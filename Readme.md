@@ -1,3 +1,9 @@
+> [!WARNING]
+> **SUPERSEDED — historical discovery document.**
+> The implementation contract is **[`SPEC.md`](./SPEC.md)** (Production Spec v2, locked 2026-09-01).
+> Six of the twelve decisions below were reversed after research; see **[`FINDINGS.md`](./FINDINGS.md)** for the evidence behind each reversal.
+> Kept for the reasoning trail only. Do not implement from this file.
+
 # Botless Meeting Assistant — Design Doc (Discovery v1)
 
 **Date:** 2026-09-01
