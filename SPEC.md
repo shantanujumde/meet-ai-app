@@ -1,6 +1,6 @@
 # meet-ai — Production Spec v2 (lockable)
 
-**Date:** 2026-09-01 · **Supersedes:** `Readme.md` (Discovery v1) · **Backed by:** `FINDINGS.md`
+**Date:** 2026-09-01 · **Supersedes:** `Readme.md` (Discovery v1) · **Backed by:** `FINDINGS.md` · **Why it exists:** [`PROBLEM.md`](./PROBLEM.md)
 
 ---
 
