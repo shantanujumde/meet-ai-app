@@ -21,9 +21,9 @@ This spec is the reconciled version. Every change is traceable to evidence in `F
 | # | Decision | v1 choice | Changed from Readme.md? |
 |---|---|---|---|
 | L1 | Platform | **macOS for v1; Windows next.** Seams built now (§8.2), port is additive | ✅ was mac+Windows simultaneously |
-| L2 | OS floor | **macOS 14.4+**, Core Audio process tap only, no ScreenCaptureKit path | ✅ was macOS 13+ w/ fallback |
-| L3 | Capture location | **In-process Rust** via `objc2-core-audio` | ✅ was Swift sidecar (TCC inheritance broken) |
-| L4 | Transcription | Local `whisper-rs`, **utterance-level** via VAD | ✅ was true streaming |
+| L2 | OS floor | **macOS 14.4+** (Core Audio process tap only, no ScreenCaptureKit path). **macOS 26+ unlocks the Apple STT engine**; 14.4–25 falls back to `whisper-rs` | ✅ was macOS 13+ w/ fallback |
+| L3 | Capture location | **Decided by the Phase 0a spike (§5).** Swift sidecar tested first (2 days); in-process Rust `objc2-core-audio` is the fallback | ⚠️ amended — see A2 |
+| L4 | Transcription | **Apple `SpeechTranscriber` via Swift sidecar** on macOS 26+, with **native long-form streaming** (volatile → finalized). `whisper-rs` + `earshot` VAD chunking is the fallback engine | ⚠️ amended — better *and* less code, see A2 |
 | L5 | Speaker labels | Two channels: mic=`You`, tap=`Others` | — unchanged |
 | L6 | Echo (no headphones) | **Detect + warn.** No dedupe code | ✅ explicit now |
 | L7 | Storage | **Markdown = truth** + derived rebuildable SQLite FTS5 index | ✅ was markdown-only |
@@ -114,13 +114,50 @@ This spec is the reconciled version. Every change is traceable to evidence in `F
 
 | Model | File | Size | Source | Role |
 |---|---|---|---|---|
-| Whisper large-v3-turbo, q5_0 | `ggml-large-v3-turbo-q5_0.bin` | ~1.6GB | HF `ggerganov/whisper.cpp` | Default STT |
-| Whisper small.en q5_1 | `ggml-small.en-q5_1.bin` | ~180MB | same | Fast tier / low battery |
-| _(no VAD model)_ | — | — | — | `earshot` is pure Rust — nothing to download or bundle |
+| **Apple `SpeechTranscriber`** | — | **0 MB** | ships with macOS 26 | **Default on mac.** Nothing to download |
+| Whisper large-v3-turbo, q5_0 | `ggml-large-v3-turbo-q5_0.bin` | ~1.6GB | HF `ggerganov/whisper.cpp` | Fallback engine (macOS < 26, Windows) |
+| Whisper small.en q5_1 | `ggml-small.en-q5_1.bin` | ~180MB | same | Fast tier / low-end Windows |
+| _(no VAD model)_ | — | — | — | `earshot` is pure Rust; on macOS 26 `SpeechDetector` replaces it |
 
-Downloaded on first run to `~/Meetings/.app/models/`. Resumable, checksummed, atomic rename. No Python anywhere.
+**On macOS 26 the first-run download is zero bytes.** Whisper models are fetched lazily — only when the user picks the fallback engine or runs below macOS 26. Downloads go to `~/Meetings/.app/models/`: resumable, checksummed, atomic rename. No Python anywhere.
 
-### 2.4b Calendar providers (L13)
+### 2.5 STT engines (L4)
+
+One trait, four implementations. The app never branches on platform outside the engine registry.
+
+```rust
+trait SttEngine {
+    fn kind(&self) -> EngineKind;
+    fn transcribe(&self, wav: &Path, sink: &mut dyn TranscriptSink) -> Result<()>;
+    fn supports_streaming(&self) -> bool;
+}
+```
+
+| # | Engine | How it's called | Available | Model download | Notes |
+|---|---|---|---|---|---|
+| 1 | **Apple `SpeechTranscriber`** | Swift sidecar `meet-stt` | macOS 26+ | **0 MB — ships with the OS** | Default on mac. ~2× faster than whisper large-v3-turbo, tops on-device accuracy. **Native long-form streaming**, so no VAD chunking needed |
+| 2 | **`whisper-rs`** | in-process Rust | everywhere | 1.6GB (or 180MB small.en) | Universal floor. Needs `earshot` VAD + utterance chunking |
+| 3 | **Windows AI Speech Recognition** | `windows` crate (WinRT), in-process — **no sidecar needed** | Windows 11 | preinstalled on Copilot+ NPU; on-demand on CPU-only | Windows default at port time. ⚠️ APIs still **preview** — verify then; engine 2 is the safety net |
+| 4 | **Cloud (BYOK)** | HTTPS | everywhere | none | Opt-in only, never load-bearing. Needs Opus encode + chunking (OpenAI caps at 25MB/file vs ~350MB for a 1-hour WAV) |
+
+**Defaults:** macOS 26+ → 1. macOS 14.4–25 → 2. Windows 11 → 3, falling back to 2. Cloud is never a default.
+
+### 2.6 The Swift sidecar (`sidecar/meet-stt`)
+
+A single Swift CLI binary inside the app bundle at `Contents/MacOS/meet-stt`. Reads WAV paths, emits JSON lines on stdout. Built with `swiftc` — **Command Line Tools are sufficient, full Xcode is not required.**
+
+| Responsibility | Framework | Phase |
+|---|---|---|
+| Transcription | `Speech` (`SpeechAnalyzer` / `SpeechTranscriber`) | 1 |
+| VAD when needed | `SpeechDetector` | 1 |
+| Speaker diarization (N speakers) | FluidAudio (pyannote on the Neural Engine) | post-v1 — un-defers L5/U6 |
+| System audio capture | Core Audio process tap | **only if Phase 0a passes** |
+
+**Why a sidecar is safe here, unlike the one L3 originally rejected:** transcription reads a file off disk. No microphone, no audio-capture permission, nothing for TCC to attribute. The TCC risk applies *only* to the capture responsibility, which is exactly what Phase 0a tests.
+
+**Not available via sidecar:** App Intents / Shortcuts must be a real Xcode target inside the bundle, which Tauri cannot build. Accepted loss. Spotlight indexing needs no code at all — the markdown corpus on disk is already indexed.
+
+### 2.7 Calendar providers (L13)
 
 All four sit behind one trait — `CalendarProvider { list_events(range) -> Vec<Event> }` — so the UI and detection logic never branch on provider.
 
@@ -133,7 +170,7 @@ All four sit behind one trait — `CalendarProvider { list_events(range) -> Vec<
 
 **Security notes:** desktop OAuth uses PKCE with no client secret (Google and Microsoft both treat desktop client secrets as non-secret; PKCE is the required flow). Redirect is `http://127.0.0.1:<random>/callback` via `tauri-plugin-oauth`, never a custom URL scheme. Refresh tokens go to the macOS Keychain via `keyring`; access tokens stay in memory only. Scopes are read-only — the app never writes to a calendar.
 
-### 2.5 AI / agent layer
+### 2.8 AI / agent layer
 
 | Piece | Implementation |
 |---|---|
@@ -147,13 +184,14 @@ All four sit behind one trait — `CalendarProvider { list_events(range) -> Vec<
 | Tracker push | Prompt names the user's configured tracker; the agent uses its own Linear/Jira/GitHub connection |
 | Ticket ID allocation | Prompt instructs: scan `~/Meetings/*/tickets/TICK-*.md`, take max+1, zero-pad to 4 |
 
-### 2.6 Build, sign, verify
+### 2.9 Build, sign, verify
 
 | Concern | Choice |
 |---|---|
 | Package manager | pnpm 9 |
 | Rust toolchain | stable, pinned via `rust-toolchain.toml` |
 | Target | `aarch64-apple-darwin` only (v1) |
+| Swift sidecar | `swiftc` from Command Line Tools — **full Xcode not required**. Built by `just sidecar`, signed with the same identity, embedded at `Contents/MacOS/meet-stt` |
 | Info.plist keys | `NSMicrophoneUsageDescription`, **`NSAudioCaptureUsageDescription`** (the tap permission key), `LSMinimumSystemVersion = 14.4` |
 | Entitlements | `com.apple.security.device.audio-input` |
 | Signing | **Local self-signed identity + hardened runtime.** Required for TCC to register the app at all — this is not optional even for personal use |
@@ -304,6 +342,8 @@ meet-ai/
     prompts/      # 🟢 minijinja templates + assembly
     calendar/     # 🟡 CalendarProvider trait: eventkit | google | microsoft | ics
     detect/        # 🟢 sysinfo processes + audio-activity heuristic
+  sidecar/
+    meet-stt/     # 🟡 Swift CLI: SpeechTranscriber, SpeechDetector, (FluidAudio later)
   src-tauri/      # 🟡 commands, events, tray, plugins, state machine
   src/            # 🟢 React app
 ```
@@ -320,9 +360,10 @@ Miss a gate → stop, don't stack work on a broken layer.
 
 | Phase | Build | Exit gate |
 |---|---|---|
-| **0. Capture CLI** ~2wk 🔴 | `meet-rec` writes `mic.wav` + `system.wav` + `segments.json`. Permission prompt, device-change handling, incremental writes | **45-min real Zoom call: both files intact, drift < 200ms end-to-end, survives an AirPods switch mid-call, survives `kill -9`** |
-| **1. Transcribe** ~1wk 🟡 | Model download, VAD segmentation, whisper-rs, `transcript.md` | Phase-0 call reads accurately. Speakers correctly split. Silence produces no invented text |
-| **2. App shell** ~2wk 🟢 | Tauri + React: meeting list, transcript view, notes pane, live utterances, tray, ⌘⇧R | You choose it over Notes for a real meeting |
+| **0a. TCC spike** ~2d ⚡ | Swift CLI with `NSAudioCaptureUsageDescription` embedded via `-sectcreate __TEXT __info_plist`, signed with the same identity, in `Contents/MacOS/`, launched as a child of the app | **Does the permission prompt appear, and does audio actually flow?** Pass → capture lives in the sidecar, 🔴 drops to 🟡, ~1 week saved. Fail → in-process Rust exactly as L3 originally specced. Either way the project's biggest unknown is answered on day 2 |
+| **0. Capture CLI** ~1–2wk 🔴 | `meet-rec` writes `mic.wav` + `system.wav` + `segments.json`. Permission prompt, device-change handling, incremental writes. Language decided by 0a | **45-min real Zoom call: both files intact, drift < 200ms end-to-end, survives an AirPods switch mid-call, survives `kill -9`** |
+| **1. Transcribe** ~1wk 🟡 | `SttEngine` trait + `sidecar/meet-stt` (Apple `SpeechTranscriber`, native streaming) + `whisper-rs` fallback + lazy model download + `transcript.md` | Phase-0 call reads accurately on **both** engines. Speakers correctly split. Silence produces no invented text. Engine switch is a config change only |
+| **2. App shell** ~2wk 🟢 | Tauri + React: meeting list, transcript view, notes pane, live transcript (native streaming on macOS 26, chunked on the whisper path), tray, ⌘⇧R | You choose it over Notes for a real meeting |
 | **3. Store + index** ~1wk 🟢 | Markdown read/write, watcher, SQLite FTS5, search box, ticket UI, manual ticket create | Delete `index.db` → everything still works after rescan |
 | **4. Agent loop** ~1wk 🟢 | `[Wrap up]` + `[Start Work]` + `[Push ticket]` prompt buttons; prompt templates | 5 consecutive meetings → usable tickets appear in UI with zero hand-repair |
 | **5a. Detection + local calendar** ~1.5wk 🟡 | `CalendarProvider` trait + **EventKit**, auto-title, 1-min reminder, process detect, confirm-to-start, **U5 pre-meeting brief with `git log`** | You open the app before meetings without being prompted |
@@ -348,7 +389,9 @@ ffprobe audio/mic.wav audio/system.wav      # both present, non-truncated
 cargo run -p audio --bin drift-check -- audio/    # asserts < 200ms, reads segments.json
 ```
 
-**Phase 1:** `cargo test -p stt` — fixture WAVs incl. a 30s pure-silence file that must yield **zero** transcript lines (the whisper-hallucination guard).
+**Phase 0a:** build and sign the Swift CLI, run it as a child of the app, `tccutil reset AudioCapture pro.saleschat.meetai` between attempts. Prompt appears + non-silent samples arrive = pass.
+
+**Phase 1:** `cargo test -p stt` against fixture WAVs, run **once per engine**, incl. a 30s pure-silence file that must yield **zero** transcript lines (the whisper-hallucination guard — Apple's engine should pass it trivially, whisper should only pass it with VAD gating).
 
 **Phase 3:** `rm ~/Meetings/.app/index.db && just dev` → all meetings, tickets and search return identically. This test *is* the L7 invariant.
 
@@ -368,7 +411,10 @@ cargo run -p audio --bin drift-check -- audio/    # asserts < 200ms, reads segme
 |---|---|
 | 🔴 Core Audio tap setup is officially poorly documented | Port from `insidegui/AudioCap`; isolated crate; fixture harness; Phase-0 gate before anything is built on top |
 | 🔴 Two-stream clock drift, silent failure at ~30min | `segments.json` + `drift-check` binary + explicit 200ms gate |
-| 🟡 whisper-rs Metal build config | Pin crate + toolchain; document the working `build.rs` env once it works |
+| 🟡 whisper-rs Metal build config | Pin crate + toolchain; document the working `build.rs` env once it works. Now off the critical path — it is the fallback engine, not the default |
+| 🟡 `SpeechAnalyzer` shipped with macOS 26 → thin LLM training data | Read Apple's docs and `FluidInference/swift-scribe` before writing the sidecar. Same rule as SETUP.md §4 |
+| 🟡 Swift adds a second language to the build | Confined to one CLI binary with a JSON-lines contract. `swiftc` ships with CLT, so no Xcode dependency |
+| 🟡 Windows AI Speech APIs are in preview | Verify at port time; `whisper-rs` small.en is the guaranteed floor |
 | 🟡 TCC won't register an unsigned app | Self-signed identity + hardened runtime from Phase 0, not retrofitted |
 | 🟡 First-run 1.6GB download | Resumable + checksummed; small.en offered as the fast path |
 | 🟡 Google refresh tokens dying weekly | OAuth app must be set to *In production* (unverified is fine at L17), **not** *Testing*. Phase-5b gate explicitly tests this |
@@ -389,7 +435,7 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 | ⛔ **Bundle identifier** | Fix it now: `pro.saleschat.meetai`. Never change it | macOS TCC keys permissions to the bundle ID. Renaming later silently revokes mic + audio-capture consent for every existing install, with no way to migrate it |
 | ⛔ **Updater keypair** | `tauri signer generate` now; put the **public** key in `tauri.conf.json`, include `tauri-plugin-updater`, point `endpoints` at a placeholder URL, ship with `active: false` | The pubkey is compiled in. A build without it can never verify a later update — v1 users would have to find and reinstall manually. Private key goes to a password manager, never the repo |
 | **Signing indirection** | `just sign` reads `$SIGN_IDENTITY` (defaults to the self-signed cert) | v2 becomes `SIGN_IDENTITY="Developer ID Application: …" just sign` — one env var, no code change |
-| **Entitlements + Info.plist** | Already final (§2.6): hardened runtime, `com.apple.security.device.audio-input`, `NSAudioCaptureUsageDescription` | Same files feed the notarized build. Notarization then adds only a CI step, not a rewrite |
+| **Entitlements + Info.plist** | Already final (§2.9): hardened runtime, `com.apple.security.device.audio-input`, `NSAudioCaptureUsageDescription` | Same files feed the notarized build. Notarization then adds only a CI step, not a rewrite |
 | **OAuth client IDs in config, not code** | `.app/config.jsonc` → `calendar.google.client_id`, `calendar.microsoft.client_id` | v2 swaps in a *verified* Google production client without a rebuild |
 | **Onboarding as its own route** | `/onboarding` exists in v1 with 3 steps (permission → model download → meetings folder), even if plain | Public v1 users hit permissions cold. Growing an existing route is cheap; retrofitting a flow into a running app is not |
 | **License + repo hygiene** | `LICENSE` = Apache-2.0 (matches open-granola), `SECURITY.md`, `CHANGELOG.md` from commit one | Adding a license after external contributions arrive is a legal mess |
@@ -405,6 +451,7 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 | **`stub` AudioSource + cross-check** | A no-op impl behind a cargo feature, and `just check` runs `cargo check --target x86_64-pc-windows-msvc --features stub-audio` from day one | The whole workspace type-checks for Windows on every commit. A leak fails CI the day it's introduced, not in month four |
 | **Paths via `dirs` + `PathBuf`** | `dirs::home_dir()`, `PathBuf::join`. Zero `format!("{}/…")`, zero literal `~` | Windows paths just work |
 | **whisper-rs accel behind features** | `metal` on macOS; leave `vulkan` / `cuda` feature stubs declared and unused | Windows GPU tiering is a feature flag, not a refactor |
+| **`SttEngine` trait** | Defined in `crates/stt` at Phase 1, with 2 impls (Apple sidecar, whisper) | Windows adds a third impl calling Windows AI Speech via the `windows` crate — **in-process, no sidecar needed**, since WinRT is directly callable from Rust |
 | **Process names in data, not code** | Detection list lives in `crates/detect/processes.json` | Windows names (`Zoom.exe`, `ms-teams.exe`) are a data edit |
 | **Keychain via `keyring`** | Already chosen (§2.3) | Maps to Windows Credential Manager with no code change |
 | **UI font stack** | Full fallback chain, not bare `-apple-system` | No mystery-font bug on Windows |
@@ -426,6 +473,20 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 ---
 
 ## Amendments
+
+### A2 — 2026-09-01 · Swift sidecar for Apple frameworks (amends L2, L3, L4)
+
+Research into macOS 26 changed the transcription picture materially. Apple's `SpeechAnalyzer` / `SpeechTranscriber` ships with the OS (**0 MB download**), runs ~**2× faster than whisper large-v3-turbo** at top-tier on-device accuracy, and does **native long-form streaming** with volatile → finalized results. All of it is Swift-only — the API is built on Swift concurrency and is not reachable through `objc2`.
+
+**Change:** add one Swift CLI, `sidecar/meet-stt`, inside the app bundle. New §2.5 (engine matrix) and §2.6 (sidecar scope).
+
+**Why a sidecar is safe here** where L3 rejected one: transcription reads a WAV off disk — no microphone, no audio-capture permission, nothing for TCC to attribute. The TCC risk applies only to *capture*, which Phase 0a now tests explicitly in 2 days rather than assuming.
+
+**What this deletes from the critical path:** the 1.6GB first-run download on macOS 26, `whisper-rs` Metal build config, the model download manager as a Phase-1 blocker, and the entire VAD-chunking design on mac (L4's "2–8s utterance lag" becomes true live captions with *less* code).
+
+**Framework decision re-confirmed, not reopened.** Swift-on-Windows was evaluated and rejected: every win above is an Apple *framework*, none of which exist on Windows, and **SwiftUI does not exist there at all**. The Browser Company had to build its own WinUI language bindings to ship Arc on Windows, then pivoted away from SwiftUI for Dia over performance. For a solo vibe-coded project the decisive factor is training data: SwiftWin32 / swift-winrt have almost none, while React is the densest region there is. The sidecar captures 6 of 7 Apple wins; going all-Swift would buy exactly one more (App Intents/Shortcuts) at the cost of Windows and the entire UI velocity story.
+
+**Also:** Windows has its own free on-device STT (Windows AI Speech Recognition — preinstalled on Copilot+ NPUs, on-demand on CPU-only), and it is WinRT, so Rust calls it **directly with no sidecar**. Cloud-only-on-Windows was considered and rejected: it would break the privacy claim on a whole platform, it is not actually cheap (25MB API caps vs ~350MB WAVs means Opus encode + chunking + reassembly), and it fails offline — the exact situation meetings get recorded in.
 
 ### A1 — 2026-09-01 · Dependency research (see [`SETUP.md`](./SETUP.md))
 
