@@ -16,6 +16,9 @@
 | Node | v26.4.0 | ≥20.19 | ✅ works. Current LTS is v24.20.0 "Krypton" — switch only if a tool complains |
 | pnpm | 11.9.0 | 11.25.0 | `pnpm self-update` |
 | just | ❌ not installed | latest | `brew install just` |
+| **`swiftc`** | **6.3.3**, target `arm64-apple-macosx26.0` | any | ✅ **verified present** — ships with CLT. A2's sidecar builds today, nothing to install |
+| **`Speech.framework`** | present | macOS 26 | ✅ **verified** — `SpeechAnalyzer` / `SpeechTranscriber` available |
+| ffmpeg | unverified | any | `brew install ffmpeg` — needed once, for the fixture WAVs (`just fixtures`) |
 
 ---
 
@@ -255,8 +258,15 @@ sw_vers -productVersion                # 26.6.2 — above the 14.4 floor
 ```bash
 cd ~/apps/meet-ai
 
-# 1.1 Apache-2.0 license
+# 1.1 Apache-2.0 license — REPLACES the MIT LICENSE already committed.
+#     Sole author, so the relicense is yours to make; MIT stays in prior commits.
 curl -sL https://www.apache.org/licenses/LICENSE-2.0.txt -o LICENSE
+cat > NOTICE <<'EOF'
+meet-ai
+Copyright 2026 Shantanu Jumde
+
+This product includes software developed as part of the meet-ai project.
+EOF
 
 # 1.2 Updater keypair. Public key goes in tauri.conf.json; PRIVATE key to your
 #     password manager and NOWHERE else. Without this, v1 installs can never
@@ -273,7 +283,8 @@ dist/
 .DS_Store
 EOF
 
-git init && git add -A && git commit -m "chore: license, gitignore, spec"
+# NOTE: the repo already has commits — do NOT run `git init`.
+git add -A && git commit -m "chore: relicense to Apache-2.0, add NOTICE and gitignore"
 ```
 
 **Bundle identifier is decided now and never changes: `pro.saleschat.meetai`.** macOS TCC keys audio permission to it; renaming later silently revokes consent on every existing install with no migration path.
@@ -458,6 +469,17 @@ sign:
     codesign --force --deep --options runtime \
       --entitlements src-tauri/entitlements.plist \
       -s "{{SIGN_IDENTITY}}" "src-tauri/target/release/bundle/macos/meet-ai.app"
+
+# The ONLY valid environment for the Phase 0a TCC spike. `just dev` proves nothing:
+# TCC keys on the signed bundle identity, and dev builds are unsigned at another path.
+bundle-signed: sidecar build sign
+    codesign --verify --verbose=2 "src-tauri/target/release/bundle/macos/meet-ai.app"
+
+# One-time fixture generation (crates/audio/fixtures/), needs ffmpeg.
+fixtures:
+    mkdir -p crates/audio/fixtures
+    ffmpeg -f lavfi -i anullsrc=r=16000:cl=mono -t 30 -c:a pcm_s16le \
+      crates/audio/fixtures/silence-30s.wav
 ```
 
 `check-windows` deliberately scopes to the four OS-agnostic crates rather than the whole workspace — `cargo check` on `src-tauri` for a Windows target pulls webview shims that add noise without adding signal. Extend it when `crates/audio/src/windows.rs` lands.
@@ -484,6 +506,12 @@ Spec: SPEC.md (locked). Versions: SETUP.md. Evidence: FINDINGS.md.
 - Bundle id `pro.saleschat.meetai` is frozen. Changing it revokes users' audio permission.
 - No AI calls, no API keys, no telemetry in this codebase. Ever.
 - markdown is the source of truth; index.db is derived and must be safe to delete.
+- transcript.md: ONE utterance = ONE line. Collapse \n\r\t and whitespace runs to a
+  single space. Never write empty text. Append-only, never rewrite a line.
+- Only FINALIZED text is persisted. Volatile/partial results go to the UI event
+  channel only and never touch disk. All engines write via one TranscriptSink.
+- The watcher must suppress self-writes (path -> Instant, 750ms) or it will reload
+  notes.md under the user's cursor. Agent writes are NOT suppressed.
 
 ## Commands
 just dev | just rec | just check | just sign
@@ -495,7 +523,16 @@ just dev | just rec | just check | just sign
 just check                    # must pass green, including check-windows
 just dev                      # window opens
 cargo run -p audio --bin meet-rec --  --list-devices
+
+# Phase 0a gate — signed bundle only. Never test TCC under `just dev`.
+just fixtures
+just bundle-signed
+tccutil reset AudioCapture pro.saleschat.meetai
+open src-tauri/target/release/bundle/macos/meet-ai.app
 ```
+
+Pass = the prompt appears, names **meet-ai** (not the helper), and non-silent samples arrive.
+⚠️ Prompt appears but samples are silent = **fail**, not pass.
 
 Then commit and start Phase 0.
 

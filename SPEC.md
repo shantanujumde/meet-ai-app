@@ -95,7 +95,7 @@ This spec is the reconciled version. Every change is traceable to evidence in `F
 | Model download | `reqwest` (rustls) + `sha2` + `tokio-util` | HTTP Range resume, checksum verify, atomic rename |
 | Database | `rusqlite` 0.32, features `bundled`, `fts5` | Derived index only. WAL mode |
 | Migrations | hand-written `PRAGMA user_version` steps | 3 tables; a framework is overkill |
-| File watching | `notify` 7 + `notify-debouncer-full` | 500ms debounce; agent writes land as bursts |
+| File watching | `notify` 8 + `notify-debouncer-full` | 500ms debounce; agent writes land as bursts. **Must implement self-write suppression** — see §4 |
 | Frontmatter | `yaml-rust2` 0.12 | `serde_yaml` is deprecated; `gray_matter` is read-only. Parse to an ordered `Yaml` value, mutate owned keys, emit — unknown keys survive because they are never modelled. SETUP.md §1.2 |
 | Config | `jsonc-parser` 0.33 + `serde_json` | `json_comments` last shipped 2023. SETUP.md §1.3 |
 | Prompt templates | `minijinja` 2 | Templates live in `.app/prompts/*.md`, user-editable |
@@ -142,6 +142,12 @@ trait SttEngine {
 
 **Defaults:** macOS 26+ → 1. macOS 14.4–25 → 2. Windows 11 → 3, falling back to 2. Cloud is never a default.
 
+**What reaches disk.** The engines have different output shapes — Apple emits volatile → finalized results, whisper emits completed chunks. One rule reconciles them:
+
+- **Only finalized text is persisted.** Volatile/partial results are pushed to the frontend over a Tauri event channel and live in UI memory only. They never touch the filesystem.
+- Every engine normalizes through **one `TranscriptSink`**, which owns the §3.4 line contract, the whitespace collapse, and the append. Engines emit structured utterances; they never format and never write.
+- Therefore, by design: **the live transcript pane and `transcript.md` are not identical mid-meeting.** The pane shows a volatile tail; the file holds only settled text. This is intentional, not a bug to fix.
+
 ### 2.6 The Swift sidecar (`sidecar/meet-stt`)
 
 A single Swift CLI binary inside the app bundle at `Contents/MacOS/meet-stt`. Reads WAV paths, emits JSON lines on stdout. Built with `swiftc` — **Command Line Tools are sufficient, full Xcode is not required.**
@@ -154,6 +160,8 @@ A single Swift CLI binary inside the app bundle at `Contents/MacOS/meet-stt`. Re
 | System audio capture | Core Audio process tap | **only if Phase 0a passes** |
 
 **Why a sidecar is safe here, unlike the one L3 originally rejected:** transcription reads a file off disk. No microphone, no audio-capture permission, nothing for TCC to attribute. The TCC risk applies *only* to the capture responsibility, which is exactly what Phase 0a tests.
+
+**Testing it.** A bare `swiftc` build has no XCTest target, and adding SwiftPM just to get one is disproportionate. Test the sidecar **from Rust** instead: `crates/stt/tests/sidecar.rs` spawns `target/meet-stt` against the §6 fixture WAVs and asserts the JSON-lines output. That tests the real contract — process boundary and JSON shape — rather than Swift internals, and keeps one test suite behind one `just check`.
 
 **Not available via sidecar:** App Intents / Shortcuts must be a real Xcode target inside the bundle, which Tauri cannot build. Accepted loss. Spotlight indexing needs no code at all — the markdown corpus on disk is already indexed.
 
@@ -279,6 +287,17 @@ Body / acceptance notes.
 
 Regex: `^\[(\d{2}:\d{2}:\d{2})\] (You|Others): (.*)$`. Deliberately plain — readable in Obsidian *and* trivially parseable.
 
+**Line contract — binding, because L7 makes this file the source of truth.** These rules must hold before the first transcript is ever written; changing them later means migrating every recorded meeting.
+
+| Rule | Detail |
+|---|---|
+| **One utterance = exactly one line** | A 40-second monologue is one long line. Editors soft-wrap it; the parser never has to reassemble anything |
+| **Whitespace is collapsed** | `\n`, `\r`, `\t` and runs of spaces in recognized text all become a single space before writing |
+| **No escaping** | The prefix is fixed-width and anchored, so `]` or `:` inside speech is safe. `(.*)$` takes the rest of the line verbatim |
+| **Empty text is never written** | Whitespace-only results are dropped. This is the last line of defence for the whisper-hallucination guard |
+| **Timestamps are utterance *start*** | Derived from `segments.json` (`start_host_ns + frame/rate`), never wall-clock at write time |
+| **Append-only** | A line, once written, is never rewritten or reordered. See §2.5 on what is allowed to reach disk |
+
 `segments.json` records clock truth:
 
 ```json
@@ -348,6 +367,12 @@ meet-ai/
   src/            # 🟢 React app
 ```
 
+**`crates/store` — watcher self-write suppression (required).** The app writes `notes.md` while the user is typing in it. Without suppression the watcher fires, the app reloads the file, and the cursor jumps mid-sentence.
+
+- Keep a short-lived map of paths this process wrote (`path → Instant`). Drop `notify` events matching an entry newer than **750ms**.
+- Second line of defence: compare a content hash before re-rendering, so an echo that slips through is a no-op.
+- **Agent writes must not be suppressed.** `meeting.md` and `tickets/*.md` arrive as bursts from an external process; the debouncer already coalesces those. Suppression applies only to paths *this* process wrote.
+
 Every 🔴/🟡 crate is independently runnable and fixture-testable. `crates/audio` ships `bin/meet-rec` — Phase 0 needs no Tauri and no UI.
 
 `AudioSource` trait is defined in `crates/audio` from day one even though only macOS implements it — that is what makes the Windows port additive.
@@ -360,10 +385,10 @@ Miss a gate → stop, don't stack work on a broken layer.
 
 | Phase | Build | Exit gate |
 |---|---|---|
-| **0a. TCC spike** ~2d ⚡ | Swift CLI with `NSAudioCaptureUsageDescription` embedded via `-sectcreate __TEXT __info_plist`, signed with the same identity, in `Contents/MacOS/`, launched as a child of the app | **Does the permission prompt appear, and does audio actually flow?** Pass → capture lives in the sidecar, 🔴 drops to 🟡, ~1 week saved. Fail → in-process Rust exactly as L3 originally specced. Either way the project's biggest unknown is answered on day 2 |
+| **0a. TCC spike** ~2d ⚡ | Swift CLI with `NSAudioCaptureUsageDescription` embedded via `-sectcreate __TEXT __info_plist`, signed with the same identity, in `Contents/MacOS/`, launched as a child of the app. **Precondition: `pnpm tauri build` + `just sign` must work first — `tauri dev` is NOT a valid test environment for TCC** (unsigned binary, different path, meaningless result) | **Does the permission prompt appear, name *meet-ai* rather than the helper, and does non-silent audio actually flow?** ⚠️ Prompt appears but samples are silent = **fail**, not pass — that is precisely the documented Tauri sidecar failure. Pass → capture lives in the sidecar, 🔴 drops to 🟡, ~1 week saved. Fail → in-process Rust exactly as L3 originally specced. Either way the project's biggest unknown is answered on day 2 |
 | **0. Capture CLI** ~1–2wk 🔴 | `meet-rec` writes `mic.wav` + `system.wav` + `segments.json`. Permission prompt, device-change handling, incremental writes. Language decided by 0a | **45-min real Zoom call: both files intact, drift < 200ms end-to-end, survives an AirPods switch mid-call, survives `kill -9`** |
 | **1. Transcribe** ~1wk 🟡 | `SttEngine` trait + `sidecar/meet-stt` (Apple `SpeechTranscriber`, native streaming) + `whisper-rs` fallback + lazy model download + `transcript.md` | Phase-0 call reads accurately on **both** engines. Speakers correctly split. Silence produces no invented text. Engine switch is a config change only |
-| **2. App shell** ~2wk 🟢 | Tauri + React: meeting list, transcript view, notes pane, live transcript (native streaming on macOS 26, chunked on the whisper path), tray, ⌘⇧R | You choose it over Notes for a real meeting |
+| **2. App shell** ~2wk 🟢 | Tauri + React: meeting list, transcript view, notes pane, live transcript (native streaming on macOS 26, chunked on the whisper path), tray, ⌘⇧R, `/onboarding` incl. **permission-denied path** | You choose it over Notes for a real meeting |
 | **3. Store + index** ~1wk 🟢 | Markdown read/write, watcher, SQLite FTS5, search box, ticket UI, manual ticket create | Delete `index.db` → everything still works after rescan |
 | **4. Agent loop** ~1wk 🟢 | `[Wrap up]` + `[Start Work]` + `[Push ticket]` prompt buttons; prompt templates | 5 consecutive meetings → usable tickets appear in UI with zero hand-repair |
 | **5a. Detection + local calendar** ~1.5wk 🟡 | `CalendarProvider` trait + **EventKit**, auto-title, 1-min reminder, process detect, confirm-to-start, **U5 pre-meeting brief with `git log`** | You open the app before meetings without being prompted |
@@ -389,7 +414,21 @@ ffprobe audio/mic.wav audio/system.wav      # both present, non-truncated
 cargo run -p audio --bin drift-check -- audio/    # asserts < 200ms, reads segments.json
 ```
 
-**Phase 0a:** build and sign the Swift CLI, run it as a child of the app, `tccutil reset AudioCapture pro.saleschat.meetai` between attempts. Prompt appears + non-silent samples arrive = pass.
+**Fixtures** — `crates/audio/fixtures/`, generated once with `ffmpeg` (`just fixtures`). Every 🔴 module is testable against these with no live meeting:
+
+| Fixture | Asserts |
+|---|---|
+| `silence-30s.wav` | **Zero** transcript lines, on both engines. The hallucination guard |
+| `two-speaker-60s.wav` | Speaker split and timestamp sanity |
+| `device-switch.wav` + `segments.json` | Multi-segment clock math, without needing a live AirPods swap |
+
+**Phase 0a** — the precondition is a *signed release bundle*; `tauri dev` proves nothing here.
+```
+just bundle-signed                                    # tauri build + codesign + verify
+tccutil reset AudioCapture pro.saleschat.meetai       # between every attempt
+open src-tauri/target/release/bundle/macos/meet-ai.app
+```
+Pass = prompt appears, names **meet-ai** (not the helper), and non-silent samples arrive. ⚠️ Prompt appears but samples are silent = **fail**.
 
 **Phase 1:** `cargo test -p stt` against fixture WAVs, run **once per engine**, incl. a 30s pure-silence file that must yield **zero** transcript lines (the whisper-hallucination guard — Apple's engine should pass it trivially, whisper should only pass it with VAD gating).
 
@@ -437,7 +476,7 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 | **Signing indirection** | `just sign` reads `$SIGN_IDENTITY` (defaults to the self-signed cert) | v2 becomes `SIGN_IDENTITY="Developer ID Application: …" just sign` — one env var, no code change |
 | **Entitlements + Info.plist** | Already final (§2.9): hardened runtime, `com.apple.security.device.audio-input`, `NSAudioCaptureUsageDescription` | Same files feed the notarized build. Notarization then adds only a CI step, not a rewrite |
 | **OAuth client IDs in config, not code** | `.app/config.jsonc` → `calendar.google.client_id`, `calendar.microsoft.client_id` | v2 swaps in a *verified* Google production client without a rebuild |
-| **Onboarding as its own route** | `/onboarding` exists in v1 with 3 steps (permission → model download → meetings folder), even if plain | Public v1 users hit permissions cold. Growing an existing route is cheap; retrofitting a flow into a running app is not |
+| **Onboarding as its own route** | `/onboarding` exists in v1 with 3 steps (permission → model download → meetings folder), even if plain. **Must handle denial**: one sentence on what breaks, a **Retry** button, and **Open System Settings** deep-linking to Privacy & Security via `x-apple.systempreferences:` — *verify the exact audio-capture anchor at implementation time*, falling back to the pane root. Recording controls stay visibly disabled while permission is absent, rather than failing at click time | Public v1 users hit permissions cold. Growing an existing route is cheap; retrofitting a flow into a running app is not |
 | **License + repo hygiene** | `LICENSE` = Apache-2.0 (matches open-granola), `SECURITY.md`, `CHANGELOG.md` from commit one | Adding a license after external contributions arrive is a legal mess |
 | **No telemetry, ever** | Keep it absent, and say so in the README | It's the product's core claim. Adding it later would break the promise |
 | Deliberately **not** done in v1 | Notarization CI, hosted privacy policy, Google scope verification, crash reporting, i18n | All are pure v2 add-ons that touch no v1 architecture |
@@ -473,6 +512,20 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 ---
 
 ## Amendments
+
+### A3 — 2026-09-01 · Pre-implementation audit (amends §3.4, §2.5, §2.3/§4, §5, §6, §2.6, §8.1)
+
+A pre-flight audit against the real repo found nine gaps. Three would have cost real time.
+
+1. **Relicensed MIT → Apache-2.0.** A `LICENSE` was already committed as MIT while SETUP.md instructed Apache-2.0; the step would have silently overwritten it. Apache-2.0 chosen for its explicit patent grant, which matters once L17 flips to public. Sole author, so the relicense is clean; MIT remains in prior commits, as expected. `NOTICE` added.
+2. **§3.4 transcript line contract made binding** — one utterance = one line, whitespace collapsed, no escaping, empty text never written, append-only. These had to land *before any transcript exists*: L7 makes markdown the source of truth, so a later change means migrating every recorded meeting.
+3. **§2.5 "only finalized text is persisted."** Apple's engine emits volatile → finalized; without this rule it would write and then rewrite lines in `transcript.md`. All engines now normalize through one `TranscriptSink`. The live pane and the file are deliberately not identical mid-meeting.
+4. **§4 watcher self-write suppression** (750ms + content hash). Without it the app reloads `notes.md` underneath the user's cursor while they type. Agent writes are explicitly exempt.
+5. **§5/§6 Phase 0a precondition: a signed release bundle.** TCC keys on the signed bundle identity, so `tauri dev` is not a valid test environment — running the spike there yields a false pass or false fail on the project's biggest unknown. Also recorded the trap: prompt appears but samples are silent is a **fail**.
+6. **§2.6 sidecar test strategy** — tested from Rust (`crates/stt/tests/sidecar.rs`) against fixture WAVs, not via XCTest. One suite, and it tests the actual process/JSON contract.
+7. **§6 fixture WAVs named** so they get created rather than assumed. **§8.1 onboarding** now owns the permission-denied path.
+
+**Confirmed frozen:** product name `meet-ai`, identifier `pro.saleschat.meetai`. **Verified on the build machine:** `swiftc` 6.3.3 targeting `arm64-apple-macosx26.0` and `Speech.framework` present — A2's sidecar is buildable today with zero installs.
 
 ### A2 — 2026-09-01 · Swift sidecar for Apple frameworks (amends L2, L3, L4)
 
