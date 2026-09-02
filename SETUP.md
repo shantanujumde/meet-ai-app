@@ -1,7 +1,8 @@
 # meet-ai — Dependency Research & Initial Setup
 
 **Verified:** 2026-09-01 against crates.io + npm registry live APIs. Not from memory.
-**Companion to:** [`SPEC.md`](./SPEC.md) §2 (tech stack), §9 (next steps).
+**Companion to:** [`SPEC.md`](./SPEC.md) §2 (tech stack), §5 (phases), §9 (next steps).
+**Note:** SPEC amendment **A2** added a Swift sidecar for Apple's STT — see §1.5 below for what that changes here.
 
 ---
 
@@ -20,7 +21,7 @@
 
 ## 1. Research findings that change the spec
 
-Four substantive changes came out of checking real registry data. All are simplifications.
+Five substantive changes came out of checking real registry data plus SPEC amendment A2. All are simplifications.
 
 ### 1.1 VAD: drop Silero + ONNX entirely → `earshot`
 
@@ -60,6 +61,22 @@ Several dependencies shipped new majors recently. An LLM's training data skews t
 | `notify` | 9.0.0-rc.5 | **8.2.0** | 9.0 is a release candidate. Don't build the file watcher on an rc |
 
 For the ones where latest *is* the right call, the mitigation is procedural — see §4 rule.
+
+### 1.5 SPEC A2 — Swift sidecar demotes whisper to fallback
+
+SPEC amendment A2 makes Apple `SpeechTranscriber` (macOS 26, 0 MB, ~2× faster than whisper large-v3-turbo, native streaming) the default STT engine via a Swift CLI at `sidecar/meet-stt`. Effects on this document:
+
+| Item | Change |
+|---|---|
+| `whisper-rs` 0.16 | **Still pinned and still added** — it is the fallback engine for macOS < 26 and the Windows floor. Just no longer on the critical path |
+| `earshot` 1.2.2 | Still needed, but only for the whisper path. macOS 26 uses `SpeechDetector` inside the sidecar |
+| Model download manager | Moves off Phase 1's critical path. Lazy — nothing downloads on macOS 26 |
+| New toolchain requirement | `swiftc`, which **ships with Command Line Tools already present on this machine**. No Xcode, no SwiftPM registry, no extra install |
+| New build step | `just sidecar` → `swiftc -O sidecar/meet-stt/main.swift -o …/Contents/MacOS/meet-stt`, then sign with the same identity |
+| 🆕 risk | `SpeechAnalyzer` shipped with macOS 26, so LLM training data is thin. Read Apple's docs and [`FluidInference/swift-scribe`](https://github.com/FluidInference/swift-scribe) first — same rule as §4 |
+| Later, free | FluidAudio (pyannote diarization on the Neural Engine) drops into the same sidecar, un-deferring real N-speaker labels |
+
+Windows, for the record: it has its own free on-device STT (Windows AI Speech Recognition) which is **WinRT and therefore callable directly from Rust via the `windows` crate — no sidecar needed there**.
 
 ---
 
@@ -202,7 +219,9 @@ Features confirmed present on 0.16.0: `metal`, `coreml`, `cuda`, `vulkan`, `hipb
 
 ## 4. The 🆕 rule
 
-Eight dependencies are new majors where model memory is a liability: `cpal`, `rubato`, `ringbuf`, `rusqlite`, `keyring`, `vite`, `react-router`, `tailwindcss`, `vitest`, `lucide-react`, `typescript`.
+Eleven dependencies are new majors where model memory is a liability: `cpal`, `rubato`, `ringbuf`, `rusqlite`, `keyring`, `vite`, `react-router`, `tailwindcss`, `vitest`, `lucide-react`, `typescript`.
+
+Plus one framework with the same problem for a different reason: **Apple `SpeechAnalyzer` / `SpeechTranscriber` shipped with macOS 26**, so there is very little of it in any training set. Treat it identically — Apple's docs and [`swift-scribe`](https://github.com/FluidInference/swift-scribe) before code.
 
 **Rule for every one of them: read the docs.rs / official docs page for the exact pinned version before writing the first line against it. Never write from memory.** The failure mode is not a compile error — it's a plausible-looking API that silently doesn't exist, followed by an agent "fixing" the version number to match its memory.
 
@@ -314,7 +333,7 @@ cd crates/audio && cargo add \
   objc2-foundation@0.3.2 block2@0.6.2 \
   cpal@0.18.2 rubato@5.0.0 ringbuf@0.5.1 hound@3.5.1 earshot@1.2.2 \
   thiserror@2.0.20 tracing@0.1.44 dirs@6.0.0 serde@1.0.229 --features serde/derive
-cd ../stt && cargo add whisper-rs@0.16.0 --features metal,tracing_backend
+cd ../stt && cargo add whisper-rs@0.16.0 --features metal,tracing_backend   # fallback engine
 cargo add hound@3.5.1 earshot@1.2.2 thiserror@2.0.20 tracing@0.1.44
 cd ../store && cargo add rusqlite@0.40.2 --features bundled,fts5
 cargo add yaml-rust2@0.12.0 notify@8.2.0 notify-debouncer-full@0.7.0 \
@@ -412,8 +431,14 @@ security find-identity -v -p codesigning     # confirm it appears
 set shell := ["bash", "-uc"]
 SIGN_IDENTITY := env_var_or_default("SIGN_IDENTITY", "meet-ai-dev")
 
-dev:            ; pnpm tauri dev
+sidecar:
+    swiftc -O sidecar/meet-stt/main.swift -o target/meet-stt
+    codesign --force --options runtime -s "{{SIGN_IDENTITY}}" target/meet-stt
+
+dev: sidecar
+    pnpm tauri dev
 rec:            ; cargo run -p audio --bin meet-rec
+stt FILE:       ; ./target/meet-stt {{FILE}}
 build:          ; pnpm tauri build
 
 # Windows seam guard — platform-agnostic crates must compile for Windows from day 1.
@@ -449,6 +474,10 @@ Spec: SPEC.md (locked). Versions: SETUP.md. Evidence: FINDINGS.md.
   rubato 5.0, ringbuf 0.5, rusqlite 0.40, keyring 4.2, vite 8, react-router 8,
   tailwind 4, vitest 4, lucide-react 1, typescript 7. Do not write from memory.
 - `objc2` 0.6.4 with `objc2-*` 0.3.2 is CORRECT. Never align these versions.
+- SpeechAnalyzer/SpeechTranscriber (macOS 26) is new: read Apple docs + swift-scribe first.
+- sidecar/meet-stt is Swift, built with swiftc from CLT. Contract is JSON lines on
+  stdout. Keep it dumb: WAV in, transcript lines out. No app logic inside it.
+- STT engines live behind the SttEngine trait. Never call an engine directly.
 - Tailwind v4 has no tailwind.config.js. Config is CSS-first.
 - OS-specific code ONLY in crates/audio/src/macos/ and crates/calendar/src/eventkit.rs.
 - All paths via `dirs` + `PathBuf::join`. Never `format!("{}/...")`, never a literal `~`.
