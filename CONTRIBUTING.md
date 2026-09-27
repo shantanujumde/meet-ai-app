@@ -60,7 +60,7 @@ just check
 
 | Step | What it covers |
 |---|---|
-| `just check-windows` | `audio`, `calendar`, `stt`, `prompts`, `detect` still compile for Windows — the SPEC §8.2 seam guard |
+| `just check-windows` | `audio`, `calendar`, `stt`, `prompts`, `detect` still compile for Windows — the SPEC §8.2 seam guard. `store` and `modelfetch` are exempt; see "Where the repo differs from SETUP.md" |
 | `cargo fmt --all --check` | Rust formatting |
 | `cargo clippy --workspace --all-targets -- -D warnings` | Rust lint, warnings are errors |
 | `cargo test --workspace` | Rust tests |
@@ -131,6 +131,8 @@ Only `just bundle-signed` proves anything about permissions.
 ```
 crates/audio/      🔴 tap + mic + resample + wav. Has bin/meet-rec.
 crates/stt/        🟡 SttEngine trait, sidecar driver, whisper fallback, transcript format
+crates/modelfetch/ 🟡 whisper model download. Has bin/meet-stt-model. The only
+                      crate in the speech path with an HTTP client — see below.
 crates/store/      🟢 markdown, frontmatter, watcher, derived SQLite index
 crates/prompts/    🟢 minijinja templates + assembly
 crates/calendar/   🟡 CalendarProvider trait: eventkit | google | microsoft | ics
@@ -176,13 +178,30 @@ Five differences. Each one is a `SETUP.md` step that does not work as written.
    `fts5_is_available` test in `crates/store/src/lib.rs` proves that rather than
    trusting the claim.
 
-2. **`just check-windows` covers everything except `store`.**
-   `rusqlite`'s `bundled` feature compiles `sqlite3.c` for the *target*, which
-   needs an MSVC toolchain no Mac has. Including `store` would make the check
-   permanently red for a reason unrelated to our code. `stt` *is* covered,
-   because `whisper-rs` is gated to macOS in its `Cargo.toml`. `audio` and
-   `calendar` are covered too — `audio` is the crate the seam guard mainly
-   exists for, and it was missing from the recipe until TUR-2 follow-up.
+2. **`just check-windows` covers everything except `store` and `modelfetch`.**
+   Both exemptions have the same cause: a dependency whose build script
+   compiles C **for the target**, which needs an MSVC toolchain no Mac has.
+   Including either would make the check permanently red for a reason unrelated
+   to our code, and a permanently-red guard is a guard nobody reads.
+
+   - `store` — `rusqlite`'s `bundled` feature compiles `sqlite3.c`.
+   - `modelfetch` — `reqwest`'s `rustls-tls` pulls `ring`, which compiles
+     `curve25519.c`. The exact failure is
+     `fatal error: 'assert.h' file not found` out of `cc-rs` with
+     `--target=x86_64-pc-windows-msvc`. Switching rustls to `aws-lc-rs` is not
+     an escape — it compiles C too. Put it back if rustls ever ships a usable
+     pure-Rust crypto provider.
+
+   `stt` *is* covered, and that is why `modelfetch` exists as a separate crate
+   at all. The model downloader started out inside `crates/stt`, and it took the
+   whole speech-to-text crate out of the guard with it (TUR-13). Splitting the
+   ~200 lines of HTTP into their own crate means the exempt surface is one file
+   with no `#[cfg(target_os)]` in it, instead of every line of transcription
+   code. `whisper-rs` is gated to macOS in `stt`'s `Cargo.toml`, so nothing else
+   in there compiles C for the target either.
+
+   `audio` and `calendar` are covered too — `audio` is the crate the seam guard
+   mainly exists for, and it was missing from the recipe until TUR-2 follow-up.
 
 3. **`cmake` is a prerequisite.** `SETUP.md` step 0.2 omits it; `whisper-rs`
    does not build without it.
