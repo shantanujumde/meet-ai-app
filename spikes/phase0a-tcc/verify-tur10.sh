@@ -28,6 +28,41 @@ rm -rf "$ROOT"; mkdir -p "$ROOT"
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ask() { printf '\n\033[1;33m>>> %s\033[0m\n' "$*"; }
 
+# The two consent clicks. With AUTO_CLICK=1 an Accessibility-driven clicker
+# answers them instead of a person — see auto-click.sh for the guards that stop
+# it touching anything but our own prompt. Falls back to asking when
+# Accessibility is not granted, because a silent no-op here would look exactly
+# like "the dialog never appeared" in the report.
+AUTO_CLICK="${AUTO_CLICK:-0}"
+if [[ "$AUTO_CLICK" == 1 ]] && ! osascript -e 'tell application "System Events" to return count of every process' >/dev/null 2>&1; then
+  echo "AUTO_CLICK=1 but Accessibility is not granted to this process — falling back to manual clicks." >&2
+  AUTO_CLICK=0
+fi
+
+CLICKER_PID=""
+# Arm the clicker BEFORE the prompt is triggered; it polls for the dialog.
+arm_click() {
+  local mode="$1"
+  [[ "$AUTO_CLICK" == 1 ]] || { ask "A dialog will appear. Click  ${2}."; return; }
+  say "auto-answering the prompt with '${2}'"
+  "$HERE/auto-click.sh" "$mode" meet-ai 120 >"$ROOT/click-$mode.log" 2>&1 &
+  CLICKER_PID=$!
+}
+# Collect the clicker's verdict. A timeout is a hard failure: every measurement
+# after an unanswered prompt describes the wrong thing.
+reap_click() {
+  [[ -n "$CLICKER_PID" ]] || return 0
+  if wait "$CLICKER_PID"; then
+    echo "    $(cat "$ROOT/click-$1.log")"
+  else
+    echo "!! the auto-clicker never found our prompt (see $ROOT/click-$1.log)." >&2
+    echo "!! Re-run without AUTO_CLICK=1 and click by hand, or widen" >&2
+    echo "!! AUTO_CLICK_PROCS if the dialog is drawn by another process." >&2
+    exit 1
+  fi
+  CLICKER_PID=""
+}
+
 # Pass the keychain explicitly. A bare `find-identity` reads the user's keychain
 # search list, which is empty under a sandboxed $HOME — it then reports "0 valid
 # identities" for an identity that is present and working.
@@ -89,13 +124,56 @@ run_once() {
   done
 }
 
-# Everything tccd said about us since a run started.
+# Everything tccd said since a run started — UNFILTERED on purpose.
+#
+# The obvious `| grep meetai` loses the answer. tccd splits a consent into two
+# lines: AUTHREQ_PROMPTING carries the subject (our bundle id) and a msgID,
+# and the AUTHREQ_RESULT that records what the user actually clicked carries
+# only that msgID. Grepping for our name keeps the question and discards the
+# answer, which is why an earlier run of this script reported "(no
+# AUTHREQ_RESULT captured)" for a denial it had in fact captured. Correlation
+# by msgID happens in decision_for(); it needs the whole log.
 tcc_since() {
   local out="$1"
   local elapsed=$(( $(date +%s) - $(cat "$out/.start") + 5 ))
   /usr/bin/log show --last "${elapsed}s" --style compact \
-      --predicate 'subsystem == "com.apple.TCC"' 2>/dev/null \
-    | grep -iE "meetai" || true
+      --predicate 'subsystem == "com.apple.TCC"' 2>/dev/null || true
+}
+
+# Only the lines that name us — for the human-readable excerpts.
+ours() { grep -iE "meetai" "$1" || true; }
+
+# The verdict tccd recorded for our AudioCapture prompt, resolved through the
+# msgID. Prints e.g. "authValue=0, authReason=2" plus how long the prompt stood.
+#
+# authValue: 0 = denied, 1 = undetermined (the pre-prompt query), 2 = allowed.
+# authReason 2 = "user answered the prompt" — it appears on BOTH an Allow and a
+# Don't Allow, so authValue is what distinguishes them, not authReason.
+decision_for() {
+  python3 - "$1" <<'PY'
+import re, sys
+lines = open(sys.argv[1], errors='replace').read().splitlines()
+prompt = None
+for l in lines:
+    m = re.search(r'AUTHREQ_PROMPTING: msgID=([0-9.]+), service=kTCCServiceAudioCapture.*meetai', l)
+    if m:
+        prompt = (m.group(1), l.split()[1][:12])
+if not prompt:
+    print("(no AUTHREQ_PROMPTING for kTCCServiceAudioCapture — no dialog was shown)")
+    sys.exit()
+msgid, t0 = prompt
+for l in lines:
+    m = re.search(r'AUTHREQ_RESULT: msgID=' + re.escape(msgid) + r', (authValue=\d+, authReason=\d+)', l)
+    if m:
+        t1 = l.split()[1][:12]
+        def ms(t):
+            h, mi, s = t.split(':'); return (int(h)*3600 + int(mi)*60 + float(s)) * 1000
+        print(f"AUTHREQ_PROMPTING msgID={msgid} at {t0}")
+        print(f"AUTHREQ_RESULT    msgID={msgid} at {t1} -> {m.group(1)}")
+        print(f"dialog stood open for {ms(t1) - ms(t0):.0f} ms")
+        sys.exit()
+print(f"(prompt msgID={msgid} shown at {t0}, but no matching AUTHREQ_RESULT — unanswered?)")
+PY
 }
 
 # Pull the numbers that matter out of probe-result.json, plus an ffmpeg-free
@@ -173,17 +251,22 @@ for svc in AudioCapture Microphone; do
     echo "    reset $svc -> FAILED (LaunchServices does not know $BUNDLE_ID)"
   fi
 done
-ask "A dialog will appear. Click  ALLOW."
+arm_click allow "ALLOW"
 run_once "$ROOT/granted"
+reap_click allow
 tcc_since "$ROOT/granted" > "$ROOT/granted.tcc.log"
 
-GRANT_EVENT=$(grep -o "Publishing <TCCDEvent:[^>]*kTCCServiceAudioCapture[^>]*>" "$ROOT/granted.tcc.log" | head -1 || true)
+# Specifically the Create. A reset emits a Delete for the same service first,
+# and `head -1` picked that up — a Delete says nothing about how the new grant
+# is keyed, which is the entire question this section asks.
+GRANT_EVENT=$(grep -o "Publishing <TCCDEvent: type=Create[^>]*kTCCServiceAudioCapture[^>]*>" "$ROOT/granted.tcc.log" | head -1 || true)
 {
   echo; echo "## 1. Grant creation"
   echo; echo "The question: does TCC store this by bundle ID now, rather than by path?"
   echo; echo '```'
   echo "${GRANT_EVENT:-(no TCCDEvent Create line — nothing was granted)}"
-  grep -o "AUTHREQ_SUBJECT: msgID=[0-9.]*, subject=[^,]*" "$ROOT/granted.tcc.log" | sed 's/msgID=[0-9.]*, //' | sort -u | head -3
+  ours "$ROOT/granted.tcc.log" | grep -o "AUTHREQ_SUBJECT: msgID=[0-9.]*, subject=[^,]*" | sed 's/msgID=[0-9.]*, //' | sort -u | head -3
+  decision_for "$ROOT/granted.tcc.log"
   echo '```'
   echo
   if [[ "$GRANT_EVENT" == *"identifier_type=Bundle ID"* ]]; then
@@ -211,11 +294,14 @@ tcc_since "$ROOT/rebuilt" > "$ROOT/rebuilt.tcc.log"
   echo; echo "Same bundle ID, same certificate, different binary. Under ad-hoc signing this"
   echo "was where the grant intermittently vanished (FINDINGS §8, signing caveat)."
   echo; echo '```'
-  grep -E "AUTHREQ_PROMPTING|Failed to match existing code requirement" "$ROOT/rebuilt.tcc.log" | head -3 \
+  # Scoped to lines naming us: the log is unfiltered now, and any other app
+  # prompting for anything during these 12 seconds would otherwise be read as
+  # our grant having evaporated.
+  ours "$ROOT/rebuilt.tcc.log" | grep -E "AUTHREQ_PROMPTING|Failed to match existing code requirement" | head -3 \
     || echo "(no prompt, no code-requirement mismatch)"
   echo '```'
   echo
-  if grep -q "AUTHREQ_PROMPTING" "$ROOT/rebuilt.tcc.log"; then
+  if ours "$ROOT/rebuilt.tcc.log" | grep -q "AUTHREQ_PROMPTING"; then
     echo "⚠️ **Re-prompted.** The grant did not survive the rebuild."
   else
     echo "**Survived.** No prompt, no mismatch — the cdhash-free designated requirement holds."
@@ -228,11 +314,12 @@ tcc_since "$ROOT/rebuilt" > "$ROOT/rebuilt.tcc.log"
 say "3/3  explicit denial — you will be asked to click DON'T ALLOW"
 # ---------------------------------------------------------------------------
 tccutil reset AudioCapture "$BUNDLE_ID" || true
-ask "A dialog will appear. Click  DON'T ALLOW."
+arm_click deny "DON'T ALLOW"
 run_once "$ROOT/denied"
+reap_click deny
 tcc_since "$ROOT/denied" > "$ROOT/denied.tcc.log"
 
-DENY_RESULT=$(grep -A1 "AUTHREQ_PROMPTING.*kTCCServiceAudioCapture" "$ROOT/denied.tcc.log" | grep -o "authValue=[0-9]*, authReason=[0-9]*" | head -1 || true)
+DENY_RESULT=$(decision_for "$ROOT/denied.tcc.log")
 {
   echo; echo "## 3. Explicit user denial"
   echo; echo "FINDINGS §10.1 measured a denial with \`authReason=8\` (missing usage string) and"
