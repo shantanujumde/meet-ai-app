@@ -33,7 +33,11 @@ const STAGE = join(HERE, ".render");
 // result was a screenshot of the failure, committed as a proof (TUR-12).
 mkdirSync(STAGE, { recursive: true });
 for (const f of readdirSync(STAGE)) {
-  if (/^(icon|mark)-.*\.(html|png)$/.test(f) || f === "manifest.json" || f === "meet-ai.iconset")
+  if (
+    /^(icon|mark|tray)-.*\.(html|png)$/.test(f) ||
+    f === "manifest.json" ||
+    f === "meet-ai.iconset"
+  )
     rmSync(join(STAGE, f), { recursive: true, force: true });
 }
 
@@ -329,6 +333,15 @@ for (const s of ICON_SIZES) {
         : "meet-ai-appicon-primary-fullcolor.svg";
   raster(`icon-${s}`, art, s);
 }
+
+/* Menu-bar tray icon, 1x and 2x.
+   Both come from the same 16px-grid drawing rather than from two separate
+   masters: every coordinate in MENUBAR is a whole number, so doubling the
+   viewport lands the 2x raster on the pixel grid too. render.sh copies the
+   pair into src-tauri/icons/ under AppKit's `…Template` names — see the note
+   there for why the suffix is load-bearing (TUR-23). */
+raster("tray-16", "meet-ai-menubar-template-black.svg", 16);
+raster("tray-32", "meet-ai-menubar-template-black.svg", 32);
 
 /* Proof renders for review: mark alone, on light and on dark. */
 for (const s of [16, 32, 128, 512]) {
