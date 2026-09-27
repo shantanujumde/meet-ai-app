@@ -16,6 +16,7 @@ version = "0.1.0"
 audio = { path = "crates/audio" }
 calendar = { path = "crates/calendar" }
 detect = { path = "crates/detect" }
+modelfetch = { path = "crates/modelfetch" }
 prompts = { path = "crates/prompts" }
 store = { path = "crates/store" }
 stt = { path = "crates/stt" }
@@ -34,6 +35,17 @@ rubato = "=5.0.0"
 
 # --- speech-to-text (SETUP.md §2.3) ---
 whisper-rs = "=0.16.0"
+
+# --- model download (SETUP.md §2.5) ---
+# Listed under "Calendar & auth" in SETUP.md because Phase 5 was the first
+# planned consumer, but the pinned versions are the ones Phase 1's lazy model
+# downloader needs first. Same versions, added earlier than SETUP.md expected.
+reqwest = { version = "=0.12.28", default-features = false, features = [
+  "rustls-tls",
+  "stream",
+] }
+sha2 = "=0.10.9"
+tokio-util = "=0.7.19"
 
 # --- store, config, prompts (SETUP.md §2.4) ---
 chrono = { version = "=0.4.45", features = ["serde"] }

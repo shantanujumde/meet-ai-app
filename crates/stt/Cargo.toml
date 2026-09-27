@@ -6,7 +6,14 @@ rust-version.workspace = true
 license.workspace = true
 version.workspace = true
 
+# No HTTP client and no async runtime here, on purpose. Fetching a whisper model
+# is the one thing on the speech path that touches the network, and it lives in
+# `crates/modelfetch` instead — see that crate's Cargo.toml for both reasons.
+# Keeping it out of this dependency graph is what makes "transcription never
+# reaches the network" (L9/L10/L11) structural rather than a promise, and it is
+# what keeps this crate inside the `just check-windows` seam guard.
 [dependencies]
+dirs.workspace = true
 earshot.workspace = true
 hound.workspace = true
 serde = { workspace = true, features = ["derive"] }
@@ -27,3 +34,12 @@ whisper-rs = { workspace = true, features = ["metal", "tracing_backend"] }
 
 [dev-dependencies]
 insta.workspace = true
+
+# The fixture WAVs are ~3 MB of silence and tone; generating them is instant and
+# keeps them out of git. `just fixtures` writes them; the tests regenerate any
+# that are missing so a fresh clone can run `cargo test -p stt` immediately.
+[features]
+default = []
+# Opt-in: runs the accuracy + silence gate against a real downloaded whisper
+# model. Off by default so `just check` never needs 190 MB or a network.
+whisper-model-tests = []
