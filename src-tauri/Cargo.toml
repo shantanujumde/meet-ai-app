@@ -17,9 +17,25 @@ tauri-build = { workspace = true, features = [] }
 
 [dependencies]
 anyhow.workspace = true
+# The recording state machine stamps meeting folder names from local time
+# (SPEC §3.1), and the onboarding flag records when it was completed.
+chrono.workspace = true
+# `~/Meetings` is built with dirs + PathBuf::join and no literal `~`, per the
+# Windows seam in SPEC §8.2.
+dirs.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-tauri = { workspace = true, features = [] }
+# `tray-icon` is the menu-bar item. `image-png` is what turns the bundled
+# template PNG into a `tauri::image::Image` at startup — without it, `Image`
+# only accepts raw RGBA and the tray would need the bitmap decoded by hand.
+# `macos-private-api` is not optional either: tauri-build refuses to compile
+# unless this list matches `app.macOSPrivateApi` in tauri.conf.json, which the
+# window's `transparent` + `underWindowBackground` vibrancy turns on.
+tauri = { workspace = true, features = [
+  "tray-icon",
+  "image-png",
+  "macos-private-api",
+] }
 tauri-plugin-clipboard-manager.workspace = true
 tauri-plugin-dialog.workspace = true
 tauri-plugin-fs.workspace = true
@@ -38,10 +54,21 @@ tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 
-# Workspace crates. Empty today; this is the wiring Rune and Vox land into.
+# Workspace crates. `stt` and `modelfetch` are live (the settings and model
+# download screens); the rest is wiring Rune and Vox land into.
 audio.workspace = true
 calendar.workspace = true
 detect.workspace = true
+# The model download screen calls `modelfetch::ensure` directly. This is the
+# only place in the app that can reach the network, which is what keeps the
+# offline claim (L9–L11) structural rather than merely intended — `stt` has no
+# HTTP stack in its dependency graph at all.
+#
+# Note for `just check-windows`: that guard names crates explicitly
+# (`-p audio -p calendar -p stt -p prompts -p detect`) and src-tauri is not one
+# of them, so pulling in modelfetch's rustls/ring chain here does not widen the
+# exemption the justfile documents.
+modelfetch.workspace = true
 prompts.workspace = true
 store.workspace = true
 stt.workspace = true
