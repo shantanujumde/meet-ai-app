@@ -1,0 +1,216 @@
+# meet-ai — brand
+
+The identity for a botless, local-first meeting recorder. Read this before you
+put the mark anywhere.
+
+Everything under this directory except `README.md` is **generated**. The source
+of truth is `tools/geometry.mjs`; `tools/build.mjs` writes the SVG masters and
+`tools/render.sh` writes the rasters, the `.icns`, the `.ico`, and the favicons.
+Do not hand-edit an SVG here — the next build overwrites it.
+
+```
+node tools/build.mjs     # SVG masters + brand-tokens.css + render manifest
+./tools/render.sh        # PNGs, icon.icns, icon.ico -> src-tauri/icons, public/
+node tools/proof.mjs && ./tools/render-proof.sh   # the review proofs
+```
+
+---
+
+## 1. The idea
+
+**`[ · ]`** — two brackets holding an empty space, with a single warm dot in
+the middle.
+
+The brackets are the container: the conversation is bracketed and kept, on
+disk, on your machine. The space between them is deliberately empty, because
+nothing joins the call — no bot in the attendee list is the product's whole
+argument, and the mark draws that absence rather than describing it. The dot is
+the record light: small, warm, and the only thing in the system that is not
+neutral. A light left on in a dark room.
+
+Square brackets are also developer syntax, which is the audience. The mark says
+"technical and contained" without a microphone, a waveform, or a speech bubble.
+
+---
+
+## 2. Files
+
+| File | Use |
+|---|---|
+| `meet-ai-logomark-primary-ink.svg` | Symbol on light backgrounds, 40px and up |
+| `meet-ai-logomark-primary-chalk.svg` | Symbol on dark backgrounds, 40px and up |
+| `meet-ai-logomark-small-chalk.svg` | Symbol at 20–32px (redrawn, heavier) |
+| `meet-ai-logomark-mono-black.svg` / `-mono-white.svg` | One-colour symbol |
+| `meet-ai-wordmark-primary-ink.svg` / `-chalk.svg` | Wordmark alone |
+| `meet-ai-wordmark-mono-black.svg` / `-mono-white.svg` | One-colour wordmark |
+| `meet-ai-logo-horizontal-ink.svg` / `-chalk.svg` | **Primary lockup** |
+| `meet-ai-logo-horizontal-mono-black.svg` / `-mono-white.svg` | One-colour lockup |
+| `meet-ai-menubar-template-black.svg` | macOS menu-bar template, 16×16 |
+| `meet-ai-appicon-primary-fullcolor.svg` | App icon master, 1024 |
+| `meet-ai-appicon-small-fullcolor.svg` | App icon, 20–64px |
+| `meet-ai-appicon-16-fullcolor.svg` | App icon, 16px, drawn on the pixel grid |
+| `meet-ai-appicon-flat-fullcolor.svg` | App icon with no gradient (print, one-colour reproduction) |
+| `meet-ai-favicon.svg` | Web favicon |
+| `brand-tokens.css` | Colour tokens |
+| `proofs/` | Rendered review proofs — icon sizes, menu bar, lockups, misuse |
+| `concepts/` | The three directions explored, kept for the record |
+
+---
+
+## 3. Colour
+
+| Token | Value | Use |
+|---|---|---|
+| `--brand-ink` | `#16181D` | Icon body, one-colour dark |
+| `--brand-ink-top` / `--brand-ink-bottom` | `#24262E` / `#121317` | App-icon body gradient |
+| `--brand-chalk` | `#F4F5F7` | The mark on ink |
+| `--brand-ember` | `#FF8A3C` | **Primary brand colour.** The record dot, the `i` tittle |
+| `--brand-ember-core` / `--brand-ember-rim` | `#FFC152` / `#E85F21` | Top and bottom of the dot's ramp |
+| `--brand-ember-ink` | `#A8410D` | Ember as *text* on white |
+
+Measured contrast (WCAG 2.1):
+
+| Pair | Ratio | Verdict |
+|---|---|---|
+| chalk on ink | 16.2:1 | AAA |
+| ink on white | 17.7:1 | AAA |
+| ember on ink | 7.6:1 | AAA |
+| ember on white | 2.1:1 | **Fails.** Never use ember as text on white |
+| ember-ink on white | 6.1:1 | AA normal, AAA large |
+
+Print references, for a press-ready file this environment cannot produce:
+ink ≈ CMYK 78/70/60/70, Pantone Black 6 C. Ember ≈ CMYK 0/56/80/0,
+Pantone 1575 C. Both are approximations from sRGB and must be proofed on press
+before anything is printed.
+
+**Nothing in the identity depends on hue alone.** The record dot is also the
+only *filled* shape in the mark, so it survives greyscale, colour blindness,
+and a one-colour flatten.
+
+### The brand colour does not enter the interface
+
+`design-system/meet-ai/tokens.css` uses macOS system colours on purpose, and
+`--accent` stays system blue. Ember lives on the app icon, the mark, the README
+and marketing surfaces. Do not repoint `--accent` at `--brand-ember`.
+
+---
+
+## 4. Clear space and minimum size
+
+**Clear space** on all four sides is the **diameter of the record dot** at
+whatever size the mark is being used. Nothing enters that margin — no text, no
+rule, no other logo, no crop.
+
+**Minimum sizes:**
+
+| Asset | Minimum | Below that |
+|---|---|---|
+| Lockup | 120px wide | Use the symbol alone |
+| Symbol, primary artwork | 40px | Switch to `-small-chalk` |
+| Symbol, small artwork | 20px | Switch to the 16px artwork |
+| Menu-bar template | 16px | Fixed; it is drawn for exactly this size |
+
+The mark exists in **three separate drawings**, not one drawing scaled. The
+primary is tuned for 40px and up. The small variant is heavier with a wider
+gutter, because the primary's dot closes up under about 40px. The 16px version
+is drawn on the pixel grid — 2px strokes on whole pixels, a 2px dot — because
+anything scaled to 16 lands on fractional pixels and turns grey. Use the right
+one; do not scale the wrong one and hope.
+
+---
+
+## 5. Backgrounds
+
+Use the mark on **ink**, on **paper (white)**, or on a **flat neutral**. On dark
+use `-chalk`, on light use `-ink`, and when only one colour is available use the
+`-mono-` files.
+
+Never on a gradient, a photograph, or a busy screenshot. If a background is
+unavoidable, put the mark on a solid ink or paper plate first.
+
+---
+
+## 6. Do not
+
+The rendered failure cases are in `proofs/proof-misuse.png`. In words:
+
+- **Do not stretch it.** The stroke stops being uniform and the dot becomes an
+  ellipse. Scale proportionally only.
+- **Do not recolour the dot.** It is ember, or `--status-recording` red when the
+  app is actually recording. Nothing else.
+- **Do not add effects.** No long shadows, no bevels, no outer glow, no
+  drop shadow under the glyph.
+- **Do not rotate it.** The brackets read as brackets only upright.
+- **Do not rebuild the lockup.** Use the supplied file. Do not set "meet-ai" in
+  a system font beside the mark — the wordmark is drawn, and a system font
+  next to it is immediately visible as wrong.
+- **Do not crowd it.** Honour the clear space.
+- **Do not put the mark on glass.** It is a solid object. `glass.css` surfaces
+  carry the mark on an opaque plate or not at all.
+
+---
+
+## 7. Typography
+
+**The wordmark is drawn, not set.** Its letterforms are built from the mark's
+own construction — one stroke weight, round terminals, circular bowls, and the
+`i` tittle is the record dot. There is no typeface behind it.
+
+That is deliberate. Apple's SF Pro would have matched the product's UI, but the
+SF licence covers interface mock-ups for Apple platforms and does **not** permit
+use in a logo or wordmark. Drawing the wordmark removes the question entirely.
+
+**For supporting text** in any brand context, use the system stack already in
+`design-system/meet-ai/tokens.css`:
+
+```
+--font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+```
+
+**No font file ships with this identity and no font licence is required
+anywhere.** If that ever changes, the new face's commercial-use and embedding
+terms must be stated here before it is used.
+
+---
+
+## 8. macOS specifics
+
+The app icon follows Apple's macOS icon grid: a 1024 canvas with an 824 body
+centred in it. The 100px margin is the grid's shadow room, not padding to fill.
+The corner is a **superellipse** (n = 4.6), not a rounded rectangle — a plain
+`rx` corner reads subtly wrong beside native icons because the arc starts too
+late and ends too abruptly.
+
+Depth comes from three real sources and no filter: the body's vertical
+gradient, a specular rim clipped to the body (bright at the top, dark at the
+bottom — the same rim language as `glass.css`), and the dot's own vertical
+ramp. There is deliberately no drop shadow under the glyph.
+
+The menu-bar asset is a **template image**: pure black with alpha. macOS tints
+it, so it carries no brand colour. The record dot turns
+`--status-recording` red only while recording, and state is never carried by
+that colour alone — the popover shows an elapsed timer beside it.
+
+### Reduced transparency and reduced motion
+
+The identity has no motion and no translucency, so both settings are no-ops for
+it. That is the point: when `glass.css` falls back to opaque surfaces, the mark
+is unchanged.
+
+---
+
+## 9. Known risks
+
+- **Trademark is not cleared.** No search has been run. A proper clearance
+  search is required before any public use of the name or the mark.
+- **Prior art worth naming.** Adobe Brackets (the discontinued code editor)
+  used literal square brackets as its mark; this lockup differs in that it is a
+  bracket *pair* enclosing a record dot, with squared stems and asymmetric arm
+  length, and it is not in the same category. Dark squircle icons are common
+  among developer tools generally. Checked against the meeting-tool field —
+  Otter, Granola, Fathom, Fireflies, Zoom — and found no proximity: that field
+  is uniformly blue/purple or warm-cream, uses animals, cameras, or waveforms,
+  and none of them use brackets.
+- **Formats not produced here.** No `.ai`, `.eps`, or Pantone-accurate proof.
+  The SVG masters are the source; a print vendor can open them directly, and
+  the Pantone references above are approximations that need a press proof.
