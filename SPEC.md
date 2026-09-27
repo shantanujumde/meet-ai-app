@@ -22,7 +22,7 @@ This spec is the reconciled version. Every change is traceable to evidence in `F
 |---|---|---|---|
 | L1 | Platform | **macOS for v1; Windows next.** Seams built now (§8.2), port is additive | ✅ was mac+Windows simultaneously |
 | L2 | OS floor | **macOS 14.4+** (Core Audio process tap only, no ScreenCaptureKit path). **macOS 26+ unlocks the Apple STT engine**; 14.4–25 falls back to `whisper-rs` | ✅ was macOS 13+ w/ fallback |
-| L3 | Capture location | **Decided by the Phase 0a spike (§5).** Swift sidecar tested first (2 days); in-process Rust `objc2-core-audio` is the fallback | ⚠️ amended — see A2 |
+| L3 | Capture location | **RESOLVED: in-process Rust** (`crates/audio`, `objc2-core-audio`). The Phase 0a spike passed, but for a reason that removed §5's argument for the sidecar — see A6 | ⚠️ amended — see A2, **A6** |
 | L4 | Transcription | **Apple `SpeechTranscriber` via Swift sidecar** on macOS 26+, with **native long-form streaming** (volatile → finalized). `whisper-rs` + `earshot` VAD chunking is the fallback engine | ⚠️ amended — better *and* less code, see A2 |
 | L5 | Speaker labels | Two channels: mic=`You`, tap=`Others` | — unchanged |
 | L6 | Echo (no headphones) | **Detect + warn.** No dedupe code | ✅ explicit now |
@@ -516,6 +516,29 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 ---
 
 ## Amendments
+
+### A6 — 2026-09-27 · L3 resolves to **in-process Rust** (resolves L3; supersedes the §5 Phase-0a pass branch)
+
+L3 did not pre-decide the capture location — it delegated the decision to the Phase 0a spike and named the Swift sidecar only as the thing to *test first*. The spike passed, and §5's table reads "Pass → capture lives in the sidecar". **That branch is not being taken**, and this amendment records why rather than leaving the divergence in `FINDINGS.md` alone. Full evidence: `FINDINGS.md` §9, §9.1, §10.
+
+**§5 chose the sidecar for one reason, and the spike removed it.** The worry was TCC attribution — that a bundled helper might not inherit the app's audio-capture grant, or would prompt in its own name. `FINDINGS.md` §8.2/§10.4 measured that it inherits cleanly and that the grant is keyed to the bundle ID. With that gone, the choice is ordinary engineering cost, and four things point one way:
+
+1. **Nothing in the capture path needs Swift.** Every call the spike makes is plain C Core Audio (`AudioHardwareCreateProcessTap`, `AudioHardwareCreateAggregateDevice`, `AudioDeviceCreateIOProcIDWithBlock`), plus one Objective-C object, `CATapDescription`, which `objc2-core-audio` already binds. Contrast `SpeechTranscriber` (L4/A2), which is Swift-concurrency-native and genuinely unreachable from Rust — that is what the sidecar exists for.
+2. **The process boundary would land on the hardest exit gate.** Phase 0 is graded on drift < 200 ms between the two tracks. The mic side is already Rust (`cpal`). A capture sidecar means two processes, two clocks, a pipe between them, and two writers for `segments.json` — across the one measurement most likely to fail slowly and silently (§7 🔴).
+3. **The permission self-check is now mandatory, and it is much cheaper in-process.** §10.1 measured that a *denied* tap is indistinguishable from a silent room: every `OSStatus` is `noErr`, the IOProc is created, callbacks fire at the normal rate, and every sample is a bit-exact zero. So meet-ai must play a known tone and confirm it returns through the tap before claiming permission (A-note: this supersedes §8.1's return-code check — see §10.2). In one process that is a function. Across a sidecar it is an IPC handshake with cross-process tone synchronisation, on the startup path, before the UI can enable recording.
+4. **The Windows seam only exists in Rust.** §8.2 puts `AudioSource` + the `stub-audio` `--target x86_64-pc-windows-msvc` cross-check into `just check` from day one and ⛔-marks OS-specific code outside `crates/audio/src/macos/`. A Swift capture sidecar leaves that seam untested and unported.
+
+**Rejected middle ground:** Swift tap + Rust mic. It puts the boundary exactly where it hurts (drift) and keeps two languages in the 🔴 module.
+
+**What this costs, stated plainly.** ~250 lines of working Swift get ported to `objc2-core-audio`. `crates/audio` stays 🔴 rather than dropping to 🟡, and the ~1 week §5 hoped to save is **not available** — re-plan Phase 0 at its original 1–2 weeks.
+
+**Conditions attached to the decision:**
+
+- The Phase 0a spike bundle (`spikes/phase0a-tcc/`) is retained as the **test oracle**, not merely reference. The Rust port must reproduce the spike's numbers against the same tone before Phase 0 is called done.
+- **§5's kill criterion is unchanged and still live:** drift unsolved after 2 weeks → rewrite as native Swift, macOS-only, Windows dropped permanently. This amendment does not spend that escape hatch; it is the fallback if the port fails on its own terms.
+- `sidecar/meet-stt` keeps transcription only, exactly as A2 scoped it. §2.6's table row "System audio capture — only if Phase 0a passes" is now **struck**: capture never goes in the sidecar.
+
+*Decided by Alen (chief of staff) on TUR-4, on the escalation from TUR-3/TUR-10. Recommended by Rune in `FINDINGS.md` §9.*
 
 ### A5 — 2026-09-27 · `segments.json` gains checkpoint anchors (amends §3.4, §6; no §1 decision touched)
 
