@@ -150,13 +150,41 @@ sign:
       fi
     }
 
-    # Sidecars and helpers, inside-out. No-op until tauri.conf.json gains an
-    # `externalBin`; written now so embedding meet-stt does not silently produce
-    # an unsigned helper inside a signed app.
+    # Every helper Tauri is supposed to embed must actually be in the bundle
+    # before we seal anything. The loop below is a `find`, and a `find` that
+    # matches nothing is indistinguishable from a `find` that matched and
+    # signed everything: a sidecar that silently fails to copy gives a green
+    # sign AND a green `--verify --deep`, because --deep cannot report a file
+    # that is not there. That ships an app with no transcription helper and
+    # nothing goes red. Found by Tess on TUR-2; the check is here rather than
+    # with the `externalBin` change so it cannot be forgotten alongside it.
+    #
+    # plutil, not jq: it reads JSON, ships with macOS, and this recipe is
+    # macOS-only already. A missing `externalBin` key exits 1 with no output,
+    # which is the correct "nothing declared" answer for today.
+    # `|| [[ -n "$want" ]]` is load-bearing: plutil emits no trailing newline,
+    # so a plain `read` returns non-zero on the last entry and drops it. With a
+    # single declared sidecar that silently skips the whole check.
+    declared=0
+    while IFS= read -r want || [[ -n "$want" ]]; do
+      [[ -n "$want" ]] || continue
+      declared=$((declared + 1))
+      [[ -x "$APP/Contents/MacOS/$want" ]] || {
+        echo "externalBin '$want' is declared in tauri.conf.json but is not in $APP/Contents/MacOS" >&2
+        exit 1
+      }
+    done < <(plutil -extract bundle.externalBin json -o - src-tauri/tauri.conf.json 2>/dev/null \
+               | tr -d '[]"' | tr ',' '\n' | sed -e 's:.*/::' -e '/^$/d')
+
+    # Sidecars and helpers, inside-out, so the outer seal covers final bytes.
+    # Counted and printed: "0 nested" must be a statement, not a silence.
+    sealed=0
     while IFS= read -r -d '' nested; do
       echo "==> sealing nested: ${nested#"$APP/"}"
       seal "$nested"
+      sealed=$((sealed + 1))
     done < <(find "$APP/Contents/MacOS" -type f -perm -u+x ! -name meet-ai -print0)
+    echo "==> nested binaries: $sealed sealed, $declared declared in externalBin"
 
     echo "==> sealing bundle: $APP"
     seal "$APP"
