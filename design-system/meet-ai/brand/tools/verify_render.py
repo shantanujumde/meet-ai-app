@@ -144,9 +144,19 @@ def main():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    # Alpha counts as a channel. The icon rasters are shot with
+    # --default-background-color=00000000, so "background" here is
+    # transparency, not a colour — and the menu-bar template is pure black
+    # artwork whose *only* varying channel is alpha (measured: R is 0 in every
+    # pixel of tray-16.png, alpha takes 14 distinct values). Comparing RGB
+    # alone sees one flat field and reports 0% ink on a perfectly correct icon.
+    # On an opaque page alpha is a constant 255, so including it changes
+    # nothing there.
+    ncmp = 4 if nch == 4 else 3
+
     def at(x, y):
         o = (y * sw + x) * nch
-        return px[o : o + 3] if nch >= 3 else px[o : o + 1] * 3
+        return px[o : o + ncmp] if nch >= 3 else px[o : o + 1] * 3
 
     # Background is read from the top-right corner: every proof page here has
     # page padding there, and so does Chrome's error page.
@@ -157,7 +167,7 @@ def main():
         for x in range(sw):
             total += 1
             c = at(x, y)
-            if max(abs(c[i] - bg[i]) for i in range(3)) > TOL:
+            if max(abs(c[i] - bg[i]) for i in range(ncmp)) > TOL:
                 ink += 1
     frac = ink / total if total else 0.0
 
