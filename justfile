@@ -97,6 +97,26 @@ stt-probe: sidecar
 stt-install-locale LOCALE="en-US": sidecar
     ./target/meet-stt --install-locale --locale {{LOCALE}}
 
+# --- live transcription ----------------------------------------------------
+
+# Play a recorded meeting through the live session API and print what the
+# Phase 2 pane would be told, one JSON object per line on stdout.
+#
+# This is how the live pane gets built before `meet-rec` has a live tap: no
+# microphone, no model, no permissions. Both tracks run as two concurrent
+# sessions sharing one `seq` counter, which is the shape the real recorder
+# will use. stdout is NDJSON and nothing else, so it pipes; progress and the
+# transcript that actually reached disk go to stderr.
+#
+# Not a `fixtures` dependency: the generator would re-run on every demo, and
+# the example already says `just fixtures` when the WAVs are not there.
+#
+#   just live-replay                          # the 60 s fixture, in real time
+#   just live-replay ARGS="--speed 8"         # same, eight times faster
+#   just live-replay ARGS="--meeting ~/Meetings/2026-09-27-standup"
+live-replay ARGS="":
+    cargo run -q -p stt --example live_replay -- {{ARGS}}
+
 # --- whisper fallback models -----------------------------------------------
 
 # List the pinned models and whether they are already downloaded.
