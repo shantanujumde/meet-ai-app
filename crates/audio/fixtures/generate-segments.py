@@ -232,9 +232,9 @@ def drift_fixtures() -> None:
 
 # --- 3. Refusal fixtures (fixture spec §3) ----------------------------------
 #
-# Each must refuse rather than flatter. Four of the seven refuse today; the rest
-# are written here as the acceptance tests for the refusals that do not exist
-# yet, and their assertions are `#[ignore]`d with the reason.
+# Each must refuse rather than flatter. All refuse today. `refuse-one-anchor`
+# used to live here too; it is now `single_anchor_fixture()` below, since TUR-4
+# resolved that row to "measures", not "refuses".
 
 
 def refusal_fixtures() -> None:
@@ -254,11 +254,6 @@ def refusal_fixtures() -> None:
     no_anchors = segment(0, START_HOST_NS, 600)
     del no_anchors["anchors"]
     write("refuse-no-anchors", [no_anchors])
-
-    # One checkpoint, nothing to difference. Drift is measured against
-    # `start_host_ns` rather than against the previous anchor, so this currently
-    # yields a number — see the finding on TUR-29.
-    write("refuse-one-anchor", [segment(0, START_HOST_NS, CHECKPOINT_S)])
 
     # F2, the one that matters most: the segment declares 2700 s of frames but
     # the anchors stop at 300 s. Measures 3 ms of drift over the 5 minutes it
@@ -353,10 +348,20 @@ def device_switch_fixtures() -> None:
     pair("device-switch-drift-reset", 1200, 1200, ppm=100.0)
 
 
+def single_anchor_fixture() -> None:
+    # Resolved on TUR-4: one anchor covering its whole segment *measures*, it
+    # does not refuse. Drift is measured against `start_host_ns`, not
+    # anchor-to-anchor, so one checkpoint is one valid host-clock-referenced
+    # point — it just cannot show a slope, which is a `drift-check`
+    # presentation concern (F3), not a `Segments::drift()` refusal.
+    write("single-anchor-measures", [segment(0, START_HOST_NS, CHECKPOINT_S)])
+
+
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     drift_fixtures()
     refusal_fixtures()
+    single_anchor_fixture()
     device_switch_fixtures()
     written = sorted(p.parent.name for p in OUT.glob("*/segments.json"))
     print(f"segments/ -> {len(written)} fixtures: {', '.join(written)}")
