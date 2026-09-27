@@ -34,6 +34,12 @@ whisper-rs = { workspace = true, features = ["metal", "tracing_backend"] }
 
 [dev-dependencies]
 insta.workspace = true
+# Test-only. Contract §7 says a frame past the declared total means meet-rec's
+# frame-count invariant broke, so `frame_to_sec` warns rather than quietly
+# extrapolating. A warning nobody captured is a warning nobody knows fires —
+# this is how `segments.rs` proves it does. Dev-only, so it stays out of the
+# shipped graph and out of the `just check-windows` seam.
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 # The fixture WAVs are ~3 MB of silence and tone; generating them is instant and
 # keeps them out of git. `just fixtures` writes them; the tests regenerate any
