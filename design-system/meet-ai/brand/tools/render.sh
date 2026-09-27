@@ -20,19 +20,34 @@ REPO="$(cd ../../../.. && pwd)"
 
 # Chrome headless writes the screenshot and then hangs on shutdown in this
 # environment, so it is killed once the file lands.
+#
+# It also loses the startup race intermittently here and exits without writing
+# anything — this is not size-dependent (observed failing at 24 and 32 while 16
+# and 64 succeeded in the same sweep), so a failure is retried rather than
+# treated as fatal. The result is verified by pixel dimensions, not just by
+# file existence, so a truncated write cannot pass.
 shoot() { # shoot <url> <out> <w> <h>
-  local ud; ud=$(mktemp -d)
-  rm -f "$2"
-  "$CHROME" --headless --disable-gpu --no-first-run --no-default-browser-check \
-    --user-data-dir="$ud" --hide-scrollbars --force-device-scale-factor=1 \
-    --virtual-time-budget=3000 --default-background-color=00000000 \
-    --screenshot="$2" --window-size="$3,$4" "$1" >/dev/null 2>&1 &
-  local pid=$!
-  for _ in $(seq 1 80); do [[ -s "$2" ]] && sleep 0.35 && break; sleep 0.25; done
-  kill -9 $pid 2>/dev/null || true
-  wait $pid 2>/dev/null || true
-  rm -rf "$ud"
-  [[ -s "$2" ]] || { echo "render failed: $2" >&2; exit 1 }
+  # Declared once: in zsh a repeated `local` in a loop body echoes the value.
+  local attempt ud pid
+  for attempt in 1 2 3 4 5; do
+    ud=$(mktemp -d)
+    rm -f "$2"
+    "$CHROME" --headless --disable-gpu --no-first-run --no-default-browser-check \
+      --user-data-dir="$ud" --hide-scrollbars --force-device-scale-factor=1 \
+      --virtual-time-budget=3000 --default-background-color=00000000 \
+      --screenshot="$2" --window-size="$3,$4" "$1" >/dev/null 2>&1 &
+    pid=$!
+    for _ in $(seq 1 80); do [[ -s "$2" ]] && sleep 0.35 && break; sleep 0.25; done
+    kill -9 $pid 2>/dev/null || true
+    wait $pid 2>/dev/null || true
+    rm -rf "$ud"
+    if [[ -s "$2" ]] && [[ "$(sips -g pixelWidth "$2" 2>/dev/null | tail -1 | tr -dc 0-9)" == "$3" ]]; then
+      return 0
+    fi
+    print -u2 "   retry $attempt: ${2:t}"
+    sleep 0.6
+  done
+  echo "render failed after 5 attempts: $2" >&2; exit 1
 }
 
 echo "-- rasterising"

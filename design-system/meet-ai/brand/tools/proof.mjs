@@ -6,7 +6,7 @@
 import { writeFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PALETTE as P, MENUBAR, bracketPaths } from "./geometry.mjs";
+import { PALETTE as P, MENUBAR, BRACKETS, bracketPaths } from "./geometry.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRAND = join(HERE, "..");
@@ -176,6 +176,20 @@ writeFileSync(
 );
 
 /* --- 5. misuse ----------------------------------------------------------- */
+/* The closed-gutter failure case is drawn from the real geometry with the arms
+   run long, so the proof shows the actual mistake rather than an illustration
+   of it. This is the shape the proximity probe rejected. */
+function closedGutter(size) {
+  const g = { ...BRACKETS, armL: 44, armR: 56 };
+  const { left, right } = bracketPaths(g);
+  const s = `fill="none" stroke="${P.chalk}" stroke-width="${g.stroke}" stroke-linecap="round" stroke-linejoin="round"`;
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="${size}" height="${size}">` +
+    `<path d="${left}" ${s}/><path d="${right}" ${s}/>` +
+    `<circle cx="${g.dot.cx}" cy="${g.dot.cy}" r="${g.dot.r}" fill="${P.ember}"/></svg>`
+  );
+}
+
 {
   const m = (s, label, note) =>
     `<div class="c" style="align-items:flex-start">
@@ -219,7 +233,13 @@ writeFileSync(
             <div class="pad" style="background:${P.ink};width:200px;height:150px;display:grid;place-items:center;position:relative">
               <div style="display:flex;gap:0">${sized("meet-ai-logomark-primary-chalk.svg", 76, 76)}<div style="width:76px;height:76px;background:#3A3C46;border-radius:8px"></div></div>
               <span style="position:absolute;top:8px;right:10px;font-size:15px;color:#FF453A">&#10006;</span>
-            </div><b style="font-size:11px">Crowd it</b><span style="max-width:200px">Clear space on every side is the height of one bracket stem.</span>
+            </div><b style="font-size:11px">Crowd it</b><span style="max-width:200px">Clear space on every side is the diameter of the record dot.</span>
+          </div>
+          <div class="c" style="align-items:flex-start">
+            <div class="pad" style="background:${P.ink};width:200px;height:150px;display:grid;place-items:center;position:relative">
+              ${closedGutter(76)}
+              <span style="position:absolute;top:8px;right:10px;font-size:15px;color:#FF453A">&#10006;</span>
+            </div><b style="font-size:11px">Close the gutter</b><span style="max-width:200px">Longer arms make it a camera focus target, not brackets. The gap is tuned; see &sect;9.</span>
           </div>
         </div></section>`,
     ),

@@ -141,6 +141,9 @@ The rendered failure cases are in `proofs/proof-misuse.png`. In words:
 - **Do not add effects.** No long shadows, no bevels, no outer glow, no
   drop shadow under the glyph.
 - **Do not rotate it.** The brackets read as brackets only upright.
+- **Do not close the gutter.** The gap in the top and bottom edges is tuned,
+  not leftover space. Lengthening the arms to "balance" the mark turns it into
+  a camera focus target — see §9.
 - **Do not rebuild the lockup.** Use the supplied file. Do not set "meet-ai" in
   a system font beside the mark — the wordmark is drawn, and a system font
   next to it is immediately visible as wrong.
@@ -203,6 +206,32 @@ is unchanged.
 
 - **Trademark is not cleared.** No search has been run. A proper clearance
   search is required before any public use of the name or the mark.
+- **Closest resemblance: the camera focus target.** `[ · ]` sits near a generic
+  UI glyph class — the viewfinder / focus-target / scan-to-capture mark used by
+  camera apps, document scanners, and Apple's own `viewfinder` and
+  `dot.viewfinder` SF Symbols. Nobody owns a viewfinder, so this is not a
+  trademark exposure. It is a **meaning** risk, and an awkward one: a first
+  read of "scan" or "camera" is unfortunate for a product whose entire pitch is
+  that nothing joins the call. It lands hardest at 16px in one colour, which is
+  exactly where this mark lives.
+
+  **This was measured, not argued** — see `proofs/proof-proximity.png`, built
+  by `tools/proximity.mjs`, which renders the mark beside the reference class
+  at 128 / 32 / 16px in one colour. The finding inverts the obvious fix. A
+  viewfinder's signature is not its gaps; it is a **closed square gestalt
+  assembled from four disjoint corner marks**. The resemblance therefore came
+  from the mark being too *enclosed*, not too open, and the fix was to widen
+  the gutter rather than narrow it. Tested at ±10 units: narrowing closed the
+  mark into a frame with a slot in it and made the resemblance clearly worse;
+  widening separated the two halves into unmistakable brackets. Shipped: the
+  menu-bar template went from a 4px to a 6px gutter, and the 16px app icon —
+  the worst case, where the mark had closed almost completely — from 2px to
+  4px.
+
+  **The gutter is load-bearing. Do not tighten it.** A future revision that
+  makes the mark look "tidier" by pulling the arms inward is walking back into
+  the viewfinder. Two things hold them apart: continuous side stems, which a
+  viewfinder does not have, and short arms relative to stem height (~1:3).
 - **Prior art worth naming.** Adobe Brackets (the discontinued code editor)
   used literal square brackets as its mark; this lockup differs in that it is a
   bracket *pair* enclosing a record dot, with squared stems and asymmetric arm
