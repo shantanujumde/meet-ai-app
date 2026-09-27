@@ -220,21 +220,29 @@ function DeniedPath({ onRecheck }: { onRecheck: () => void }) {
 
       <ol className="steps">
         <li>
-          Open <strong>System Settings</strong> → <strong>Privacy &amp; Security</strong>. The
-          buttons below jump straight there.
+          <span>
+            Open <strong>System Settings</strong> → <strong>Privacy &amp; Security</strong>. The
+            buttons below jump straight there.
+          </span>
         </li>
         <li>
-          Find <strong>System Audio Recording Only</strong> and switch <strong>meet-ai</strong> on.
-          This is the one that captures the other people in your call.
+          <span>
+            Find <strong>System Audio Recording Only</strong> and switch <strong>meet-ai</strong>{" "}
+            on. This is the one that captures the other people in your call.
+          </span>
         </li>
         <li>
-          Go back and find <strong>Microphone</strong>, and switch <strong>meet-ai</strong> on there
-          too. This one captures you.
+          <span>
+            Go back and find <strong>Microphone</strong>, and switch <strong>meet-ai</strong> on
+            there too. This one captures you.
+          </span>
         </li>
         <li>
-          Come back here and choose <strong>Check again</strong>. If macOS asks you to quit and
-          reopen meet-ai first, do that — the change does not always take effect while the app is
-          running.
+          <span>
+            Come back here and choose <strong>Check again</strong>. If macOS asks you to quit and
+            reopen meet-ai first, do that — the change does not always take effect while the app is
+            running.
+          </span>
         </li>
       </ol>
 
