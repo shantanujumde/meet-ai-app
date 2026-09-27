@@ -91,6 +91,33 @@ pub const DRIFT_GATE_MS: f64 = 200.0;
 /// channel, two WAV header updates. Bounds worst-case tail loss on `kill -9`.
 pub const CHECKPOINT_INTERVAL_S: u64 = 5;
 
+/// How much audio a **deliberately closed** segment may carry past its last
+/// anchor before [`Segments::drift`] refuses the recording.
+///
+/// A segment that is not the last one was closed on purpose — a device change,
+/// a format change, a wake — and the writer got to run code on the way out. So
+/// it must latch a close anchor there, and the only thing allowed to sit past
+/// it is the final ring-buffer drain: the anchor is latched *before* the drain
+/// (see [`Segments::check_anchors`]), so the frames the drain flushes land in
+/// the segment total without ever reaching an anchor. That is tens of
+/// milliseconds of buffer, not seconds.
+///
+/// ⛔ **This is a writer obligation, enforced here by the reader.** `meet-rec`
+/// must latch an anchor at every segment close. Without one, a device switch
+/// four seconds after the last ordinary checkpoint leaves four seconds of audio
+/// that no anchor ever measured, and the gate reports a number that does not
+/// describe it.
+pub const CLOSE_ANCHOR_SLACK_MS: f64 = 250.0;
+
+/// How much audio the **last** segment may carry past its last anchor.
+///
+/// The last segment is the only one `kill -9` can cut short, and a killed
+/// process does not get to latch a close anchor. The most it can lose is one
+/// checkpoint interval of audio (A5 §3), plus the same drain the close case
+/// allows. Anything beyond that is not a ragged shutdown — it is a recording
+/// whose anchors stopped while the audio kept going.
+pub const FINAL_TAIL_SLACK_MS: f64 = CHECKPOINT_INTERVAL_S as f64 * 1000.0 + CLOSE_ANCHOR_SLACK_MS;
+
 /// `segments.json` in full.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Segments {
@@ -229,6 +256,17 @@ impl Segment {
     fn audio_ms(&self, channel: Channel) -> f64 {
         self.frames(channel) as f64 * 1000.0 / SAMPLE_RATE_HZ as f64
     }
+
+    /// Audio in this segment that no anchor covers: everything after the last
+    /// anchor, or the whole segment when it has none.
+    ///
+    /// This is the only honest answer to "how much of this did we measure?",
+    /// and it is what both the coverage refusal and
+    /// [`ChannelDrift::tail_unanchored_ms`] are asking for.
+    fn uncovered_ms(&self, channel: Channel) -> f64 {
+        let anchored_frames = self.anchors.last().map_or(0, |a| a.frames(channel));
+        self.frames(channel).saturating_sub(anchored_frames) as f64 * 1000.0 / SAMPLE_RATE_HZ as f64
+    }
 }
 
 /// Why a drift number could not be produced.
@@ -236,7 +274,11 @@ impl Segment {
 /// Every variant is a refusal rather than a zero. A run with no system audio at
 /// all must not report a passing drift figure (`sys_frames == 0` subtracts to
 /// something flattering), so `drift-check` exits non-zero on all of these.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+///
+/// Not `Eq`: [`DriftError::AnchorCoverage`] carries milliseconds, and the
+/// figure a human needs in the message is worth more than a trait nothing in
+/// this crate uses.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum DriftError {
     #[error("segments.json contains no segments")]
     NoSegments,
@@ -265,6 +307,55 @@ pub enum DriftError {
         channel: Channel,
         anchor_frames: u64,
         segment_frames: u64,
+    },
+
+    /// The host clock stopped advancing while frames kept arriving.
+    ///
+    /// [`DriftError::NonMonotonic`] only catches time going *backwards*, and a
+    /// stubbed or stuck latch never does. Checkpoints are
+    /// [`CHECKPOINT_INTERVAL_S`] apart, so two anchors in one segment cannot
+    /// honestly share a host time.
+    ///
+    /// This is a separate refusal from a failing gate on purpose. A frozen
+    /// latch that repeats its frame count too reads as exactly 0 ms of drift at
+    /// every anchor and *certifies* the recording; and even when the number
+    /// does explode, "your hardware drifted" sends someone hunting a clock bug
+    /// that is not there, where "this measurement is not valid" points at the
+    /// recorder.
+    #[error(
+        "anchor {anchor} of segment {segment} repeats the previous {field} — the host clock is not advancing, so nothing here measures anything"
+    )]
+    FrozenClock {
+        segment: usize,
+        anchor: usize,
+        field: &'static str,
+    },
+
+    /// A segment carries more audio past its last anchor than its slack allows:
+    /// the anchors stopped before the recording did.
+    ///
+    /// Without this, `drift()` measures the anchored prefix and returns that as
+    /// the gate number — a 45-minute call anchored for five minutes reports the
+    /// five minutes and says nothing about the forty. That is the A5 §1 "gate
+    /// that cannot fail" failure mode one level down: the arithmetic is right,
+    /// the thing it describes is not the recording.
+    ///
+    /// Slack is [`CLOSE_ANCHOR_SLACK_MS`] for a deliberately closed segment and
+    /// [`FINAL_TAIL_SLACK_MS`] for the last one.
+    #[error(
+        "segment {segment} carries {uncovered_ms:.0} ms of {channel:?} audio past its last anchor, over the {slack_ms:.0} ms allowed — that audio was never measured against the host clock"
+    )]
+    AnchorCoverage {
+        segment: usize,
+        channel: Channel,
+        /// Audio after the segment's last anchor — or all of it, when the
+        /// segment has no anchors at all.
+        uncovered_ms: f64,
+        slack_ms: f64,
+        /// `true` when this is not the last segment, so the writer had the
+        /// chance to latch a close anchor and did not take it. `false` for the
+        /// last segment, which `kill -9` can cut short.
+        closed_deliberately: bool,
     },
 }
 
@@ -415,6 +506,10 @@ impl Segments {
         if self.segments.iter().all(|s| s.anchors.is_empty()) {
             return Err(DriftError::NoAnchors);
         }
+        // Order matters: `NoAnchors` above is the better message for a whole
+        // file that predates A5, and coverage would otherwise claim it as a
+        // partly-anchored recording.
+        self.check_anchor_coverage()?;
 
         let origin = self.segments[0].start_host_ns;
         let mic = self.channel_drift(Channel::Mic, origin);
@@ -432,14 +527,24 @@ impl Segments {
             })
             .fold(0.0_f64, f64::max);
 
-        let boundary_gaps = self.segments.windows(2).map(boundary_gap).collect();
-
         Ok(DriftReport {
             mic,
             system,
             max_track_skew_ms,
-            boundary_gaps,
+            boundary_gaps: self.boundary_gaps(),
         })
+    }
+
+    /// What every segment boundary cost, in milliseconds of unrecorded wall
+    /// clock, in `idx` order.
+    ///
+    /// Public and separate from [`Segments::drift`] because a boundary gap is
+    /// arithmetic on segment *totals* — it does not depend on anchors at all,
+    /// and stays answerable for a recording whose drift `drift()` refuses to
+    /// certify. "What did the AirPods swap cost?" is still a fair question
+    /// about a file with a coverage hole somewhere else in it.
+    pub fn boundary_gaps(&self) -> Vec<BoundaryGap> {
+        self.segments.windows(2).map(boundary_gap).collect()
     }
 
     /// Drift is measured *within* a segment, against that segment's own
@@ -468,9 +573,14 @@ impl Segments {
                     });
                 }
             }
-            if let Some(last) = segment.anchors.last() {
-                tail_unanchored_ms = segment.audio_ms(channel)
-                    - last.frames(channel) as f64 * 1000.0 / SAMPLE_RATE_HZ as f64;
+            if !segment.anchors.is_empty() {
+                // ⚠ F4 (TUR-4): this assigns rather than accumulates, so an
+                // earlier segment's tail is overwritten by a later one. Left
+                // alone deliberately — it is TUR-4's fix, not this one's — but
+                // `check_anchor_coverage` now bounds every non-final tail at
+                // `CLOSE_ANCHOR_SLACK_MS`, so what this can lose is a quarter
+                // of a second rather than the four seconds it used to.
+                tail_unanchored_ms = segment.uncovered_ms(channel);
             }
         }
 
@@ -484,24 +594,37 @@ impl Segments {
         }
     }
 
-    /// Anchors must not go backwards, and must not claim frames the segment
-    /// itself does not. The writer latches an anchor *before* draining the ring
-    /// buffer, so the drain can only ever push the segment's count further
-    /// ahead — an anchor past the segment total means the file is corrupt, not
-    /// that the recording was cut short.
+    /// Anchors must not go backwards, the host clock must actually *advance*,
+    /// and no anchor may claim frames the segment itself does not. The writer
+    /// latches an anchor *before* draining the ring buffer, so the drain can
+    /// only ever push the segment's count further ahead — an anchor past the
+    /// segment total means the file is corrupt, not that the recording was cut
+    /// short.
     fn check_anchors(&self) -> Result<(), DriftError> {
         for (segment_idx, segment) in self.segments.iter().enumerate() {
             let mut prev: Option<&Anchor> = None;
             for (anchor_idx, anchor) in segment.anchors.iter().enumerate() {
                 if let Some(prev) = prev {
-                    for (field, now, before) in [
-                        ("mic_host_ns", anchor.mic_host_ns, prev.mic_host_ns),
-                        ("sys_host_ns", anchor.sys_host_ns, prev.sys_host_ns),
-                        ("mic_frames", anchor.mic_frames, prev.mic_frames),
-                        ("sys_frames", anchor.sys_frames, prev.sys_frames),
+                    for (field, now, before, is_host_clock) in [
+                        ("mic_host_ns", anchor.mic_host_ns, prev.mic_host_ns, true),
+                        ("sys_host_ns", anchor.sys_host_ns, prev.sys_host_ns, true),
+                        ("mic_frames", anchor.mic_frames, prev.mic_frames, false),
+                        ("sys_frames", anchor.sys_frames, prev.sys_frames, false),
                     ] {
                         if now < before {
                             return Err(DriftError::NonMonotonic {
+                                segment: segment_idx,
+                                anchor: anchor_idx,
+                                field,
+                            });
+                        }
+                        // Frames are allowed to repeat — a stalled device
+                        // delivering nothing is caught by the drift number
+                        // going hugely negative. A repeated *host time* is not:
+                        // checkpoints are CHECKPOINT_INTERVAL_S apart, so two
+                        // anchors in one segment cannot share one.
+                        if is_host_clock && now == before {
+                            return Err(DriftError::FrozenClock {
                                 segment: segment_idx,
                                 anchor: anchor_idx,
                                 field,
@@ -521,6 +644,38 @@ impl Segments {
                     }
                 }
                 prev = Some(anchor);
+            }
+        }
+        Ok(())
+    }
+
+    /// Every millisecond of audio must sit under an anchor, or close enough
+    /// behind the last one that no clock error could hide in the gap.
+    ///
+    /// Checked per channel and per segment rather than once over the
+    /// recording, because a hole in the middle is exactly as unmeasured as a
+    /// hole at the end, and a per-recording figure would let one well-anchored
+    /// segment cover for a neighbour that has no anchors at all.
+    fn check_anchor_coverage(&self) -> Result<(), DriftError> {
+        let last_idx = self.segments.len() - 1;
+        for (segment_idx, segment) in self.segments.iter().enumerate() {
+            let closed_deliberately = segment_idx != last_idx;
+            let slack_ms = if closed_deliberately {
+                CLOSE_ANCHOR_SLACK_MS
+            } else {
+                FINAL_TAIL_SLACK_MS
+            };
+            for channel in [Channel::Mic, Channel::System] {
+                let uncovered_ms = segment.uncovered_ms(channel);
+                if uncovered_ms > slack_ms {
+                    return Err(DriftError::AnchorCoverage {
+                        segment: segment_idx,
+                        channel,
+                        uncovered_ms,
+                        slack_ms,
+                        closed_deliberately,
+                    });
+                }
             }
         }
         Ok(())
@@ -932,6 +1087,237 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// **F2 — the gate that cannot fail, one level down.**
+    ///
+    /// A 45-minute call at 100 ppm ends 270 ms out and must fail the gate.
+    /// Anchor only its first five minutes and the anchored prefix reads 30 ms:
+    /// honest arithmetic, comfortably passing, and a description of one ninth
+    /// of the file. Before the coverage refusal, that 30 ms *was* the gate
+    /// number for the whole 45 minutes.
+    ///
+    /// The second half is what makes this a proof rather than a demo of a new
+    /// error. Truncate the audio to exactly what the anchors cover and nothing
+    /// about the measurement changes — same anchors, same 30 ms, same pass —
+    /// because the measurement was never wrong. What was wrong is that the same
+    /// answer came back for two files forty minutes apart in length, which is
+    /// the signature of a gate that is not reading the recording.
+    #[test]
+    fn a_recording_anchored_for_only_its_first_five_minutes_refuses() {
+        const ANCHORED_S: u64 = 300;
+        let mut partly_anchored = drifting_segment(FORTY_FIVE_MINUTES_S, 100.0, 100.0);
+        // The audio stays: 45 minutes of frames, anchors stopping at minute 5.
+        partly_anchored
+            .anchors
+            .truncate((ANCHORED_S / CHECKPOINT_INTERVAL_S) as usize);
+
+        let err = segments(vec![partly_anchored.clone()]).drift().unwrap_err();
+
+        let DriftError::AnchorCoverage {
+            segment,
+            channel,
+            uncovered_ms,
+            closed_deliberately,
+            ..
+        } = err
+        else {
+            panic!("expected an anchor-coverage refusal, got {err:?}");
+        };
+        assert_eq!((segment, channel), (0, Channel::Mic));
+        assert!(!closed_deliberately, "a single segment is the last segment");
+        assert!(
+            (uncovered_ms - 2_400_000.0).abs() < 1_000.0,
+            "{uncovered_ms} ms unmeasured, expected ~2400 s"
+        );
+
+        // Same anchors, same arithmetic — now covering the whole file.
+        let mut truncated = partly_anchored;
+        let last = *truncated.anchors.last().unwrap();
+        truncated.mic_frames = last.mic_frames;
+        truncated.sys_frames = last.sys_frames;
+
+        let report = segments(vec![truncated]).drift().unwrap();
+
+        assert!(
+            (report.mic.final_ms - 30.0).abs() < 1.0,
+            "the anchored prefix measures {} ms, expected ~30 (300 s at 100 ppm)",
+            report.mic.final_ms
+        );
+        assert!(report.passes(DRIFT_GATE_MS), "{report:?}");
+
+        // And the 45-minute recording that number used to stand in for does
+        // not pass — which is what the coverage refusal now stops it hiding.
+        let whole = segments(vec![drifting_segment(FORTY_FIVE_MINUTES_S, 100.0, 100.0)]);
+        assert!(!whole.drift().unwrap().passes(DRIFT_GATE_MS));
+    }
+
+    /// **F1 — a close anchor at every deliberate segment close.**
+    ///
+    /// The writer half is a `meet-rec` call site that does not exist yet; this
+    /// is the half a reader can enforce today. A segment that is not the last
+    /// one was closed on purpose, with the writer still running, so there is no
+    /// excuse for audio past its final anchor beyond one ring-buffer drain.
+    ///
+    /// The asymmetry is the point, and it is asserted in both directions here:
+    /// the *identical* five-second tail is a refusal in segment 0 and fine in
+    /// the last segment, because only the last segment can be cut short by
+    /// `kill -9`.
+    #[test]
+    fn a_segment_closed_without_a_close_anchor_refuses_where_a_killed_one_does_not() {
+        let ragged = || {
+            let mut segment = drifting_segment(600, 0.0, 0.0);
+            // Torn down one whole checkpoint after the last anchor that landed,
+            // with nothing latched on the way out.
+            segment.anchors.pop();
+            segment
+        };
+
+        // As the last segment: this is what `kill -9` leaves behind.
+        segments(vec![ragged()])
+            .drift()
+            .expect("a ragged tail on the last segment is a crash, not a corrupt file");
+
+        // The same five seconds before a device switch is a writer bug.
+        let first = ragged();
+        let mut second = drifting_segment(600, 0.0, 0.0);
+        second.idx = 1;
+        second.reason = reason::DEFAULT_OUTPUT_DEVICE_CHANGED.into();
+        let audio_ns = first.mic_frames * 1_000_000_000 / SAMPLE_RATE_HZ as u64;
+        shift(&mut second, audio_ns + 400 * 1_000_000, 0);
+
+        let err = segments(vec![first, second]).drift().unwrap_err();
+
+        let DriftError::AnchorCoverage {
+            segment,
+            uncovered_ms,
+            slack_ms,
+            closed_deliberately,
+            ..
+        } = err
+        else {
+            panic!("expected an anchor-coverage refusal, got {err:?}");
+        };
+        assert_eq!(segment, 0);
+        assert!(closed_deliberately);
+        assert_eq!(slack_ms, CLOSE_ANCHOR_SLACK_MS);
+        assert!(
+            (uncovered_ms - CHECKPOINT_INTERVAL_S as f64 * 1000.0).abs() < 1.0,
+            "{uncovered_ms} ms unmeasured before the switch, expected one checkpoint"
+        );
+        // That same figure sits inside the last segment's slack — so the
+        // refusal is about *which* segment it happened in, not about the size.
+        assert!(uncovered_ms < FINAL_TAIL_SLACK_MS);
+    }
+
+    /// A stubbed host clock: every checkpoint reporting the host time of the
+    /// first, while the frames keep arriving.
+    ///
+    /// `NonMonotonic` never fires — the clock does not go backwards, it just
+    /// stops — so before this refusal the file reached the gate maths and blew
+    /// it, which reads to whoever is holding the laptop as a hardware fault. It
+    /// is not one. Nothing here measured anything.
+    #[test]
+    fn a_segment_whose_host_clock_never_advances_refuses() {
+        let mut frozen = drifting_segment(300, 0.0, 0.0);
+        assert_eq!(frozen.anchors.len(), 60, "Tess's fixture shape");
+        let stuck_at = frozen.anchors[0].mic_host_ns;
+        for anchor in &mut frozen.anchors {
+            anchor.mic_host_ns = stuck_at;
+            anchor.sys_host_ns = stuck_at;
+        }
+
+        let err = segments(vec![frozen]).drift().unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                DriftError::FrozenClock {
+                    segment: 0,
+                    anchor: 1,
+                    field: "mic_host_ns",
+                }
+            ),
+            "expected a frozen-clock refusal at the first repeat, got {err:?}"
+        );
+    }
+
+    /// The dangerous sibling: the latch itself is stuck, so host time *and*
+    /// frames repeat. Every anchor then differences to the same small offset,
+    /// `passes(200)` returns true, and a recording nobody measured certifies
+    /// itself.
+    #[test]
+    fn a_stuck_anchor_latch_refuses_instead_of_certifying_itself() {
+        let mut stuck = drifting_segment(300, 0.0, 0.0);
+        let first = stuck.anchors[0];
+        for anchor in &mut stuck.anchors {
+            *anchor = first;
+        }
+
+        let err = segments(vec![stuck.clone()]).drift().unwrap_err();
+        assert!(matches!(err, DriftError::FrozenClock { .. }), "{err:?}");
+
+        // What it used to report: a fixed offset that never grows, so max and
+        // final agree on a number well under the gate and it waves through.
+        let drift_ms = first.drift_ms(Channel::Mic, stuck.start_host_ns);
+        assert!(
+            drift_ms.abs() < DRIFT_GATE_MS,
+            "the frozen anchor read {drift_ms} ms — it used to pass the gate"
+        );
+    }
+
+    /// Coverage is per segment, not per recording: one well-anchored segment
+    /// must not cover for a neighbour that has none at all.
+    #[test]
+    fn a_segment_with_no_anchors_at_all_is_wholly_unmeasured() {
+        let mut first = drifting_segment(600, 0.0, 0.0);
+        first.anchors.clear();
+        let mut second = drifting_segment(600, 0.0, 0.0);
+        second.idx = 1;
+        second.reason = reason::STREAM_RESTART.into();
+        let audio_ns = first.mic_frames * 1_000_000_000 / SAMPLE_RATE_HZ as u64;
+        shift(&mut second, audio_ns, 0);
+
+        let err = segments(vec![first, second]).drift().unwrap_err();
+
+        let DriftError::AnchorCoverage {
+            segment,
+            uncovered_ms,
+            ..
+        } = err
+        else {
+            panic!("expected an anchor-coverage refusal, got {err:?}");
+        };
+        assert_eq!(segment, 0);
+        assert!(
+            (uncovered_ms - 600_000.0).abs() < 1.0,
+            "an unanchored segment is uncovered end to end, not from its last anchor: {uncovered_ms}"
+        );
+    }
+
+    /// A boundary gap is arithmetic on segment totals and never touches an
+    /// anchor, so it stays answerable for a file whose drift is refused.
+    #[test]
+    fn boundary_gaps_are_readable_from_a_recording_whose_drift_is_refused() {
+        let mut first = drifting_segment(600, 0.0, 0.0);
+        first.anchors.pop();
+        let gap_ms = 400_u64;
+        let mut second = drifting_segment(600, 0.0, 0.0);
+        second.idx = 1;
+        second.reason = reason::DEFAULT_OUTPUT_DEVICE_CHANGED.into();
+        let audio_ns = first.mic_frames * 1_000_000_000 / SAMPLE_RATE_HZ as u64;
+        shift(&mut second, audio_ns + gap_ms * 1_000_000, 0);
+        let recording = segments(vec![first, second]);
+
+        assert!(recording.drift().is_err());
+
+        let gaps = recording.boundary_gaps();
+        assert_eq!(gaps.len(), 1);
+        assert!(
+            (gaps[0].mic_ms - gap_ms as f64).abs() < 1.0,
+            "the missing close anchor moved the gap to {} ms",
+            gaps[0].mic_ms
+        );
     }
 
     #[test]
