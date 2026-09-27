@@ -18,6 +18,12 @@ use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+/// The recording-start chime and its detector (SPEC §8.1, decided in A6).
+/// Platform-agnostic for the same reason `segments` is: it is the contract
+/// between the side that plays the chime and the side that looks for it, and
+/// both ends have to agree on it exactly.
+pub mod chime;
+
 /// The `segments.json` contract and the drift maths that reads it (SPEC §3.4,
 /// amended by A5). Platform-agnostic on purpose: it is a file format, and
 /// `drift-check` has to parse it wherever a recording is read.
