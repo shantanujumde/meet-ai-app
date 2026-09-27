@@ -47,8 +47,6 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 # to test the real configuration, not a relaxed one.
 # ---------------------------------------------------------------------------
 IDENTITY="${SIGN_IDENTITY:--}"
-KEYCHAIN_ARGS=()
-if [[ -n "${SIGN_KEYCHAIN:-}" ]]; then KEYCHAIN_ARGS=(--keychain "$SIGN_KEYCHAIN"); fi
 
 if [[ "$IDENTITY" == "-" ]]; then
   echo "==> signing ad-hoc (no code-signing identity configured)"
@@ -56,13 +54,25 @@ else
   echo "==> signing with identity: $IDENTITY"
 fi
 
-codesign --force --options runtime --timestamp=none \
-  --entitlements "$HERE/entitlements.plist" \
-  "${KEYCHAIN_ARGS[@]}" -s "$IDENTITY" "$MACOS_DIR/meet-tap-probe"
+# Built as a function rather than an array of extra args: under `set -u`,
+# expanding an empty array aborts the script, and it does so *between* the two
+# codesign calls — which silently leaves the app bundle unsigned while the
+# helper looks fine. That exact bug shipped in the first version of this file.
+sign() {
+  local target="$1"
+  if [[ -n "${SIGN_KEYCHAIN:-}" ]]; then
+    codesign --force --options runtime --timestamp=none \
+      --entitlements "$HERE/entitlements.plist" \
+      --keychain "$SIGN_KEYCHAIN" -s "$IDENTITY" "$target"
+  else
+    codesign --force --options runtime --timestamp=none \
+      --entitlements "$HERE/entitlements.plist" \
+      -s "$IDENTITY" "$target"
+  fi
+}
 
-codesign --force --options runtime --timestamp=none \
-  --entitlements "$HERE/entitlements.plist" \
-  "${KEYCHAIN_ARGS[@]}" -s "$IDENTITY" "$APP"
+sign "$MACOS_DIR/meet-tap-probe"
+sign "$APP"
 
 echo "==> verifying"
 codesign --verify --deep --strict --verbose=2 "$APP"
