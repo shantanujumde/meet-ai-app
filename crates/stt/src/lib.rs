@@ -33,7 +33,9 @@ use std::path::Path;
 pub mod apple;
 pub mod model;
 pub mod registry;
+pub mod replay;
 pub mod segments;
+pub mod session;
 pub mod sink;
 pub mod transcribe;
 pub mod vad;
@@ -41,6 +43,10 @@ pub mod vad;
 #[cfg(target_os = "macos")]
 pub mod whisper;
 
+pub use session::{
+    LiveEmitter, LiveLine, LiveListener, LiveUpdate, NoListener, ReadySpan, SeqCounter,
+    SessionOptions, SessionOutcome, SharedSink, SpanAssembler, SttSession,
+};
 pub use sink::{CollectingSink, MarkdownSink, TranscriptSink};
 pub use transcribe::{MeetingPaths, Outcome, transcribe_meeting, transcribe_track};
 
@@ -207,6 +213,33 @@ pub trait SttEngine {
         speaker: Speaker,
         sink: &mut dyn TranscriptSink,
     ) -> Result<(), Error>;
+
+    /// Can this engine transcribe audio that is still arriving?
+    ///
+    /// SPEC §2.5 names this on the trait. An engine that answers `false` must
+    /// make [`Self::start_session`] fail, and the caller falls back to
+    /// transcribing the recording once it is finished.
+    fn supports_streaming(&self) -> bool {
+        false
+    }
+
+    /// Open a live session over audio that has not been recorded yet.
+    ///
+    /// Returns a trait object, so [`registry`] stays the only module that
+    /// names an engine and the live pane stays a config change away from
+    /// either one. See [`session`] for the volatile/finalized contract.
+    ///
+    /// The default is the honest answer for an engine with no streaming path:
+    /// a typed error naming itself, not a silent batch fallback.
+    fn start_session(
+        &mut self,
+        options: session::SessionOptions,
+        sink: Box<dyn TranscriptSink + Send>,
+        listener: Box<dyn session::LiveListener>,
+    ) -> Result<Box<dyn session::SttSession>, Error> {
+        let _ = (options, sink, listener);
+        Err(Error::StreamingUnsupported(self.name()))
+    }
 }
 
 /// Everything that can go wrong during transcription.
@@ -220,6 +253,13 @@ pub enum Error {
     #[error("the speech engine failed: {0}")]
     Engine(String),
 
+    /// The engine works, but not on audio that is still arriving.
+    ///
+    /// Not a fallback: the caller decides whether to record without a live
+    /// pane or to pick a different engine, and both need to know which it is.
+    #[error("the {0} engine cannot transcribe live audio")]
+    StreamingUnsupported(&'static str),
+
     /// The `sidecar/meet-stt` process failed or emitted something unparseable.
     #[error("the speech helper failed: {0}")]
     Sidecar(String),
@@ -227,25 +267,6 @@ pub enum Error {
     /// The whisper model file is not where it was expected.
     #[error("no speech model at {0}")]
     ModelMissing(std::path::PathBuf),
-
-    /// The download failed or came back the wrong size.
-    ///
-    /// Raised by the `modelfetch` crate, not by anything here — `stt` has no
-    /// HTTP client. The variant lives in this enum anyway so the UI has one
-    /// error type to render for the whole speech path.
-    #[error("model download failed: {0}")]
-    ModelDownload(String),
-
-    /// The download completed but is not the file we pinned.
-    ///
-    /// Separate from [`Self::ModelDownload`] because this one is a possible
-    /// tampering signal, not a flaky network, and the UI should say so.
-    #[error("model {model} failed its checksum: expected {expected}, got {actual}")]
-    ModelChecksum {
-        model: &'static str,
-        expected: &'static str,
-        actual: String,
-    },
 
     /// `segments.json` was missing or malformed.
     #[error("could not read segments.json: {0}")]
