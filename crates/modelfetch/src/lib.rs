@@ -232,10 +232,7 @@ async fn download(
 
     let status = response.status();
     if !status.is_success() {
-        return Err(Error::Download(format!(
-            "{} returned {status}",
-            spec.url
-        )));
+        return Err(Error::Download(format!("{} returned {status}", spec.url)));
     }
 
     // A server that ignores `Range` answers 200 with the whole file. Appending
@@ -318,10 +315,12 @@ async fn sha256_file(path: &Path) -> Result<String, Error> {
 
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
 async fn part_size(path: &Path) -> u64 {
@@ -344,7 +343,8 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("meet-ai-modelfetch-{}-{name}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("meet-ai-modelfetch-{}-{name}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -452,8 +452,14 @@ mod tests {
         // Must be ModelChecksum, not ModelDownload: the UI shows a
         // security-flavoured screen for one and "try again" for the other.
         assert!(matches!(error, Error::Checksum { .. }), "got {error:?}");
-        assert!(!dir.join(TINY.filename).exists(), "an unverified file was promoted");
-        assert!(!part.exists(), "\"download again from scratch\" would resume bad bytes");
+        assert!(
+            !dir.join(TINY.filename).exists(),
+            "an unverified file was promoted"
+        );
+        assert!(
+            !part.exists(),
+            "\"download again from scratch\" would resume bad bytes"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
