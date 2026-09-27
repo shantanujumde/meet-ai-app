@@ -49,11 +49,15 @@ CURRENT=$(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$
 # shellcheck disable=SC2086
 security list-keychains -d user -s $CURRENT "$KEYCHAIN"
 
-echo "==> marking the cert trusted for code signing (may prompt for admin)"
-if security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain cert.pem 2>/dev/null; then
+# The *user* trust domain is enough for codesign and needs no admin password —
+# measured, TUR-10. `-d` (admin domain) is tried only as a fallback because it
+# goes through SecurityAgent and blocks on a GUI password dialog, which a
+# headless run cannot answer.
+echo "==> marking the cert trusted for code signing (user trust domain, no admin)"
+if security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" cert.pem 2>/dev/null; then
+  echo "    trusted in the user domain (cert stored in $KEYCHAIN_SHORT)"
+elif security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain cert.pem 2>/dev/null; then
   echo "    trusted in the system keychain"
-elif security add-trusted-cert -r trustRoot -p codeSign -k "$KEYCHAIN" cert.pem 2>/dev/null; then
-  echo "    trusted in $KEYCHAIN_SHORT"
 else
   echo "    !! could not set trust automatically."
   echo "    !! Run this once, then re-run build.sh:"

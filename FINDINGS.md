@@ -365,14 +365,18 @@ identity to confirm the grant becomes bundle-ID-keyed and survives rebuilds.**
 
 ### Still unverified
 
-- **What the API does when permission is *denied*.** Everything above is the
-  granted path. Whether `AudioDeviceCreateIOProcIDWithBlock` returns an error or
-  succeeds-and-delivers-silence on denial is unknown, and it decides whether the
-  denied-permission UI (SPEC §8.1 onboarding) can be driven by a return code or
-  must be driven by an RMS check. Test: grant once, toggle meet-ai off under
-  Privacy & Security → Audio Recording, re-run, record the `OSStatus`.
-- The dialog's literal text.
-- Behaviour under a real (non-ad-hoc) signing identity.
+- ~~What the API does when permission is *denied*.~~ **Answered in §10.1** — it
+  succeeds and delivers digital silence; every `OSStatus` is `noErr`. Neither a
+  return-code check nor an RMS floor can detect it. §10.2 has what to do instead.
+- ~~The dialog's literal text.~~ **Answered in §10.5**, from the system string
+  table rather than a screenshot.
+- ~~Behaviour under a real (non-ad-hoc) signing identity.~~ **Answered in
+  §10.3–10.4** — the grant becomes bundle-ID-keyed and the designated requirement
+  stops containing a cdhash, so rebuilds no longer break it. Creating the identity
+  needs no admin password.
+- Still open: observing the `identifier_type=Bundle ID` grant-*creation* event, and
+  a user's explicit **Don't Allow** (as opposed to §10.1's missing-usage-string
+  denial). One click each — `spikes/phase0a-tcc/verify-tur10.sh`.
 - macOS 14.4–26. Everything here is macOS 27.0 only.
 
 ---
@@ -425,3 +429,198 @@ in the 🔴 module.
 stack line already assumed. `crates/audio` stays 🔴 rather than dropping to 🟡 —
 the ~1 week §5 hoped to save is not available. `sidecar/meet-stt` keeps
 transcription only, exactly as A2 scoped it.
+
+---
+
+## 10. Phase 0a follow-up — the denied path, and a real signing identity (measured, 2026-09-27)
+
+**Ticket:** TUR-10 · **Code:** [`spikes/phase0a-tcc/`](./spikes/phase0a-tcc/) ·
+Closes the first three items of §8 "Still unverified".
+
+Everything below was measured on the same machine as §8 (macOS 27.0 `26A428`,
+arm64), inside a 15-minute window, with the same synthetic tone
+(L = 440 Hz, R = 660 Hz, amplitude 0.5, played by `/usr/bin/afplay` as a
+separate process).
+
+### 10.1 What the API does when permission is DENIED — **it lies**
+
+**On denial every Core Audio call still returns `noErr`, the IOProc is created,
+the device starts, and the callbacks fire at full rate delivering bit-exact
+zeros.** There is no error anywhere in the return path.
+
+Two 12-second captures, same tone playing through the same output device,
+ten minutes apart:
+
+| | **GRANTED** `authValue=2` | **DENIED** `authValue=0` |
+|---|---|---|
+| Bundle | `/tmp/meet-ai-fresh2-…` (ad-hoc, granted in TUR-3) | `…/nodesc/meet-ai.app` (identity-signed, see 10.2) |
+| `create_tap_osstatus` | `0` | `0` |
+| `create_process_tap_ms` | 4.147 | 3.745 |
+| `create_aggregate_ms` | 13.441 | 11.615 |
+| **`create_ioproc_ms`** | **2.373 → `noErr`** | **5.881 → `noErr`** |
+| `device_start_ms` | 91.549 → `noErr` | 75.062 → `noErr` |
+| Frames | 575 488 | 575 488 |
+| IO callbacks | 1 124 | 1 124 |
+| Span | 11 999.97 ms | 11 989.31 ms |
+| **RMS** | **0.339042 (−9.39 dBFS)** | **0.0** |
+| Peak | 0.499 999 88 | 0.0 |
+| **`zero_sample_fraction`** | **0.077 461** | **1.0** |
+| Payload, measured by `ffmpeg` | 4 235 395 non-zero bytes | **0 non-zero bytes** |
+| The tone file being played, meanwhile | 6 098 646 non-zero bytes | 6 098 646 non-zero bytes |
+
+The last row is the control that makes this conclusive: in the denied run the
+app had `afplay` running (`run.log`: `afplay launched, pid=21587`) on a 16 s tone
+file containing 6 098 646 non-zero bytes, and the tap returned 4 603 948 bytes of
+which **not one** was non-zero.
+
+`tccd` agrees, and it takes **1 millisecond** to do so — no dialog is drawn:
+
+```
+13:18:04.101  tccd  AUTHREQ_PROMPTING: msgID=617.4086, service=kTCCServiceAudioCapture,
+              subject=Sub:{pro.saleschat.meetaiNODESC}Resp:{…/MacOS/meet-ai}
+13:18:04.102  tccd  AUTHREQ_RESULT:    msgID=617.4086, authValue=0, authReason=8
+```
+
+against the granted run's
+
+```
+13:20:05.776  tccd  AUTHREQ_RESULT:    msgID=617.4106, authValue=2, authReason=2
+```
+
+`authValue`: `0` = denied, `1` = unknown, `2` = allowed. `authReason`: `2` = user
+consent, `8` = missing usage string.
+
+⚠️ **Honest scope of this measurement.** The denial was produced by building the
+bundle **without `NSAudioCaptureUsageDescription`** (`authReason=8`), because that
+is the only way to drive TCC to `authValue=0` without a human clicking a dialog —
+this machine grants no Accessibility to the automation shell, so synthetic clicks
+are impossible, and the TCC database is not writable without Full Disk Access.
+A user pressing **Don't Allow** produces `authValue=0, authReason=2`. Both reach
+`coreaudiod` as the same "not authorized" answer, so the downstream behaviour
+should be identical — but that last step is **inferred, not measured**. See 10.4.
+
+### 10.2 Therefore: SPEC §8.1's denial path cannot be a return-code check — *or* an RMS floor
+
+The ticket framed this as a choice between two strategies. **Both of them fail.**
+
+1. **Return-code check — impossible.** Every `OSStatus` in the chain is `noErr`
+   on the denied path. There is nothing to check.
+2. **RMS floor on the first second — unsound.** Denied audio is
+   `zero_sample_fraction = 1.0`. But so is a *granted* capture of a silent Mac:
+   §8's `--no-tone` control produced an all-zero payload too. "Permission denied"
+   and "nobody is talking yet" are bit-for-bit identical. An RMS floor would
+   fire a false "permission denied" on every meeting that starts quietly, and
+   would still be right by accident on a real denial — which is worse, because it
+   looks like it works.
+
+**Use a positive control instead — the only strategy that actually separates the
+two cases.** At onboarding, and once at the start of each recording:
+
+- meet-ai plays a **short known signal from its own process** (a ~200 ms tone, or
+  the "recording started" chime the UI wants anyway). The process tap is global,
+  so our own output is inside it.
+- Capture for the duration of that signal and test for it — RMS above a floor is
+  enough; Goertzel at the known frequency (as §8 used) is stricter and costs
+  nothing.
+- **Signal absent ⇒ permission is denied.** Signal present ⇒ granted, and we have
+  also just proved the whole tap → WAV path end-to-end, which the return codes
+  never proved.
+- Only after that does the recording-started state become true. Until then the UI
+  stays on "checking permission", and on failure goes to SPEC §8.1's denial screen
+  (one sentence + **Retry** + **Open System Settings**).
+
+Two supporting notes for the implementation:
+
+- `zero_sample_fraction == 1.0` over a window is a useful *alarm*, not a verdict:
+  necessary for denial, not sufficient. Log it; never show it to the user as
+  "permission denied" on its own.
+- The **microphone** half of onboarding probably does not need any of this:
+  `AVCaptureDevice.authorizationStatus(for: .audio)` is a public, synchronous
+  status API that documents a `.denied` case, which the tap has no equivalent of.
+  ⚠️ Not measured here — §8 only exercised the mic's *granted* path, and this run
+  did not touch `kTCCServiceMicrophone` at all. Confirm it before relying on it;
+  after §10.1 the null hypothesis for any macOS permission API is that it lies.
+
+⛔ **And never ship without `NSAudioCaptureUsageDescription`.** 10.1's denial
+*is* that bug: the key was missing, so macOS denied in 1 ms, drew no dialog, told
+the app nothing, and let it record an hour of silence. That is exactly the
+failure mode SPEC §5 calls a fail rather than a pass.
+
+### 10.3 A real signing identity needs **no admin password** — the ticket's premise was wrong
+
+`make-identity.sh` tried `security add-trusted-cert -d … -k /Library/Keychains/System.keychain`
+first, which is an admin-domain change and goes through SecurityAgent. Dropping
+the `-d` writes the trust setting to the **user** domain instead, which is enough
+for `codesign` and needs no password at all:
+
+```
+$ security add-trusted-cert -r trustRoot -p codeSign -k ~/Library/Keychains/meet-ai-signing.keychain-db cert.pem
+$ security find-identity -v -p codesigning
+  1) BE3FB2C8C0CE4AC08348A09F0BF278094626E347 "meet-ai Local Signing"
+     1 valid identities found
+```
+
+Seven seconds, non-interactive, exit 0. `make-identity.sh` now tries the user
+domain first and keeps `-d` only as a fallback. **`sudo` is no longer part of the
+setup**, and SETUP.md Step 5's "create it by hand in Keychain Access" is replaced
+by running the script.
+
+### 10.4 Under that identity TCC keys the grant to the **bundle ID**, not the path
+
+This is the §8 signing caveat, resolved. The mechanism is the designated
+requirement, and it is visible directly:
+
+```
+ad-hoc:    designated => cdhash H"8a42ac53dc5371fb8a54fb8078042ee0bd790d8c"
+identity:  designated => identifier "pro.saleschat.meetai" and
+                         certificate leaf = H"be3fb2c8c0ce4ac08348a09f0bf278094626e347"
+```
+
+The ad-hoc requirement **is** the binary hash, so every rebuild that changes a
+single instruction breaks it — that is §8's "Failed to match existing code
+requirement". The identity requirement contains no hash at all: bundle ID plus
+certificate. Rebuilding cannot invalidate it.
+
+`tccd` keys its records the same way. Same machine, twelve minutes apart:
+
+```
+ad-hoc bundle    AUTHREQ_SUBJECT: subject=/private/tmp/meet-ai-fresh2-…/Contents/MacOS/meet-ai
+identity bundle  AUTHREQ_SUBJECT: subject=pro.saleschat.meetaiNODESC
+```
+
+A **path** for ad-hoc, a **bundle ID** for the signed build. So
+`tccutil reset AudioCapture pro.saleschat.meetai` addresses a record that now
+exists, and SPEC §6's Phase 0a recipe is correct as written — provided the
+bundle is signed with an identity. It was a no-op in §8 only because the spike
+was ad-hoc.
+
+**Still to confirm with a human at the keyboard:** the `Publishing <TCCDEvent:
+type=Create, …, identifier_type=Bundle ID>` line only appears when a grant is
+*created*, which needs someone to click **Allow** once. Run
+`spikes/phase0a-tcc/verify-tur10.sh`; it is two clicks and writes the report itself.
+
+### 10.5 The literal prompt text — from the system, not a screenshot
+
+`/System/Library/PrivateFrameworks/TCC.framework/Resources/Localizable.loctable`
+is the source of truth for what the user reads. English:
+
+| Key | Text |
+|---|---|
+| `REQUEST_ACCESS_SERVICE_kTCCServiceAudioCapture` | **“%@” would like access to record your system audio.** |
+| `REQUEST_ACCESS_SERVICE_kTCCServiceMicrophone` | **Allow “%@” to access your microphone?** |
+| `REQUEST_ACCESS_ALLOW` | **Allow** |
+| `REQUEST_ACCESS_DENY` / `REQUEST_ACCESS_DONT_ALLOW` | **Don’t Allow** |
+
+`%@` is the app's display name, i.e. **meet-ai** (§8.2 already proved the
+attribution resolves to the app, not the helper). So the dialog reads:
+
+> **“meet-ai” would like access to record your system audio.**
+> meet-ai records the audio of your meetings so it can transcribe them on this
+> Mac. Nothing is uploaded.
+> \[ Don't Allow ] \[ Allow ]
+
+The second line is `NSAudioCaptureUsageDescription`, verbatim. There is **no**
+`REQUEST_DEFAULT_PURPOSE_STRING_SERVICE_kTCCServiceAudioCapture` key in the
+table — unlike Bluetooth and App Data, this service has no fallback sentence.
+Our string is the *entire* explanation the user gets, which is one more reason
+§10.2's ⛔ matters: omit it and macOS does not fall back, it denies.
