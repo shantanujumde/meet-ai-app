@@ -9,26 +9,11 @@
 //! proof that the Core Audio entry points FINDINGS §9 committed the project to
 //! are reachable from Rust at the versions the workspace pins.
 
-use std::time::Duration;
-
-/// How long the real tap/IOProc creation call site (once written) is allowed
-/// to sit inside `AudioHardwareCreateProcessTap` / `AudioDeviceCreateIOProcIDWithBlock`
-/// before giving up.
-///
-/// These calls block for as long as the user takes to answer the TCC consent
-/// dialog, not for how long the API itself needs. Tess measured
-/// `create_ioproc` at 1393 ms and 2059 ms against real dialogs, versus 5.7 ms
-/// warm with no dialog shown (TUR-4, `spikes/phase0a-tcc`). A "safe-looking"
-/// 1 s guard would abort the one call that is about to succeed — and only on
-/// the very first run, since every later run is warm and invisible to that
-/// bug in testing.
-///
-/// So this is sized for a human, not an API: generous enough that a person
-/// reading the dialog never trips it, with the failure mode of "the user
-/// walked away from the prompt" being an acceptable one to eventually time
-/// out on.
-pub const TAP_CREATION_TIMEOUT: Duration = Duration::from_secs(30);
-
+/// The real tap/IOProc creation call site (once written) uses
+/// [`crate::AUDIO_PERMISSION_TIMEOUT`] — moved there because [`crate::mic`]
+/// needs the identical bound on `cpal`'s stream creation, and both are the
+/// same failure mode: a Core Audio call that can block on a TCC dialog no one
+/// is present to answer.
 #[cfg(test)]
 mod tests {
     use objc2::AnyThread;

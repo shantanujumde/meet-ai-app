@@ -1,18 +1,47 @@
 //! Audio capture for meet-ai.
 //!
 //! Phase 0 territory (SPEC §5). The Core Audio process tap itself is not
-//! wired up yet — [`AudioSource`] has no real implementation on either
-//! platform. What is real: the on-disk contract ([`segments`]), the
-//! crash-safe writer that produces the WAV half of it ([`wav_writer`]), and
-//! the permission chime ([`chime`]).
+//! wired up yet — [`Channel::System`] has no real implementation. What is
+//! real: the on-disk contract ([`segments`]), the crash-safe writer that
+//! produces the WAV half of it ([`wav_writer`]), the permission chime
+//! ([`chime`]), the device-rate resampler ([`resample`]), and, as of this
+//! module, a real microphone [`AudioSource`] ([`mic`]).
 //!
-//! [`AudioSource`] exists from day one even though only macOS implements it
-//! (SPEC §4), so that the Windows port (SPEC §8.2) is additive rather than a
-//! rewrite.
+//! [`AudioSource`] exists from day one even though only [`mic::MicSource`] is
+//! implemented so far (SPEC §4), so that the Windows port (SPEC §8.2) is
+//! additive rather than a rewrite once the process tap lands.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 use std::path::PathBuf;
+use std::time::Duration;
+
+/// How long any Core Audio call that can trigger a TCC consent dialog — the
+/// process tap, and `cpal`'s microphone stream creation — is allowed to block
+/// before whichever caller is timing it gives up on it.
+///
+/// These calls block for as long as a human takes to answer the dialog, not
+/// for how long the underlying API needs: Tess measured real dialogs at
+/// 1393 ms and 2059 ms, against 5.7 ms warm with no dialog shown (TUR-4,
+/// `spikes/phase0a-tcc`). A "safe-looking" 1 s guard would abort the one call
+/// that is about to succeed, and only on the very first run — every later run
+/// is warm and the bug is invisible in testing.
+///
+/// ⚠️ This constant is *not*, by itself, enough to bound the call. Measured
+/// directly on this machine (TUR-4): in an environment with nobody available
+/// to answer the dialog — an agent session with no display/Accessibility
+/// access, or headless CI — `cpal`'s coreaudio backend does not error, it
+/// blocks `build_input_stream` *forever*; passing this value as that call's
+/// own `timeout` argument does nothing, because (per `cpal` 0.18.2's source)
+/// that parameter is only read by a sample-rate-negotiation fallback path,
+/// never by the call that actually blocks on permission
+/// (`AudioUnitInitialize`). [`mic::MicSource::start`] is what makes the
+/// *caller* time-bounded instead: it runs the blocking call on its own
+/// thread and gives up on that thread with `recv_timeout(AUDIO_PERMISSION_TIMEOUT)`,
+/// leaking the still-blocked thread rather than joining it. The tap's future
+/// call site should do the same — do not assume passing this to a Core Audio
+/// API is sufficient on its own.
+pub const AUDIO_PERMISSION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The macOS capture implementation. SPEC §4 ⛔: OS-specific code lives here
 /// and nowhere else.
@@ -39,6 +68,11 @@ pub mod wav_writer;
 /// negotiated, and this is the one place that brings it to the rate every WAV
 /// and every anchor formula assumes.
 pub mod resample;
+
+/// The microphone [`AudioSource`], via `cpal`. Cross-platform on purpose —
+/// unlike the process tap, `cpal` already runs on Windows, so this is not
+/// gated under `macos`.
+pub mod mic;
 
 /// Which side of the conversation a stream came from.
 ///
@@ -75,7 +109,15 @@ impl Channel {
 ///
 /// Implementations are expected to own their own OS threads. Audio callbacks
 /// must never run on the tokio runtime (SPEC §2.3).
-pub trait AudioSource {
+///
+/// `position` and `checkpoint` exist for the orchestrator (`meet-rec`'s main
+/// loop) to build `segments.json`'s checkpoint [`crate::segments::Anchor`]s
+/// (contract revision 3, §11) without the WAV writer itself living outside
+/// this trait. Neither is real-time-safe to call from an audio callback —
+/// both lock a mutex a worker thread also holds — and neither is meant to be:
+/// the orchestrator calls them from its own checkpoint thread, on the
+/// `CHECKPOINT_INTERVAL_S` cadence (`crate::segments::CHECKPOINT_INTERVAL_S`).
+pub trait AudioSource: Send {
     /// Start writing 16 kHz mono PCM to `dest`, returning once capture is live.
     fn start(&mut self, dest: PathBuf) -> Result<(), Error>;
 
@@ -84,6 +126,26 @@ pub trait AudioSource {
 
     /// Which channel this source feeds.
     fn channel(&self) -> Channel;
+
+    /// The most recent (host_ns, wav_domain_frames) pair this channel has
+    /// processed — the `mHostTime` of the buffer that produced the most
+    /// recently *written* 16 kHz sample, paired with the WAV-domain frame
+    /// index that sample landed at. `None` before the first resampled chunk
+    /// has been written.
+    ///
+    /// This is deliberately *not* "frames flushed so far" sampled at whatever
+    /// instant the orchestrator happens to call this — contract §11 is
+    /// explicit that anchoring on flush position measures the writer's own
+    /// latency instead of the device clock. Implementations must latch both
+    /// halves of the pair together, from inside the same write that produced
+    /// them.
+    fn position(&self) -> Option<(u64, u64)>;
+
+    /// §7's checkpoint order, steps 1 and 3: fsync the appended sample bytes,
+    /// then patch the header to declare them. The caller sequences
+    /// `segments.json`'s atomic write between the two — this method only
+    /// performs its own half.
+    fn checkpoint(&mut self) -> Result<(), Error>;
 }
 
 /// Everything that can go wrong during capture.
