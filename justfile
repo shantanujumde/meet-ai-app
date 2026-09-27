@@ -134,21 +134,36 @@ sign:
     APP="target/release/bundle/macos/meet-ai.app"
     [[ -d "$APP" ]] || { echo "no bundle at $APP — run \`just build\` first" >&2; exit 1; }
 
-    # Written as a function rather than an args array on purpose: under `set -u`
+    # Written as functions rather than an args array on purpose: under `set -u`
     # an empty array expansion aborts the script *between* the nested and outer
     # codesign calls, which silently leaves the app unsigned while the helpers
     # look fine. That exact bug shipped once already (build.sh, TUR-9).
-    seal() {
+    # (`"$@"` below is safe where `"${arr[@]}"` is not — bash 3.2 special-cases
+    # it, and /bin/bash on macOS is still 3.2.)
+    #
+    # $1 = path to sign, $2.. = extra flags.
+    _codesign() {
+      local path="$1"; shift
       if [[ -n "{{SIGN_KEYCHAIN}}" && -f "{{SIGN_KEYCHAIN}}" ]]; then
         codesign --force --options runtime --timestamp=none \
-          --entitlements src-tauri/entitlements.plist \
-          --keychain "{{SIGN_KEYCHAIN}}" -s "{{SIGN_IDENTITY}}" "$1"
+          --keychain "{{SIGN_KEYCHAIN}}" -s "{{SIGN_IDENTITY}}" "$@" "$path"
       else
         codesign --force --options runtime --timestamp=none \
-          --entitlements src-tauri/entitlements.plist \
-          -s "{{SIGN_IDENTITY}}" "$1"
+          -s "{{SIGN_IDENTITY}}" "$@" "$path"
       fi
     }
+
+    # The app gets the mic entitlement, because the app is what records.
+    seal() { _codesign "$1" --entitlements src-tauri/entitlements.plist; }
+
+    # Nested helpers get none. entitlements.plist is a single key,
+    # com.apple.security.device.audio-input, and meet-stt reads finished WAVs
+    # off disk — it has no business holding mic access. Note this is the *same*
+    # defect the header attributes to `--deep`: one entitlement set stamped
+    # over every nested binary. Avoiding `--deep` but passing the app's plist
+    # to each nested codesign call reproduces it exactly, which is what this
+    # split prevents. Raised by Rune on TUR-2.
+    seal_nested() { _codesign "$1"; }
 
     # Every helper Tauri is supposed to embed must actually be in the bundle
     # before we seal anything. The loop below is a `find`, and a `find` that
@@ -180,8 +195,8 @@ sign:
     # Counted and printed: "0 nested" must be a statement, not a silence.
     sealed=0
     while IFS= read -r -d '' nested; do
-      echo "==> sealing nested: ${nested#"$APP/"}"
-      seal "$nested"
+      echo "==> sealing nested (no entitlements): ${nested#"$APP/"}"
+      seal_nested "$nested"
       sealed=$((sealed + 1))
     done < <(find "$APP/Contents/MacOS" -type f -perm -u+x ! -name meet-ai -print0)
     echo "==> nested binaries: $sealed sealed, $declared declared in externalBin"
