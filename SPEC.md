@@ -430,7 +430,9 @@ open src-tauri/target/release/bundle/macos/meet-ai.app
 ```
 Pass = prompt appears, names **meet-ai** (not the helper), and non-silent samples arrive. ⚠️ Prompt appears but samples are silent = **fail**.
 
-⚠️ **The `tccutil` line only works on a bundle signed with a real identity.** Under ad-hoc signing TCC keys the record to the executable *path*, and the reset is a silent no-op — measured both ways in FINDINGS §10.4. `just bundle-signed` must therefore use `$SIGN_IDENTITY`, never `codesign -s -`. To force a fresh prompt from an ad-hoc build, copy the bundle to a new path instead.
+⚠️ **The `tccutil` line only works on a bundle signed with a real identity.** Under ad-hoc signing TCC keys the record to the executable *path*, and the reset is a silent no-op — measured both ways in FINDINGS §10.4. `just bundle-signed` must therefore use `$SIGN_IDENTITY`, never `codesign -s -`.
+
+⛔ **Do not "copy the bundle to a new path" to force a fresh prompt.** An earlier revision of this line recommended exactly that; it is a one-way door. Each new path makes TCC create a **path-keyed** record, and those are permanent — `tccutil reset` resolves its argument as a bundle ID and returns `-10814` for a path, and deleting the directory leaves the record behind (measured, FINDINGS §10.6). Two are already stuck on the dev machine. Sign with the identity and reset by bundle ID; that is the only repeatable baseline. The identity's leaf SHA-1 is what every grant is keyed to, so it must not be re-minted between gate runs either — `spikes/phase0a-tcc/make-identity.sh` is idempotent for that reason, and `verify-tur10.sh` aborts if the leaf has moved.
 
 **Phase 1:** `cargo test -p stt` against fixture WAVs, run **once per engine**, incl. a 30s pure-silence file that must yield **zero** transcript lines (the whisper-hallucination guard — Apple's engine should pass it trivially, whisper should only pass it with VAD gating).
 

@@ -436,7 +436,7 @@ measured in FINDINGS §10.3–10.4.
 
 ```bash
 spikes/phase0a-tcc/make-identity.sh          # ~7s, no admin password needed
-security find-identity -v -p codesigning     # 1) … "meet-ai Local Signing"
+spikes/phase0a-tcc/make-identity.sh --print  # leaf SHA-1: be3fb2c8…
 ```
 
 The script generates the cert, puts it in its own keychain
@@ -444,17 +444,42 @@ The script generates the cert, puts it in its own keychain
 and marks it trusted for code signing in the **user** trust domain. That last
 part is why there is no password prompt: `security add-trusted-cert` only needs
 an admin password with `-d`, which writes to the system keychain. We don't need
-that. Then:
+that.
+
+**Run it as often as you like — it is idempotent.** If the identity already
+exists it reuses it and exits. That matters more than it sounds: the leaf SHA-1
+it prints is what TCC keys every grant to, so minting a replacement silently
+voids every permission the machine has already given you. `--rotate` is the
+deliberate override and warns first.
+
+Use `--print` to read the fingerprint back, and check a built bundle against it:
 
 ```bash
-export SIGN_IDENTITY="meet-ai Local Signing"
-export SIGN_KEYCHAIN="$HOME/Library/Keychains/meet-ai-signing.keychain-db"
-just bundle-signed
+codesign -d -r- build/meet-ai.app
+# designated => identifier "pro.saleschat.meetai" and certificate leaf = H"be3fb2c8…"
 ```
 
-⛔ `just bundle-signed` must **never** fall back to `codesign -s -`. A bundle
-signed ad-hoc invalidates every TCC result you get from it, including the
-Phase 0a gate.
+Verify with `security find-identity -v -p codesigning ~/Library/Keychains/meet-ai-signing.keychain-db`
+— pass the keychain explicitly. Without it the command reads the user's keychain
+search list, which is empty under a sandboxed `$HOME`, and reports **"0 valid
+identities"** for an identity that is present and working.
+
+After that, signing needs no environment at all — `build.sh` defaults to this
+identity and finds the keychain itself:
+
+```bash
+spikes/phase0a-tcc/build.sh    # or: just bundle-signed
+```
+
+⛔ Never fall back to `codesign -s -`. A bundle signed ad-hoc invalidates every
+TCC result you get from it, including the Phase 0a gate — and it is not
+recoverable: an ad-hoc build makes TCC record the grant against the executable's
+absolute **path**, and path-keyed records cannot be removed by `tccutil reset`
+(it resolves its argument as a bundle ID and returns `-10814`). Deleting the
+build directory does not clear them either. Only System Settings by hand, or a
+`TCC.db` write behind Full Disk Access, will. Two such records are already stuck
+on the development machine. `build.sh` now exits 1 rather than ad-hoc sign;
+`ALLOW_ADHOC=1` overrides it if you genuinely need to. Details in FINDINGS §10.6.
 
 ### Step 6 — `justfile` (incl. the ⛔ Windows cross-check)
 

@@ -20,29 +20,39 @@ run it again.
 | `Info-helper.plist` | Embedded in the helper via `-sectcreate __TEXT __info_plist`, as SPEC §5 specifies |
 | `entitlements.plist` | `com.apple.security.device.audio-input` |
 | `build.sh` | Compile → assemble bundle → sign with hardened runtime → verify |
-| `make-identity.sh` | Creates a local self-signed code-signing identity. **No `sudo`, no admin password** — the trust setting goes in the user domain (TUR-10) |
+| `make-identity.sh` | Ensures the local self-signed code-signing identity exists. **Idempotent** — re-running reuses it. **No `sudo`, no admin password** (TUR-10) |
 | `run.sh` | Reset TCC, launch, then **re-measure the WAV with ffmpeg**, independently of what the probe claimed |
 | `verify-tur10.sh` | The two checks that need a human: grant creation, and an explicit **Don't Allow**. Two clicks; writes `/tmp/meet-ai-tur10/report.md` itself |
 
 ## Running it
 
+One-time, about seven seconds, asks for nothing:
+
 ```sh
-./build.sh                         # ad-hoc signed
+./make-identity.sh                 # idempotent; re-running reuses the cert
+```
+
+Then:
+
+```sh
+./build.sh                         # signs with that identity, no env vars needed
 ./run.sh --seconds 12 --reset      # system audio only
 ./run.sh --seconds 20 --mic        # also exercise the Microphone TCC service
 ```
 
-For a stable TCC grant across rebuilds, use a real identity instead of ad-hoc —
-this takes about seven seconds and asks for nothing:
+`tccutil reset AudioCapture pro.saleschat.meetai` works on a bundle built this
+way, because the grant is keyed to the bundle ID rather than the executable
+path — FINDINGS §10.4.
 
-```sh
-./make-identity.sh
-SIGN_IDENTITY="meet-ai Local Signing" \
-  SIGN_KEYCHAIN="$HOME/Library/Keychains/meet-ai-signing.keychain-db" ./build.sh
-```
+⛔ **Don't ad-hoc sign.** `build.sh` exits 1 rather than fall back to
+`codesign -s -`, because an ad-hoc build makes TCC key its grant to the
+executable's absolute path, and path-keyed records are permanent: `tccutil
+reset` can't reach them and deleting the directory doesn't clear them
+(FINDINGS §10.6). `ALLOW_ADHOC=1 ./build.sh` if you really mean it.
 
-Then `tccutil reset AudioCapture pro.saleschat.meetai` works, because the grant
-is keyed to the bundle ID rather than the executable path — FINDINGS §10.4.
+Likewise, don't re-mint the identity. The leaf SHA-1 that `./make-identity.sh
+--print` reports is what every grant is keyed to; replacing it voids them all.
+`--rotate` exists for when that is genuinely what you want.
 
 Artifacts land in `/tmp/meet-ai-phase0a-run` (override with `MEET_AI_SPIKE_OUT`).
 Deliberately outside the repo — recordings must never be committable.

@@ -16,7 +16,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="$HERE/build/meet-ai.app"
 BUNDLE_ID="pro.saleschat.meetai"
 IDENTITY="${SIGN_IDENTITY:-meet-ai Local Signing}"
-KEYCHAIN="${SIGN_KEYCHAIN:-$HOME/Library/Keychains/meet-ai-signing.keychain-db}"
+REAL_HOME="$(/usr/bin/dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+[[ -n "$REAL_HOME" && -d "$REAL_HOME" ]] || REAL_HOME="$HOME"
+KEYCHAIN="${SIGN_KEYCHAIN:-$REAL_HOME/Library/Keychains/meet-ai-signing.keychain-db}"
 ROOT=/tmp/meet-ai-tur10
 REPORT="$ROOT/report.md"
 SECS=12
@@ -26,10 +28,49 @@ rm -rf "$ROOT"; mkdir -p "$ROOT"
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ask() { printf '\n\033[1;33m>>> %s\033[0m\n' "$*"; }
 
-if ! security find-identity -v -p codesigning | grep -q "$IDENTITY"; then
-  echo "no signing identity '$IDENTITY' — run ./make-identity.sh first" >&2
+# Pass the keychain explicitly. A bare `find-identity` reads the user's keychain
+# search list, which is empty under a sandboxed $HOME — it then reports "0 valid
+# identities" for an identity that is present and working.
+if ! security find-identity -v -p codesigning "$KEYCHAIN" 2>/dev/null | grep -qF "$IDENTITY"; then
+  echo "no signing identity '$IDENTITY' in $KEYCHAIN — run ./make-identity.sh first" >&2
   exit 1
 fi
+
+# The leaf SHA-1 is what TCC keys every grant to. If it has moved since the last
+# run, every result below is meaningless: a re-prompt could be a correct re-ask
+# after denial, or just macOS not recognising a differently-signed binary. Bail
+# rather than hand back an ambiguous gate result.
+LEAF="$(security find-certificate -c "$IDENTITY" -p "$KEYCHAIN" 2>/dev/null \
+        | openssl x509 -outform der 2>/dev/null | shasum -a 1 | awk '{print $1}')"
+if [[ -z "$LEAF" ]]; then
+  echo "could not read the leaf fingerprint from $KEYCHAIN" >&2
+  exit 1
+fi
+
+# The known-good baseline, recorded when the identity was created (TUR-10).
+# Override only if the identity was deliberately rotated.
+EXPECT_LEAF="${EXPECT_LEAF:-be3fb2c8c0ce4ac08348a09f0bf278094626e347}"
+if [[ "$LEAF" != "$EXPECT_LEAF" ]]; then
+  echo "!! signing identity has ROTATED." >&2
+  echo "!!   expected leaf: $EXPECT_LEAF" >&2
+  echo "!!   actual leaf:   $LEAF" >&2
+  echo "!! Every prior TCC grant is keyed to the old leaf, so a re-prompt here" >&2
+  echo "!! would be unattributable. Re-run with EXPECT_LEAF=$LEAF once you have" >&2
+  echo "!! accepted that every existing grant is void." >&2
+  exit 1
+fi
+
+# Snapshot every TCC record that mentions us, for both services. `tccutil list`
+# is a read verb and needs no privileges. Path-keyed records left over from the
+# ad-hoc era show up here and CANNOT be cleared by `tccutil reset` — it resolves
+# its argument through LaunchServices as a bundle ID and returns -10814 for a
+# path. They are inert for an identity-signed build (tccd matches us by bundle
+# ID) but they are why this snapshot is in the report: if a result looks wrong,
+# check whether a stale path record shadowed it.
+tcc_records() {
+  echo "AudioCapture:"; tccutil list -s kTCCServiceAudioCapture 2>/dev/null | grep -i "meet" | sed 's/^/  /' || echo "  (none)"
+  echo "Microphone:";   tccutil list -s kTCCServiceMicrophone   2>/dev/null | grep -i "meet" | sed 's/^/  /' || echo "  (none)"
+}
 
 sign_build() { SIGN_IDENTITY="$IDENTITY" SIGN_KEYCHAIN="$KEYCHAIN" "$HERE/build.sh" >"$ROOT/build.log" 2>&1; }
 
@@ -92,19 +133,46 @@ PY
   echo
   echo "Generated $(date -u +%Y-%m-%dT%H:%M:%SZ) on macOS $(sw_vers -productVersion) ($(sw_vers -buildVersion)), $(uname -m)."
   echo
+  echo "Signing identity \`$IDENTITY\`, leaf \`$LEAF\` — matches the recorded baseline."
+  echo
   echo '```'
   codesign -d -r- "$APP" 2>&1 | grep designated || true
   echo '```'
+  echo
+  echo "## 0. TCC baseline before anything was touched"
+  echo
+  echo '```'
+  tcc_records
+  echo '```'
 } > "$REPORT"
 
-say "building, signed with '$IDENTITY'"
+say "building, signed with '$IDENTITY' (leaf $LEAF)"
 sign_build
+
+# The build must still carry the leaf we just asserted. Signing can succeed
+# against a different identity if the search list changed underneath us.
+if ! codesign -d -r- "$APP" 2>&1 | grep -qi "$LEAF"; then
+  echo "!! the built bundle is not signed by the expected leaf $LEAF" >&2
+  codesign -d -r- "$APP" 2>&1 | grep designated >&2 || true
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 say "1/3  fresh grant — you will be asked to click ALLOW"
 # ---------------------------------------------------------------------------
-tccutil reset AudioCapture "$BUNDLE_ID" || true
-tccutil reset Microphone   "$BUNDLE_ID" || true
+# Reset BOTH services. They are independently tracked and were observed in
+# different states (AudioCapture granted, Microphone not), which would otherwise
+# mean only one prompt appears and the run looks half-broken.
+# Note the exit codes: `tccutil reset` exits 64 with -10814 when LaunchServices
+# cannot resolve the bundle ID. That is the signal the app is unknown to LS, not
+# a harmless no-op, so record it rather than swallowing it.
+for svc in AudioCapture Microphone; do
+  if tccutil reset "$svc" "$BUNDLE_ID" >/dev/null 2>&1; then
+    echo "    reset $svc -> ok"
+  else
+    echo "    reset $svc -> FAILED (LaunchServices does not know $BUNDLE_ID)"
+  fi
+done
 ask "A dialog will appear. Click  ALLOW."
 run_once "$ROOT/granted"
 tcc_since "$ROOT/granted" > "$ROOT/granted.tcc.log"
@@ -181,7 +249,20 @@ DENY_RESULT=$(grep -A1 "AUTHREQ_PROMPTING.*kTCCServiceAudioCapture" "$ROOT/denie
   echo "zero non-zero payload bytes — i.e. the API reports success and records silence."
 } >> "$REPORT"
 
-tccutil reset AudioCapture "$BUNDLE_ID" || true
+tccutil reset AudioCapture "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+{
+  echo; echo "## 4. TCC records afterwards"
+  echo
+  echo "Compare against §0. A new *path* entry here means something got ad-hoc"
+  echo "signed during the run — that record is permanent (\`tccutil reset\` cannot"
+  echo "reach it) and the next run's baseline is dirty."
+  echo; echo '```'
+  tcc_records
+  echo '```'
+  echo
+  echo "Signing leaf at end of run: \`$(security find-certificate -c "$IDENTITY" -p "$KEYCHAIN" 2>/dev/null | openssl x509 -outform der 2>/dev/null | shasum -a 1 | awk '{print $1}')\`"
+} >> "$REPORT"
 
 say "done — $REPORT"
 cat "$REPORT"
