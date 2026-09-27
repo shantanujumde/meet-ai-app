@@ -199,3 +199,214 @@ Diarization    2-channel now; sherpa-rs speaker embeddings later  (was: "pyannot
 6. Which tracker do *you* actually use? — only that one deserves native sync.
 7. Distributing publicly, or personal-only? — decides whether notarization + Google verification ever matter.
 8. Kill date if Phase 0 drift isn't solved?
+
+---
+
+## 8. Phase 0a — macOS audio-capture permission spike (measured, 2026-09-27)
+
+**Ticket:** TUR-3 · **Code:** [`spikes/phase0a-tcc/`](./spikes/phase0a-tcc/) · **Verdict: PASS on all three parts.**
+
+This section supersedes the TCC claim in §2 D1 ("a Swift sidecar does not reliably
+inherit the app's TCC permissions"). That claim was inferred from open Tauri
+issues. It is wrong on macOS 27 for a helper that lives inside the app bundle and
+is launched as a child of the app, and the `tccd` logs below say so directly.
+
+### Test environment
+
+| | |
+|---|---|
+| macOS | **27.0**, build `26A428`, arm64 |
+| Swift | 6.4 (`swiftlang-6.4.0.34.1`), Command Line Tools only — **no Xcode** |
+| Bundle | hand-assembled `meet-ai.app`, bundle ID `pro.saleschat.meetai`, `LSUIElement`, `LSMinimumSystemVersion 14.4` |
+| Info.plist | `NSAudioCaptureUsageDescription` + `NSMicrophoneUsageDescription` in the app plist, and in the helper via `-sectcreate __TEXT __info_plist` |
+| Entitlements | `com.apple.security.device.audio-input` |
+| Signing | **ad-hoc (`codesign -s -`) with `--options runtime`.** The machine has **zero** code-signing identities and creating a trusted self-signed one needs an admin password, which a headless run cannot supply. See "Signing caveat" below |
+| Launch | `open -a meet-ai.app` → LaunchServices → app has `ppid=1`, helper is its child |
+| Capture API | `CATapDescription(stereoGlobalTapButExcludeProcesses: [])` → `AudioHardwareCreateProcessTap` → private aggregate device → `AudioDeviceCreateIOProcIDWithBlock` |
+| Audio source | synthetic tone played by `/usr/bin/afplay` as a **separate process**: L = 440 Hz, R = 660 Hz, amplitude 0.5 |
+
+### 1. Does the permission prompt appear? — **YES**
+
+```
+13:06:36.595  tccd  AUTHREQ_PROMPTING: service=kTCCServiceAudioCapture,
+              subject=Sub:{/private/tmp/…/meet-ai.app/Contents/MacOS/meet-ai}
+13:06:39.656  tccd  Publishing <TCCDEvent: type=Create,
+              service=kTCCServiceAudioCapture, identifier_type=Path,
+              identifier=/private/tmp/…/meet-ai.app/Contents/MacOS/meet-ai>
+```
+
+Observed on three separate first-run bundles. The microphone prompt
+(`kTCCServiceMicrophone`) appears the same way and is a separate grant.
+
+### 2. Does it name *meet-ai* rather than the helper? — **YES**
+
+The helper `meet-tap-probe` (pid 87119) makes the Core Audio call. `coreaudiod`
+asks TCC about it, and TCC resolves it to the **app** as responsible process:
+
+```
+AUTHREQ_ATTRIBUTION: attribution={
+    responsible={TCCDProcess: identifier=meet-ai, pid=87116,
+                 responsible_path=…/meet-ai.app/Contents/MacOS/meet-ai},
+    accessing   ={TCCDProcess: identifier=meet-tap-probe, pid=87119,
+                 binary_path=…/meet-ai.app/Contents/MacOS/meet-tap-probe},
+    requesting  ={TCCDProcess: identifier=com.apple.audio.coreaudiod, pid=617}}
+AUTHREQ_SUBJECT: subject=…/meet-ai.app/Contents/MacOS/meet-ai
+```
+
+The helper's own identity (`pro.saleschat.meetai.tap-probe`) never becomes the
+subject. One grant covers the app and every child it spawns.
+
+*Not verified:* the literal wording rendered in the dialog. The evidence above is
+the daemon's attribution, not a screenshot.
+
+### 3. Does non-silent audio actually arrive? — **YES**
+
+25-second capture, tone playing (`/tmp/meet-ai-phase0a-run4`):
+
+| Measure | Value |
+|---|---|
+| Format | 48 000 Hz, 2 ch, float32 (`kAudioTapPropertyFormat`) |
+| Frames / IO callbacks | 1 200 640 / 2 345 |
+| Span (first → last buffer host time) | 25 002.68 ms |
+| RMS | **0.346548 (−9.20 dBFS)** |
+| Peak | 0.619006 (−4.17 dBFS) |
+| Bit-exact-zero samples | 1 of 2 401 280 (fraction 8.3 × 10⁻⁷) |
+| Per-second RMS | 0.022 (tone fading in), then 0.339–0.356 for all 24 remaining buckets |
+
+Verified **independently of the probe's own meter**, by Goertzel analysis of a
+1-second slice of the WAV:
+
+```
+L rms=0.35355   L @ 440Hz = 0.50000   L @ 660Hz = 0.00000   L @ 1000Hz = 0.00000
+R rms=0.35355   R @ 660Hz = 0.50000   R @ 440Hz = 0.00000   R @ 1000Hz = 0.00000
+```
+
+Exact recovery of amplitude 0.5 at the right frequency in the right channel, zero
+energy elsewhere, stereo separation intact. Theoretical RMS of a 0.5 sine is
+0.5/√2 = 0.35355 — matched to five decimals.
+
+**Control (`--no-tone`, nothing playing):** the same bundle produced a WAV whose
+payload is **all zero bytes**, `zero_sample_fraction = 1.0`. So the tap reports
+silence when there is silence and the tone when there is a tone. It is not
+fabricating and it is not capturing something else.
+
+### The important discovery: where the prompt blocks
+
+`AudioHardwareCreateProcessTap` is **not** the gate. Measured on a first-run
+bundle, alongside `tccd`'s prompt window of 3 061 ms:
+
+| Call | Time |
+|---|---|
+| `AudioHardwareCreateProcessTap` | 3.05 ms → `noErr` |
+| read `kAudioTapPropertyFormat` | 0.06 ms |
+| `AudioHardwareCreateAggregateDevice` | 11.91 ms |
+| **`AudioDeviceCreateIOProcIDWithBlock`** | **3 064.04 ms** → `noErr` |
+| `AudioDeviceStart` | 27.84 ms |
+
+Two consequences for Phase 0:
+
+1. **Never infer permission from `AudioHardwareCreateProcessTap`.** It returns
+   `noErr` in ~3 ms before the user has decided anything. This is the trap SPEC
+   §5 warns about, now located precisely.
+2. `AudioDeviceCreateIOProcIDWithBlock` is a **synchronous** gate — it blocks
+   until the user answers. That is where the "waiting for permission" state
+   belongs, and it means the shell can show real UI instead of guessing.
+   ⚠️ It must be called off the UI thread, and it needs a timeout.
+
+### Signing caveat — ad-hoc is not good enough for the real app
+
+The spike is **ad-hoc signed**, so TCC stored the grant with
+`identifier_type=Path` against the executable path. Consequences observed:
+
+- `tccutil reset AudioCapture pro.saleschat.meetai` is a **no-op** — it targets a
+  bundle-ID record that doesn't exist. The SPEC §6 verification recipe needs
+  updating, or a real identity. To force a fresh prompt, copy the bundle to a new
+  path.
+- One rebuild produced `Failed to match existing code requirement for subject
+  …/MacOS/meet-ai and service kTCCServiceAudioCapture` and re-prompted; another
+  rebuild did not. Grant persistence across rebuilds was **inconsistent** across
+  four runs, which is exactly what SPEC §2.9's "local self-signed identity, not
+  optional" is there to prevent. Not chased further — it is an artefact of ad-hoc
+  signing and disappears with a stable identity.
+
+`make-identity.sh` creates the self-signed cert, but making `codesign` accept it
+needs one `sudo security add-trusted-cert`. **Re-run the spike once under a real
+identity to confirm the grant becomes bundle-ID-keyed and survives rebuilds.**
+
+### Also measured, free of charge
+
+- **Microphone in the same bundle works.** `AVCaptureDevice.requestAccess(for:
+  .audio)` from the *helper* prompted, attributed to meet-ai, blocked 3 s, then
+  captured real room audio: 480 000 frames, peak 0.2645 (−11.55 dBFS), 100 buffers
+  at 48 kHz mono. Dual-track capture needs two grants, both named meet-ai.
+- **Crash safety holds.** `kill -9` on the helper 8 s into a 20 s capture left a
+  valid, playable 8.021 s WAV (`ffprobe` clean, RMS 0.3306, peak 0.5000). The
+  1-second header-patch cadence is enough; SPEC §2.3's 5 s is also fine.
+- **`kAudioAggregateDeviceTapAutoStartKey` must be `false`.** With it on,
+  `AudioDeviceStart` blocks until some tapped process produces audio — i.e. a
+  meeting recorder would not start recording until someone spoke, and the first
+  buffer's host time would no longer mark the true start of the segment. That
+  breaks `segments.json` (SPEC §3.4) before it is even written.
+
+### Still unverified
+
+- **What the API does when permission is *denied*.** Everything above is the
+  granted path. Whether `AudioDeviceCreateIOProcIDWithBlock` returns an error or
+  succeeds-and-delivers-silence on denial is unknown, and it decides whether the
+  denied-permission UI (SPEC §8.1 onboarding) can be driven by a return code or
+  must be driven by an RMS check. Test: grant once, toggle meet-ai off under
+  Privacy & Security → Audio Recording, re-run, record the `OSStatus`.
+- The dialog's literal text.
+- Behaviour under a real (non-ad-hoc) signing identity.
+- macOS 14.4–26. Everything here is macOS 27.0 only.
+
+---
+
+## 9. Decision — capture layer is **pure Rust, in-process** (2026-09-27)
+
+Resolves L3, which SPEC §1 explicitly delegated to this spike.
+
+SPEC §5 pre-committed to "pass → capture lives in the sidecar". **I am not taking
+that branch**, and this is the divergence to argue with rather than a silent
+re-design. The reasoning:
+
+The spike was meant to decide Swift-vs-Rust on TCC grounds. It removed TCC from
+the argument entirely — a bundled helper inherits the app's TCC identity cleanly
+(§8.2 above). So the decision falls back to ordinary engineering cost, and there
+the evidence points the other way:
+
+1. **Nothing in the capture path needs Swift.** Everything measured above is the
+   C Core Audio API — `AudioHardwareCreateProcessTap`,
+   `AudioObjectGetPropertyData`, `AudioHardwareCreateAggregateDevice`,
+   `AudioDeviceCreateIOProcIDWithBlock`. The single Objective-C object is
+   `CATapDescription`, and `objc2-core-audio` already binds it. Contrast
+   `SpeechTranscriber` (L4/A2), which is Swift-concurrency-native and genuinely
+   unreachable from Rust — that is what the sidecar is *for*.
+2. **The Phase 0 gate is drift < 200 ms across two tracks.** Mic capture is
+   `cpal`, in Rust. Putting the tap in a separate Swift process means two
+   processes, two clocks and a pipe between them, on the single hardest exit gate
+   in the project. Same-process gives both tracks one host clock and one writer
+   for `segments.json` (SPEC §3.4).
+3. **A sidecar boundary is free for transcription and expensive for capture.**
+   `meet-stt` is stateless: WAV path in, JSON lines out. Capture is a long-lived
+   real-time component sharing a ring buffer, device-change listeners, resamplers
+   and incremental WAV writers with the rest of `crates/audio`. Every audio frame
+   would have to cross a pipe, or the writers get duplicated in Swift.
+4. **The Windows seam only works in Rust.** SPEC §8.2 makes `AudioSource` + the
+   `stub-audio` `--target x86_64-pc-windows-msvc` cross-check part of `just check`
+   from day one, and ⛔-marks "OS-specific code only in `crates/audio/src/macos/`".
+   A Swift capture sidecar leaves that seam untested and unported.
+
+**Cost of this choice:** porting ~250 lines of working Swift to `objc2-core-audio`.
+That is the price, it is small, and the spike bundle is both the reference
+implementation and the test oracle for the port — the Rust version must reproduce
+the same numbers against the same tone.
+
+**Rejected middle ground:** Swift sidecar for the tap plus Rust for the mic. It
+takes the process boundary exactly where it hurts (drift) and keeps two languages
+in the 🔴 module.
+
+**Net effect on SPEC:** L3 resolves to in-process Rust, as §2.3 and §6's original
+stack line already assumed. `crates/audio` stays 🔴 rather than dropping to 🟡 —
+the ~1 week §5 hoped to save is not available. `sidecar/meet-stt` keeps
+transcription only, exactly as A2 scoped it.
