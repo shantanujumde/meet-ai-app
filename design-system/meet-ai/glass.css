@@ -13,7 +13,9 @@
    0 — Window base
    The webview must be transparent so the native material shows through.
    Pair with tauri.conf.json: transparent: true, windowEffects.effects:
-   ["underWindowBackground"], titleBarStyle: "Transparent".
+   ["underWindowBackground"], titleBarStyle: "Overlay" (not "Transparent" —
+   that value leaves the traffic lights in a bare strip above the webview
+   instead of inset into it; see MASTER.md §3).
    -------------------------------------------------------------------------- */
 html, body, #root {
   background: transparent;
