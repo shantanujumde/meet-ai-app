@@ -1,6 +1,8 @@
 //! The `whisper-rs` fallback engine.
 //!
-//! Used on macOS 14.4–25, and the guaranteed floor everywhere else (SPEC §2.5).
+//! The guaranteed floor everywhere Apple's engine is absent — Windows, and a
+//! deliberate manual override on mac. Since SPEC A8 raised the mac floor to
+//! macOS 26 it is no longer a *version* fallback there (SPEC §2.5).
 //! Slower and less accurate than Apple's engine, and — the part that matters —
 //! it hallucinates.
 //!
