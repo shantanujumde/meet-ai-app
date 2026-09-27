@@ -20,8 +20,9 @@ run it again.
 | `Info-helper.plist` | Embedded in the helper via `-sectcreate __TEXT __info_plist`, as SPEC §5 specifies |
 | `entitlements.plist` | `com.apple.security.device.audio-input` |
 | `build.sh` | Compile → assemble bundle → sign with hardened runtime → verify |
-| `make-identity.sh` | Creates a local self-signed code-signing identity (needs one `sudo` for the trust setting) |
+| `make-identity.sh` | Creates a local self-signed code-signing identity. **No `sudo`, no admin password** — the trust setting goes in the user domain (TUR-10) |
 | `run.sh` | Reset TCC, launch, then **re-measure the WAV with ffmpeg**, independently of what the probe claimed |
+| `verify-tur10.sh` | The two checks that need a human: grant creation, and an explicit **Don't Allow**. Two clicks; writes `/tmp/meet-ai-tur10/report.md` itself |
 
 ## Running it
 
@@ -31,24 +32,27 @@ run it again.
 ./run.sh --seconds 20 --mic        # also exercise the Microphone TCC service
 ```
 
-For a stable TCC grant across rebuilds, use a real identity instead of ad-hoc:
+For a stable TCC grant across rebuilds, use a real identity instead of ad-hoc —
+this takes about seven seconds and asks for nothing:
 
 ```sh
 ./make-identity.sh
-sudo security add-trusted-cert -d -r trustRoot -p codeSign \
-    -k /Library/Keychains/System.keychain "$TMPDIR/meet-ai-signing/cert.pem"
 SIGN_IDENTITY="meet-ai Local Signing" \
   SIGN_KEYCHAIN="$HOME/Library/Keychains/meet-ai-signing.keychain-db" ./build.sh
 ```
+
+Then `tccutil reset AudioCapture pro.saleschat.meetai` works, because the grant
+is keyed to the bundle ID rather than the executable path — FINDINGS §10.4.
 
 Artifacts land in `/tmp/meet-ai-phase0a-run` (override with `MEET_AI_SPIKE_OUT`).
 Deliberately outside the repo — recordings must never be committable.
 
 ### Forcing a fresh permission prompt
 
-Under ad-hoc signing TCC keys the grant to the executable **path**
-(`identifier_type=Path`), and `tccutil reset AudioCapture pro.saleschat.meetai`
-does not clear it. Copy the bundle somewhere new instead:
+With a real identity, `tccutil reset AudioCapture pro.saleschat.meetai` is all
+you need. Under **ad-hoc** signing TCC keys the grant to the executable **path**
+(`identifier_type=Path`) and that reset is a silent no-op — copy the bundle
+somewhere new instead:
 
 ```sh
 FRESH=/tmp/meet-ai-fresh-$(date +%s); mkdir -p "$FRESH"
@@ -73,6 +77,12 @@ reports only things that come from the samples — frame count, RMS, peak, count
 bit-exact-zero samples, per-second RMS, and first/last buffer host timestamps —
 and `run.sh` then re-measures the same file with `ffmpeg`, which has no idea what
 the probe claimed.
+
+TUR-10 made that stance load-bearing rather than merely careful: on a **denied**
+capture *every* call in the chain returns `noErr`, the IO callbacks fire at the
+normal rate, and every sample is a bit-exact zero (FINDINGS §10.1). Had the probe
+trusted return codes it would have reported a clean pass on a recording that
+contains nothing.
 
 The control case matters as much as the positive one: `./run.sh --no-tone` must
 come back as **all zero bytes**. If it doesn't, the tap is picking up something

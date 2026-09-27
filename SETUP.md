@@ -427,14 +427,34 @@ Tailwind v4 — **no config file**. In `src/index.css`:
 <key>com.apple.security.device.audio-input</key><true/>
 ```
 
-Self-signed identity — **not optional.** macOS TCC will not reliably register an unsigned app, so audio permission never sticks:
+Self-signed identity — **not optional, and it is a one-time step.** Under ad-hoc
+signing (`codesign -s -`) the designated requirement *is* the binary's cdhash, so
+TCC keys the grant to the executable **path** and every rebuild can drop it.
+With an identity the requirement becomes bundle ID + certificate, TCC keys the
+grant to `pro.saleschat.meetai`, and `tccutil reset` starts working. Both halves
+measured in FINDINGS §10.3–10.4.
 
 ```bash
-# create a self-signed code-signing cert named "meet-ai-dev" in Keychain Access:
-#   Keychain Access > Certificate Assistant > Create a Certificate...
-#   Name: meet-ai-dev | Identity Type: Self Signed Root | Type: Code Signing
-security find-identity -v -p codesigning     # confirm it appears
+spikes/phase0a-tcc/make-identity.sh          # ~7s, no admin password needed
+security find-identity -v -p codesigning     # 1) … "meet-ai Local Signing"
 ```
+
+The script generates the cert, puts it in its own keychain
+(`~/Library/Keychains/meet-ai-signing.keychain-db`, never your login keychain),
+and marks it trusted for code signing in the **user** trust domain. That last
+part is why there is no password prompt: `security add-trusted-cert` only needs
+an admin password with `-d`, which writes to the system keychain. We don't need
+that. Then:
+
+```bash
+export SIGN_IDENTITY="meet-ai Local Signing"
+export SIGN_KEYCHAIN="$HOME/Library/Keychains/meet-ai-signing.keychain-db"
+just bundle-signed
+```
+
+⛔ `just bundle-signed` must **never** fall back to `codesign -s -`. A bundle
+signed ad-hoc invalidates every TCC result you get from it, including the
+Phase 0a gate.
 
 ### Step 6 — `justfile` (incl. the ⛔ Windows cross-check)
 
