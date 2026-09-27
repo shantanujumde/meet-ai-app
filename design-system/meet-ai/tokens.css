@@ -1,0 +1,343 @@
+/* =============================================================================
+   meet-ai design system — token layer
+   Platform: macOS (Tauri 2 + WKWebView). Apple Liquid Glass constructs.
+   Layers: 1 primitive -> 2 semantic -> 3 component. Never use layer 1 in a
+   component. Never hardcode a raw value in a component.
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   LAYER 1 — PRIMITIVES
+   Raw values. No meaning attached. Do not reference these in components.
+   -------------------------------------------------------------------------- */
+:root {
+  /* --- Neutral alpha ramps -------------------------------------------------
+     Glass surfaces are alpha over an unknown backdrop, so the neutral scale is
+     defined in alpha, not in opaque hex. Opaque hex exists only for the
+     reduced-transparency fallback. */
+  --white-a02: rgba(255, 255, 255, 0.02);
+  --white-a04: rgba(255, 255, 255, 0.04);
+  --white-a06: rgba(255, 255, 255, 0.06);
+  --white-a10: rgba(255, 255, 255, 0.10);
+  --white-a14: rgba(255, 255, 255, 0.14);
+  --white-a20: rgba(255, 255, 255, 0.20);
+  --white-a30: rgba(255, 255, 255, 0.30);
+  --white-a45: rgba(255, 255, 255, 0.45);
+  --white-a60: rgba(255, 255, 255, 0.60);
+  --white-a80: rgba(255, 255, 255, 0.80);
+
+  --black-a02: rgba(0, 0, 0, 0.02);
+  --black-a04: rgba(0, 0, 0, 0.04);
+  --black-a06: rgba(0, 0, 0, 0.06);
+  --black-a10: rgba(0, 0, 0, 0.10);
+  --black-a14: rgba(0, 0, 0, 0.14);
+  --black-a20: rgba(0, 0, 0, 0.20);
+  --black-a30: rgba(0, 0, 0, 0.30);
+  --black-a45: rgba(0, 0, 0, 0.45);
+  --black-a60: rgba(0, 0, 0, 0.60);
+  --black-a80: rgba(0, 0, 0, 0.80);
+
+  /* Opaque neutrals — fallback only (prefers-reduced-transparency) */
+  --gray-50:  #f7f7f8;
+  --gray-100: #ededf0;
+  --gray-200: #dcdce1;
+  --gray-300: #c2c2ca;
+  --gray-500: #7d7d88;
+  --gray-700: #3d3d46;
+  --gray-800: #2a2a31;
+  --gray-900: #1c1c20;
+  --gray-950: #131316;
+
+  /* --- macOS system colors -------------------------------------------------
+     Match the platform. Do not invent a brand blue for system affordances. */
+  --sys-blue-light:   #007aff;
+  --sys-blue-dark:    #0a84ff;
+  --sys-red-light:    #ff3b30;
+  --sys-red-dark:     #ff453a;
+  --sys-green-light:  #34c759;
+  --sys-green-dark:   #30d158;
+  --sys-orange-light: #ff9500;
+  --sys-orange-dark:  #ff9f0a;
+
+  /* --- Blur radii -----------------------------------------------------------
+     Four steps only. More steps means inconsistent depth and more GPU passes. */
+  --blur-thin:    8px;   /* inline chips, hover layers */
+  --blur-regular: 20px;  /* default glass — floating controls, popovers */
+  --blur-thick:   40px;  /* sheets, modal scrims */
+  --blur-window:  60px;  /* window-level base, when not using native vibrancy */
+
+  /* Saturation boost. Apple's materials pull color from the backdrop.
+     Without this, glass over a colorful backdrop reads as dirty gray. */
+  --sat-glass: 180%;
+  --sat-clear: 140%;
+
+  /* --- Corner radii ---------------------------------------------------------
+     Concentric rule: an inner radius equals the outer radius minus the padding
+     between them. Compute with calc(), never eyeball. */
+  --radius-window:  12px;  /* macOS 26 window corner */
+  --radius-panel:   14px;
+  --radius-card:    10px;
+  --radius-control: 8px;
+  --radius-chip:    6px;
+  --radius-capsule: 999px; /* default for standalone floating controls */
+
+  /* --- Spacing — 4pt grid ---------------------------------------------------
+     macOS is a pointer platform. Density is tighter than web or iOS. */
+  --space-0:  0;
+  --space-1:  2px;
+  --space-2:  4px;
+  --space-3:  6px;
+  --space-4:  8px;
+  --space-5:  12px;
+  --space-6:  16px;
+  --space-7:  20px;
+  --space-8:  24px;
+  --space-9:  32px;
+  --space-10: 40px;
+
+  /* --- Control heights — AppKit metrics ------------------------------------- */
+  --control-h-small:   20px;
+  --control-h-regular: 24px;
+  --control-h-large:   32px;  /* primary actions, toolbar glass buttons */
+  --control-h-touch:   44px;  /* only for drag handles and the record button */
+
+  /* --- Typography -----------------------------------------------------------
+     Use the system font. A Mac app that ships a webfont reads as a website.
+     -apple-system resolves to SF Pro and picks up optical sizing for free. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* macOS type scale in px. Base is 13, not 16. */
+  --text-caption2:  10px;
+  --text-caption1:  11px;
+  --text-footnote:  12px;
+  --text-body:      13px;  /* default */
+  --text-callout:   14px;
+  --text-headline:  15px;
+  --text-title3:    17px;
+  --text-title2:    22px;
+  --text-title1:    28px;
+
+  --leading-tight:  1.2;
+  --leading-normal: 1.45;
+  --leading-prose:  1.6;   /* notes and transcript body */
+
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  /* --- Motion ---------------------------------------------------------------
+     Glass reacts, it does not perform. Durations are short and easing is
+     mostly deceleration, matching AppKit. */
+  --dur-instant: 80ms;   /* press feedback */
+  --dur-fast:    140ms;  /* hover, tint change */
+  --dur-normal:  220ms;  /* popover in, panel expand */
+  --dur-slow:    320ms;  /* sheet, morph between grouped glass */
+
+  --ease-out:    cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-in-out: cubic-bezier(0.45, 0.05, 0.55, 0.95);
+  --ease-spring: linear(0, 0.24 4%, 0.63 10%, 0.9 16%, 1.02 22%, 1.05 30%, 1.01 45%, 1);
+
+  /* --- Elevation ------------------------------------------------------------
+     Glass separates by shadow, not by a darker fill. */
+  --shadow-raised:   0 1px 2px var(--black-a10), 0 0 0 0.5px var(--black-a10);
+  --shadow-floating: 0 4px 16px var(--black-a20), 0 0 0 0.5px var(--black-a14);
+  --shadow-sheet:    0 16px 48px var(--black-a30), 0 0 0 0.5px var(--black-a20);
+
+  /* --- Z scale --------------------------------------------------------------- */
+  --z-content:   0;
+  --z-sticky:    10;
+  --z-floating:  20;
+  --z-popover:   40;
+  --z-sheet:     60;
+  --z-toast:     80;
+  --z-recording: 100; /* the recording indicator is never covered */
+}
+
+/* -----------------------------------------------------------------------------
+   LAYER 2 — SEMANTIC
+   What a value means. Components consume only this layer.
+   Light mode is the default. Dark mode overrides below.
+   -------------------------------------------------------------------------- */
+:root {
+  /* Glass surfaces — alpha fills that sit on the blurred backdrop */
+  --surface-glass-regular: var(--white-a60);
+  --surface-glass-clear:   var(--white-a20);
+  --surface-glass-raised:  var(--white-a80);
+  --surface-glass-sunken:  var(--black-a04);
+
+  /* The content layer — opaque, sits under the glass layer */
+  --surface-content:      rgba(255, 255, 255, 0.72);
+  --surface-content-alt:  var(--white-a45);
+
+  /* Rim light. Glass has a bright top edge and a dark bottom edge. */
+  --rim-highlight: var(--white-a80);
+  --rim-shadow:    var(--black-a10);
+  --rim-border:    var(--black-a10);
+
+  /* Dimming layer required under Clear glass over photos or video */
+  --scrim-clear:  var(--black-a20);
+  --scrim-sheet:  var(--black-a30);
+
+  /* Text */
+  --text-primary:   rgba(0, 0, 0, 0.85);
+  --text-secondary: rgba(0, 0, 0, 0.55);
+  --text-tertiary:  rgba(0, 0, 0, 0.35);
+  --text-on-accent: #ffffff;
+
+  /* Separators */
+  --separator:        var(--black-a10);
+  --separator-strong: var(--black-a20);
+
+  /* Accent — one tint per window. Used for the single primary action. */
+  --accent:          var(--sys-blue-light);
+  --accent-hover:    color-mix(in srgb, var(--sys-blue-light) 88%, black);
+  --accent-glass:    color-mix(in srgb, var(--sys-blue-light) 22%, transparent);
+  --focus-ring:      var(--sys-blue-light);
+
+  /* Status — recording is the app's loudest state, so it owns red */
+  --status-recording: var(--sys-red-light);
+  --status-success:   var(--sys-green-light);
+  --status-warning:   var(--sys-orange-light);
+  --status-danger:    var(--sys-red-light);
+
+  /* Speaker colors for the transcript. Distinguishable without relying on hue
+     alone — pair each with an initial and a position. */
+  --speaker-1: var(--sys-blue-light);
+  --speaker-2: #af52de;
+  --speaker-3: #ff9500;
+  --speaker-4: #00c7be;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface-glass-regular: var(--white-a10);
+    --surface-glass-clear:   var(--white-a04);
+    --surface-glass-raised:  var(--white-a14);
+    --surface-glass-sunken:  var(--black-a20);
+
+    --surface-content:     rgba(28, 28, 32, 0.72);
+    --surface-content-alt: var(--black-a30);
+
+    --rim-highlight: var(--white-a20);
+    --rim-shadow:    var(--black-a45);
+    --rim-border:    var(--white-a10);
+
+    --scrim-clear: var(--black-a45);
+    --scrim-sheet: var(--black-a60);
+
+    --text-primary:   rgba(255, 255, 255, 0.92);
+    --text-secondary: rgba(255, 255, 255, 0.62);
+    --text-tertiary:  rgba(255, 255, 255, 0.40);
+    --text-on-accent: #ffffff;
+
+    --separator:        var(--white-a10);
+    --separator-strong: var(--white-a20);
+
+    --accent:       var(--sys-blue-dark);
+    --accent-hover: color-mix(in srgb, var(--sys-blue-dark) 88%, white);
+    --accent-glass: color-mix(in srgb, var(--sys-blue-dark) 26%, transparent);
+    --focus-ring:   var(--sys-blue-dark);
+
+    --status-recording: var(--sys-red-dark);
+    --status-success:   var(--sys-green-dark);
+    --status-warning:   var(--sys-orange-dark);
+    --status-danger:    var(--sys-red-dark);
+
+    --speaker-1: var(--sys-blue-dark);
+    --speaker-2: #bf5af2;
+    --speaker-3: var(--sys-orange-dark);
+    --speaker-4: #66d4cf;
+
+    --shadow-raised:   0 1px 2px var(--black-a45), 0 0 0 0.5px var(--white-a06);
+    --shadow-floating: 0 4px 16px var(--black-a60), 0 0 0 0.5px var(--white-a10);
+    --shadow-sheet:    0 16px 48px var(--black-a80), 0 0 0 0.5px var(--white-a10);
+  }
+}
+
+/* Explicit dark override so an in-app theme toggle wins over the system */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-glass-regular: var(--white-a10);
+  --surface-glass-clear:   var(--white-a04);
+  --surface-glass-raised:  var(--white-a14);
+  --surface-content:       rgba(28, 28, 32, 0.72);
+  --rim-highlight: var(--white-a20);
+  --rim-shadow:    var(--black-a45);
+  --rim-border:    var(--white-a10);
+  --scrim-clear:   var(--black-a45);
+  --text-primary:   rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.62);
+  --text-tertiary:  rgba(255, 255, 255, 0.40);
+  --separator:      var(--white-a10);
+  --accent:         var(--sys-blue-dark);
+  --focus-ring:     var(--sys-blue-dark);
+  --status-recording: var(--sys-red-dark);
+}
+
+/* -----------------------------------------------------------------------------
+   LAYER 3 — COMPONENT
+   One block per surface in the app. Values reference layer 2 only.
+   Concentric radii are computed, never typed by hand.
+   -------------------------------------------------------------------------- */
+:root {
+  /* Titlebar — transparent, drag region, merges with the toolbar */
+  --titlebar-h:       38px;
+  --titlebar-fill:    transparent;
+  --titlebar-pad-x:   var(--space-5);
+  --titlebar-traffic-inset: 78px; /* clearance for the traffic lights */
+
+  /* Sidebar — meeting list. Native vibrancy behind it, no extra blur. */
+  --sidebar-w:        228px;
+  --sidebar-w-min:    180px;
+  --sidebar-w-max:    320px;
+  --sidebar-fill:     transparent;
+  --sidebar-pad:      var(--space-4);
+  --sidebar-row-h:    28px;
+  --sidebar-row-radius: var(--radius-chip);
+  --sidebar-row-hover:  var(--white-a10);
+  --sidebar-row-active: var(--accent-glass);
+
+  /* Floating toolbar — the glass layer above the content */
+  --toolbar-pad:      var(--space-2);
+  --toolbar-radius:   var(--radius-capsule);
+  --toolbar-gap:      var(--space-2);
+  --toolbar-item-h:   var(--control-h-large);
+  /* Concentric: inner radius = outer radius - padding */
+  --toolbar-item-radius: calc(var(--radius-capsule) - var(--toolbar-pad));
+
+  /* Notes pane — the primary writing surface, opaque for reading comfort */
+  --notes-pad:        var(--space-8);
+  --notes-measure:    68ch;
+  --notes-text:       var(--text-callout);
+  --notes-leading:    var(--leading-prose);
+  --notes-fill:       var(--surface-content);
+
+  /* Live transcript — collapsible, glass, sits over the notes pane */
+  --transcript-w:         320px;
+  --transcript-radius:    var(--radius-panel);
+  --transcript-pad:       var(--space-5);
+  --transcript-row-gap:   var(--space-4);
+  --transcript-row-radius: calc(var(--radius-panel) - var(--transcript-pad));
+  --transcript-text:      var(--text-footnote);
+  --transcript-collapsed-h: var(--control-h-large);
+  /* Volatile (not yet finalized) text is dimmer and never persisted */
+  --transcript-volatile:  var(--text-tertiary);
+  --transcript-final:     var(--text-primary);
+
+  /* Popover — menu bar panel and inline menus */
+  --popover-radius:   var(--radius-panel);
+  --popover-pad:      var(--space-3);
+  --popover-item-h:   var(--control-h-regular);
+  --popover-item-radius: calc(var(--radius-panel) - var(--popover-pad));
+  --popover-min-w:    240px;
+
+  /* Record button — the one control that must be findable at a glance */
+  --record-size:      var(--control-h-touch);
+  --record-fill:      var(--status-recording);
+  --record-pulse-min: 0.55;
+
+  /* Focus ring — 2px outside the control, never removed */
+  --focus-w:          2px;
+  --focus-offset:     2px;
+}
