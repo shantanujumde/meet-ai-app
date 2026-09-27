@@ -12,11 +12,8 @@
 //! been observed to fail is not known to work** — so every threshold gets a
 //! pair, one fixture just under and one just over.
 //!
-//! One row's expected value is still contested rather than merely unbuilt
-//! (`refuse-one-anchor`). Its fixture is built and its assertion is written,
-//! `#[ignore]`d with the reason and the owner — a missing fixture is invisible,
-//! an ignored one shows up in every test run. Run it with
-//! `cargo test -p audio --test segments_fixtures -- --ignored`.
+//! `refuse-one-anchor` was the one contested row: the spec's §3 rationale
+//! predated A5 and no longer applies. Resolved on TUR-4 — see the test below.
 
 use std::path::PathBuf;
 
@@ -384,26 +381,37 @@ fn refuse_frozen_clock_and_frames_refuses_a_stuck_anchor_latch() {
     );
 }
 
-/// **Contested expected value.** Owner: [@Rune] on TUR-4.
+/// **Resolved on TUR-4, by Rune: measures, does not refuse.**
 ///
-/// The spec's §3 rationale is "nothing to difference", which was written when
-/// drift was assumed to be an anchor-to-anchor difference. A5 measures each
-/// anchor against `start_host_ns` instead, so one anchor covering its whole
-/// segment *is* a valid one-point measurement — there is no slope, but there is
-/// a drift number, and `DriftReport` has no slope field to mark `n/a`.
+/// The fixture spec's §3 rationale — "nothing to difference" — predates A5 and
+/// no longer holds: A5 measures each anchor against `start_host_ns`, not
+/// anchor-to-anchor, so one anchor covering its whole segment is one valid
+/// host-clock-referenced point. `max_abs_ms` and `final_ms` are both
+/// well-defined from a single sample; what a single anchor cannot show is a
+/// *slope*, and a minimum-anchor-count rule for that belongs to the future
+/// slope feature (F3: `drift-check` prints `n/a` below 2 measured anchors),
+/// which has nothing in `DriftReport` to attach to yet and is not this
+/// function's refusal to make.
 ///
-/// So either the row is stale or single-point coverage is too thin to certify.
-/// Written and ignored rather than dropped, because dropping it silently
-/// decides the question.
+/// The dimension `Segments::drift()` already gates on is *coverage*: a single
+/// anchor that leaves most of its segment's audio unmeasured still refuses via
+/// `AnchorCoverage`, same as zero anchors would. This fixture's one anchor
+/// covers its whole 5 s segment, so there is nothing uncovered.
 #[test]
-#[ignore = "expected value contested: one anchor is a valid point measurement under A5 — Rune, TUR-4"]
-fn refuse_one_anchor_refuses_a_single_point_measurement() {
-    let result = load("refuse-one-anchor").drift();
+fn a_single_anchor_that_covers_its_whole_segment_is_a_valid_point_measurement() {
+    let report = load("single-anchor-measures")
+        .drift()
+        .expect("one anchor covering its whole segment is a measurement, not a refusal");
 
-    assert!(
-        result.is_err(),
-        "a one-anchor recording measured: {result:#?}"
+    assert_eq!(report.mic.anchors, 1);
+    assert_ms(report.mic.max_abs_ms, 0.0, "single-anchor mic drift");
+    assert_ms(report.mic.final_ms, 0.0, "single-anchor mic final drift");
+    assert_ms(
+        report.mic.tail_unanchored_ms,
+        0.0,
+        "fully covered by its one anchor",
     );
+    assert!(report.passes(GATE_MS), "{report:?}");
 }
 
 // ---------------------------------------------------------------------------
