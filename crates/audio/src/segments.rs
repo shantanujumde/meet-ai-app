@@ -1616,7 +1616,10 @@ mod tests {
         writer.update_frames(240_000, 240_000);
 
         let idx = 1;
-        writer.segments.push(SegmentsWriter::segment(idx, open(reason::STREAM_RESTART, 10_000_000_000)));
+        writer.segments.push(SegmentsWriter::segment(
+            idx,
+            open(reason::STREAM_RESTART, 10_000_000_000),
+        ));
 
         let err = writer.as_segments().drift().unwrap_err();
         assert!(matches!(
