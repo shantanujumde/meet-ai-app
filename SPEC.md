@@ -517,6 +517,20 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A7 — 2026-09-27 · The permission-check tone is audible, and plays every recording, not just at onboarding (amends §8.1; spun out of TUR-10 as TUR-24)
+
+A6 item 3 established *that* meet-ai must play a known tone and listen for it, but not what the tone sounds like or how often it plays. Three options were on the table: an audible chime, an inaudible (quiet or ultrasonic) tone, or a tone played once at onboarding only. Decided: **audible, and on every recording start, not just onboarding.**
+
+1. **The control has to survive the exact path it is testing.** Quiet or ultrasonic content is the first thing Bluetooth codecs, device resampling and AGC throw away — the very loss the tone exists to detect. Loud enough to be heard is loud enough to be measured.
+2. **It costs nothing extra in UX.** The app wants a "recording started" cue anyway; the same sound serves both jobs.
+3. **Onboarding-only does not cover permission revoked mid-life.** macOS lets a user flip System Settings → Privacy & Security at any time, silently, with no signal to a running app. A check that ran once at setup would let meet-ai record an hour of silence after a later revocation and report success. Checking at the start of every recording catches that case; onboarding-only cannot.
+
+Implementation: `crates/audio/src/chime.rs` — a rising two-note chime (A5 880 Hz → E6 1318.5 Hz, ~220 ms, −12 dBFS), a Goertzel-based detector requiring both notes present with contrast against each other (rejects a sustained tone that happens to contain both partials), and a poll-until-heard probe sized to the 1.07 s tap settle time measured in TUR-4. Full rationale and test coverage in that file.
+
+**Open item, not yet measured:** whether the chime still reaches the tap when system output is muted or at zero volume. If it does not, a muted Mac reads identically to a denial. Until this is measured, "no chime" must surface as *needs explaining*, not a bare "permission denied" — see the ⚠️ in `chime.rs`.
+
+*Decided by Nia (onboarding UX owner) on TUR-24. Rune (capture owner) had no preference beyond the tone surviving the audio path.*
+
 ### A6 — 2026-09-27 · L3 resolves to **in-process Rust** (resolves L3; supersedes the §5 Phase-0a pass branch)
 
 L3 did not pre-decide the capture location — it delegated the decision to the Phase 0a spike and named the Swift sidecar only as the thing to *test first*. The spike passed, and §5's table reads "Pass → capture lives in the sidecar". **That branch is not being taken**, and this amendment records why rather than leaving the divergence in `FINDINGS.md` alone. Full evidence: `FINDINGS.md` §9, §9.1, §10.
