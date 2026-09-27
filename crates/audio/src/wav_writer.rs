@@ -24,9 +24,7 @@
 //! smaller, fully-durable value rather than a larger one nothing backs.
 
 use std::fs::{File, OpenOptions};
-#[cfg(test)]
-use std::io::Read;
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::segments::SAMPLE_RATE_HZ;
@@ -116,6 +114,34 @@ impl WavWriter {
         Ok(())
     }
 
+    /// Insert `frames` zero samples immediately after the header, ahead of
+    /// whatever has already been appended — the head-pad contract §6 requires
+    /// so frame 0 of both channels lands on the recording's shared
+    /// `start_host_ns`, for whichever channel's hardware came up later.
+    ///
+    /// Only ever called once, at the very start of a recording, before more
+    /// than a checkpoint's worth of real audio exists — so shifting the
+    /// existing bytes by re-reading and rewriting them is cheap. The caller
+    /// (`AudioSource::pad_leading_silence`) is responsible for serializing
+    /// this against concurrent [`WavWriter::append`] calls; nothing here
+    /// does that on its own.
+    pub fn prepend_silence(&mut self, frames: u64) -> io::Result<()> {
+        if frames == 0 {
+            return Ok(());
+        }
+        self.file.seek(SeekFrom::Start(HEADER_LEN))?;
+        let mut existing = Vec::new();
+        self.file.read_to_end(&mut existing)?;
+
+        self.file.seek(SeekFrom::Start(HEADER_LEN))?;
+        let silence = vec![0u8; (frames * BYTES_PER_SAMPLE as u64) as usize];
+        self.file.write_all(&silence)?;
+        self.file.write_all(&existing)?;
+
+        self.appended_frames += frames;
+        Ok(())
+    }
+
     /// Frames appended so far, including any not yet covered by the header
     /// (the excess §7 bounds at one checkpoint).
     pub fn appended_frames(&self) -> u64 {
@@ -126,6 +152,25 @@ impl WavWriter {
     pub fn header_frames(&self) -> u64 {
         self.header_frames
     }
+}
+
+/// Read back only the frame count a WAV header at `path` declares, without
+/// reading the sample data. For a caller (`meet-rec`, `drift-check`) that
+/// wants to report what a *conforming* reader would see — the declared
+/// length, never the file's actual on-disk size, which can run ahead of it
+/// by up to one checkpoint (§7).
+pub fn read_header_frames(path: &Path) -> io::Result<u64> {
+    let mut file = File::open(path)?;
+    let mut header = [0u8; HEADER_LEN as usize];
+    file.read_exact(&mut header)?;
+    if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" || &header[36..40] != b"data" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{}: not a canonical 44-byte RIFF/WAVE file", path.display()),
+        ));
+    }
+    let declared_bytes = u32::from_le_bytes(header[40..44].try_into().unwrap()) as u64;
+    Ok(declared_bytes / BYTES_PER_SAMPLE as u64)
 }
 
 fn header_bytes(frames: u64) -> [u8; HEADER_LEN as usize] {
@@ -332,6 +377,53 @@ mod tests {
             "data length must still read as the old, fully-durable value"
         );
         assert_eq!(samples, first);
+    }
+
+    #[test]
+    fn prepend_silence_shifts_real_audio_after_a_silent_head_pad() {
+        let path = temp_path("head-pad.wav");
+        let _ = std::fs::remove_file(&path);
+        let mut w = WavWriter::create(&path).unwrap();
+
+        // The channel that came up first already wrote its first buffer
+        // before the orchestrator could measure the gap and pad the other
+        // channel — exercise that ordering, not the empty-file case.
+        let real = tone(160, 440.0); // 10 ms
+        w.append(&real).unwrap();
+
+        w.prepend_silence(80).unwrap(); // 5 ms pad
+        w.fsync_data().unwrap();
+        w.patch_header().unwrap();
+
+        assert_eq!(w.header_frames(), 240);
+        let (frames, samples) = read_declared(&path).unwrap();
+        assert_eq!(frames, 240);
+        assert!(
+            samples[..80].iter().all(|&s| s == 0),
+            "the pad must be silence, not garbage"
+        );
+        assert_eq!(
+            samples[80..],
+            real,
+            "the real audio must be exact and unshifted past the pad"
+        );
+    }
+
+    #[test]
+    fn prepend_silence_is_a_no_op_for_a_zero_frame_pad() {
+        let path = temp_path("no-pad.wav");
+        let _ = std::fs::remove_file(&path);
+        let mut w = WavWriter::create(&path).unwrap();
+        let real = tone(160, 440.0);
+        w.append(&real).unwrap();
+
+        w.prepend_silence(0).unwrap();
+        w.fsync_data().unwrap();
+        w.patch_header().unwrap();
+
+        let (frames, samples) = read_declared(&path).unwrap();
+        assert_eq!(frames, 160);
+        assert_eq!(samples, real);
     }
 
     #[test]

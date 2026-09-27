@@ -141,11 +141,37 @@ pub trait AudioSource: Send {
     /// them.
     fn position(&self) -> Option<(u64, u64)>;
 
-    /// §7's checkpoint order, steps 1 and 3: fsync the appended sample bytes,
-    /// then patch the header to declare them. The caller sequences
-    /// `segments.json`'s atomic write between the two — this method only
-    /// performs its own half.
-    fn checkpoint(&mut self) -> Result<(), Error>;
+    /// §7's checkpoint order, step 1: fsync the appended sample bytes so they
+    /// are durable before `segments.json` can claim them.
+    ///
+    /// Split from [`AudioSource::patch_header`] rather than one combined
+    /// `checkpoint` call because the two steps must straddle
+    /// `segments.json`'s own atomic write (temp file, `fsync`, `rename(2)`):
+    /// fsync every channel's data first, then write `segments.json`, then
+    /// patch every channel's header. Patching a header before
+    /// `segments.json` is written risks exactly the crash window §7 exists
+    /// to prevent — a header declaring frames no `segments.json` on disk yet
+    /// accounts for.
+    fn fsync_data(&mut self) -> Result<(), Error>;
+
+    /// §7's checkpoint order, step 3: patch the WAV header to declare the
+    /// frames [`AudioSource::fsync_data`] just made durable. Call only after
+    /// `segments.json` has been written for this checkpoint.
+    fn patch_header(&mut self) -> Result<(), Error>;
+
+    /// Contract §6's head-pad: insert `frames` of silence at the very start
+    /// of this channel's WAV, so frame 0 lands on the recording's shared
+    /// `start_host_ns` instead of on whichever instant this channel's
+    /// hardware happened to come up.
+    ///
+    /// The orchestrator calls this once, immediately after both channels'
+    /// first real buffer has arrived, on whichever channel's first buffer
+    /// was later — never on the earlier one, and never more than once.
+    /// Implementations must serialize this against their own worker thread's
+    /// concurrent [`AudioSource::position`]-reporting writes (e.g. by taking
+    /// the same lock), since unlike the other methods here this one is not
+    /// safe to interleave with an in-flight append.
+    fn pad_leading_silence(&mut self, frames: u64) -> Result<(), Error>;
 }
 
 /// Everything that can go wrong during capture.
