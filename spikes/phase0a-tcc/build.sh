@@ -5,8 +5,8 @@
 # environment. This script is the minimal stand-in for `just bundle-signed`:
 # no Tauri, no React, same signing shape.
 #
-#   SIGN_IDENTITY="meet-ai Local Signing"  ./build.sh     # self-signed identity
-#   ./build.sh                                            # falls back to ad-hoc (-)
+#   ./build.sh                     # signs with the local identity (see make-identity.sh)
+#   ALLOW_ADHOC=1 ./build.sh       # ad-hoc — only when you mean it, see below
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,12 +46,45 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 # TCC will not reliably register the app without it, and the spike is supposed
 # to test the real configuration, not a relaxed one.
 # ---------------------------------------------------------------------------
-IDENTITY="${SIGN_IDENTITY:--}"
+# Default to the local identity and find its keychain ourselves, so nobody has
+# to remember two env vars. make-identity.sh is idempotent — running it twice
+# does not rotate the cert.
+IDENTITY="${SIGN_IDENTITY:-meet-ai Local Signing}"
+if [[ -z "${SIGN_KEYCHAIN:-}" && "$IDENTITY" != "-" ]]; then
+  REAL_HOME="$(/usr/bin/dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+  [[ -n "$REAL_HOME" && -d "$REAL_HOME" ]] || REAL_HOME="$HOME"
+  CANDIDATE="$REAL_HOME/Library/Keychains/meet-ai-signing.keychain-db"
+  [[ -f "$CANDIDATE" ]] && SIGN_KEYCHAIN="$CANDIDATE"
+fi
 
-if [[ "$IDENTITY" == "-" ]]; then
-  echo "==> signing ad-hoc (no code-signing identity configured)"
+# Ad-hoc signing is no longer a silent fallback. TCC cannot key an ad-hoc
+# signature to anything stable, so it keys the grant to the executable's
+# absolute PATH instead — and those path records are permanent: `tccutil reset`
+# resolves its argument through LaunchServices as a bundle ID, so a path record
+# is unreachable and errors with -10814 (measured, TUR-10). Every ad-hoc build
+# in a fresh directory therefore leaves one more un-removable TCC record behind
+# and makes the next grant test ambiguous. Two such orphans already exist.
+if [[ "$IDENTITY" == "-" || -z "${SIGN_KEYCHAIN:-}" ]]; then
+  if [[ "${ALLOW_ADHOC:-0}" != "1" ]]; then
+    cat >&2 <<'EOF'
+!! Refusing to ad-hoc sign.
+
+   No code-signing identity was found, so this build would be signed ad-hoc.
+   TCC would then key any grant to this bundle's absolute path, permanently:
+   path-keyed records cannot be removed by `tccutil reset`, only by hand in
+   System Settings. That poisons the permission baseline for everyone.
+
+   Fix it once:   ./make-identity.sh
+   Or override:   ALLOW_ADHOC=1 ./build.sh
+EOF
+    exit 1
+  fi
+  IDENTITY="-"
+  unset SIGN_KEYCHAIN
+  echo "==> signing ad-hoc (ALLOW_ADHOC=1) — this will create a path-keyed TCC record"
 else
   echo "==> signing with identity: $IDENTITY"
+  echo "    keychain: $SIGN_KEYCHAIN"
 fi
 
 # Built as a function rather than an array of extra args: under `set -u`,

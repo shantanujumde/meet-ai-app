@@ -624,3 +624,77 @@ The second line is `NSAudioCaptureUsageDescription`, verbatim. There is **no**
 table — unlike Bluetooth and App Data, this service has no fallback sentence.
 Our string is the *entire* explanation the user gets, which is one more reason
 §10.2's ⛔ matters: omit it and macOS does not fall back, it denies.
+
+### 10.6 Path-keyed TCC records are **permanent**, and that makes ad-hoc signing a one-way door
+
+Prompted by Tess's read-only `tccutil list` on TUR-2, which found four TCC
+identities for one app: three absolute paths and one bundle ID. §10.4 explains
+why they exist. The new question is whether they can be cleaned up. They cannot.
+
+`tccutil reset` resolves its argument through LaunchServices **as a bundle
+identifier**. Give it a path and it fails identically to a bundle ID that was
+never installed:
+
+```
+$ tccutil reset AudioCapture "/private/tmp/meet-ai-fresh-1790494489/meet-ai.app/Contents/MacOS/meet-ai"
+tccutil: No such bundle identifier "…": OSStatus error -10814.   # exit 64
+
+$ tccutil reset AudioCapture "pro.saleschat.definitelynotreal"
+tccutil: No such bundle identifier "…": OSStatus error -10814.   # exit 64
+```
+
+Same error for the `.app` path as for the executable path. Deleting the
+directory does not help either — I removed both `/private/tmp/meet-ai-fresh*`
+trees and re-listed:
+
+```
+$ rm -rf /private/tmp/meet-ai-fresh-1790494489 /private/tmp/meet-ai-fresh2-1790494596
+$ tccutil list -s kTCCServiceAudioCapture | grep -i meet
+/Users/shantanujumde/apps/meet-ai/spikes/phase0a-tcc/build/meet-ai.app/Contents/MacOS/meet-ai
+/private/tmp/meet-ai-fresh-1790494489/meet-ai.app/Contents/MacOS/meet-ai     # still there
+/private/tmp/meet-ai-fresh2-1790494596/meet-ai.app/Contents/MacOS/meet-ai    # still there
+pro.saleschat.meetai
+```
+
+So a path record outlives both the tool that can reset bundle IDs and the file
+it points at. Clearing one needs System Settings by hand, or a direct `TCC.db`
+write behind Full Disk Access.
+
+**Consequence: every ad-hoc build in a fresh directory permanently dirties the
+machine's permission baseline.** That is a correctness problem for gate testing,
+not just untidiness — a re-prompt against a moving identity is unattributable
+(correct re-ask after a denial, or macOS simply not recognising the binary?).
+
+Three things changed to close the door:
+
+- **`build.sh` refuses to ad-hoc sign.** It now defaults `SIGN_IDENTITY` to the
+  local identity and locates the keychain itself, so the normal invocation is a
+  bare `./build.sh`. With no identity it exits 1 and explains why;
+  `ALLOW_ADHOC=1` is the deliberate override.
+- **`make-identity.sh` is idempotent.** It used to mint a fresh cert *and*
+  `delete-keychain` on every run — which rotated the leaf, and with it every
+  grant. It now reuses the existing identity and prints its leaf SHA-1;
+  `--rotate` is required to replace it and warns first. The cert also moved out
+  of `$TMPDIR` (macOS purges it; under Paperclip it is per-run, so the PEM
+  vanished within a day while the keychain survived) to `~/.meet-ai/signing`,
+  and the private key is no longer left on disk at all.
+- **`verify-tur10.sh` asserts the baseline before asking for a click.** It
+  checks the leaf against a recorded `EXPECT_LEAF`, re-checks it against the
+  built bundle after signing, aborts on mismatch, and snapshots
+  `tccutil list` for **both** services into the report before and after.
+
+Two smaller things fixed along the way, both measured:
+
+- `security find-identity -v -p codesigning` with no keychain argument reports
+  **"0 valid identities"** under a sandboxed `$HOME`, for an identity that is
+  present and working — it reads the user keychain search list, which is empty
+  there. Always pass the keychain explicitly.
+- `security list-keychains -d user -s $CURRENT "$KEYCHAIN"` **replaces** the
+  search list. In that same sandboxed case `$CURRENT` is empty, so the old
+  script would have wiped the login keychain out of the user's search path.
+  Guarded.
+
+Also worth recording for a first-run test: `kTCCServiceAudioCapture` and
+`kTCCServiceMicrophone` are tracked independently and were observed in
+*different* states — the main bundle held AudioCapture but not Microphone. Reset
+both, or only one dialog appears and the run looks half-broken.
