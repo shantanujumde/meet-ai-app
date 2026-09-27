@@ -286,8 +286,7 @@ pub fn heard(captured: &[f32], sample_rate: u32) -> Reading {
 pub fn probe(sample_rate: u32, mut pull: impl FnMut() -> Option<Vec<f32>>) -> Reading {
     let budget = samples_in(ONSET_TIMEOUT_MILLIS + duration_millis(), sample_rate);
     let mut captured = Vec::new();
-    loop {
-        let Some(chunk) = pull() else { break };
+    while let Some(chunk) = pull() {
         captured.extend(chunk);
 
         let reading = heard(&captured, sample_rate);

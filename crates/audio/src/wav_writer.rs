@@ -24,9 +24,9 @@
 //! smaller, fully-durable value rather than a larger one nothing backs.
 
 use std::fs::{File, OpenOptions};
-use std::io::{self, Seek, SeekFrom, Write};
 #[cfg(test)]
 use std::io::Read;
+use std::io::{self, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::segments::SAMPLE_RATE_HZ;
@@ -106,8 +106,7 @@ impl WavWriter {
         let data_len = frames * BYTES_PER_SAMPLE as u64;
 
         self.file.seek(SeekFrom::Start(RIFF_SIZE_OFFSET))?;
-        self.file
-            .write_all(&(36 + data_len as u32).to_le_bytes())?;
+        self.file.write_all(&(36 + data_len as u32).to_le_bytes())?;
 
         self.file.seek(SeekFrom::Start(DATA_SIZE_OFFSET))?;
         self.file.write_all(&(data_len as u32).to_le_bytes())?;
@@ -169,8 +168,10 @@ fn read_declared(path: &Path) -> io::Result<(u64, Vec<i16>)> {
     let mut buf = vec![0u8; declared_bytes as usize];
     file.read_exact(&mut buf)?;
     let samples = buf
-        .chunks_exact(2)
-        .map(|b| i16::from_le_bytes([b[0], b[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| i16::from_le_bytes(*b))
         .collect();
     Ok((declared_frames, samples))
 }
@@ -189,7 +190,8 @@ mod tests {
     }
 
     fn temp_path(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("meet-ai-wav-writer-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("meet-ai-wav-writer-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join(name)
     }
@@ -224,7 +226,8 @@ mod tests {
         assert_eq!(read_back, samples, "bytes must round-trip exactly");
 
         // It is not silence: a real signal has real energy.
-        let rms = (read_back.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / read_back.len() as f64)
+        let rms = (read_back.iter().map(|s| (*s as f64).powi(2)).sum::<f64>()
+            / read_back.len() as f64)
             .sqrt();
         assert!(rms > 1000.0, "RMS {rms} reads as silence, not a tone");
     }
@@ -278,7 +281,10 @@ mod tests {
             "header must still declare the last successful checkpoint, not the killed one"
         );
         assert_eq!(samples.len(), 80_000);
-        assert_eq!(samples, checkpoint_1, "the playable prefix must be exact, not truncated audio");
+        assert_eq!(
+            samples, checkpoint_1,
+            "the playable prefix must be exact, not truncated audio"
+        );
 
         // The invariant from §7: total appended bytes always exceed or equal
         // what the header admits to, bounded to one checkpoint (80_000
@@ -339,7 +345,11 @@ mod tests {
         drop(w);
 
         let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(&bytes[36..40], b"data", "data must be the final chunk header");
+        assert_eq!(
+            &bytes[36..40],
+            b"data",
+            "data must be the final chunk header"
+        );
         assert_eq!(
             bytes.len() as u64,
             HEADER_LEN + 160 * BYTES_PER_SAMPLE as u64,
