@@ -78,6 +78,19 @@ Measured contrast (WCAG 2.1):
 | ember on white | 2.1:1 | **Fails.** Never use ember as text on white |
 | ember-ink on white | 6.1:1 | AA normal, AAA large |
 
+Those are the flat swatches. The dot carries a vertical ramp, so the figure that
+actually governs the small sizes is the one sampled off the shipped raster:
+
+| As rendered | Dot vs body | Brackets vs body |
+|---|---|---|
+| app icon @ 32px | 7.0:1 | 8.5:1 |
+| app icon @ 16px | 4.7:1 | 16.3:1 |
+
+At 16px the dot resolves to the dark end of its ramp (`#C46D34`), which is why
+it measures below the 7.6:1 swatch. It still clears 4.5:1, so the mark passes at
+its smallest size — but that row is the floor of the whole system. **If the dot's
+ramp is ever darkened, re-measure the 16px raster, not the swatch.**
+
 Print references, for a press-ready file this environment cannot produce:
 ink ≈ CMYK 78/70/60/70, Pantone Black 6 C. Ember ≈ CMYK 0/56/80/0,
 Pantone 1575 C. Both are approximations from sRGB and must be proofed on press
