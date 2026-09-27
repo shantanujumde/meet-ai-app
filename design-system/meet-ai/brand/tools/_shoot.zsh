@@ -22,10 +22,21 @@
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 SHOOT_DIR="${0:A:h}"
 
-# shoot_page <html-path> <out-png> <w> <h> [min-ink]
+# shoot_page <html-path> <out-png> <w> <h> [min-ink] [scale] [bg]
+#
+# scale and bg are what used to justify render.sh keeping its own copy of this
+# loop (TUR-32). They are parameters, not a second implementation:
+#
+#            scale   bg                  min-ink
+#   proofs     2     (Chrome's opaque    0.04
+#                     default)
+#   icons      1     00000000            0.10   see render.sh for the
+#                     (transparent)             calibration
 shoot_page() {
-  local html="$1" out="$2" w="$3" h="$4" ink="${5:-0.04}"
+  local html="$1" out="$2" w="$3" h="$4" ink="${5:-0.04}" scale="${6:-2}" bg="$7"
   local attempt ud pid
+  local -a bgflag
+  [[ -n "$bg" ]] && bgflag=(--default-background-color="$bg")
 
   [[ -f "$html" ]] || {
     print -u2 "   missing input: $html"
@@ -37,9 +48,20 @@ shoot_page() {
   for attempt in 1 2 3 4 5; do
     ud=$(mktemp -d)
     rm -f "$out"
+    # --use-mock-keychain, or Chrome blocks on a GUI keychain prompt (TUR-20).
+    # On startup Chrome's OSCrypt wants to store its "Chrome Safe Storage" key
+    # in the default keychain. The --user-data-dir above is a fresh mktemp
+    # profile, so there is never an existing key to reuse and every single
+    # launch attempts that write. Under a redirected $HOME — which is what any
+    # sandboxed runner gives us — there is no keychain at all to write to, so
+    # the Security framework puts up a modal "A keychain cannot be found to
+    # store Chrome" panel and waits. Headless does not suppress it. Chrome sits
+    # on the dialog, writes nothing, the loop below times out, and the retry
+    # raises another one: five stacked dialogs per image.
     "$CHROME" --headless --disable-gpu --no-first-run --no-default-browser-check \
-      --user-data-dir="$ud" --hide-scrollbars --force-device-scale-factor=2 \
-      --virtual-time-budget=3000 --screenshot="$out" \
+      --use-mock-keychain \
+      --user-data-dir="$ud" --hide-scrollbars --force-device-scale-factor="$scale" \
+      --virtual-time-budget=3000 "${bgflag[@]}" --screenshot="$out" \
       --window-size="$w,$h" "file://$html" >/dev/null 2>&1 &
     pid=$!
     for _ in $(seq 1 80); do [[ -s "$out" ]] && sleep 0.35 && break; sleep 0.25; done
@@ -47,9 +69,15 @@ shoot_page() {
     wait $pid 2>/dev/null || true
     rm -rf "$ud"
 
+    # `|| rc=$?` rather than a bare call followed by `$?`: every caller runs
+    # under `set -e`, and a bare non-zero exit there aborts the whole script
+    # before the next line can read the status — which made the retry loop
+    # below unreachable and turned every transient Chrome flake into a hard
+    # build failure. Putting the call on the left of `||` makes it a tested
+    # condition, which ERR_EXIT ignores.
+    local rc=0
     python3 "$SHOOT_DIR/verify_render.py" "$out" \
-      --expect "$((w * 2))x$((h * 2))" --min-ink "$ink"
-    local rc=$?
+      --expect "$((w * scale))x$((h * scale))" --min-ink "$ink" || rc=$?
     (( rc == 0 )) && return 0
     # 3 = the page rendered at the right size but is empty. Deterministic, so
     # another attempt would only produce the same empty picture.
