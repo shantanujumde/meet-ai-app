@@ -112,6 +112,7 @@ Pin these exactly in `Cargo.toml` and commit `Cargo.lock`. 🆕 = new major with
 | `objc2` | **0.6.4** | |
 | `objc2-core-audio` | **0.3.2** | ⚠️ **The version skew vs `objc2` 0.6.4 is correct.** Framework crates version independently of `objc2`. Do not let an agent "fix" this |
 | `objc2-core-audio-types` | **0.3.2** | |
+| `objc2-core-foundation` | **0.3.2** | 🆕 not in the original list — the process tap's aggregate-device description is a `CFDictionary`, and this crate is where `objc2-core-audio` sources that type from. Already resolved transitively at 0.3.2 before this was made a direct dependency, so pinning it added no version churn |
 | `objc2-foundation` | **0.3.2** | |
 | `block2` | **0.6.2** | needed for Core Audio tap IO callbacks |
 | `cpal` | **0.18.2** 🆕 | mic capture. LLMs know 0.15 — the device/stream API changed |

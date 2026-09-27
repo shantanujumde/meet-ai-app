@@ -5,9 +5,14 @@
 //! platform-agnostic so the Windows port (SPEC §8.2) is additive rather than a
 //! rewrite.
 //!
-//! The implementation lands in Phase 0. What is here today is the link-time
-//! proof that the Core Audio entry points FINDINGS §9 committed the project to
-//! are reachable from Rust at the versions the workspace pins.
+//! The implementation lands in Phase 0. Below the link-time proof tests
+//! (which assert the Core Audio entry points FINDINGS §9 committed the
+//! project to are reachable from Rust at the versions the workspace pins),
+//! [`tap`] is the real, if hardware-unverified, tap implementation.
+
+/// The system-audio [`crate::AudioSource`] — see [`tap::SystemSource`] and its
+/// module docs for the honest state of hardware verification.
+pub mod tap;
 
 /// The real tap/IOProc creation call site (once written) uses
 /// [`crate::AUDIO_PERMISSION_TIMEOUT`] — moved there because [`crate::mic`]
