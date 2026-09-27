@@ -166,7 +166,16 @@
   --surface-glass-raised:  var(--white-a80);
   --surface-glass-sunken:  var(--black-a04);
 
-  /* The content layer — opaque, sits under the glass layer */
+  /* The window canvas — the bottom of the stack, and the only fully opaque
+     surface in the system.
+     Everything above it is alpha over *something*, and that something has to
+     be a known colour or §7's "body text holds 4.5:1 against its composed
+     backdrop" is unmeasurable. The native NSVisualEffectView still sits behind
+     this and shapes the window's corners, shadow and active-state dimming; it
+     is not asked to carry contrast for body text, because it cannot. */
+  --surface-canvas:       #ffffff;
+
+  /* The content layer — sits on the canvas, under the glass layer */
   --surface-content:      rgba(255, 255, 255, 0.72);
   --surface-content-alt:  var(--white-a45);
 
@@ -216,6 +225,7 @@
     --surface-glass-raised:  var(--white-a14);
     --surface-glass-sunken:  var(--black-a20);
 
+    --surface-canvas:      var(--gray-950);
     --surface-content:     rgba(28, 28, 32, 0.72);
     --surface-content-alt: var(--black-a30);
 
@@ -258,6 +268,7 @@
 /* Explicit dark override so an in-app theme toggle wins over the system */
 :root[data-theme="dark"] {
   color-scheme: dark;
+  --surface-canvas:        var(--gray-950);
   --surface-glass-regular: var(--white-a10);
   --surface-glass-clear:   var(--white-a04);
   --surface-glass-raised:  var(--white-a14);
