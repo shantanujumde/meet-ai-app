@@ -32,3 +32,8 @@ Meetings/
 # Spike build output (compiled binaries + signed bundle) is reproducible from
 # source via spikes/phase0a-tcc/build.sh.
 spikes/*/build/
+
+# Brand raster staging. Reproducible from design-system/meet-ai/brand/tools via
+# `node build.mjs && ./render.sh`; the committed outputs are src-tauri/icons/,
+# public/, and the SVG masters.
+design-system/meet-ai/brand/tools/.render/

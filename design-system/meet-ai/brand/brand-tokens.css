@@ -1,0 +1,28 @@
+/* =============================================================================
+   meet-ai — brand tokens
+   These are IDENTITY tokens: the app icon, the mark, README and marketing
+   surfaces. They are deliberately NOT wired into the product UI. The interface
+   uses macOS system colours on purpose (design-system/meet-ai/tokens.css, the
+   "macOS system colors" block). Do not repoint --accent at --brand-ember.
+   ============================================================================= */
+:root {
+  /* Ink — the icon body. A dark, quiet object in the Dock. */
+  --brand-ink:        #16181D;        /* flat / one-colour ink       */
+  --brand-ink-top:    #24262E;     /* icon gradient, top          */
+  --brand-ink-bottom: #121317;  /* icon gradient, bottom       */
+  /* Chalk — the mark on ink. */
+  --brand-chalk:      #F4F5F7;
+  /* Ember — the record light. The one warm thing in the system. */
+  --brand-ember:       #FF8A3C;      /* primary brand colour        */
+  --brand-ember-core:  #FFC152;  /* highlight inside the dot    */
+  --brand-ember-rim:   #E85F21;   /* shadow side of the dot      */
+  --brand-ember-ink:   #A8410D;   /* ember as TEXT on white      */
+}
+/* Contrast, measured (WCAG 2.1 relative luminance):
+     chalk on ink ......... 16.2:1   AAA
+     ink on white ......... 17.7:1   AAA
+     ember on ink ..........7.6:1    AAA
+     ember on white ........2.1:1    FAILS — never set ember as text on white
+     ember-ink on white ....6.1:1    AAA large / AA normal
+   Nothing in the identity depends on hue alone: the record dot is also the
+   only filled shape in the mark, so it survives greyscale and colour blindness. */
