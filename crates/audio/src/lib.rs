@@ -1,13 +1,14 @@
 //! Audio capture for meet-ai.
 //!
-//! Phase 0 territory (SPEC §5). Nothing here is implemented yet — this crate
-//! exists so the capture work has a place to land that already compiles, is
-//! already wired into `just check`, and already has the platform seam in the
-//! right place.
+//! Phase 0 territory (SPEC §5). The Core Audio process tap itself is not
+//! wired up yet — [`AudioSource`] has no real implementation on either
+//! platform. What is real: the on-disk contract ([`segments`]), the
+//! crash-safe writer that produces the WAV half of it ([`wav_writer`]), and
+//! the permission chime ([`chime`]).
 //!
-//! The one thing that is real today is [`AudioSource`]. SPEC §4 requires the
-//! trait to exist from day one even though only macOS will implement it, so
-//! that the Windows port (SPEC §8.2) is additive rather than a rewrite.
+//! [`AudioSource`] exists from day one even though only macOS implements it
+//! (SPEC §4), so that the Windows port (SPEC §8.2) is additive rather than a
+//! rewrite.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
@@ -28,6 +29,10 @@ pub mod chime;
 /// amended by A5). Platform-agnostic on purpose: it is a file format, and
 /// `drift-check` has to parse it wherever a recording is read.
 pub mod segments;
+
+/// The crash-safe incremental WAV writer (contract §7, §13). Platform-agnostic:
+/// it only knows about bytes and file offsets, never about Core Audio.
+pub mod wav_writer;
 
 /// Which side of the conversation a stream came from.
 ///
