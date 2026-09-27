@@ -97,6 +97,24 @@ just bundle-signed                        # build + sign + verify
 (`~/Library/Keychains/meet-ai-signing.keychain-db`). Override either with
 `SIGN_IDENTITY` / `SIGN_KEYCHAIN` for a Developer ID build.
 
+**If `find-identity` reports `0 valid identities found`, check `$HOME` before
+re-running the script.** `security` and `codesign` read the keychain search list
+out of `$HOME`, and some automated runners redirect `$HOME` to a temp directory.
+The certificate is fine; the lookup is pointed at an empty machine. Both sides
+of this reproduce here:
+
+```bash
+$ HOME=/Users/<you> security find-identity -v -p codesigning
+  1) BE3FB2C8… "meet-ai Local Signing"
+     1 valid identities found
+$ HOME="$TMPDIR" security find-identity -v -p codesigning
+     0 valid identities found
+```
+
+Re-running `make-identity.sh` under the redirected `$HOME` just creates a second
+cert in a keychain nothing will search. Set `HOME` back instead. This applies to
+any keychain-touching command, `just sign` included.
+
 **Do not ad-hoc sign instead.** Under ad-hoc signing TCC keys the grant to the
 executable's cdhash, so every rebuild silently drops audio permission and
 `tccutil reset AudioCapture pro.saleschat.meetai` becomes a no-op. With this
