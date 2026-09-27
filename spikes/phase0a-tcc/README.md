@@ -78,16 +78,21 @@ Deliberately outside the repo — recordings must never be committable.
 
 ### Forcing a fresh permission prompt
 
-With a real identity, `tccutil reset AudioCapture pro.saleschat.meetai` is all
-you need. Under **ad-hoc** signing TCC keys the grant to the executable **path**
-(`identifier_type=Path`) and that reset is a silent no-op — copy the bundle
-somewhere new instead:
+With a real identity — which is the only way `build.sh` will sign — this is all
+you need, and it is repeatable indefinitely:
 
 ```sh
-FRESH=/tmp/meet-ai-fresh-$(date +%s); mkdir -p "$FRESH"
-cp -R build/meet-ai.app "$FRESH/"
-open -a "$FRESH/meet-ai.app" --args --out /tmp/meet-ai-probe --seconds 20
+tccutil reset AudioCapture pro.saleschat.meetai
 ```
+
+⛔ **Never copy the bundle to a new path to force a prompt.** Under ad-hoc
+signing TCC keys the grant to the executable **path** (`identifier_type=Path`),
+and each new path manufactures a **permanent** record: `tccutil reset` resolves
+its argument through LaunchServices as a bundle ID and returns `-10814` for a
+path, and the record outlives the directory it names. Several are already stuck
+on the dev machine and cannot be removed (measured, FINDINGS §10.6). An earlier
+revision of this section recommended exactly that; it is a one-way door. This
+matches the ⛔ in SPEC §5 — sign with the identity and reset by bundle ID.
 
 ### Watching TCC decide
 
