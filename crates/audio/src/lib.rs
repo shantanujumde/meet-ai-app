@@ -18,6 +18,11 @@ use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+/// The `segments.json` contract and the drift maths that reads it (SPEC §3.4,
+/// amended by A5). Platform-agnostic on purpose: it is a file format, and
+/// `drift-check` has to parse it wherever a recording is read.
+pub mod segments;
+
 /// Which side of the conversation a stream came from.
 ///
 /// L5 locks speaker labelling to the two channels we capture: the microphone is
