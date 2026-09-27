@@ -22,7 +22,26 @@ run it again.
 | `build.sh` | Compile → assemble bundle → sign with hardened runtime → verify |
 | `make-identity.sh` | Ensures the local self-signed code-signing identity exists. **Idempotent** — re-running reuses it. **No `sudo`, no admin password** (TUR-10) |
 | `run.sh` | Reset TCC, launch, then **re-measure the WAV with ffmpeg**, independently of what the probe claimed |
-| `verify-tur10.sh` | The two checks that need a human: grant creation, and an explicit **Don't Allow**. Two clicks; writes `/tmp/meet-ai-tur10/report.md` itself |
+| `verify-tur10.sh` | Grant creation, survival across a rebuild, and an explicit **Don't Allow**. Runs unattended with `AUTO_CLICK=1`; writes `/tmp/meet-ai-tur10/report.md` itself |
+| `auto-click.sh` | Answers the TCC consent dialog via Accessibility. Refuses to click any window that is not our own prompt — see the safety notes in its header |
+
+### Answering the consent prompt without a human
+
+The dialog is drawn by `UserNotificationCenter` and is an ordinary Accessibility
+window, so `verify-tur10.sh` can answer it itself (FINDINGS §10.7):
+
+```sh
+AUTO_CLICK=1 ./verify-tur10.sh     # ~2 min, no keyboard needed, plays a tone
+```
+
+This needs Accessibility for whatever runs it. Check with:
+
+```sh
+osascript -e 'tell application "System Events" to return count of every process'
+```
+
+A `-1743` error means it is not granted; the script says so and falls back to
+asking you to click, rather than silently recording an unanswered prompt.
 
 ## Running it
 

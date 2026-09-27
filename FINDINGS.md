@@ -374,9 +374,11 @@ identity to confirm the grant becomes bundle-ID-keyed and survives rebuilds.**
   §10.3–10.4** — the grant becomes bundle-ID-keyed and the designated requirement
   stops containing a cdhash, so rebuilds no longer break it. Creating the identity
   needs no admin password.
-- Still open: observing the `identifier_type=Bundle ID` grant-*creation* event, and
-  a user's explicit **Don't Allow** (as opposed to §10.1's missing-usage-string
-  denial). One click each — `spikes/phase0a-tcc/verify-tur10.sh`.
+- ~~Observing the `identifier_type=Bundle ID` grant-*creation* event, and a
+  user's explicit **Don't Allow**.~~ **Answered in §10.7** — both measured, with
+  no human at the keyboard: the consent dialog turned out to be an ordinary
+  Accessibility window. `AUTO_CLICK=1 spikes/phase0a-tcc/verify-tur10.sh`
+  reproduces the whole thing unattended.
 - macOS 14.4–26. Everything here is macOS 27.0 only.
 
 ---
@@ -490,14 +492,14 @@ against the granted run's
 `authValue`: `0` = denied, `1` = unknown, `2` = allowed. `authReason`: `2` = user
 consent, `8` = missing usage string.
 
-⚠️ **Honest scope of this measurement.** The denial was produced by building the
-bundle **without `NSAudioCaptureUsageDescription`** (`authReason=8`), because that
-is the only way to drive TCC to `authValue=0` without a human clicking a dialog —
-this machine grants no Accessibility to the automation shell, so synthetic clicks
-are impossible, and the TCC database is not writable without Full Disk Access.
-A user pressing **Don't Allow** produces `authValue=0, authReason=2`. Both reach
-`coreaudiod` as the same "not authorized" answer, so the downstream behaviour
-should be identical — but that last step is **inferred, not measured**. See 10.4.
+**Scope of this measurement — and its resolution.** The denial above was produced
+by building the bundle **without `NSAudioCaptureUsageDescription`**
+(`authReason=8`), which was at the time the only way to reach `authValue=0`
+without a human clicking a dialog. That left the real case — a user pressing
+**Don't Allow**, `authValue=0, authReason=2` — inferred rather than measured.
+
+**It is now measured.** See §10.7: an explicit Don't Allow behaves identically,
+down to the same all-zero payload. Nothing in §10.2 rests on inference any more.
 
 ### 10.2 Therefore: SPEC §8.1's denial path cannot be a return-code check — *or* an RMS floor
 
@@ -594,10 +596,13 @@ exists, and SPEC §6's Phase 0a recipe is correct as written — provided the
 bundle is signed with an identity. It was a no-op in §8 only because the spike
 was ad-hoc.
 
-**Still to confirm with a human at the keyboard:** the `Publishing <TCCDEvent:
-type=Create, …, identifier_type=Bundle ID>` line only appears when a grant is
-*created*, which needs someone to click **Allow** once. Run
-`spikes/phase0a-tcc/verify-tur10.sh`; it is two clicks and writes the report itself.
+**Confirmed** — the grant-*creation* event was captured in §10.7, and it is
+bundle-ID keyed:
+
+```
+Publishing <TCCDEvent: type=Create, service=kTCCServiceAudioCapture,
+            identifier_type=Bundle ID, identifier=pro.saleschat.meetai>
+```
 
 ### 10.5 The literal prompt text — from the system, not a screenshot
 
@@ -678,7 +683,7 @@ Three things changed to close the door:
   of `$TMPDIR` (macOS purges it; under Paperclip it is per-run, so the PEM
   vanished within a day while the keychain survived) to `~/.meet-ai/signing`,
   and the private key is no longer left on disk at all.
-- **`verify-tur10.sh` asserts the baseline before asking for a click.** It
+- **`verify-tur10.sh` asserts the baseline before the first prompt.** It
   checks the leaf against a recorded `EXPECT_LEAF`, re-checks it against the
   built bundle after signing, aborts on mismatch, and snapshots
   `tccutil list` for **both** services into the report before and after.
@@ -698,3 +703,98 @@ Also worth recording for a first-run test: `kTCCServiceAudioCapture` and
 `kTCCServiceMicrophone` are tracked independently and were observed in
 *different* states — the main bundle held AudioCapture but not Microphone. Reset
 both, or only one dialog appears and the run looks half-broken.
+
+### 10.7 The two "needs a human" facts, measured — the consent dialog **is** scriptable
+
+§10.1 and §10.4 each ended with a fact that supposedly needed a person at the
+keyboard: an explicit **Don't Allow** (`authReason=2`), and the grant-*creation*
+event that TCC only writes when someone clicks **Allow**. Both are now measured.
+
+**The blocker was wrong, not insurmountable.** §10.1 recorded that "this machine
+grants no Accessibility to the automation shell". Re-testing it is one command,
+and it now succeeds:
+
+```
+$ osascript -e 'tell application "System Events" to return count of every process'
+105
+```
+
+With Accessibility available, the consent dialog is an ordinary AX window. It is
+drawn by **`UserNotificationCenter`**, and `spikes/phase0a-tcc/auto-click.sh`
+answers it:
+
+```
+CLICKED:UserNotificationCenter:Allow
+CLICKED:UserNotificationCenter:Don’t Allow
+```
+
+So `verify-tur10.sh` now runs unattended under `AUTO_CLICK=1`. Two full runs,
+~90 seconds apart, agree on every line below.
+
+#### The measurement
+
+| | GRANTED (clicked Allow) | REBUILD (not asked) | DENIED (clicked Don't Allow) |
+|---|---|---|---|
+| `tccd` verdict | `authValue=2, authReason=2` | *no prompt* | **`authValue=0, authReason=2`** |
+| `create_tap_osstatus` | 0 | 0 | **0** |
+| `create_ioproc_ms` | 1553.148 → `noErr` | 4.616 → `noErr` | **1255.184 → `noErr`** |
+| `device_start_ms` | 30.659 → `noErr` | 11.065 → `noErr` | **15.852 → `noErr`** |
+| frames / io_callbacks | 576 512 / 1 126 | 576 000 / 1 125 | **576 512 / 1 126** |
+| `rms` | 0.361263 | 0.346509 | **0.0** |
+| `peak` | 0.932076 | 0.941738 | **0.0** |
+| `zero_sample_fraction` | 1.73e-06 | 1.74e-06 | **1.0** |
+| non-zero payload bytes | 4 585 557 | 4 582 194 | **0** |
+
+**An explicit Don't Allow is indistinguishable from the `authReason=8` denial in
+§10.1.** Every `OSStatus` is `noErr`, the IOProc is created, the device starts,
+1 126 callbacks fire at the normal rate — and every sample is a bit-exact zero.
+§10.2's positive-control design is therefore confirmed against the real case,
+not just the one that was convenient to produce.
+
+Two details the correlation turned up:
+
+- **`create_ioproc_ms` is the dialog's dwell time.** `tccd` logged the prompt
+  standing open for 1 250 ms; `AudioDeviceCreateIOProcIDWithBlock` returned in
+  1 255.184 ms. On the rebuild, with no prompt, it returned in 4.616 ms. So that
+  call blocks for exactly as long as the user hesitates — it is not a timeout,
+  and onboarding must not treat a slow return as failure.
+- **`authReason=2` means "the user answered", not "the user consented."** It
+  appears on Allow and on Don't Allow alike; `authValue` (`0` denied / `2`
+  allowed) is the bit that differs. Reading `authReason` alone inverts the
+  result.
+
+#### Grant creation and survival
+
+The `type=Create` event, which only exists once someone has clicked Allow:
+
+```
+Publishing <TCCDEvent: type=Create, service=kTCCServiceAudioCapture,
+            identifier_type=Bundle ID, identifier=pro.saleschat.meetai>
+```
+
+`identifier_type=Bundle ID` — §10.4 confirmed, and **SPEC §6's
+`tccutil reset AudioCapture pro.saleschat.meetai` recipe is valid as written**.
+The rebuild step then changed the binary (and its cdhash) under the same
+identity and drew **no prompt and no `Failed to match existing code
+requirement`**: the cdhash-free designated requirement holds, so §8's
+intermittent grant loss was purely an ad-hoc artefact.
+
+#### Reading the log: don't grep for your own name
+
+The obvious `log show … | grep meetai` **silently discards the answer**. `tccd`
+splits a consent across two lines: `AUTHREQ_PROMPTING` carries the subject and a
+msgID, and the `AUTHREQ_RESULT` recording what was clicked carries *only* the
+msgID. Filtering by bundle id keeps the question and drops the answer — which is
+why an earlier run of `verify-tur10.sh` reported "(no AUTHREQ_RESULT captured)"
+for a denial it had in fact captured correctly. Correlate by msgID instead;
+`decision_for()` in that script does.
+
+#### Safety note on the clicker
+
+`auto-click.sh` runs on a live desktop, so it refuses to click unless the window
+mentions `meet-ai`, has both an affirmative and a negative button, and belongs to
+an allowlisted system process. It also matches the deny button by its
+apostrophe: the real label is **“Don’t Allow”** with U+2019, so a naive
+`contains "Allow"` matches the deny button too and a clicker built that way
+would silently deny when told to allow. Verified against a decoy dialog that
+does not mention us — left untouched, timed out, exit non-zero.
