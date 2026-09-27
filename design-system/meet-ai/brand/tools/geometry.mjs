@@ -62,7 +62,17 @@ const f = (v) => Math.round(v * 1000) / 1000;
    the Liquid Glass language. 5 is the point where it is unmistakably `[ ]` and
    still belongs beside a macOS control. Dot went 7.5 -> 10: at 7.5 it was the
    first thing to disappear at 32px. Stroke stayed at 11; 12.5 crowded the
-   dot's diagonal clearance against the arm tips. */
+   dot's diagonal clearance against the arm tips.
+
+   Arms went 36/64 -> 31/69 after the viewfinder proximity probe
+   (proximity.mjs, ../proofs/proof-proximity.png). The gutter — the gap in the
+   top and bottom edges — is the single knob that decides whether this reads as
+   a bracket pair or as a camera focus target. Counter-intuitively, *widening*
+   it moves away from the viewfinder: a viewfinder's signature is a closed
+   square gestalt made of four disjoint corner marks, so the risk here came
+   from the mark being too enclosed, not too open. Narrowing the gutter (tested
+   at -10) closed it into a frame with a slot. Widening separates the two
+   halves into unmistakable brackets. */
 export const BRACKETS = {
   stroke: 11,
   stemL: 16,
@@ -70,8 +80,8 @@ export const BRACKETS = {
   top: 20,
   bottom: 80,
   corner: 5,
-  armL: 36, // inner tip of the left bracket's arms
-  armR: 64,
+  armL: 31, // inner tip of the left bracket's arms
+  armR: 69,
   dot: { cx: 50, cy: 50, r: 10 },
 };
 
@@ -89,7 +99,11 @@ export function bracketPaths(g = BRACKETS) {
 /* Small-size variant, for raster exports at or below 32px. Scaling the primary
    mark down puts its stroke on a fractional pixel and lets the dot fill in.
    This one is redrawn heavier and more open so that after the squircle's
-   inset there is still a whole pixel of gutter around the dot. */
+   inset there is still a whole pixel of gutter around the dot.
+   Arms 35/65 -> 29/71: the gutter is matched to the primary in *visual* terms
+   (27 units of white on a 79-unit visual width, ~34%), not in centreline
+   terms — this variant's stroke is 4 units heavier, so equal centreline gaps
+   would have left it visibly more closed than the primary. */
 export const BRACKETS_SMALL = {
   stroke: 15,
   stemL: 18,
@@ -97,14 +111,17 @@ export const BRACKETS_SMALL = {
   top: 22,
   bottom: 78,
   corner: 4,
-  armL: 35,
-  armR: 65,
+  armL: 29,
+  armR: 71,
   dot: { cx: 50, cy: 50, r: 12 },
 };
 
 /* Menu-bar template. Not derived from the 100-unit grid at all: drawn directly
    on the 16px pixel grid so every stroke lands on whole pixels and nothing is
-   antialiased into grey. This is the app's primary usage context. */
+   antialiased into grey. This is the app's primary usage context.
+   Arms 5/11 -> 4/12: gutter 4px -> 6px of white. This is where the viewfinder
+   read was strongest, because at 16px the arms were long relative to the gap
+   and the whole thing closed into a box. */
 export const MENUBAR = {
   view: 16,
   stroke: 2,
@@ -113,8 +130,8 @@ export const MENUBAR = {
   top: 3,
   bottom: 13,
   corner: 1,
-  armL: 5,
-  armR: 11,
+  armL: 4,
+  armR: 12,
   dot: { cx: 8, cy: 8, r: 2 },
 };
 
@@ -312,7 +329,11 @@ export { f };
 /* App icon drawn directly on the 16px pixel grid. Scaling the 1024 master down
    to 16 leaves every stroke straddling a pixel boundary and the record dot
    dissolves into grey. Here the body is 14px (1..15), strokes are 2px on whole
-   pixels, and the dot is a clean 2px. */
+   pixels, and the dot is a clean 2px.
+   Arms 6/10 -> 5/11: gutter 2px -> 4px. This was the tightest case and the
+   worst offender — at a 2px gutter the mark read as a closed frame with a slot
+   in it. Pulling the stems inward instead was tried and rejected: it starved
+   the arms to nothing and the mark drifted toward parentheses. */
 export const ICON16 = {
   bodyInset: 1,
   stroke: 2,
@@ -321,7 +342,7 @@ export const ICON16 = {
   top: 5,
   bottom: 11,
   corner: 1,
-  armL: 6,
-  armR: 10,
+  armL: 5,
+  armR: 11,
   dot: { cx: 8, cy: 8, r: 1 },
 };
