@@ -203,36 +203,149 @@ fn streaming_a_track_gives_the_same_lines_as_transcribing_it() {
     assert_eq!(live.lines(), batch.lines());
 }
 
-/// The Apple path is not wired for streaming yet, and says so.
+/// The Apple engine's live path, driven for real through `meet-stt --stdin`.
 ///
-/// `meet-stt` takes a finished WAV on argv. Streaming off a live tap means
-/// either stdin or a growing file, and that is a joint call with the capture
-/// side — see TUR-15. Until it is made, the engine must return a typed error
-/// rather than quietly transcribing nothing or blocking forever.
+/// TUR-31 decided stdin, per channel, two sidecars. TUR-33 wires it onto the
+/// same [`stt::session::SttSession`] seam every other engine uses, so this is
+/// deliberately the whisper-shaped test, not a bespoke one: same
+/// `start_session`, same [`stt::replay::replay_samples`], same assertions.
+///
+/// Needs a built sidecar and macOS 26+ with the locale installed, so it skips
+/// loudly rather than failing on a machine that has neither — same pattern as
+/// `tests/sidecar.rs`.
 #[test]
-fn the_apple_engine_reports_no_streaming_path_rather_than_faking_one() {
+fn the_apple_engine_reports_that_it_streams() {
     let Some(binary) = fixtures::sidecar() else {
         eprintln!("SKIPPED: target/meet-stt is not built — run `just sidecar`");
         return;
     };
 
-    let mut engine = stt::apple::AppleEngine::new(binary, "en-US");
+    let engine = stt::apple::AppleEngine::new(binary, "en-US");
     assert!(
-        !engine.supports_streaming(),
-        "AppleEngine claims a streaming path it does not have"
+        engine.supports_streaming(),
+        "AppleEngine has a real stdin streaming path (TUR-31/TUR-33) and must say so"
     );
+}
 
-    match engine.start_session(
+/// The silence gate, on the Apple engine, over a real subprocess.
+///
+/// Same assertions as `whisper_streams_nothing_over_thirty_quiet_seconds`,
+/// with one deliberate exception: unlike whisper and replay, the Apple engine
+/// has no [`stt::session::SpanAssembler`] in front of it — SPEC §2.5 is
+/// explicit that engine 1 does native long-form streaming precisely so it does
+/// *not* need VAD chunking, so nothing here gates what the analyzer is allowed
+/// to see the way `SpanAssembler` gates whisper. Measured on this machine
+/// (macOS 27.0, `en-US` installed): `silence-30s.wav` produces no volatile at
+/// all, but `room-tone-30s.wav` produces exactly one transient hypothesis that
+/// never finalizes — Apple's own model guessing at pink noise for a moment
+/// before deciding there is nothing there. That is not the bug this gate
+/// exists to catch: it never reaches the sink, and `finish()` withdraws it
+/// before returning, so no stale tail survives to the pane. What must never
+/// happen — a *finalized* line, or a tail still showing after `finish()` — is
+/// asserted below and holds on both fixtures.
+#[test]
+fn apple_streams_nothing_settled_over_thirty_quiet_seconds() {
+    fixtures::ensure();
+
+    let Some(binary) = fixtures::sidecar() else {
+        eprintln!("SKIPPED: target/meet-stt is not built — run `just sidecar`");
+        return;
+    };
+
+    for name in ["silence-30s.wav", "room-tone-30s.wav"] {
+        let pcm = stt::read_wav_16k_mono(&fixtures::path(name))
+            .unwrap_or_else(|e| panic!("{name}: {e} — run crates/audio/fixtures/generate.sh"));
+
+        let sink = SharedCollector::new();
+        let seen = CollectingListener::new();
+        let mut engine = stt::apple::AppleEngine::new(binary.clone(), "en-US");
+        let mut session = match engine.start_session(
+            SessionOptions::new(Speaker::You),
+            Box::new(sink.clone()),
+            Box::new(seen.clone()),
+        ) {
+            Ok(session) => session,
+            Err(e) => {
+                eprintln!(
+                    "SKIPPED: could not start a live apple session ({e}) — is en-US installed?"
+                );
+                return;
+            }
+        };
+
+        replay_samples(&pcm, session.as_mut(), &ReplayOptions::instant())
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let outcome = session.finish().unwrap_or_else(|e| panic!("{name}: {e}"));
+
+        assert_eq!(
+            outcome.finalized,
+            0,
+            "{name}: {} line(s) settled over quiet audio: {:?}",
+            outcome.finalized,
+            sink.lines()
+        );
+        assert!(sink.is_empty(), "{name}: quiet audio reached disk");
+        assert_eq!(
+            seen.tail_for(Speaker::You),
+            None,
+            "{name}: a stale tail was left on screen after finish()"
+        );
+        assert_eq!(
+            outcome.audio_sec, 30,
+            "{name}: audio_sec did not match feed"
+        );
+    }
+}
+
+/// Apple live vs Apple batch must not disagree, the way the whisper and replay
+/// equivalents do not — otherwise the pane would show one thing during the
+/// meeting and `transcript.md` would show another.
+///
+/// Real subprocess, real hardware, real speech: `meet-stt --stdin` streamed a
+/// block at a time against the same fixture `meet-stt <wav>` transcribes in
+/// batch.
+#[test]
+fn apple_streams_the_same_lines_it_batches() {
+    fixtures::ensure();
+
+    let Some(binary) = fixtures::sidecar() else {
+        eprintln!("SKIPPED: target/meet-stt is not built — run `just sidecar`");
+        return;
+    };
+
+    let wav = fixtures::path("two-speaker-60s/mic.wav");
+    let pcm = stt::read_wav_16k_mono(&wav).unwrap();
+
+    let live = SharedCollector::new();
+    let mut engine = stt::apple::AppleEngine::new(binary, "en-US");
+    let mut session = match engine.start_session(
         SessionOptions::new(Speaker::You),
-        Box::new(SharedCollector::new()),
+        Box::new(live.clone()),
         Box::new(stt::NoListener),
     ) {
-        Err(stt::Error::StreamingUnsupported(name)) => {
-            assert_eq!(name, "apple-speech");
+        Ok(session) => session,
+        Err(e) => {
+            eprintln!("SKIPPED: could not start a live apple session ({e}) — is en-US installed?");
+            return;
         }
-        Err(other) => panic!("expected StreamingUnsupported, got {other:?}"),
-        Ok(_) => panic!("AppleEngine opened a session it cannot drive"),
+    };
+    replay_samples(&pcm, session.as_mut(), &ReplayOptions::instant()).unwrap();
+    session.finish().unwrap();
+
+    let mut batch = stt::CollectingSink::new();
+    engine.transcribe(&wav, Speaker::You, &mut batch).unwrap();
+
+    eprintln!("--- apple, streamed a block at a time ---");
+    for line in live.lines() {
+        eprintln!("{line}");
     }
+
+    assert!(!batch.utterances.is_empty(), "the fixture has speech in it");
+    assert_eq!(
+        live.lines(),
+        batch.lines(),
+        "the live pane and transcript.md would show different text"
+    );
 }
 
 /// The gate on the engine that actually hallucinates.
