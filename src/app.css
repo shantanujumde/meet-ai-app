@@ -27,7 +27,13 @@
   font-family: var(--font-ui);
   font-size: var(--text-body);
   color: var(--text-primary);
-  background: var(--surface-canvas, transparent);
+  /* Opaque. The window is `transparent: true` with a native material behind
+     it, and that material is nowhere near opaque enough to read body text
+     against — whatever is behind the window shows straight through the
+     titlebar and the content column. MASTER.md §8 settles this: glass yields.
+     The material still shapes the corners, the shadow and the active-state
+     dimming, which is what it is genuinely good at. */
+  background: var(--surface-canvas);
 }
 
 /* Onboarding takes the whole window: no sidebar to navigate to yet, and a
