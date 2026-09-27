@@ -9,10 +9,17 @@ of truth is `tools/geometry.mjs`; `tools/build.mjs` writes the SVG masters and
 Do not hand-edit an SVG here — the next build overwrites it.
 
 ```
-node tools/build.mjs     # SVG masters + brand-tokens.css + render manifest
-./tools/render.sh        # PNGs, icon.icns, icon.ico -> src-tauri/icons, public/
-node tools/proof.mjs && ./tools/render-proof.sh   # the review proofs
+node tools/build.mjs        # SVG masters + brand-tokens.css + render manifest
+./tools/render.sh           # PNGs, icon.icns, icon.ico -> src-tauri/icons, public/
+./tools/render-proof.sh     # the review proofs
+./tools/render-proximity.sh # the prior-art proximity probe
 ```
+
+The two proof scripts run their own generators, so they are safe to run in any
+order and on their own. Both verify what Chrome actually produced before
+accepting it: a missing input page fails the script instead of being
+screenshotted as an error page, and a render that comes out the right size but
+empty is rejected rather than committed. See `tools/_shoot.zsh`.
 
 ---
 
