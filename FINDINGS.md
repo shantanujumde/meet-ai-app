@@ -220,7 +220,7 @@ is launched as a child of the app, and the `tccd` logs below say so directly.
 | Bundle | hand-assembled `meet-ai.app`, bundle ID `pro.saleschat.meetai`, `LSUIElement`, `LSMinimumSystemVersion 14.4` |
 | Info.plist | `NSAudioCaptureUsageDescription` + `NSMicrophoneUsageDescription` in the app plist, and in the helper via `-sectcreate __TEXT __info_plist` |
 | Entitlements | `com.apple.security.device.audio-input` |
-| Signing | **ad-hoc (`codesign -s -`) with `--options runtime`.** The machine has **zero** code-signing identities and creating a trusted self-signed one needs an admin password, which a headless run cannot supply. See "Signing caveat" below |
+| Signing | **ad-hoc (`codesign -s -`) with `--options runtime`**, entitlements on both the app bundle and the helper. The machine has **zero** code-signing identities and creating a trusted self-signed one needs an admin password, which a headless run cannot supply. See "Signing caveat" below |
 | Launch | `open -a meet-ai.app` → LaunchServices → app has `ppid=1`, helper is its child |
 | Capture API | `CATapDescription(stereoGlobalTapButExcludeProcesses: [])` → `AudioHardwareCreateProcessTap` → private aggregate device → `AudioDeviceCreateIOProcIDWithBlock` |
 | Audio source | synthetic tone played by `/usr/bin/afplay` as a **separate process**: L = 440 Hz, R = 660 Hz, amplitude 0.5 |
@@ -245,16 +245,31 @@ asks TCC about it, and TCC resolves it to the **app** as responsible process:
 
 ```
 AUTHREQ_ATTRIBUTION: attribution={
-    responsible={TCCDProcess: identifier=meet-ai, pid=87116,
+    responsible={TCCDProcess: identifier=pro.saleschat.meetai,           pid=4974,
                  responsible_path=…/meet-ai.app/Contents/MacOS/meet-ai},
-    accessing   ={TCCDProcess: identifier=meet-tap-probe, pid=87119,
+    accessing   ={TCCDProcess: identifier=pro.saleschat.meetai.tap-probe, pid=4977,
                  binary_path=…/meet-ai.app/Contents/MacOS/meet-tap-probe},
-    requesting  ={TCCDProcess: identifier=com.apple.audio.coreaudiod, pid=617}}
-AUTHREQ_SUBJECT: subject=…/meet-ai.app/Contents/MacOS/meet-ai
+    requesting  ={TCCDProcess: identifier=com.apple.tccd, pid=412}}
 ```
 
-The helper's own identity (`pro.saleschat.meetai.tap-probe`) never becomes the
-subject. One grant covers the app and every child it spawns.
+The helper's own identity (`pro.saleschat.meetai.tap-probe`) is the *accessing*
+process and never becomes the subject. One grant covers the app and every child
+it spawns. `coreaudiod` (pid 617) asks the same question and gets the same
+answer.
+
+⚠️ **Correction to an earlier draft of this section.** The first four runs were
+made with a `build.sh` that aborted between its two `codesign` calls (empty bash
+array under `set -u`), so the **app bundle was never explicitly signed** — only
+the helper was, and the app carried just the linker's automatic ad-hoc signature
+with no hardened runtime and no entitlements. All three answers were unchanged
+when re-run against a correctly signed bundle (13:13:31, RMS 0.353543 / −9.03
+dBFS, peak 0.515868, 719 872 frames over 14 986.7 ms, prompt blocked
+`AudioDeviceCreateIOProcIDWithBlock` for 2 198 ms), but the attribution got
+cleaner: with the bundle properly signed TCC uses the **bundle identifier**
+(`pro.saleschat.meetai`) as the identity instead of the executable's file name
+(`meet-ai`). The block above is from the correctly-signed run. The script is
+fixed; the failure mode is worth remembering because a half-signed bundle
+verified fine at a glance.
 
 *Not verified:* the literal wording rendered in the dialog. The evidence above is
 the daemon's attribution, not a screenshot.
