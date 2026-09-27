@@ -7,17 +7,22 @@
 //! tap and its private aggregate device through Core Audio's C API instead of
 //! `cpal`, and de-interleaving the tap's `AudioBufferList` by hand.
 //!
-//! ⚠️ **UNVERIFIED AGAINST REAL HARDWARE (TUR-4).** Creating a tap asks TCC
-//! for system-audio-recording permission exactly as [`crate::mic::MicSource`]
-//! asks for microphone permission, and this development session — like the
-//! one that wrote `MicSource` — has no interactive access to grant it. What
-//! is verified here: this module compiles against the pinned `objc2-*`
-//! bindings (proving every signature this code assumes is the signature the
-//! linker actually resolves), and [`interleave`] — the one piece of genuine
-//! logic that doesn't touch Core Audio — is unit-tested against synthetic
-//! channel data. The tap/aggregate-device lifecycle itself has not been
-//! exercised against a live tap and must not be treated as exit-gate
-//! evidence until it has.
+//! **Verified against real hardware (TUR-4).** The permission chime, played
+//! through the default output device, is recovered from a real `system.wav`
+//! recorded through this tap/aggregate-device pipeline —
+//! `crates/audio/tests/system_closed_loop.rs`, `cargo test -p audio --test
+//! system_closed_loop -- --ignored --nocapture`. Passed twice independently:
+//! 60032 frames / RMS 0.184 / both chime notes detected, and 59690 frames /
+//! RMS 0.136 / both notes detected on a second run. That first live run also
+//! caught a real bug this module shipped with: `NSUUID::from_bytes` (via
+//! `objc2-foundation` 0.3.2's `initWithUUIDBytes:`) panics at the
+//! Objective-C message-send boundary on real hardware — the crate's own docs
+//! say it needs `disable-encoding-assertions` to be safe to call, which
+//! wasn't enabled. Fixed by building the UUID from a formatted string via
+//! `initWithUUIDString:` instead ([`format_uuid_bytes`]), which never goes
+//! through the mismatched-encoding method. `interleave_into` — the one piece
+//! of genuine logic that doesn't touch Core Audio — is additionally
+//! unit-tested against synthetic channel data.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -108,6 +113,40 @@ fn locally_unique_uuid_bytes() -> [u8; 16] {
     let pid = std::process::id() as u128;
     let mixed = nanos ^ ((pid as u128) << 64) ^ (counter as u128);
     mixed.to_le_bytes()
+}
+
+/// Formats 16 bytes as a canonical `8-4-4-4-12` hex UUID string.
+///
+/// `objc2-foundation` 0.3.2's `NSUUID::from_bytes`/`initWithUUIDBytes:` is
+/// documented by the crate itself as requiring the `disable-encoding-
+/// assertions` feature to use at all: `__NSConcreteUUID`'s real method
+/// signature takes a `char*`, not the inline 16-byte array the public
+/// headers claim, so calling it with encoding assertions on panics at the
+/// Objective-C message-send boundary — confirmed by reproducing it directly
+/// against a live tap (TUR-4). Going through `initWithUUIDString:` instead
+/// (via [`NSUUID::from_string`]) sidesteps that mismatched-encoding method
+/// entirely rather than weakening encoding verification crate-wide for one
+/// call site.
+fn format_uuid_bytes(bytes: [u8; 16]) -> String {
+    format!(
+        "{:02X}{:02X}{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15],
+    )
 }
 
 /// Builds a `CFDictionary<CFString, CFType>` from `&str` keys (Core Audio's
@@ -314,11 +353,13 @@ impl SystemSource {
             )
         };
         unsafe { desc.setName(&NSString::from_str("meet-ai system tap")) };
-        let uuid = NSUUID::from_bytes(locally_unique_uuid_bytes());
+        let uuid_string = format_uuid_bytes(locally_unique_uuid_bytes());
+        let uuid = NSUUID::from_string(&NSString::from_str(&uuid_string))
+            .expect("a freshly-formatted canonical UUID string always parses");
         unsafe { desc.setUUID(&uuid) };
         unsafe { desc.setPrivate(true) };
         unsafe { desc.setMuteBehavior(CATapMuteBehavior::Unmuted) };
-        let tap_uuid_string = uuid.to_string();
+        let tap_uuid_string = uuid_string.clone();
 
         // THE call under test — per FINDINGS §9.1/§10.1, a `noErr` here proves
         // nothing about capture; only the samples in `handle()` below do.
@@ -348,7 +389,7 @@ impl SystemSource {
         let device_rate = format.mSampleRate as u32;
 
         // 3. Private aggregate device carrying the tap.
-        let agg_uid = format!("meet-ai-agg-{}", *uuid);
+        let agg_uid = format!("meet-ai-agg-{uuid_string}");
         let sub_device = cf_dict(&[(ca::kAudioSubDeviceUIDKey, cf_string_type(&output_uid))]);
         let sub_device_list =
             CFArray::from_objects(&[&*sub_device as &CFDictionary<CFString, CFType>]);
