@@ -26,8 +26,16 @@ src-tauri/gen/
 # IS source though, so ignore the artifacts rather than the whole directory —
 # an unqualified `fixtures/` swallowed generate.sh and made the fixtures
 # unreproducible on a fresh clone.
+#
+# `segments/` is the exception. Those are `segments.json` files of a few tens of
+# KB, and `crates/audio/tests/segments_fixtures.rs` parses them from disk — the
+# on-disk shape is half of what the test asserts, so the fixtures have to be in
+# the tree for `cargo test` to mean anything on a fresh clone. Their WAVs are
+# still generated (FIXTURE_WAVS=1) and still ignored, by the `*.wav` rule below.
 crates/audio/fixtures/*
 !crates/audio/fixtures/generate.sh
+!crates/audio/fixtures/generate-segments.py
+!crates/audio/fixtures/segments/
 
 # Recordings and transcripts never belong in the repo.
 Meetings/

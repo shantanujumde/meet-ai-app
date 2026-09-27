@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "segments": [
+    {
+      "idx": 0,
+      "start_host_ns": 1000000000,
+      "start_continuous_ns": 1000000000,
+      "start_unix_ns": 1790499600000000000,
+      "mic_rate": 16000,
+      "sys_rate": 16000,
+      "mic_frames": 80000,
+      "sys_frames": 80000,
+      "reason": "start",
+      "mic_device_rate": 48000,
+      "sys_device_rate": 48000,
+      "anchors": [
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000}
+      ]
+    },
+    {
+      "idx": 1,
+      "start_host_ns": 6400000000,
+      "start_continuous_ns": 6400000000,
+      "start_unix_ns": 1790499605400000000,
+      "mic_rate": 16000,
+      "sys_rate": 16000,
+      "mic_frames": 128000,
+      "sys_frames": 128000,
+      "reason": "default_output_device_changed",
+      "mic_device_rate": 48000,
+      "sys_device_rate": 48000,
+      "anchors": [
+        {"mic_host_ns": 11400000000, "mic_frames": 80000, "sys_host_ns": 11400000000, "sys_frames": 80000}
+      ]
+    }
+  ]
+}

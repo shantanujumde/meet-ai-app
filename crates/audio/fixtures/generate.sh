@@ -147,4 +147,14 @@ JSON
   echo ']}'
 } >"$ref"
 
+# --- 4. segments/ ------------------------------------------------------------
+# The Phase 0 drift-gate fixtures: hand-computed `segments.json` files for the
+# §2 drift rows, the §3 refusals and the §4 device switches. Unlike the WAVs
+# above these ARE committed — they are a few tens of KB each, and the on-disk
+# shape is half of what `crates/audio/tests/segments_fixtures.rs` tests.
+#
+# Set FIXTURE_WAVS=1 to also write the matching silence WAVs (~1 GB; only a
+# future `drift-check` header cross-check needs them).
+python3 generate-segments.py
+
 echo "done -> $here"
