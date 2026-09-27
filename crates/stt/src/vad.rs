@@ -116,16 +116,26 @@ pub struct SegmentConfig {
     /// The second half of the hallucination guard: a 100 ms blip of keyboard
     /// noise that squeaks past the threshold still never reaches whisper.
     pub min_speech_frames: usize,
+
+    /// Hard ceiling on one span, after which it is cut and a new one opened.
+    ///
+    /// Whisper was trained on 30-second windows and silently truncates a
+    /// longer clip, so an uninterrupted monologue has to be cut *somewhere*;
+    /// cutting it deliberately at a known point beats discovering later that
+    /// the tail of a four-minute answer was never transcribed. 25 s leaves
+    /// room for the padding either side.
+    pub max_speech_frames: usize,
 }
 
 impl Default for SegmentConfig {
     fn default() -> Self {
         Self {
             threshold: 0.6,
-            onset_frames: 4,       // ~64 ms
-            hangover_frames: 30,   // ~480 ms
-            pad_frames: 10,        // ~160 ms either side
-            min_speech_frames: 16, // ~256 ms
+            onset_frames: 4,          // ~64 ms
+            hangover_frames: 30,      // ~480 ms
+            pad_frames: 10,           // ~160 ms either side
+            min_speech_frames: 16,    // ~256 ms
+            max_speech_frames: 1_562, // ~25 s
         }
     }
 }
@@ -154,6 +164,142 @@ impl SpeechSpan {
     }
 }
 
+/// The onset/hangover state machine, with no audio and no detector attached.
+///
+/// Split out of [`detect_speech`] so the live path can share it. A batch caller
+/// has the whole recording and can merge two padded spans that overlap; a live
+/// caller has already handed the earlier span to an engine and cannot take it
+/// back. Both need the *same* answer to "where does this utterance start and
+/// stop", which is exactly what this struct is, and nothing else.
+///
+/// Feed it one `is_speech` verdict per [`FRAME_SAMPLES`]-long frame, in order.
+/// Spans come back **unpadded**: padding is a per-caller policy, because it is
+/// the only part that differs between batch and live.
+#[derive(Debug, Clone)]
+pub struct Segmenter {
+    config: SegmentConfig,
+    /// Absolute index of the next frame to be scored. Absolute, not relative
+    /// to the current `feed` call, so live timestamps land on the recording's
+    /// timeline rather than on the chunk's.
+    next_frame: usize,
+    /// `None` = currently in silence. `Some(start)` = inside a span that opened
+    /// at frame `start`.
+    open_at: Option<usize>,
+    speech_run: usize,
+    silence_run: usize,
+    /// Where speech was last actually seen, so the hangover tail is trimmed
+    /// back off the end of the span rather than baked into it.
+    last_speech_frame: usize,
+}
+
+impl Segmenter {
+    pub fn new(config: SegmentConfig) -> Self {
+        Self {
+            config,
+            next_frame: 0,
+            open_at: None,
+            speech_run: 0,
+            silence_run: 0,
+            last_speech_frame: 0,
+        }
+    }
+
+    /// Score one frame's verdict. Returns a span if this frame closed one.
+    pub fn push(&mut self, is_speech: bool) -> Option<SpeechSpan> {
+        let frame_index = self.next_frame;
+        self.next_frame += 1;
+
+        if is_speech {
+            self.speech_run += 1;
+            self.silence_run = 0;
+            self.last_speech_frame = frame_index;
+            if self.open_at.is_none() && self.speech_run >= self.config.onset_frames {
+                // Open the span at the first frame of the run, not the frame
+                // that crossed the onset count, or we clip the word's attack.
+                self.open_at = Some(frame_index + 1 - self.speech_run);
+            }
+            // Somebody who never pauses still has to be cut into clips an
+            // engine can actually swallow. Close here and reopen immediately,
+            // so the next frame continues the same monologue in a new span.
+            if let Some(start_frame) = self.open_at
+                && (frame_index + 1).saturating_sub(start_frame) >= self.config.max_speech_frames
+            {
+                self.open_at = Some(frame_index + 1);
+                return self.raw_span(start_frame, frame_index + 1);
+            }
+            return None;
+        }
+
+        self.speech_run = 0;
+        self.silence_run += 1;
+        if let Some(start_frame) = self.open_at
+            && self.silence_run >= self.config.hangover_frames
+        {
+            self.open_at = None;
+            return self.raw_span(start_frame, self.last_speech_frame + 1);
+        }
+        None
+    }
+
+    /// The span that is open right now, if any — speech heard but not yet
+    /// settled. The live path needs this to show a volatile tail; the batch
+    /// path never asks.
+    ///
+    /// Unlike [`Self::push`], this ignores `min_speech_frames`: a hypothesis
+    /// that is still growing has not had its chance to get long enough yet.
+    pub fn open_span(&self) -> Option<SpeechSpan> {
+        self.open_at.map(|start_frame| SpeechSpan {
+            start_sample: start_frame * FRAME_SAMPLES,
+            end_sample: (self.last_speech_frame + 1) * FRAME_SAMPLES,
+        })
+    }
+
+    /// End of audio: close whatever is still open.
+    pub fn finish(&mut self) -> Option<SpeechSpan> {
+        let start_frame = self.open_at.take()?;
+        self.raw_span(start_frame, self.last_speech_frame + 1)
+    }
+
+    /// How many frames have been scored. `frames_scored() * FRAME_SAMPLES` is
+    /// the absolute sample position of the stream.
+    pub fn frames_scored(&self) -> usize {
+        self.next_frame
+    }
+
+    /// Apply the minimum-length rule — the second half of the hallucination
+    /// guard — and convert frames to samples.
+    fn raw_span(&self, start_frame: usize, end_frame: usize) -> Option<SpeechSpan> {
+        if end_frame.saturating_sub(start_frame) < self.config.min_speech_frames {
+            return None;
+        }
+        Some(SpeechSpan {
+            start_sample: start_frame * FRAME_SAMPLES,
+            end_sample: end_frame * FRAME_SAMPLES,
+        })
+    }
+}
+
+/// Widen a span by [`SegmentConfig::pad_frames`] either side, clamped.
+///
+/// Whisper's first and last word are the ones it gets wrong when a clip starts
+/// mid-phoneme, so every span handed to an engine carries context. `floor` and
+/// `ceiling` are the sample range the padded span may not escape: the live path
+/// passes the end of the previous span and the end of the audio it holds, so
+/// padding can never reach into audio that was already transcribed or audio
+/// that has not arrived yet.
+pub fn pad_span(
+    span: SpeechSpan,
+    config: &SegmentConfig,
+    floor: usize,
+    ceiling: usize,
+) -> SpeechSpan {
+    let pad = config.pad_frames * FRAME_SAMPLES;
+    SpeechSpan {
+        start_sample: span.start_sample.saturating_sub(pad).max(floor),
+        end_sample: (span.end_sample + pad).min(ceiling),
+    }
+}
+
 /// Split 16 kHz mono PCM into the stretches that contain speech.
 ///
 /// Returns an empty vector for silence. That empty vector is the whole
@@ -163,85 +309,35 @@ pub fn detect_speech(pcm: &[i16], vad: &mut dyn Vad, config: &SegmentConfig) -> 
     vad.reset();
 
     let total_frames = pcm.len() / FRAME_SAMPLES;
+    let mut segmenter = Segmenter::new(*config);
     let mut spans = Vec::new();
-
-    // `None` = currently in silence. `Some(start)` = currently inside a span
-    // that opened at frame `start`.
-    let mut open_at: Option<usize> = None;
-    let mut speech_run = 0usize;
-    let mut silence_run = 0usize;
-    // Where speech was last actually seen, so the hangover tail is trimmed back
-    // off the end of the span rather than baked into it.
-    let mut last_speech_frame = 0usize;
 
     for frame_index in 0..total_frames {
         let start = frame_index * FRAME_SAMPLES;
         let frame = &pcm[start..start + FRAME_SAMPLES];
         let is_speech = vad.score(frame) >= config.threshold;
-
-        if is_speech {
-            speech_run += 1;
-            silence_run = 0;
-            last_speech_frame = frame_index;
-            if open_at.is_none() && speech_run >= config.onset_frames {
-                // Open the span at the first frame of the run, not the frame
-                // that crossed the onset count, or we clip the word's attack.
-                open_at = Some(frame_index + 1 - speech_run);
-            }
-        } else {
-            speech_run = 0;
-            silence_run += 1;
-            if let Some(start_frame) = open_at
-                && silence_run >= config.hangover_frames
-            {
-                push_span(
-                    &mut spans,
-                    start_frame,
-                    last_speech_frame + 1,
-                    pcm.len(),
-                    config,
-                );
-                open_at = None;
-            }
+        if let Some(span) = segmenter.push(is_speech) {
+            push_span(&mut spans, span, pcm.len(), config);
         }
     }
 
     // A span still open at end-of-audio closes at the last speech frame.
-    if let Some(start_frame) = open_at {
-        push_span(
-            &mut spans,
-            start_frame,
-            last_speech_frame + 1,
-            pcm.len(),
-            config,
-        );
+    if let Some(span) = segmenter.finish() {
+        push_span(&mut spans, span, pcm.len(), config);
     }
 
     spans
 }
 
-/// Apply the minimum-length rule and the context padding, then record the span.
-fn push_span(
-    spans: &mut Vec<SpeechSpan>,
-    start_frame: usize,
-    end_frame: usize,
-    pcm_len: usize,
-    config: &SegmentConfig,
-) {
-    if end_frame.saturating_sub(start_frame) < config.min_speech_frames {
-        return;
-    }
+/// Pad a raw span and record it, merging it into the previous one if the
+/// padding made the two overlap.
+///
+/// Merging is a batch-only luxury — nothing has been transcribed yet, so two
+/// spans can still become one. Emitting overlapping audio instead would
+/// duplicate words across two lines.
+fn push_span(spans: &mut Vec<SpeechSpan>, raw: SpeechSpan, pcm_len: usize, config: &SegmentConfig) {
+    let span = pad_span(raw, config, 0, pcm_len);
 
-    let padded_start = start_frame.saturating_sub(config.pad_frames);
-    let padded_end = end_frame + config.pad_frames;
-
-    let span = SpeechSpan {
-        start_sample: padded_start * FRAME_SAMPLES,
-        end_sample: (padded_end * FRAME_SAMPLES).min(pcm_len),
-    };
-
-    // Padding can make two close spans overlap. Merge rather than emit
-    // overlapping audio, which would duplicate words across two lines.
     if let Some(previous) = spans.last_mut()
         && span.start_sample <= previous.end_sample
     {
@@ -282,6 +378,7 @@ mod tests {
             hangover_frames: 3,
             pad_frames: 0,
             min_speech_frames: 2,
+            max_speech_frames: 1_000,
         }
     }
 
@@ -387,6 +484,127 @@ mod tests {
         for pair in spans.windows(2) {
             assert!(pair[0].end_sample <= pair[1].start_sample);
         }
+    }
+
+    // --- the streaming state machine ---
+    //
+    // The live path cannot call `detect_speech`, because it never has the
+    // whole recording. It drives `Segmenter` a frame at a time instead, so the
+    // two have to agree about where utterances start and stop.
+
+    fn drive(segmenter: &mut Segmenter, verdicts: &[bool]) -> Vec<SpeechSpan> {
+        verdicts
+            .iter()
+            .filter_map(|is_speech| segmenter.push(*is_speech))
+            .collect()
+    }
+
+    fn verdicts(total: usize, speech: &[usize]) -> Vec<bool> {
+        (0..total).map(|index| speech.contains(&index)).collect()
+    }
+
+    #[test]
+    fn the_streaming_segmenter_agrees_with_the_batch_one() {
+        let speech = [2, 3, 4, 5, 20, 21, 22, 23];
+        let mut scores = vec![0.0; 40];
+        for index in speech {
+            scores[index] = 0.9;
+        }
+        let mut vad = ScriptedVad { scores, next: 0 };
+        let batch = detect_speech(&pcm_for(40), &mut vad, &config());
+
+        let mut segmenter = Segmenter::new(config());
+        let mut live = drive(&mut segmenter, &verdicts(40, &speech));
+        live.extend(segmenter.finish());
+
+        // pad_frames is 0 in this config, so the padded batch spans and the
+        // raw streaming ones are directly comparable.
+        assert_eq!(batch, live);
+    }
+
+    #[test]
+    fn streaming_silence_never_opens_a_span() {
+        let mut segmenter = Segmenter::new(config());
+        assert!(drive(&mut segmenter, &[false; 200]).is_empty());
+        assert_eq!(segmenter.open_span(), None, "nothing may be open");
+        assert_eq!(segmenter.finish(), None);
+    }
+
+    #[test]
+    fn the_open_span_is_visible_before_it_closes() {
+        // The live pane's volatile tail is drawn from this.
+        let mut segmenter = Segmenter::new(config());
+        drive(&mut segmenter, &verdicts(6, &[2, 3, 4, 5]));
+
+        let open = segmenter.open_span().expect("speech is still going");
+        assert_eq!(open.start_sample, 2 * FRAME_SAMPLES);
+        assert_eq!(open.end_sample, 6 * FRAME_SAMPLES);
+
+        // Three silent frames (the hangover) settle it.
+        let closed = drive(&mut segmenter, &[false, false, false]);
+        assert_eq!(closed.len(), 1);
+        assert_eq!(segmenter.open_span(), None, "the tail must be released");
+    }
+
+    #[test]
+    fn a_blip_too_short_to_keep_still_closes_the_open_span() {
+        // A span that opens and is then thrown away by the minimum-length rule
+        // returns nothing from `push`. The live session has to notice that and
+        // clear the tail, so `open_span` going back to `None` is the signal it
+        // watches — assert that it actually does.
+        let strict = SegmentConfig {
+            min_speech_frames: 5,
+            ..config()
+        };
+        let mut segmenter = Segmenter::new(strict);
+        // Four frames only: two of silence, then two of speech. Any more and
+        // the hangover would already have closed the span before the assert.
+        drive(&mut segmenter, &verdicts(4, &[2, 3]));
+        assert!(segmenter.open_span().is_some());
+
+        let closed = drive(&mut segmenter, &[false, false, false]);
+        assert!(closed.is_empty(), "too short to transcribe");
+        assert_eq!(segmenter.open_span(), None, "but definitely not still open");
+    }
+
+    #[test]
+    fn a_monologue_is_cut_at_the_ceiling_rather_than_silently_truncated() {
+        let capped = SegmentConfig {
+            max_speech_frames: 10,
+            ..config()
+        };
+        let mut segmenter = Segmenter::new(capped);
+        // 25 unbroken frames of speech: two full cuts, third still open.
+        let spans = drive(&mut segmenter, &[true; 25]);
+
+        assert_eq!(spans.len(), 2, "cut twice: {spans:?}");
+        assert_eq!(spans[0].start_sample, 0);
+        assert_eq!(spans[0].end_sample, 10 * FRAME_SAMPLES);
+        assert_eq!(spans[1].start_sample, 10 * FRAME_SAMPLES);
+        assert_eq!(spans[1].end_sample, 20 * FRAME_SAMPLES);
+        // No audio is lost at a cut: the next span starts where the last ended.
+        let open = segmenter.open_span().expect("still talking");
+        assert_eq!(open.start_sample, 20 * FRAME_SAMPLES);
+    }
+
+    #[test]
+    fn padding_never_reaches_back_into_audio_already_transcribed() {
+        let span = SpeechSpan {
+            start_sample: 10 * FRAME_SAMPLES,
+            end_sample: 20 * FRAME_SAMPLES,
+        };
+        let padded = pad_span(span, &config(), 0, usize::MAX);
+        assert_eq!(padded, span, "pad_frames is 0 here");
+
+        let generous = SegmentConfig {
+            pad_frames: 100,
+            ..config()
+        };
+        let floor = 8 * FRAME_SAMPLES;
+        let ceiling = 21 * FRAME_SAMPLES;
+        let padded = pad_span(span, &generous, floor, ceiling);
+        assert_eq!(padded.start_sample, floor, "clamped to the floor");
+        assert_eq!(padded.end_sample, ceiling, "clamped to what has arrived");
     }
 
     #[test]
