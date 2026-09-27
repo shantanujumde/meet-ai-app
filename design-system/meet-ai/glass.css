@@ -1,0 +1,289 @@
+/* =============================================================================
+   meet-ai — Liquid Glass recipes
+   Requires tokens.css.
+
+   Apple's real Liquid Glass is a native API (SwiftUI .glassEffect / AppKit).
+   A WKWebView cannot call it. This file reproduces the observable constructs
+   in CSS: adaptive translucency, rim specular highlight, edge lensing, and
+   grouped morphing. Window-level vibrancy comes from Tauri's windowEffects,
+   which is the real NSVisualEffectView sitting behind the transparent webview.
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   0 — Window base
+   The webview must be transparent so the native material shows through.
+   Pair with tauri.conf.json: transparent: true, windowEffects.effects:
+   ["underWindowBackground"], titleBarStyle: "Transparent".
+   -------------------------------------------------------------------------- */
+html, body, #root {
+  background: transparent;
+  height: 100%;
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Drag region for the transparent titlebar. Buttons inside must opt out. */
+.drag-region { -webkit-app-region: drag; }
+.no-drag, button, input, a, [role="button"] { -webkit-app-region: no-drag; }
+
+/* -----------------------------------------------------------------------------
+   1 — Regular glass
+   The default. Adaptive, works on any backdrop, carries its own separation.
+   Use for floating toolbars, popovers, the transcript panel, sheets.
+   -------------------------------------------------------------------------- */
+.glass {
+  position: relative;
+  isolation: isolate;
+  background-color: var(--surface-glass-regular);
+  backdrop-filter: blur(var(--blur-regular)) saturate(var(--sat-glass));
+  -webkit-backdrop-filter: blur(var(--blur-regular)) saturate(var(--sat-glass));
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-floating);
+  /* Rim: bright top edge, dark bottom edge, hairline border.
+     This is what reads as "glass" rather than "blurred box". */
+  border: 0.5px solid var(--rim-border);
+}
+
+/* Specular highlight along the top rim, fading around the curve.
+   Drawn as a masked ring so it follows the radius exactly. */
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    180deg,
+    var(--rim-highlight) 0%,
+    transparent 42%,
+    transparent 58%,
+    var(--rim-shadow) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Edge lensing. Apple's glass refracts the backdrop harder at its edges.
+   Approximated with a second, stronger blur confined to a thin inset ring.
+   Costs one extra backdrop pass — apply only to large surfaces. */
+.glass--lensed::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  backdrop-filter: blur(calc(var(--blur-regular) * 2)) saturate(var(--sat-glass));
+  -webkit-backdrop-filter: blur(calc(var(--blur-regular) * 2)) saturate(var(--sat-glass));
+  -webkit-mask: radial-gradient(
+    120% 120% at 50% 50%,
+    transparent 58%,
+    #000 100%
+  );
+  mask: radial-gradient(120% 120% at 50% 50%, transparent 58%, #000 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* -----------------------------------------------------------------------------
+   2 — Clear glass
+   More transparent, for use over media or a vibrant backdrop. It does not
+   guarantee contrast on its own, so it REQUIRES a dimming layer underneath.
+   Never place body text on clear glass without the scrim.
+   -------------------------------------------------------------------------- */
+.glass--clear {
+  background-color: var(--surface-glass-clear);
+  backdrop-filter: blur(var(--blur-thin)) saturate(var(--sat-clear));
+  -webkit-backdrop-filter: blur(var(--blur-thin)) saturate(var(--sat-clear));
+}
+.glass--clear::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--scrim-clear);
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* -----------------------------------------------------------------------------
+   3 — Interactive glass
+   Glass responds to the pointer: it brightens on hover and compresses on
+   press. Never animate the blur radius — it forces a full recomposite.
+   -------------------------------------------------------------------------- */
+.glass--interactive {
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-instant) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+  cursor: pointer;
+}
+.glass--interactive:hover  { background-color: var(--surface-glass-raised); }
+.glass--interactive:active { transform: scale(0.97); box-shadow: var(--shadow-raised); }
+
+/* Tint. One tinted control per window, reserved for the primary action. */
+.glass--tinted {
+  background-color: var(--accent-glass);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* -----------------------------------------------------------------------------
+   4 — Grouping
+   Glass never stacks on glass. Sibling controls that sit close together share
+   one container so their blurs merge into a single pass instead of compounding
+   into mud. This is the CSS equivalent of GlassEffectContainer.
+   -------------------------------------------------------------------------- */
+.glass-group {
+  display: flex;
+  align-items: center;
+  gap: var(--toolbar-gap);
+  padding: var(--toolbar-pad);
+  border-radius: var(--toolbar-radius);
+}
+/* Children of a group are plain fills. They must NOT re-blur. */
+.glass-group > * {
+  background-color: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: none;
+  box-shadow: none;
+  border-radius: var(--toolbar-item-radius);
+  height: var(--toolbar-item-h);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.glass-group > *:hover           { background-color: var(--white-a14); }
+.glass-group > [aria-pressed="true"],
+.glass-group > [data-active="true"] { background-color: var(--accent-glass); }
+
+/* -----------------------------------------------------------------------------
+   5 — Scroll edge effect
+   Content must fade as it passes under a floating glass bar, otherwise text
+   collides with the bar and reads as a rendering bug.
+   soft = gradient fade (default). hard = a defined cut for pinned bars.
+   -------------------------------------------------------------------------- */
+.scroll-edge {
+  --edge-size: 48px;
+  overflow-y: auto;
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 var(--edge-size),
+    #000 calc(100% - var(--edge-size)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 var(--edge-size),
+    #000 calc(100% - var(--edge-size)),
+    transparent 100%
+  );
+}
+.scroll-edge--hard { --edge-size: 8px; }
+.scroll-edge--top-only {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 var(--edge-size));
+  mask-image: linear-gradient(180deg, transparent 0, #000 var(--edge-size));
+}
+
+/* -----------------------------------------------------------------------------
+   6 — Morphing between grouped elements
+   When a control expands into a panel (transcript collapsed -> expanded), the
+   glass stretches rather than cross-fading. Use the View Transition API; it
+   degrades to an instant swap where unsupported.
+   -------------------------------------------------------------------------- */
+@supports (view-transition-name: none) {
+  .morph-transcript { view-transition-name: transcript-glass; }
+  ::view-transition-old(transcript-glass),
+  ::view-transition-new(transcript-glass) {
+    animation-duration: var(--dur-slow);
+    animation-timing-function: var(--ease-spring);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   7 — Focus
+   The ring sits outside the glass so the rim highlight stays readable.
+   Never remove it. Never rely on the glass brightening alone.
+   -------------------------------------------------------------------------- */
+:where(button, a, input, textarea, [tabindex]):focus-visible {
+  outline: var(--focus-w) solid var(--focus-ring);
+  outline-offset: var(--focus-offset);
+  border-radius: inherit;
+}
+
+/* -----------------------------------------------------------------------------
+   8 — Accessibility fallbacks
+   Every one of these is a system setting a real user has switched on. Glass is
+   decoration; the interface must survive losing it entirely.
+   -------------------------------------------------------------------------- */
+
+/* Reduce Transparency — replace every blur with an opaque surface. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass--clear {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background-color: var(--gray-50);
+    border-color: var(--separator-strong);
+  }
+  .glass::before,
+  .glass--lensed::after,
+  .glass--clear::after { display: none; }
+  html, body { background: var(--gray-100); }
+
+  @media (prefers-color-scheme: dark) {
+    .glass, .glass--clear { background-color: var(--gray-900); }
+    html, body { background: var(--gray-950); }
+  }
+}
+
+/* Increase Contrast — solid borders, no soft rims, stronger text. */
+@media (prefers-contrast: more) {
+  .glass, .glass--clear {
+    border: 1px solid var(--text-primary);
+    background-color: var(--surface-glass-raised);
+  }
+  .glass::before { display: none; }
+  :root {
+    --text-secondary: var(--text-primary);
+    --separator: var(--text-primary);
+  }
+}
+
+/* Reduce Motion — keep state changes, drop the travel. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  .glass--interactive:active { transform: none; }
+  .record-indicator { animation: none; opacity: 1; }
+}
+
+/* -----------------------------------------------------------------------------
+   9 — Recording indicator
+   The one element that outranks glass. It stays legible on any backdrop, so it
+   is a solid fill, not a translucent one.
+   -------------------------------------------------------------------------- */
+.record-indicator {
+  width: var(--record-size);
+  height: var(--record-size);
+  border-radius: var(--radius-capsule);
+  background: var(--record-fill);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-recording) 25%, transparent);
+  z-index: var(--z-recording);
+  animation: record-pulse 2s var(--ease-in-out) infinite;
+}
+@keyframes record-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: var(--record-pulse-min); }
+}
