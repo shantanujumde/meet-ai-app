@@ -316,6 +316,14 @@ fn whisper_streams_the_same_lines_it_batches() {
     let mut batch = stt::CollectingSink::new();
     engine.transcribe(&wav, Speaker::You, &mut batch).unwrap();
 
+    // Printed so the gate is readable in a log rather than only pass/fail —
+    // `accuracy.rs` does the same. An empty-vs-empty comparison would pass
+    // vacuously, so the non-empty assertion comes first.
+    eprintln!("--- whisper, streamed a block at a time ---");
+    for line in live.lines() {
+        eprintln!("{line}");
+    }
+
     assert!(!batch.utterances.is_empty(), "the fixture has speech in it");
     assert_eq!(
         live.lines(),
