@@ -6,7 +6,7 @@
      node build.mjs        # SVG masters + manifest
      ./render.sh           # rasters, icns, ico, favicons, src-tauri/icons
    ============================================================================= */
-import { writeFileSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, rmSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -25,8 +25,17 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const BRAND = resolve(HERE, "..");
 const REPO = resolve(HERE, "..", "..", "..", "..");
 const STAGE = join(HERE, ".render");
-rmSync(STAGE, { recursive: true, force: true });
+// Prune only what this script owns. `.render/` is shared: proof.mjs and
+// proximity.mjs stage their HTML here too, so that relative <img> links to the
+// rasters resolve under file://. Wiping the directory wholesale used to delete
+// those pages out from under their render scripts — and because Chrome answers
+// a missing file:// URL with an error page rather than a non-zero exit, the
+// result was a screenshot of the failure, committed as a proof (TUR-12).
 mkdirSync(STAGE, { recursive: true });
+for (const f of readdirSync(STAGE)) {
+  if (/^(icon|mark)-.*\.(html|png)$/.test(f) || f === "manifest.json" || f === "meet-ai.iconset")
+    rmSync(join(STAGE, f), { recursive: true, force: true });
+}
 
 const write = (rel, body) => {
   const p = join(BRAND, rel);
