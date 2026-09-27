@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+/* The design system is the single source of the visual language. It lives at
+   design-system/meet-ai/ and is imported, not copied, so there is never a second
+   drifting palette. Read design-system/meet-ai/MASTER.md before adding styles. */
+@import "../design-system/meet-ai/tokens.css";
+@import "../design-system/meet-ai/glass.css";
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
