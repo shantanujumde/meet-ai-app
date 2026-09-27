@@ -330,23 +330,40 @@ Two consequences for Phase 0:
 
 ### Signing caveat — ad-hoc is not good enough for the real app
 
+> ⚠️ **Superseded by §10.3–10.4 and §10.6.** The observations below are accurate
+> *for an ad-hoc signed bundle*, but two of the conclusions they led to were
+> wrong and one of the remedies is actively harmful. Read §10.6 before acting on
+> anything in this subsection. Corrections are inline.
+
 The spike is **ad-hoc signed**, so TCC stored the grant with
 `identifier_type=Path` against the executable path. Consequences observed:
 
 - `tccutil reset AudioCapture pro.saleschat.meetai` is a **no-op** — it targets a
-  bundle-ID record that doesn't exist. The SPEC §6 verification recipe needs
-  updating, or a real identity. To force a fresh prompt, copy the bundle to a new
-  path.
+  bundle-ID record that doesn't exist.
+  **Correction (§10.4):** SPEC §6's recipe is correct as written; it was a no-op
+  here *only* because the spike was ad-hoc signed. Under the real identity the
+  grant is created with `identifier_type=Bundle ID` and `tccutil reset` works.
+  ⛔ **Do not "copy the bundle to a new path to force a fresh prompt."** That was
+  the original advice here and it is how three permanent, unreachable path-keyed
+  TCC records were manufactured — `tccutil reset` resolves its argument through
+  LaunchServices as a bundle ID and returns `-10814` for a path, and the record
+  outlives the directory it names (§10.6). The advice is removed from SPEC §6.
 - One rebuild produced `Failed to match existing code requirement for subject
   …/MacOS/meet-ai and service kTCCServiceAudioCapture` and re-prompted; another
   rebuild did not. Grant persistence across rebuilds was **inconsistent** across
   four runs, which is exactly what SPEC §2.9's "local self-signed identity, not
-  optional" is there to prevent. Not chased further — it is an artefact of ad-hoc
-  signing and disappears with a stable identity.
+  optional" is there to prevent.
+  **Confirmed as an ad-hoc artefact (§10.4, §10.7):** the ad-hoc designated
+  requirement *is* the cdhash, so every rebuild is a new subject. Under the
+  identity the requirement carries no hash, and a rebuild that changed the cdhash
+  drew no prompt and no `Failed to match` line.
 
-`make-identity.sh` creates the self-signed cert, but making `codesign` accept it
-needs one `sudo security add-trusted-cert`. **Re-run the spike once under a real
-identity to confirm the grant becomes bundle-ID-keyed and survives rebuilds.**
+`make-identity.sh` creates the self-signed cert.
+**Correction (§10.3):** it needs **no admin password**. The earlier claim that it
+required one `sudo security add-trusted-cert` was a bug in the script — it passed
+`-d` (system keychain). Without `-d` the trust setting lands in the user domain,
+`codesign` accepts it, and `sudo` leaves the setup entirely. `build.sh` now
+defaults to the identity and refuses to ad-hoc sign unless `ALLOW_ADHOC=1`.
 
 ### Also measured, free of charge
 
@@ -431,6 +448,36 @@ in the 🔴 module.
 stack line already assumed. `crates/audio` stays 🔴 rather than dropping to 🟡 —
 the ~1 week §5 hoped to save is not available. `sidecar/meet-stt` keeps
 transcription only, exactly as A2 scoped it.
+
+### 9.1 What the TUR-10 follow-up added to this decision
+
+§10 was not scoped to revisit L3, but one of its results bears on it directly.
+Recorded here so the decision is judged on the complete evidence.
+
+**One new argument for in-process, and it is not a small one.** §10.2 replaced
+the permission check with a **positive control**: meet-ai plays a short known
+tone from its own process, then confirms that tone comes back through the tap
+before it will call permission granted. That is now the *only* way to tell a
+denial from a quiet room — §10.1/§10.7 measured both the missing-usage-string
+denial and a real **Don't Allow**, and in both cases every `OSStatus` is `noErr`
+while the payload is bit-exact zeros, identical to a granted capture of a silent
+Mac. So the check is mandatory, not a nicety.
+
+In-process Rust makes that check one function: emit tone, read the ring buffer,
+correlate, return a verdict. Across a sidecar boundary it becomes an IPC
+handshake that has to start the tap, synchronise a tone with a different
+process's clock, and stream the verdict back — on the startup path, before the
+UI can enable recording. This argument did not exist when §9 was written; it
+points the same way as the other four.
+
+**Nothing in §10 points the other way.** The two remaining implementation
+constraints it found — `AudioDeviceCreateIOProcIDWithBlock` blocking for exactly
+the dialog's dwell time (1 255 ms measured against a 1 250 ms prompt), and
+`authReason=2` meaning "the user answered" rather than "the user consented" —
+cost the same in either language.
+
+**Decision unchanged: pure Rust, in-process.** Still pending agreement, since it
+diverges from SPEC §5.
 
 ---
 
