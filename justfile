@@ -80,6 +80,17 @@ sidecar:
 dev: sidecar
     pnpm tauri dev
 
+# A sample meetings folder, so the app shell's populated states can be looked at
+# without recording a real meeting first. Writes into target/, never ~/Meetings.
+ui-fixtures:
+    bash src-tauri/fixtures/ui-fixtures.sh
+
+# Run the app against those fixtures. This is the command to use when working on
+# the meeting list, the review view or the notes pane — `just dev` points at the
+# real ~/Meetings, which on a fresh machine is empty.
+dev-ui: sidecar ui-fixtures
+    MEET_AI_MEETINGS_ROOT="$PWD/target/ui-fixtures/Meetings" pnpm tauri dev
+
 # Phase 0's capture CLI — no Tauri, no UI.
 rec *ARGS:
     cargo run -p audio --bin meet-rec -- {{ARGS}}

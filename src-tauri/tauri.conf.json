@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "meet-ai",
@@ -18,7 +19,14 @@
         "minWidth": 760,
         "minHeight": 520,
         "resizable": true,
-        "titleBarStyle": "Transparent"
+        "titleBarStyle": "Transparent",
+        "hiddenTitle": true,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["underWindowBackground"],
+          "state": "followsWindowActiveState",
+          "radius": 12
+        }
       }
     ],
     "security": {
