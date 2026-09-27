@@ -4,7 +4,16 @@ set shell := ["bash", "-uc"]
 SIGN_IDENTITY := env_var_or_default("SIGN_IDENTITY", "meet-ai-dev")
 
 # The one command. If this is green, the repo is healthy.
-check: check-windows
+#
+# `sidecar` is a dependency, not decoration. Two reasons:
+#   1. swiftc is the only thing that compiles sidecar/meet-stt. Without it here
+#      a broken main.swift passes `just check` and only fails at `just build`.
+#      Survivable while the sidecar is a 60-line stub; not survivable in Phase 1
+#      when it becomes the default engine on macOS 26.
+#   2. crates/stt tests the sidecar across the process boundary rather than with
+#      XCTest (see main.swift's header), so `cargo test` needs target/meet-stt
+#      to already exist.
+check: check-windows sidecar
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
