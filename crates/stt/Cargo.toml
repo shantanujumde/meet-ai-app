@@ -1,0 +1,29 @@
+[package]
+name = "stt"
+description = "SttEngine trait, Swift sidecar driver, whisper-rs fallback, transcript formatting."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+earshot.workspace = true
+hound.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# whisper-rs is the FALLBACK engine (SETUP.md §1.5) — macOS 26 uses the Swift
+# sidecar instead. It is gated per-target for two reasons:
+#   1. `metal` is an Apple-only feature.
+#   2. whisper-rs-sys compiles whisper.cpp with cmake for the *target*, which a
+#      Windows cross-check from a Mac has no toolchain for. Gating keeps
+#      `just check-windows` meaningful instead of failing for an unrelated reason.
+# The Windows seam (SPEC §8.2) turns on `vulkan`/`cuda` in the block below when
+# crates/audio/src/windows.rs lands.
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { workspace = true, features = ["metal", "tracing_backend"] }
+
+[dev-dependencies]
+insta.workspace = true

@@ -1,0 +1,55 @@
+[package]
+name = "meet-ai"
+description = "Botless meeting recorder for macOS."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+# Tauri 2 builds the app as a library so the mobile targets can link it. The
+# desktop binary below is a thin wrapper around `meet_ai_lib::run()`.
+name = "meet_ai_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { workspace = true, features = [] }
+
+[dependencies]
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tauri = { workspace = true, features = [] }
+tauri-plugin-clipboard-manager.workspace = true
+tauri-plugin-dialog.workspace = true
+tauri-plugin-fs.workspace = true
+tauri-plugin-log.workspace = true
+tauri-plugin-notification.workspace = true
+tauri-plugin-opener.workspace = true
+tokio = { workspace = true, features = [
+  "rt-multi-thread",
+  "macros",
+  "fs",
+  "process",
+  "sync",
+  "time",
+] }
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+
+# Workspace crates. Empty today; this is the wiring Rune and Vox land into.
+audio.workspace = true
+calendar.workspace = true
+detect.workspace = true
+prompts.workspace = true
+store.workspace = true
+stt.workspace = true
+
+# Desktop-only plugins. A global shortcut, a single-instance guard and an
+# updater have no meaning on mobile, and Tauri's own template gates them the
+# same way.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-global-shortcut.workspace = true
+tauri-plugin-single-instance.workspace = true
+tauri-plugin-updater.workspace = true

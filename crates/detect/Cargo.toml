@@ -1,0 +1,14 @@
+[package]
+name = "detect"
+description = "Meeting detection from running processes and audio activity."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sysinfo.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- These two strings are what the user actually reads in the macOS
+	     permission prompt. Plain language, and they say why, not just what.
+	     NSAudioCaptureUsageDescription is the Core Audio process-tap key and is
+	     the whole reason Phase 0a exists. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>meet-ai records your microphone so your own voice appears in meeting transcripts.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>meet-ai records this Mac's audio so other participants appear in meeting transcripts.</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.4</string>
+</dict>
+</plist>

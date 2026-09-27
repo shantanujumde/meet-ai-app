@@ -1,0 +1,31 @@
+[package]
+name = "store"
+description = "Markdown read/write, YAML frontmatter, file watching, derived SQLite FTS5 index."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+chrono.workspace = true
+dirs.workspace = true
+jsonc-parser.workspace = true
+notify.workspace = true
+notify-debouncer-full.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+yaml-rust2.workspace = true
+
+# SETUP.md §2.4 asks for features ["bundled", "fts5"]. rusqlite 0.40.2 has no
+# `fts5` feature — `bundled` compiles the amalgamation with SQLITE_ENABLE_FTS5
+# already on. Asking for it fails to resolve. The `fts5_is_available` test in
+# src/lib.rs proves FTS5 really is there rather than trusting this comment.
+#
+# `bundled` also compiles sqlite3.c for the *target*, which is why this crate is
+# outside `just check-windows`. See the note in the justfile.
+rusqlite = { workspace = true, features = ["bundled"] }
+
+[dev-dependencies]
+insta.workspace = true
