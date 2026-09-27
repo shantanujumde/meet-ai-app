@@ -60,7 +60,7 @@ just check
 
 | Step | What it covers |
 |---|---|
-| `just check-windows` | `stt`, `prompts`, `detect` still compile for Windows — the SPEC §8.2 seam guard |
+| `just check-windows` | `audio`, `calendar`, `stt`, `prompts`, `detect` still compile for Windows — the SPEC §8.2 seam guard |
 | `cargo fmt --all --check` | Rust formatting |
 | `cargo clippy --workspace --all-targets -- -D warnings` | Rust lint, warnings are errors |
 | `cargo test --workspace` | Rust tests |
@@ -83,17 +83,26 @@ just rec     # the Phase 0 capture CLI, no Tauri and no UI
 macOS TCC will not reliably register an unsigned app, so audio permission never
 sticks. This is not optional, even for personal use.
 
-Create a self-signed code-signing certificate named `meet-ai-dev`:
-
-> Keychain Access → Certificate Assistant → Create a Certificate…
-> Name: `meet-ai-dev` · Identity Type: Self Signed Root · Type: Code Signing
+Creating the certificate is scripted — there is no Keychain Access step. The
+script asks for nothing: it puts the cert in its own keychain and sets trust in
+the *user* domain, which needs no admin password (measured, TUR-10).
 
 ```bash
-security find-identity -v -p codesigning   # confirm meet-ai-dev appears
-just bundle-signed                         # build + sign + verify
+./spikes/phase0a-tcc/make-identity.sh   # ~7 s, no sudo, no GUI
+security find-identity -v -p codesigning  # confirm "meet-ai Local Signing" appears
+just bundle-signed                        # build + sign + verify
 ```
 
-Use a different name by exporting `SIGN_IDENTITY`.
+`just sign` defaults to that identity and to the keychain the script creates
+(`~/Library/Keychains/meet-ai-signing.keychain-db`). Override either with
+`SIGN_IDENTITY` / `SIGN_KEYCHAIN` for a Developer ID build.
+
+**Do not ad-hoc sign instead.** Under ad-hoc signing TCC keys the grant to the
+executable's cdhash, so every rebuild silently drops audio permission and
+`tccutil reset AudioCapture pro.saleschat.meetai` becomes a no-op. With this
+identity the designated requirement is `identifier "pro.saleschat.meetai" and
+certificate leaf = H"be3f…"` — bundle ID plus a stable cert — and the grant
+survives rebuilds (FINDINGS §10.4).
 
 **`just dev` is not a valid environment for testing audio permission.** TCC keys
 on the signed bundle identity, and dev builds are unsigned at a different path.
@@ -149,11 +158,13 @@ Five differences. Each one is a `SETUP.md` step that does not work as written.
    `fts5_is_available` test in `crates/store/src/lib.rs` proves that rather than
    trusting the claim.
 
-2. **`just check-windows` covers `stt`, `prompts` and `detect` — not `store`.**
+2. **`just check-windows` covers everything except `store`.**
    `rusqlite`'s `bundled` feature compiles `sqlite3.c` for the *target*, which
    needs an MSVC toolchain no Mac has. Including `store` would make the check
    permanently red for a reason unrelated to our code. `stt` *is* covered,
-   because `whisper-rs` is gated to macOS in its `Cargo.toml`.
+   because `whisper-rs` is gated to macOS in its `Cargo.toml`. `audio` and
+   `calendar` are covered too — `audio` is the crate the seam guard mainly
+   exists for, and it was missing from the recipe until TUR-2 follow-up.
 
 3. **`cmake` is a prerequisite.** `SETUP.md` step 0.2 omits it; `whisper-rs`
    does not build without it.

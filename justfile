@@ -1,7 +1,16 @@
 set shell := ["bash", "-uc"]
 
-# Self-signed identity created in Keychain Access. See Readme.md § Setup.
-SIGN_IDENTITY := env_var_or_default("SIGN_IDENTITY", "meet-ai-dev")
+# Self-signed identity created by `spikes/phase0a-tcc/make-identity.sh`. That
+# script is headless — no sudo, no Keychain Access, no admin password, because
+# the trust setting goes in the *user* domain (measured, TUR-10) — so there is
+# no manual GUI step in this repo's signing path. The default below is the name
+# that script gives the cert; override both vars for a Developer ID build.
+SIGN_IDENTITY := env_var_or_default("SIGN_IDENTITY", "meet-ai Local Signing")
+
+# The cert lives in its own keychain so nothing in the login keychain is
+# touched, which means codesign needs to be pointed at it. Empty = search the
+# default keychains.
+SIGN_KEYCHAIN := env_var_or_default("SIGN_KEYCHAIN", env_var("HOME") + "/Library/Keychains/meet-ai-signing.keychain-db")
 
 # The one command. If this is green, the repo is healthy.
 #
@@ -32,9 +41,16 @@ check: check-windows sidecar
 # stops pulling a target-compiled C dependency.
 #
 # `stt` IS covered, because whisper-rs is gated to macOS in its Cargo.toml.
+#
+# `audio` is the crate this guard mainly exists for — it is the only one with an
+# `#[cfg(target_os = "macos")]` module — and it was missing from the list, so the
+# seam the comment above describes was not actually being checked. Its Apple
+# framework dependencies are already gated in Cargo.toml, so it cross-checks
+# clean; `cargo check` never links, so cpal's Windows backend needs no MSVC
+# toolchain. `calendar` is here for the same reason, ahead of its Phase 5 deps.
 check-windows:
     rustup target add x86_64-pc-windows-msvc
-    cargo check --target x86_64-pc-windows-msvc -p stt -p prompts -p detect
+    cargo check --target x86_64-pc-windows-msvc -p audio -p calendar -p stt -p prompts -p detect
 
 # Format and autofix everything that can be autofixed.
 fmt:
@@ -66,16 +82,56 @@ build: sidecar
 
 # macOS TCC will not reliably register an unsigned app, so audio permission
 # never sticks. This is not optional, even for personal use.
+#
+# Nested code is signed first, bundle last, and `--deep` is NOT used to sign.
+# codesign seals whatever it finds inside the bundle at the moment it signs the
+# outer wrapper, so signing outside-in leaves a seal over binaries that were
+# re-signed afterwards. `--deep` looks like it solves that but applies the same
+# entitlements to every nested binary and is deprecated by Apple for signing;
+# it is only used to *verify* below. The half-signed-bundle bug this avoids is
+# a real one — see the comment in spikes/phase0a-tcc/build.sh.
 sign:
-    codesign --force --deep --options runtime \
-      --entitlements src-tauri/entitlements.plist \
-      -s "{{SIGN_IDENTITY}}" "target/release/bundle/macos/meet-ai.app"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    APP="target/release/bundle/macos/meet-ai.app"
+    [[ -d "$APP" ]] || { echo "no bundle at $APP — run \`just build\` first" >&2; exit 1; }
+
+    # Written as a function rather than an args array on purpose: under `set -u`
+    # an empty array expansion aborts the script *between* the nested and outer
+    # codesign calls, which silently leaves the app unsigned while the helpers
+    # look fine. That exact bug shipped once already (build.sh, TUR-9).
+    seal() {
+      if [[ -n "{{SIGN_KEYCHAIN}}" && -f "{{SIGN_KEYCHAIN}}" ]]; then
+        codesign --force --options runtime --timestamp=none \
+          --entitlements src-tauri/entitlements.plist \
+          --keychain "{{SIGN_KEYCHAIN}}" -s "{{SIGN_IDENTITY}}" "$1"
+      else
+        codesign --force --options runtime --timestamp=none \
+          --entitlements src-tauri/entitlements.plist \
+          -s "{{SIGN_IDENTITY}}" "$1"
+      fi
+    }
+
+    # Sidecars and helpers, inside-out. No-op until tauri.conf.json gains an
+    # `externalBin`; written now so embedding meet-stt does not silently produce
+    # an unsigned helper inside a signed app.
+    while IFS= read -r -d '' nested; do
+      echo "==> sealing nested: ${nested#"$APP/"}"
+      seal "$nested"
+    done < <(find "$APP/Contents/MacOS" -type f -perm -u+x ! -name meet-ai -print0)
+
+    echo "==> sealing bundle: $APP"
+    seal "$APP"
 
 # The ONLY valid environment for the Phase 0a TCC spike. `just dev` proves
 # nothing: TCC keys on the signed bundle identity, and dev builds are unsigned
 # at a different path.
+#
+# `--timestamp=none` above means a self-signed build carries no trusted
+# timestamp; that is fine locally and MUST be dropped for a Developer ID
+# release, which Apple will otherwise reject at notarisation.
 bundle-signed: build sign
-    codesign --verify --verbose=2 "target/release/bundle/macos/meet-ai.app"
+    codesign --verify --deep --strict --verbose=2 "target/release/bundle/macos/meet-ai.app"
 
 # --- fixtures --------------------------------------------------------------
 

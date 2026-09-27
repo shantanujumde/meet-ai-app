@@ -13,6 +13,11 @@
 
 use std::path::PathBuf;
 
+/// The macOS capture implementation. SPEC §4 ⛔: OS-specific code lives here
+/// and nowhere else.
+#[cfg(target_os = "macos")]
+pub mod macos;
+
 /// Which side of the conversation a stream came from.
 ///
 /// L5 locks speaker labelling to the two channels we capture: the microphone is
