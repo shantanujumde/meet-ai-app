@@ -99,7 +99,7 @@ The web view must be transparent for the native material to show through.
   "app": {
     "windows": [{
       "transparent": true,
-      "titleBarStyle": "Transparent",
+      "titleBarStyle": "Overlay",
       "hiddenTitle": true,
       "windowEffects": {
         "effects": ["underWindowBackground"],
@@ -116,6 +116,10 @@ The web view must be transparent for the native material to show through.
 Notes that will cost time if missed:
 
 - `transparent: true` on macOS requires `macOSPrivateApi: true` in the Tauri config.
+- Use `titleBarStyle: "Overlay"`, not `"Transparent"`. Tauri's `"Transparent"` only
+  makes the native title bar's own background see-through — it does not extend the
+  web view under it, so the traffic lights end up sitting in a bare strip above your
+  content instead of inset into it. `"Overlay"` is the one that merges the two.
 - The traffic lights sit at the top left. Reserve `--titlebar-traffic-inset`
   (78px) or your own controls will collide with them.
 - Any element in the titlebar needs `-webkit-app-region: drag` to move the
