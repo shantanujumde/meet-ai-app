@@ -48,7 +48,11 @@ async fn main() -> ExitCode {
                     "{:<24} {:>7.0} MB  {}",
                     spec.id,
                     spec.bytes as f64 / 1_000_000.0,
-                    if installed { "installed" } else { "not downloaded" }
+                    if installed {
+                        "installed"
+                    } else {
+                        "not downloaded"
+                    }
                 );
             }
             ExitCode::SUCCESS
