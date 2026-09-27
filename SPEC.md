@@ -517,6 +517,44 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A5 — 2026-09-27 · `segments.json` gains checkpoint anchors (amends §3.4, §6; no §1 decision touched)
+
+The Phase 0 exit gate in §5 is "drift < 200ms end-to-end, **with the measured number reported**", and §6 says `drift-check` gets that number by reading `segments.json`. Writing the reader first — `crates/audio/src/segments.rs`, tests included, before any capture code exists — showed that the §3.4 shape cannot produce it.
+
+**1. §3.4's shape cannot express the gate.** A 45-minute call with no device switch is **one** segment: one `start_host_ns` and two frame counts. The only quantity derivable from that is `(mic_frames − sys_frames) / rate`, which compares the two tracks against *each other* and never against a clock. Three ways that fails:
+
+- **Common mode is invisible.** When both tracks run off the same device clock — the same AirPods, the same USB interface — they slide off wall time together and the subtraction reads ≈0. A transcript a quarter-second out by minute 45 passes the gate. `common_mode_drift_is_invisible_to_a_track_subtraction_and_caught_by_anchors` is that exact case, 100 ppm on both channels: the naive metric reads <1 ms, the real drift is 270 ms.
+- **It cannot separate drift from teardown.** The two streams stop at different instants, so ragged shutdown and genuine clock error land in the same subtraction.
+- **It can be structurally zero.** Drive the resampler at a fixed ratio off input frames and output counts stay locked together by construction. A gate that cannot fail is not a gate — §7's 🔴 "silent failure at ~30min" risk, wearing a green light.
+
+**So each segment carries an `anchors` array — one entry per 5-second checkpoint:**
+
+```json
+{"version":1,"segments":[{"idx":0,"start_host_ns":123456789,
+  "start_continuous_ns":123456789,"start_unix_ns":1759000000000000000,
+  "mic_rate":16000,"sys_rate":16000,"mic_frames":43200000,"sys_frames":43200000,
+  "reason":"start","mic_device_rate":48000,"sys_device_rate":48000,
+  "anchors":[{"mic_host_ns":128456789,"mic_frames":80000,
+              "sys_host_ns":128451203,"sys_frames":79998}]}]}
+```
+
+An anchor pairs the IO callback's own `mHostTime` with the WAV-domain frame index that buffer ends at — per channel, since the two callbacks fire independently, and *not* the flush position, which would measure our own writer latency instead of the device clock. Drift per channel is then `frames/16000 − (host_ns − start_host_ns)/1e9`, which is a curve with a maximum, a final value and a crossing minute. ~540 rows for a 45-minute call, a few tens of KB against ~230 MB of audio.
+
+Consequences, all of them additive — `crates/stt` ignores unknown fields and needs no change:
+
+- **`mic_rate`/`sys_rate` are `16000` in every segment of a real recording.** A WAV header carries one rate and we write one file per channel, so a device-rate change is absorbed by the resampler (§2.3) rather than expressed in the file. §3.4's `"mic_rate":48000` literal is illustrative and cannot occur. The hardware rate moves to `mic_device_rate`/`sys_device_rate`.
+- **Frame 0 of both channels is `start_host_ns`.** Whichever stream comes up later is head-padded with silence, and **those padded frames count** in `*_frames` and in every anchor — the pad stands for real elapsed time.
+- **A segment boundary is a real gap and is never padded.** `drift-check` reports it per boundary in milliseconds instead of asserting a switch "survived".
+- **Sleep is a segment boundary of its own.** `mach_absolute_time()` does not advance while the machine sleeps, so a lid closed for twenty minutes moves `start_host_ns` by ~nothing and every later transcript line lands twenty minutes early. A wake therefore closes the segment and opens a new one with `reason:"system_wake"`, and each segment carries `start_continuous_ns` (mach *continuous* time) and `start_unix_ns`. `Δcontinuous − Δhost` across the boundary is exactly the time asleep.
+
+**2. §6: `drift-check` refuses rather than flatters.** With no system track it must exit non-zero with "not measurable" — treating a missing tap as `sys_frames = 0` and subtracting reports a passing number for a recording with no system audio in it at all. Same refusal for a file with no anchors, a non-monotonic anchor series, or anchors claiming more frames than their segment.
+
+**3. The `kill -9` frame-count invariant is an inequality, not an equality.** `segments.json` and the two WAV headers are three separate writes and the trio is not atomic. Each checkpoint writes sample bytes → `segments.json` (temp file + `rename(2)`) → WAV headers in place, because the two crash windows are not equally bad. Header first and the header declares frames no segment accounts for: real speech gets decoded with **no timestamp** and silently dropped. `segments.json` first and the segments describe frames the header does not expose yet, which nobody ever asks about. So:
+
+> `sum(*_frames across segments) >= wav_header_frames` for each channel, always — with equality after a graceful stop.
+
+Strict equality is not achievable across three writes under an arbitrary kill and must not be asserted. A corollary for every consumer: a recording's duration is `wav_header_frames / 16000`, never `sum(*_frames)`, which after a crash overstates by up to one checkpoint interval. Worst-case tail loss on force-quit is therefore ≤ 5 s, and that is the tolerance to test against.
+
 ### A4 — 2026-09-27 · Phase 1 implementation notes (amends §3.5, §6; corrects §2.4 and SETUP.md §1.1)
 
 Building Phase 1 turned up four things the spec either did not say or said wrongly. None touches a §1 locked decision.
