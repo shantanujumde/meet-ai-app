@@ -1250,9 +1250,7 @@ mod tests {
     fn a_stuck_anchor_latch_refuses_instead_of_certifying_itself() {
         let mut stuck = drifting_segment(300, 0.0, 0.0);
         let first = stuck.anchors[0];
-        for anchor in &mut stuck.anchors {
-            *anchor = first;
-        }
+        stuck.anchors.fill(first);
 
         let err = segments(vec![stuck.clone()]).drift().unwrap_err();
         assert!(matches!(err, DriftError::FrozenClock { .. }), "{err:?}");
