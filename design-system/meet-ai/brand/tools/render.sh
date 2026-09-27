@@ -104,12 +104,17 @@ cp "$STAGE/tray-32.png" "$ICONS/meet-aiTemplate@2x.png"
 # still the right drawing for the favicon and the .ico below, where nothing
 # re-renders it and a pixel-grid drawing is exactly what is wanted.
 #
-# Trade-off, stated because it is not free: on the macOS 14.4 floor (SPEC L2)
-# there is no such re-render, so those releases now downscale 16px and 32px
-# from the 128pt rep instead of using art drawn for the size. Untested here —
-# this machine is Darwin 27 only. The proper fix for both at once is an Icon
-# Composer `.icon` asset, which needs Xcode 26; only Command Line Tools are
-# installed, so it cannot be produced in this workspace.
+# This used to cost something below macOS 26, where there is no such re-render
+# and the system downscales 16px and 32px from the 128pt rep instead of using
+# art drawn for the size. That cost is now zero: SPEC A8 raised the OS floor to
+# macOS 26+, so no supported release takes that path. The measurement that
+# settled it is TUR-41 -- brand/proofs/leo-tur41-downscale-proxy-16-32-64.png, a
+# simulated shrink showing the mark stays readable but goes visibly soft at
+# 16px. Kept here because it is the reason the ladder stops at 128pt.
+#
+# Still open, and unrelated to the floor: the proper fix is an Icon Composer
+# `.icon` asset, which needs Xcode 26; only Command Line Tools are installed,
+# so it cannot be produced in this workspace.
 SET="$STAGE/meet-ai.iconset"
 rm -rf "$SET"; mkdir -p "$SET"
 cp "$STAGE/icon-128.png"  "$SET/icon_128x128.png"

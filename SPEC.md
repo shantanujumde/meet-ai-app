@@ -21,7 +21,7 @@ This spec is the reconciled version. Every change is traceable to evidence in `F
 | # | Decision | v1 choice | Changed from Readme.md? |
 |---|---|---|---|
 | L1 | Platform | **macOS for v1; Windows next.** Seams built now (§8.2), port is additive | ✅ was mac+Windows simultaneously |
-| L2 | OS floor | **macOS 14.4+** (Core Audio process tap only, no ScreenCaptureKit path). **macOS 26+ unlocks the Apple STT engine**; 14.4–25 falls back to `whisper-rs` | ✅ was macOS 13+ w/ fallback |
+| L2 | OS floor | **macOS 26+** (Core Audio process tap only, no ScreenCaptureKit path). The Apple STT engine ships with the OS, so mac has no sub-26 tier to fall back from | ⚠️ amended — was 13+, then 14.4+, now **26+**, see **A8** |
 | L3 | Capture location | **RESOLVED: in-process Rust** (`crates/audio`, `objc2-core-audio`). The Phase 0a spike passed, but for a reason that removed §5's argument for the sidecar — see A6 | ⚠️ amended — see A2, **A6** |
 | L4 | Transcription | **Apple `SpeechTranscriber` via Swift sidecar** on macOS 26+, with **native long-form streaming** (volatile → finalized). `whisper-rs` + `earshot` VAD chunking is the fallback engine | ⚠️ amended — better *and* less code, see A2 |
 | L5 | Speaker labels | Two channels: mic=`You`, tap=`Others` | — unchanged |
@@ -115,11 +115,11 @@ This spec is the reconciled version. Every change is traceable to evidence in `F
 | Model | File | Size | Source | Role |
 |---|---|---|---|---|
 | **Apple `SpeechTranscriber`** | — | **0 MB** | ships with macOS 26 | **Default on mac.** Nothing to download |
-| Whisper large-v3-turbo, q5_0 | `ggml-large-v3-turbo-q5_0.bin` | ~1.6GB | HF `ggerganov/whisper.cpp` | Fallback engine (macOS < 26, Windows) |
+| Whisper large-v3-turbo, q5_0 | `ggml-large-v3-turbo-q5_0.bin` | ~1.6GB | HF `ggerganov/whisper.cpp` | **Windows** engine, and the manual opt-out on mac. No longer a mac version fallback (A8) |
 | Whisper small.en q5_1 | `ggml-small.en-q5_1.bin` | ~180MB | same | Fast tier / low-end Windows |
-| _(no VAD model)_ | — | — | — | `earshot` is pure Rust; on macOS 26 `SpeechDetector` replaces it |
+| _(no VAD model)_ | — | — | — | `earshot` is pure Rust; on mac `SpeechDetector` replaces it |
 
-**On macOS 26 the first-run download is zero bytes.** Whisper models are fetched lazily — only when the user picks the fallback engine or runs below macOS 26. Downloads go to `~/Meetings/.app/models/`: resumable, checksummed, atomic rename. No Python anywhere.
+**On mac the first-run download is zero bytes** — every supported mac is macOS 26+ (L2). Whisper models are fetched lazily, only when the user deliberately picks the fallback engine. Downloads go to `~/Meetings/.app/models/`: resumable, checksummed, atomic rename. No Python anywhere.
 
 ### 2.5 STT engines (L4)
 
@@ -136,11 +136,11 @@ trait SttEngine {
 | # | Engine | How it's called | Available | Model download | Notes |
 |---|---|---|---|---|---|
 | 1 | **Apple `SpeechTranscriber`** | Swift sidecar `meet-stt` | macOS 26+ | **0 MB — ships with the OS** | Default on mac. ~2× faster than whisper large-v3-turbo, tops on-device accuracy. **Native long-form streaming**, so no VAD chunking needed |
-| 2 | **`whisper-rs`** | in-process Rust | everywhere | 1.6GB (or 180MB small.en) | Universal floor. Needs `earshot` VAD + utterance chunking |
+| 2 | **`whisper-rs`** | in-process Rust | everywhere | 1.6GB (or 180MB small.en) | Universal floor. Needs `earshot` VAD + utterance chunking. On mac this is now only a **manual override**, never a version fallback (A8) |
 | 3 | **Windows AI Speech Recognition** | `windows` crate (WinRT), in-process — **no sidecar needed** | Windows 11 | preinstalled on Copilot+ NPU; on-demand on CPU-only | Windows default at port time. ⚠️ APIs still **preview** — verify then; engine 2 is the safety net |
 | 4 | **Cloud (BYOK)** | HTTPS | everywhere | none | Opt-in only, never load-bearing. Needs Opus encode + chunking (OpenAI caps at 25MB/file vs ~350MB for a 1-hour WAV) |
 
-**Defaults:** macOS 26+ → 1. macOS 14.4–25 → 2. Windows 11 → 3, falling back to 2. Cloud is never a default.
+**Defaults:** mac → 1, always (macOS 26 is the floor, L2). Windows 11 → 3, falling back to 2. Cloud is never a default.
 
 **What reaches disk.** The engines have different output shapes — Apple emits volatile → finalized results, whisper emits completed chunks. One rule reconciles them:
 
@@ -200,7 +200,7 @@ All four sit behind one trait — `CalendarProvider { list_events(range) -> Vec<
 | Rust toolchain | stable, pinned via `rust-toolchain.toml` |
 | Target | `aarch64-apple-darwin` only (v1) |
 | Swift sidecar | `swiftc` from Command Line Tools — **full Xcode not required**. Built by `just sidecar`, signed with the same identity, embedded at `Contents/MacOS/meet-stt` |
-| Info.plist keys | `NSMicrophoneUsageDescription`, **`NSAudioCaptureUsageDescription`** (the tap permission key), `LSMinimumSystemVersion = 14.4` |
+| Info.plist keys | `NSMicrophoneUsageDescription`, **`NSAudioCaptureUsageDescription`** (the tap permission key), `LSMinimumSystemVersion = 26.0` (A8) |
 | Entitlements | `com.apple.security.device.audio-input` |
 | Signing | **Local self-signed identity + hardened runtime.** Required for TCC to register the app at all — this is not optional even for personal use |
 | Notarization / auto-update / CI | **Out of scope** (L17) |
@@ -516,6 +516,29 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 ---
 
 ## Amendments
+
+### A8 — 2026-09-27 · OS floor rises to **macOS 26+** (amends L2, L4, §2.4, §2.5, §2.9; closes TUR-37)
+
+**Decision: meet-ai ships macOS 26 and later only.** Board call, made on the icon evidence below, and it settles the OS floor for the whole project — not just for icons.
+
+**How it came up.** TUR-22 rebuilt the app icon with large art only (128pt and up). On macOS 26 that is correct and verified on two signed bundles. Below 26, the system has to downscale that art to 16px and 32px itself, and there is no macOS 14.x or 15.x machine or VM here to look at the result. TUR-41 simulated the downscale on this host: readable at every size, near-identical to the old hand-drawn art at 32px and 64px, but visibly softer and greyer at 16px — the crisp tile edge goes, though the two brackets stay separate and the orange dot stays a dot. A good stand-in, explicitly **not** a real-device check: macOS 14's exact filter and rep-selection are not guaranteed to match.
+
+**Why raise the floor rather than accept the simulation.** The simulation could only ever buy confidence in the icon. It could not buy confidence in anything else that was never run below 26 — and nothing in this project ever has been. `FINDINGS.md` records this as a standing limit in its own words: *"macOS 14.4–26. Everything here is macOS 27.0 only."* Keeping 14.4 in the spec was claiming support for a tier with zero executed tests behind it, icons included. Raising the floor makes the spec true instead of aspirational, and it is the option that removes work rather than adding it.
+
+**What this changes:**
+
+| Was | Now |
+|---|---|
+| L2 floor `macOS 14.4+` | `macOS 26+` |
+| `LSMinimumSystemVersion = 14.4`, `tauri.conf.json` `minimumSystemVersion: "14.4"` | `26.0` |
+| Engine default: 26+ → Apple, 14.4–25 → whisper | mac → Apple, always |
+| whisper-rs on mac = version fallback tier | whisper-rs on mac = **manual override only** |
+
+**What this does *not* decide.** whisper-rs stays in the tree and stays in §2.5. It is still the Windows engine (L1: Windows next) and still the safety net behind engine 3, whose APIs are preview. Whether mac should keep a whisper path *at all* — which would also delete the model download manager, the Metal build config and mac-side VAD chunking from v1 — is a separate scope question and is **not** spent here.
+
+**Deliberately left alone.** `FINDINGS.md` and `spikes/phase0a-tcc/build.sh` still say 14.4. They are records of what was true when the research and the Phase 0a spike ran; rewriting them would falsify a result rather than update a decision.
+
+**Cost, stated plainly:** anyone on macOS 14 or 15 cannot run meet-ai. Given L17 (not public) and a single known user on macOS 26.6.2, that population is currently zero.
 
 ### A7 — 2026-09-27 · The permission-check tone is audible, and plays every recording, not just at onboarding (amends §8.1; spun out of TUR-10 as TUR-24)
 

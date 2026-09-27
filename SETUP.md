@@ -10,7 +10,7 @@
 
 | Tool | Found | Needed | Action |
 |---|---|---|---|
-| macOS | **26.6.2** | 14.4+ | ✅ far above floor |
+| macOS | **26.6.2** | 26.0+ | ✅ at or above floor (SPEC A8) |
 | Xcode Command Line Tools | present (`/Library/Developer/CommandLineTools`) | CLT only | ✅ **full Xcode not required** — L2 drops ScreenCaptureKit, and `objc2` needs no Xcode project. `codesign` ships with CLT |
 | Rust | ❌ **not installed** | 1.98.0 | install via rustup (step 0.1) |
 | Node | v26.4.0 | ≥20.19 | ✅ works. Current LTS is v24.20.0 "Krypton" — switch only if a tool complains |
@@ -250,7 +250,7 @@ pnpm self-update                      # 11.9.0 -> 11.25.0
 # 0.3 verify
 rustc --version                        # expect 1.98.0
 xcode-select -p                        # CLT path is fine; full Xcode not needed
-sw_vers -productVersion                # 26.6.2 — above the 14.4 floor
+sw_vers -productVersion                # 26.6.2 — at or above the 26.0 floor
 ```
 
 ### Step 1 — ⛔ irreversibles, before any feature code
@@ -303,7 +303,7 @@ Then set the identifier in `src-tauri/tauri.conf.json`:
   "productName": "meet-ai",
   "identifier": "pro.saleschat.meetai",
   "bundle": {
-    "macOS": { "minimumSystemVersion": "14.4" }
+    "macOS": { "minimumSystemVersion": "26.0" }
   }
 }
 ```
@@ -418,7 +418,7 @@ Tailwind v4 — **no config file**. In `src/index.css`:
 <key>NSAudioCaptureUsageDescription</key>
 <string>meet-ai records this Mac's audio so other participants appear in meeting transcripts.</string>
 <key>LSMinimumSystemVersion</key>
-<string>14.4</string>
+<string>26.0</string>
 ```
 
 `src-tauri/entitlements.plist`:

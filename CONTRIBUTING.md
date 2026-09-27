@@ -45,7 +45,7 @@ node --version           # >= v20.19
 pnpm --version           # 11.25.0  (run it inside the repo)
 swiftc --version         # any
 just --version           # any
-sw_vers -productVersion  # >= 14.4
+sw_vers -productVersion  # >= 26.0
 ```
 
 ### 2. Install and check
