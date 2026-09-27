@@ -515,6 +515,32 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A4 — 2026-09-27 · Phase 1 implementation notes (amends §3.5, §6; corrects §2.4 and SETUP.md §1.1)
+
+Building Phase 1 turned up four things the spec either did not say or said wrongly. None touches a §1 locked decision.
+
+1. **§3.5 gains `transcription.engine`.** The Phase 1 exit gate requires that "engine switch is a config change only", but `config.jsonc` had no field to change — only `model`, `language` and `live`. Added `"engine": "auto"`, with `"apple-speech"` and `"whisper"` as explicit overrides. `auto` is the §2.5 defaults table. Forcing an engine that is unavailable is an **error**, not a silent fallback: if you asked for it, you want to know why you did not get it.
+
+   ```jsonc
+   "transcription": {
+     "engine": "auto",              // or "apple-speech" | "whisper"
+     "model": "large-v3-turbo-q5_0",
+     "language": "en",
+     "live": true
+   }
+   ```
+
+2. **§2.4 model size was wrong.** `ggml-large-v3-turbo-q5_0.bin` is **574 MB**, not ~1.6 GB — that figure belongs to an unquantized large-v3. `small.en-q5_1` is 190 MB as stated. The first-run download risk in §7 is correspondingly smaller. Both files are pinned by URL *and* SHA-256, taken from Hugging Face's published LFS object ids rather than computed from a local download, which would only prove the bytes matched themselves.
+
+3. **SETUP.md §1.1 mis-describes `earshot`.** At the pinned 1.2.2 it is **not** a WebRTC VAD port; it is a small neural detector scoring 256-sample (16 ms) frames at 16 kHz and returning 0..1. The choice still holds for the reasons given (pure Rust, `libm` its only dependency, no bundled ONNX model), but there are no WebRTC aggressiveness modes to reach for — there is a threshold, in `stt::vad::SegmentConfig`. The `Vad` trait seam for Silero is in place as §1.1 intended.
+
+4. **§6 gains `room-tone-30s.wav`.** `silence-30s.wav` is digitally perfect zeroes, which any VAD passes trivially. Measured against `small.en-q5_1`, ungated whisper produced phantom text on *every* quiet input tried: `[BLANK_AUDIO]` on pure silence, `[no speech detected]` on quiet pink noise, `(water rushing)` on louder pink noise. The hallucination guard is therefore three layers, and the fixture set needs a noise case to exercise them:
+   - **VAD gating** — whisper is only ever handed sample ranges the detector returned. Silence yields zero spans, so zero inference calls. This is the layer that does the work.
+   - **`no_speech_thold`** — whisper.cpp's own per-segment probability. All three phantoms above scored 0.79–0.97 against a 0.6 threshold.
+   - **A shape rule plus a phrase list** — a segment wrapped entirely in `[...]`, `(...)` or `*...*` is a sound annotation, not speech. Being structural, it catches annotations nobody has seen yet, which an enumerated list cannot; only `[BLANK_AUDIO]` was on the list.
+
+**Still open at the end of Phase 1.** The gate is verified against synthetic text-to-speech fixtures only. TTS has no room tone, no codec artefacts, no crosstalk and no overlapping speakers, so it proves the plumbing, the speaker split and the timestamp maths — not real-world accuracy. Phase 1 is not complete until the same checks run against a real `meet-rec` recording from Phase 0.
+
 ### A3 — 2026-09-01 · Pre-implementation audit (amends §3.4, §2.5, §2.3/§4, §5, §6, §2.6, §8.1)
 
 A pre-flight audit against the real repo found nine gaps. Three would have cost real time.

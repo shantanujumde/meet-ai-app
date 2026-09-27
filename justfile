@@ -34,13 +34,25 @@ check: check-windows sidecar
 # for Windows from day one, so a mac assumption cannot quietly leak out of
 # crates/audio or crates/calendar.
 #
-# SETUP.md §6 lists four crates here. `store` is the one omission: rusqlite's
-# `bundled` feature compiles sqlite3.c for the *target*, which needs an MSVC
-# toolchain no Mac has, so including it would make this check permanently red
-# for a reason that has nothing to do with our code. Put it back the day store
-# stops pulling a target-compiled C dependency.
+# SETUP.md §6 lists four crates here. Two crates are deliberately left out, and
+# both for the same reason: a dependency whose build script compiles C for the
+# *target*, which needs an MSVC toolchain no Mac has. Including either would
+# make this check permanently red for a reason that has nothing to do with our
+# code, and a permanently-red guard is a guard nobody reads.
 #
-# `stt` IS covered, because whisper-rs is gated to macOS in its Cargo.toml.
+#   * `store` — rusqlite's `bundled` feature compiles sqlite3.c. Put it back the
+#     day store stops pulling a target-compiled C dependency.
+#   * `modelfetch` — reqwest's `rustls-tls` pulls `ring`, which compiles
+#     curve25519.c and friends. `aws-lc-rs` is not an escape; it compiles C too.
+#     This crate is ~200 lines of HTTP range-request and SHA-256 over
+#     `std::path`, with no `#[cfg(target_os)]` anywhere, so it is the cheapest
+#     possible thing to exempt. Put it back if rustls ever ships a usable
+#     pure-Rust provider.
+#
+# `stt` IS covered, and staying that way is why `modelfetch` is a separate crate
+# at all — the downloader was inside `stt` and took the whole speech-to-text
+# crate out of this guard with it (TUR-13). whisper-rs is gated to macOS in
+# stt's Cargo.toml, so nothing else in there compiles C for the target.
 #
 # `audio` is the crate this guard mainly exists for — it is the only one with an
 # `#[cfg(target_os = "macos")]` module — and it was missing from the list, so the
@@ -74,6 +86,32 @@ rec *ARGS:
 
 stt FILE:
     ./target/meet-stt {{FILE}}
+
+# Which speech engine can this Mac use right now, offline? This is what the
+# registry runs to decide between Apple's engine and the whisper fallback.
+stt-probe: sidecar
+    ./target/meet-stt --probe
+
+# Install Apple's on-device model for a locale. Needs the network, and it is
+# the ONLY thing on the Apple path that does — transcription never touches it.
+stt-install-locale LOCALE="en-US": sidecar
+    ./target/meet-stt --install-locale --locale {{LOCALE}}
+
+# --- whisper fallback models -----------------------------------------------
+
+# List the pinned models and whether they are already downloaded.
+models:
+    cargo run -q -p modelfetch --bin meet-stt-model -- list
+
+# Download one. Resumable and checksum-verified, so re-running after an
+# interrupted attempt continues rather than starting over.
+model ID="small.en-q5_1":
+    cargo run -q --release -p modelfetch --bin meet-stt-model -- get {{ID}}
+
+# The Phase 1 accuracy + silence gate against the whisper engine. Separate from
+# `just check` because it needs a 190 MB model on disk; `just model` first.
+check-whisper:
+    cargo test -p stt --features whisper-model-tests -- --nocapture
 
 build: sidecar
     pnpm tauri build
@@ -135,8 +173,11 @@ bundle-signed: build sign
 
 # --- fixtures --------------------------------------------------------------
 
-# One-time fixture generation (crates/audio/fixtures/). Needs ffmpeg.
+# Fixture generation (crates/audio/fixtures/). Needs ffmpeg and macOS `say`.
+#
+# Produces the three fixtures SPEC §6 names plus `room-tone-30s.wav`, which is
+# the silence case that actually catches a too-permissive VAD. The WAVs are
+# generated rather than committed — see generate.sh for why, and for the
+# reference text the accuracy test measures word error rate against.
 fixtures:
-    mkdir -p crates/audio/fixtures
-    ffmpeg -y -f lavfi -i anullsrc=r=16000:cl=mono -t 30 -c:a pcm_s16le \
-      crates/audio/fixtures/silence-30s.wav
+    bash crates/audio/fixtures/generate.sh
