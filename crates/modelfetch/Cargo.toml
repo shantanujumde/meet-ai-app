@@ -1,0 +1,36 @@
+[package]
+name = "modelfetch"
+description = "Lazy, resumable, checksum-verified download of the pinned whisper models."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+
+# This crate exists to keep `crates/stt` free of an HTTP stack. Two payoffs:
+#
+#   1. The offline invariant (L9/L10/L11) becomes structural — `stt` has no
+#      network dependency in its graph, so transcription *cannot* reach the
+#      network even by accident.
+#   2. `just check-windows` keeps covering all of `stt`. rustls pulls `ring`,
+#      whose build script compiles C for the *target*, which a Mac with no MSVC
+#      toolchain cannot do. Confining that to this crate means one small,
+#      network-only crate is exempt from the seam guard instead of the whole
+#      speech-to-text crate. See the justfile and CONTRIBUTING.md §"Where the
+#      repo differs from SETUP.md".
+[dependencies]
+# The model catalogue (`ModelSpec`, `MODELS`, `default_model_dir`) lives in
+# `stt` because `stt::registry` needs it to answer "is a model on disk?"
+# offline. The dependency only points this way.
+stt.workspace = true
+
+futures-util = { version = "=0.3.31", default-features = false, features = [
+  "std",
+] }
+reqwest.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "rt", "macros"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
