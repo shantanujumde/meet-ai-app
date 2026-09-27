@@ -1,0 +1,16 @@
+[package]
+name = "prompts"
+description = "minijinja templates and prompt assembly for the copy-to-clipboard agent flow."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+minijinja.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

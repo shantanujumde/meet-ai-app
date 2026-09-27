@@ -1,0 +1,40 @@
+[package]
+name = "audio"
+description = "System audio tap + mic capture, resampling, incremental WAV writing."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "meet-rec"
+path = "src/bin/meet-rec.rs"
+
+[dependencies]
+cpal.workspace = true
+dirs.workspace = true
+earshot.workspace = true
+hound.workspace = true
+ringbuf.workspace = true
+rubato.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# Apple frameworks. SPEC §4: OS-specific code lives ONLY in src/macos/, and the
+# AudioSource trait in src/lib.rs stays platform-agnostic so the Windows port is
+# additive. Gating here is what keeps `just check-windows` honest.
+#
+# ⚠️ `objc2` 0.6.4 alongside `objc2-*` 0.3.2 is CORRECT (SETUP.md §2.2).
+#    Framework crates version independently. Never "align" these.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+objc2.workspace = true
+objc2-core-audio.workspace = true
+objc2-core-audio-types.workspace = true
+objc2-core-foundation.workspace = true
+objc2-foundation.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

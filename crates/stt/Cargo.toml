@@ -1,0 +1,51 @@
+[package]
+name = "stt"
+description = "SttEngine trait, Swift sidecar driver, whisper-rs fallback, transcript formatting."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+
+# No HTTP client and no async runtime here, on purpose. Fetching a whisper model
+# is the one thing on the speech path that touches the network, and it lives in
+# `crates/modelfetch` instead — see that crate's Cargo.toml for both reasons.
+# Keeping it out of this dependency graph is what makes "transcription never
+# reaches the network" (L9/L10/L11) structural rather than a promise, and it is
+# what keeps this crate inside the `just check-windows` seam guard.
+[dependencies]
+dirs.workspace = true
+earshot.workspace = true
+hound.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# whisper-rs is the FALLBACK engine (SETUP.md §1.5) — macOS 26 uses the Swift
+# sidecar instead. It is gated per-target for two reasons:
+#   1. `metal` is an Apple-only feature.
+#   2. whisper-rs-sys compiles whisper.cpp with cmake for the *target*, which a
+#      Windows cross-check from a Mac has no toolchain for. Gating keeps
+#      `just check-windows` meaningful instead of failing for an unrelated reason.
+# The Windows seam (SPEC §8.2) turns on `vulkan`/`cuda` in the block below when
+# crates/audio/src/windows.rs lands.
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { workspace = true, features = ["metal", "tracing_backend"] }
+
+[dev-dependencies]
+insta.workspace = true
+# Test-only. Contract §7 says a frame past the declared total means meet-rec's
+# frame-count invariant broke, so `frame_to_sec` warns rather than quietly
+# extrapolating. A warning nobody captured is a warning nobody knows fires —
+# this is how `segments.rs` proves it does. Dev-only, so it stays out of the
+# shipped graph and out of the `just check-windows` seam.
+tracing-subscriber = { workspace = true, features = ["fmt"] }
+
+# The fixture WAVs are ~3 MB of silence and tone; generating them is instant and
+# keeps them out of git. `just fixtures` writes them; the tests regenerate any
+# that are missing so a fresh clone can run `cargo test -p stt` immediately.
+[features]
+default = []
+# Opt-in: runs the accuracy + silence gate against a real downloaded whisper
+# model. Off by default so `just check` never needs 190 MB or a network.
+whisper-model-tests = []

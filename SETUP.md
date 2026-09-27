@@ -10,12 +10,15 @@
 
 | Tool | Found | Needed | Action |
 |---|---|---|---|
-| macOS | **26.6.2** | 14.4+ | ✅ far above floor |
+| macOS | **26.6.2** | 26.0+ | ✅ at or above floor (SPEC A8) |
 | Xcode Command Line Tools | present (`/Library/Developer/CommandLineTools`) | CLT only | ✅ **full Xcode not required** — L2 drops ScreenCaptureKit, and `objc2` needs no Xcode project. `codesign` ships with CLT |
 | Rust | ❌ **not installed** | 1.98.0 | install via rustup (step 0.1) |
 | Node | v26.4.0 | ≥20.19 | ✅ works. Current LTS is v24.20.0 "Krypton" — switch only if a tool complains |
 | pnpm | 11.9.0 | 11.25.0 | `pnpm self-update` |
 | just | ❌ not installed | latest | `brew install just` |
+| **`swiftc`** | **6.3.3**, target `arm64-apple-macosx26.0` | any | ✅ **verified present** — ships with CLT. A2's sidecar builds today, nothing to install |
+| **`Speech.framework`** | present | macOS 26 | ✅ **verified** — `SpeechAnalyzer` / `SpeechTranscriber` available |
+| ffmpeg | unverified | any | `brew install ffmpeg` — needed once, for the fixture WAVs (`just fixtures`) |
 
 ---
 
@@ -109,6 +112,7 @@ Pin these exactly in `Cargo.toml` and commit `Cargo.lock`. 🆕 = new major with
 | `objc2` | **0.6.4** | |
 | `objc2-core-audio` | **0.3.2** | ⚠️ **The version skew vs `objc2` 0.6.4 is correct.** Framework crates version independently of `objc2`. Do not let an agent "fix" this |
 | `objc2-core-audio-types` | **0.3.2** | |
+| `objc2-core-foundation` | **0.3.2** | 🆕 not in the original list — the process tap's aggregate-device description is a `CFDictionary`, and this crate is where `objc2-core-audio` sources that type from. Already resolved transitively at 0.3.2 before this was made a direct dependency, so pinning it added no version churn |
 | `objc2-foundation` | **0.3.2** | |
 | `block2` | **0.6.2** | needed for Core Audio tap IO callbacks |
 | `cpal` | **0.18.2** 🆕 | mic capture. LLMs know 0.15 — the device/stream API changed |
@@ -247,7 +251,7 @@ pnpm self-update                      # 11.9.0 -> 11.25.0
 # 0.3 verify
 rustc --version                        # expect 1.98.0
 xcode-select -p                        # CLT path is fine; full Xcode not needed
-sw_vers -productVersion                # 26.6.2 — above the 14.4 floor
+sw_vers -productVersion                # 26.6.2 — at or above the 26.0 floor
 ```
 
 ### Step 1 — ⛔ irreversibles, before any feature code
@@ -255,8 +259,15 @@ sw_vers -productVersion                # 26.6.2 — above the 14.4 floor
 ```bash
 cd ~/apps/meet-ai
 
-# 1.1 Apache-2.0 license
+# 1.1 Apache-2.0 license — REPLACES the MIT LICENSE already committed.
+#     Sole author, so the relicense is yours to make; MIT stays in prior commits.
 curl -sL https://www.apache.org/licenses/LICENSE-2.0.txt -o LICENSE
+cat > NOTICE <<'EOF'
+meet-ai
+Copyright 2026 Shantanu Jumde
+
+This product includes software developed as part of the meet-ai project.
+EOF
 
 # 1.2 Updater keypair. Public key goes in tauri.conf.json; PRIVATE key to your
 #     password manager and NOWHERE else. Without this, v1 installs can never
@@ -273,7 +284,8 @@ dist/
 .DS_Store
 EOF
 
-git init && git add -A && git commit -m "chore: license, gitignore, spec"
+# NOTE: the repo already has commits — do NOT run `git init`.
+git add -A && git commit -m "chore: relicense to Apache-2.0, add NOTICE and gitignore"
 ```
 
 **Bundle identifier is decided now and never changes: `pro.saleschat.meetai`.** macOS TCC keys audio permission to it; renaming later silently revokes consent on every existing install with no migration path.
@@ -292,7 +304,7 @@ Then set the identifier in `src-tauri/tauri.conf.json`:
   "productName": "meet-ai",
   "identifier": "pro.saleschat.meetai",
   "bundle": {
-    "macOS": { "minimumSystemVersion": "14.4" }
+    "macOS": { "minimumSystemVersion": "26.0" }
   }
 }
 ```
@@ -407,7 +419,7 @@ Tailwind v4 — **no config file**. In `src/index.css`:
 <key>NSAudioCaptureUsageDescription</key>
 <string>meet-ai records this Mac's audio so other participants appear in meeting transcripts.</string>
 <key>LSMinimumSystemVersion</key>
-<string>14.4</string>
+<string>26.0</string>
 ```
 
 `src-tauri/entitlements.plist`:
@@ -416,14 +428,59 @@ Tailwind v4 — **no config file**. In `src/index.css`:
 <key>com.apple.security.device.audio-input</key><true/>
 ```
 
-Self-signed identity — **not optional.** macOS TCC will not reliably register an unsigned app, so audio permission never sticks:
+Self-signed identity — **not optional, and it is a one-time step.** Under ad-hoc
+signing (`codesign -s -`) the designated requirement *is* the binary's cdhash, so
+TCC keys the grant to the executable **path** and every rebuild can drop it.
+With an identity the requirement becomes bundle ID + certificate, TCC keys the
+grant to `pro.saleschat.meetai`, and `tccutil reset` starts working. Both halves
+measured in FINDINGS §10.3–10.4.
 
 ```bash
-# create a self-signed code-signing cert named "meet-ai-dev" in Keychain Access:
-#   Keychain Access > Certificate Assistant > Create a Certificate...
-#   Name: meet-ai-dev | Identity Type: Self Signed Root | Type: Code Signing
-security find-identity -v -p codesigning     # confirm it appears
+spikes/phase0a-tcc/make-identity.sh          # ~7s, no admin password needed
+spikes/phase0a-tcc/make-identity.sh --print  # leaf SHA-1: be3fb2c8…
 ```
+
+The script generates the cert, puts it in its own keychain
+(`~/Library/Keychains/meet-ai-signing.keychain-db`, never your login keychain),
+and marks it trusted for code signing in the **user** trust domain. That last
+part is why there is no password prompt: `security add-trusted-cert` only needs
+an admin password with `-d`, which writes to the system keychain. We don't need
+that.
+
+**Run it as often as you like — it is idempotent.** If the identity already
+exists it reuses it and exits. That matters more than it sounds: the leaf SHA-1
+it prints is what TCC keys every grant to, so minting a replacement silently
+voids every permission the machine has already given you. `--rotate` is the
+deliberate override and warns first.
+
+Use `--print` to read the fingerprint back, and check a built bundle against it:
+
+```bash
+codesign -d -r- build/meet-ai.app
+# designated => identifier "pro.saleschat.meetai" and certificate leaf = H"be3fb2c8…"
+```
+
+Verify with `security find-identity -v -p codesigning ~/Library/Keychains/meet-ai-signing.keychain-db`
+— pass the keychain explicitly. Without it the command reads the user's keychain
+search list, which is empty under a sandboxed `$HOME`, and reports **"0 valid
+identities"** for an identity that is present and working.
+
+After that, signing needs no environment at all — `build.sh` defaults to this
+identity and finds the keychain itself:
+
+```bash
+spikes/phase0a-tcc/build.sh    # or: just bundle-signed
+```
+
+⛔ Never fall back to `codesign -s -`. A bundle signed ad-hoc invalidates every
+TCC result you get from it, including the Phase 0a gate — and it is not
+recoverable: an ad-hoc build makes TCC record the grant against the executable's
+absolute **path**, and path-keyed records cannot be removed by `tccutil reset`
+(it resolves its argument as a bundle ID and returns `-10814`). Deleting the
+build directory does not clear them either. Only System Settings by hand, or a
+`TCC.db` write behind Full Disk Access, will. Two such records are already stuck
+on the development machine. `build.sh` now exits 1 rather than ad-hoc sign;
+`ALLOW_ADHOC=1` overrides it if you genuinely need to. Details in FINDINGS §10.6.
 
 ### Step 6 — `justfile` (incl. the ⛔ Windows cross-check)
 
@@ -458,6 +515,17 @@ sign:
     codesign --force --deep --options runtime \
       --entitlements src-tauri/entitlements.plist \
       -s "{{SIGN_IDENTITY}}" "src-tauri/target/release/bundle/macos/meet-ai.app"
+
+# The ONLY valid environment for the Phase 0a TCC spike. `just dev` proves nothing:
+# TCC keys on the signed bundle identity, and dev builds are unsigned at another path.
+bundle-signed: sidecar build sign
+    codesign --verify --verbose=2 "src-tauri/target/release/bundle/macos/meet-ai.app"
+
+# One-time fixture generation (crates/audio/fixtures/), needs ffmpeg.
+fixtures:
+    mkdir -p crates/audio/fixtures
+    ffmpeg -f lavfi -i anullsrc=r=16000:cl=mono -t 30 -c:a pcm_s16le \
+      crates/audio/fixtures/silence-30s.wav
 ```
 
 `check-windows` deliberately scopes to the four OS-agnostic crates rather than the whole workspace — `cargo check` on `src-tauri` for a Windows target pulls webview shims that add noise without adding signal. Extend it when `crates/audio/src/windows.rs` lands.
@@ -484,6 +552,12 @@ Spec: SPEC.md (locked). Versions: SETUP.md. Evidence: FINDINGS.md.
 - Bundle id `pro.saleschat.meetai` is frozen. Changing it revokes users' audio permission.
 - No AI calls, no API keys, no telemetry in this codebase. Ever.
 - markdown is the source of truth; index.db is derived and must be safe to delete.
+- transcript.md: ONE utterance = ONE line. Collapse \n\r\t and whitespace runs to a
+  single space. Never write empty text. Append-only, never rewrite a line.
+- Only FINALIZED text is persisted. Volatile/partial results go to the UI event
+  channel only and never touch disk. All engines write via one TranscriptSink.
+- The watcher must suppress self-writes (path -> Instant, 750ms) or it will reload
+  notes.md under the user's cursor. Agent writes are NOT suppressed.
 
 ## Commands
 just dev | just rec | just check | just sign
@@ -495,7 +569,16 @@ just dev | just rec | just check | just sign
 just check                    # must pass green, including check-windows
 just dev                      # window opens
 cargo run -p audio --bin meet-rec --  --list-devices
+
+# Phase 0a gate — signed bundle only. Never test TCC under `just dev`.
+just fixtures
+just bundle-signed
+tccutil reset AudioCapture pro.saleschat.meetai
+open src-tauri/target/release/bundle/macos/meet-ai.app
 ```
+
+Pass = the prompt appears, names **meet-ai** (not the helper), and non-silent samples arrive.
+⚠️ Prompt appears but samples are silent = **fail**, not pass.
 
 Then commit and start Phase 0.
 
