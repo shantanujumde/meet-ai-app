@@ -268,6 +268,13 @@ unsafe impl Send for Built {}
 /// pushes samples, never locks, allocates, or touches disk.
 pub struct SystemSource {
     built: Option<Built>,
+    /// The same `Arc` as `built.shared`, kept alive independently so
+    /// [`AudioSource::position`] still reports the final frame count after
+    /// [`AudioSource::stop`] has torn `built` down. Without this, the
+    /// orchestrator's post-stop "read the exact final count" step (contract
+    /// §7's "equality on graceful stop") would silently see `None` and fall
+    /// back to zero, undoing everything the earlier checkpoints wrote.
+    shared: Option<Arc<Mutex<Shared>>>,
 }
 
 impl Default for SystemSource {
@@ -278,7 +285,10 @@ impl Default for SystemSource {
 
 impl SystemSource {
     pub fn new() -> Self {
-        Self { built: None }
+        Self {
+            built: None,
+            shared: None,
+        }
     }
 
     fn worker_loop(
@@ -597,6 +607,7 @@ impl AudioSource for SystemSource {
             }
         };
 
+        self.shared = Some(Arc::clone(&built.shared));
         self.built = Some(built);
         Ok(())
     }
@@ -624,8 +635,8 @@ impl AudioSource for SystemSource {
     }
 
     fn position(&self) -> Option<(u64, u64)> {
-        let built = self.built.as_ref()?;
-        let guard = built.shared.lock().expect("system writer mutex poisoned");
+        let shared = self.shared.as_ref()?;
+        let guard = shared.lock().expect("system writer mutex poisoned");
         if guard.last_host_ns == 0 {
             None
         } else {
@@ -633,13 +644,31 @@ impl AudioSource for SystemSource {
         }
     }
 
-    fn checkpoint(&mut self) -> Result<(), Error> {
+    fn fsync_data(&mut self) -> Result<(), Error> {
         let Some(built) = &self.built else {
             return Ok(());
         };
         let mut guard = built.shared.lock().expect("system writer mutex poisoned");
         guard.writer.fsync_data()?;
+        Ok(())
+    }
+
+    fn patch_header(&mut self) -> Result<(), Error> {
+        let Some(built) = &self.built else {
+            return Ok(());
+        };
+        let mut guard = built.shared.lock().expect("system writer mutex poisoned");
         guard.writer.patch_header()?;
+        Ok(())
+    }
+
+    fn pad_leading_silence(&mut self, frames: u64) -> Result<(), Error> {
+        let Some(built) = &self.built else {
+            return Ok(());
+        };
+        let mut guard = built.shared.lock().expect("system writer mutex poisoned");
+        guard.writer.prepend_silence(frames)?;
+        guard.frames += frames;
         Ok(())
     }
 }

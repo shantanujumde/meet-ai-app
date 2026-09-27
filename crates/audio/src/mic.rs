@@ -333,13 +333,34 @@ impl AudioSource for MicSource {
         }
     }
 
-    fn checkpoint(&mut self) -> Result<(), Error> {
+    fn fsync_data(&mut self) -> Result<(), Error> {
         let Some(shared) = &self.shared else {
             return Ok(());
         };
         let mut guard = shared.lock().expect("mic writer mutex poisoned");
         guard.writer.fsync_data()?;
+        Ok(())
+    }
+
+    fn patch_header(&mut self) -> Result<(), Error> {
+        let Some(shared) = &self.shared else {
+            return Ok(());
+        };
+        let mut guard = shared.lock().expect("mic writer mutex poisoned");
         guard.writer.patch_header()?;
+        Ok(())
+    }
+
+    fn pad_leading_silence(&mut self, frames: u64) -> Result<(), Error> {
+        let Some(shared) = &self.shared else {
+            return Ok(());
+        };
+        // Locking here excludes the worker thread's own `shared.lock()` in
+        // `worker_loop` for the duration of the splice, so no append can land
+        // between our read-the-tail and write-the-pad steps.
+        let mut guard = shared.lock().expect("mic writer mutex poisoned");
+        guard.writer.prepend_silence(frames)?;
+        guard.frames += frames;
         Ok(())
     }
 }
