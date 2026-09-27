@@ -1,0 +1,17 @@
+[package]
+name = "calendar"
+description = "CalendarProvider trait over EventKit, Google, Microsoft Graph and ICS."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+
+# The provider dependencies — objc2-event-kit, oauth2, icalendar, keyring,
+# reqwest, sha2 — are deliberately NOT here yet. SETUP.md §3.3: they are added at
+# Phase 5. There is no point compiling an OAuth stack and a TLS client for two
+# months before the first provider is written.

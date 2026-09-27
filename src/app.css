@@ -1,0 +1,901 @@
+/* =============================================================================
+   meet-ai — app surfaces
+   Layer 3 of the design system, for the screens that exist in Phase 2a.
+
+   Rules taken from design-system/meet-ai/MASTER.md and worth restating, because
+   every one of them is easy to break in a hurry:
+     * Base text is 13px. Web habits inflate a Mac app.
+     * Nested radii are computed with calc(), never typed.
+     * Never stack glass on glass; at most three glass surfaces on screen.
+     * Body text does not live on glass. The notes pane and the transcript
+       column are opaque content, not material.
+     * Focus rings are 2px at 2px offset and are never removed.
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   Shell
+   -------------------------------------------------------------------------- */
+
+.shell {
+  display: grid;
+  grid-template-rows: var(--titlebar-h) 1fr;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  grid-template-areas:
+    "titlebar titlebar"
+    "sidebar  content";
+  height: 100%;
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  color: var(--text-primary);
+  /* Opaque. The window is `transparent: true` with a native material behind
+     it, and that material is nowhere near opaque enough to read body text
+     against — whatever is behind the window shows straight through the
+     titlebar and the content column. MASTER.md §8 settles this: glass yields.
+     The material still shapes the corners, the shadow and the active-state
+     dimming, which is what it is genuinely good at. */
+  background: var(--surface-canvas);
+}
+
+/* Onboarding takes the whole window: no sidebar to navigate to yet, and a
+   half-set-up app should not look browsable. */
+.shell--focused {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "titlebar"
+    "content";
+}
+
+/* -----------------------------------------------------------------------------
+   Titlebar
+   -------------------------------------------------------------------------- */
+
+.titlebar {
+  grid-area: titlebar;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  /* The traffic lights live at the top left; anything placed under them is
+     unclickable and looks like a bug. */
+  padding-inline: var(--titlebar-traffic-inset) var(--titlebar-pad-x);
+  background: var(--titlebar-fill);
+  border-bottom: 0.5px solid var(--separator);
+  -webkit-app-region: drag;
+}
+
+.titlebar__title {
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.titlebar__spacer {
+  flex: 1;
+}
+
+/* -----------------------------------------------------------------------------
+   Sidebar — the meeting list
+   Native window vibrancy is already behind this, so it gets no blur of its own.
+   -------------------------------------------------------------------------- */
+
+.sidebar {
+  grid-area: sidebar;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--sidebar-pad);
+  gap: var(--space-4);
+  background: var(--sidebar-fill);
+  border-right: 0.5px solid var(--separator);
+}
+
+.sidebar__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-inline: var(--space-3);
+  font-size: var(--text-caption1);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.sidebar__count {
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: var(--weight-regular);
+}
+
+.sidebar__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sidebar__footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 0.5px solid var(--separator);
+}
+
+/* Selection is marked by fill AND a leading accent bar, never by colour alone. */
+.meeting-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--sidebar-row-radius);
+  position: relative;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.meeting-row:hover {
+  background: var(--sidebar-row-hover);
+}
+
+.meeting-row[aria-current="true"] {
+  background: var(--sidebar-row-active);
+}
+
+.meeting-row[aria-current="true"]::before {
+  content: "";
+  position: absolute;
+  inset-block: var(--space-2);
+  inset-inline-start: 0;
+  width: 2px;
+  border-radius: var(--radius-capsule);
+  background: var(--accent);
+}
+
+.meeting-row__title {
+  display: block;
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meeting-row__meta {
+  display: flex;
+  gap: var(--space-3);
+  font-size: var(--text-caption1);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+
+.meeting-row__badge {
+  color: var(--text-secondary);
+}
+
+/* -----------------------------------------------------------------------------
+   Content column
+   -------------------------------------------------------------------------- */
+
+.content {
+  grid-area: content;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--notes-fill);
+}
+
+.page {
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: var(--space-9) var(--notes-pad) var(--space-10);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+.page--narrow {
+  max-width: 34rem;
+}
+
+.page__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.page__title {
+  font-size: var(--text-title1);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
+  margin: 0;
+  line-height: var(--leading-tight);
+}
+
+.page__subtitle {
+  font-size: var(--text-title3);
+  font-weight: var(--weight-semibold);
+  margin: 0;
+}
+
+.page__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  font-size: var(--text-footnote);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.section__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+
+.section__title {
+  font-size: var(--text-title3);
+  font-weight: var(--weight-semibold);
+  margin: 0;
+}
+
+.section__hint {
+  font-size: var(--text-footnote);
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+.prose {
+  font-size: var(--text-callout);
+  line-height: var(--leading-prose);
+  color: var(--text-secondary);
+  max-width: var(--notes-measure);
+  margin: 0;
+}
+
+/* -----------------------------------------------------------------------------
+   Buttons
+   One tinted control per window: `.btn--primary`. Everything else is neutral.
+   -------------------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  height: var(--control-h-large);
+  padding-inline: var(--space-5);
+  border-radius: var(--radius-control);
+  border: 0.5px solid var(--rim-border);
+  background: var(--surface-glass-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  cursor: default;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-instant) var(--ease-out);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--surface-glass-regular);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--text-on-accent);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn--danger {
+  background: var(--status-danger);
+  border-color: transparent;
+  color: var(--text-on-accent);
+}
+
+.btn--quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+.btn--quiet:hover:not(:disabled) {
+  background: var(--sidebar-row-hover);
+  color: var(--text-primary);
+}
+
+.btn--small {
+  height: var(--control-h-regular);
+  padding-inline: var(--space-4);
+  font-size: var(--text-footnote);
+}
+
+.btn--block {
+  width: 100%;
+}
+
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+/* Never removed. A keyboard user cannot operate this app without it. */
+:where(a, button, input, textarea, [tabindex]):focus-visible {
+  outline: var(--focus-w) solid var(--focus-ring);
+  outline-offset: var(--focus-offset);
+  border-radius: var(--radius-control);
+}
+
+/* -----------------------------------------------------------------------------
+   Record control
+   Solid, never glass, and never covered (MASTER.md §5.6).
+   -------------------------------------------------------------------------- */
+
+.record {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  -webkit-app-region: no-drag;
+}
+
+.record__button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--control-h-large);
+  padding-inline: var(--space-5);
+  border-radius: var(--radius-capsule);
+  border: 0.5px solid var(--rim-border);
+  background: var(--surface-glass-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  cursor: default;
+}
+
+.record__button[data-recording="true"] {
+  background: var(--status-recording);
+  border-color: transparent;
+  color: var(--text-on-accent);
+}
+
+.record__button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.record__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-capsule);
+  background: currentColor;
+  flex: none;
+}
+
+/* State is never carried by the pulse alone — an elapsed timer sits beside it,
+   and Reduce Motion stops the pulse while the dot stays visible. */
+.record__dot--live {
+  animation: record-pulse 2s var(--ease-in-out) infinite;
+}
+
+.record__elapsed {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-footnote);
+  color: var(--text-secondary);
+  min-width: 5ch;
+}
+
+.record__shortcut {
+  font-size: var(--text-caption1);
+  color: var(--text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .record__dot--live {
+    animation: none;
+  }
+}
+
+@keyframes record-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: var(--record-pulse-min);
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   Cards, rows and status
+   -------------------------------------------------------------------------- */
+
+.card {
+  border: 0.5px solid var(--separator);
+  border-radius: var(--radius-panel);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  background: var(--surface-content-alt);
+}
+
+.card--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Rows sit flush inside `.card--flush`, whose `overflow: hidden` does the
+   corner clipping. They carry no radius of their own on purpose: the
+   concentric rule would compute `--radius-panel - --space-6` here, which is
+   negative — the sign that these corners are the card's, not the row's. */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-6);
+}
+
+.row + .row {
+  border-top: 0.5px solid var(--separator);
+}
+
+.row__label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.row__name {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+}
+
+.row__detail {
+  font-size: var(--text-caption1);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.row__value {
+  font-size: var(--text-footnote);
+  color: var(--text-secondary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-h-small);
+  padding-inline: var(--space-4);
+  border-radius: var(--radius-capsule);
+  font-size: var(--text-caption2);
+  font-weight: var(--weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--surface-glass-sunken);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.badge--ok {
+  color: var(--status-success);
+}
+
+.badge--warn {
+  color: var(--status-warning);
+}
+
+.badge--danger {
+  color: var(--status-danger);
+}
+
+/* -----------------------------------------------------------------------------
+   Designed empty / loading / error states
+   Every one of these gets real copy telling the user what to do next.
+   -------------------------------------------------------------------------- */
+
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-5);
+  padding: var(--space-9) var(--space-6);
+  border: 0.5px dashed var(--separator-strong);
+  border-radius: var(--radius-panel);
+  text-align: left;
+}
+
+.state--center {
+  align-items: center;
+  text-align: center;
+}
+
+.state--error {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--status-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--status-danger) 6%, transparent);
+}
+
+.state--security {
+  border-color: color-mix(in srgb, var(--status-warning) 55%, transparent);
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
+}
+
+.state__title {
+  font-size: var(--text-headline);
+  font-weight: var(--weight-semibold);
+  margin: 0;
+}
+
+.state__body {
+  font-size: var(--text-body);
+  line-height: var(--leading-prose);
+  color: var(--text-secondary);
+  max-width: var(--notes-measure);
+  margin: 0;
+}
+
+/* The verbatim Rust message. Monospace and quiet, so it reads as evidence
+   rather than as the instruction — the sentence above it is the instruction. */
+.state__detail {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption1);
+  line-height: var(--leading-normal);
+  color: var(--text-tertiary);
+  background: var(--surface-glass-sunken);
+  border-radius: var(--radius-chip);
+  padding: var(--space-4);
+  margin: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* A loading row that does not reflow the page when it resolves. */
+.checking {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--text-footnote);
+}
+
+.checking__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-capsule);
+  background: currentColor;
+  animation: checking-fade 1.2s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .checking__dot {
+    animation: none;
+  }
+}
+
+@keyframes checking-fade {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   Onboarding steps
+   -------------------------------------------------------------------------- */
+
+.steps {
+  list-style: none;
+  counter-reset: step;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.steps li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: var(--control-h-regular) 1fr;
+  gap: var(--space-5);
+  align-items: start;
+  font-size: var(--text-body);
+  line-height: var(--leading-prose);
+  color: var(--text-secondary);
+}
+
+.steps li::before {
+  content: counter(step);
+  display: grid;
+  place-items: center;
+  width: var(--control-h-regular);
+  height: var(--control-h-regular);
+  border-radius: var(--radius-capsule);
+  background: var(--surface-glass-sunken);
+  color: var(--text-primary);
+  font-size: var(--text-caption1);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.steps strong {
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.progress-dots {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.progress-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-capsule);
+  background: var(--separator-strong);
+}
+
+.progress-dots span[data-active="true"] {
+  background: var(--accent);
+}
+
+/* -----------------------------------------------------------------------------
+   Transcript (read-only review)
+   Opaque content, not glass: this is sustained reading.
+   -------------------------------------------------------------------------- */
+
+.transcript {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.transcript__line {
+  display: grid;
+  grid-template-columns: 7ch auto 1fr;
+  gap: var(--space-5);
+  align-items: baseline;
+  font-size: var(--transcript-text);
+  line-height: var(--leading-prose);
+}
+
+.transcript__time {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption1);
+  color: var(--text-tertiary);
+}
+
+/* Colour is paired with an initial, so the transcript survives colourblindness
+   and greyscale printing (MASTER.md §9). */
+.transcript__speaker {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-capsule);
+  font-size: var(--text-caption2);
+  font-weight: var(--weight-semibold);
+  color: var(--text-on-accent);
+  align-self: center;
+}
+
+.transcript__speaker[data-speaker="You"] {
+  background: var(--speaker-1);
+}
+
+.transcript__speaker[data-speaker="Others"] {
+  background: var(--speaker-2);
+}
+
+.transcript__text {
+  color: var(--transcript-final);
+}
+
+/* -----------------------------------------------------------------------------
+   Notes pane
+   The content layer: opaque, because this is where writing happens.
+   -------------------------------------------------------------------------- */
+
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+}
+
+.notes__editor {
+  width: 100%;
+  min-height: 14rem;
+  resize: vertical;
+  border: 0.5px solid var(--separator);
+  border-radius: var(--radius-card);
+  background: var(--surface-content);
+  color: var(--text-primary);
+  padding: var(--space-6);
+  font-family: var(--font-ui);
+  font-size: var(--notes-text);
+  line-height: var(--notes-leading);
+  max-width: var(--notes-measure);
+}
+
+.notes__editor::placeholder {
+  color: var(--text-tertiary);
+}
+
+.notes__status {
+  font-size: var(--text-caption1);
+  color: var(--text-tertiary);
+  min-height: 1.2em;
+}
+
+.notes__status[data-tone="error"] {
+  color: var(--status-danger);
+}
+
+/* -----------------------------------------------------------------------------
+   Download progress
+   -------------------------------------------------------------------------- */
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.progress__track {
+  height: 6px;
+  border-radius: var(--radius-capsule);
+  background: var(--surface-glass-sunken);
+  overflow: hidden;
+}
+
+.progress__fill {
+  height: 100%;
+  border-radius: var(--radius-capsule);
+  background: var(--accent);
+  transition: width var(--dur-normal) var(--ease-out);
+}
+
+/* Hashing has no sub-progress to report, so the bar says "working" rather than
+   sitting at 100% looking frozen. */
+.progress__fill--indeterminate {
+  width: 40%;
+  animation: progress-sweep 1.4s var(--ease-in-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress__fill--indeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
+}
+
+@keyframes progress-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.progress__label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-5);
+  font-size: var(--text-caption1);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* -----------------------------------------------------------------------------
+   Banner — a persistent, dismissible warning above the content
+   -------------------------------------------------------------------------- */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--text-footnote);
+  border-bottom: 0.5px solid var(--separator);
+  background: color-mix(in srgb, var(--status-warning) 12%, transparent);
+  color: var(--text-primary);
+}
+
+.banner--danger {
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+}
+
+.banner__text {
+  flex: 1;
+  margin: 0;
+  line-height: var(--leading-normal);
+}
+
+/* Increase Contrast collapses secondary text into primary and turns rims into
+   solid borders — glass is decoration and the interface survives losing it. */
+@media (prefers-contrast: more) {
+  .prose,
+  .state__body,
+  .row__value,
+  .page__meta {
+    color: var(--text-primary);
+  }
+
+  .card,
+  .state,
+  .notes__editor,
+  .btn {
+    border-width: 1px;
+    border-color: var(--separator-strong);
+  }
+}
+
+/* The visually-hidden pattern, for text that only VoiceOver needs. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

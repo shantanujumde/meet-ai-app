@@ -1,0 +1,89 @@
+[workspace]
+members = ["crates/*", "src-tauri"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.98.0"
+license = "Apache-2.0"
+version = "0.1.0"
+
+# Every version here is pinned exactly to SETUP.md §2. Do not bump one without
+# updating SETUP.md in the same commit — two other crates depend on these being
+# the versions their docs were read against (see CLAUDE.md, the "new major" rule).
+[workspace.dependencies]
+# --- local crates ---
+audio = { path = "crates/audio" }
+calendar = { path = "crates/calendar" }
+detect = { path = "crates/detect" }
+modelfetch = { path = "crates/modelfetch" }
+prompts = { path = "crates/prompts" }
+store = { path = "crates/store" }
+stt = { path = "crates/stt" }
+
+# --- audio (SETUP.md §2.2) ---
+block2 = "=0.6.2"
+cpal = "=0.18.2"
+earshot = "=1.2.2"
+hound = "=3.5.1"
+objc2 = "=0.6.4"
+objc2-core-audio = "=0.3.2"
+objc2-core-audio-types = "=0.3.2"
+objc2-core-foundation = "=0.3.2"
+objc2-foundation = "=0.3.2"
+ringbuf = "=0.5.1"
+rubato = "=5.0.0"
+
+# --- speech-to-text (SETUP.md §2.3) ---
+whisper-rs = "=0.16.0"
+
+# --- model download (SETUP.md §2.5) ---
+# Listed under "Calendar & auth" in SETUP.md because Phase 5 was the first
+# planned consumer, but the pinned versions are the ones Phase 1's lazy model
+# downloader needs first. Same versions, added earlier than SETUP.md expected.
+reqwest = { version = "=0.12.28", default-features = false, features = [
+  "rustls-tls",
+  "stream",
+] }
+sha2 = "=0.10.9"
+tokio-util = "=0.7.19"
+
+# --- store, config, prompts (SETUP.md §2.4) ---
+chrono = { version = "=0.4.45", features = ["serde"] }
+dirs = "=6.0.0"
+jsonc-parser = "=0.33.1"
+minijinja = "=2.24.0"
+notify = "=8.2.0"
+notify-debouncer-full = "=0.7.0"
+rusqlite = "=0.40.2"
+serde = "=1.0.229"
+serde_json = "=1.0.151"
+yaml-rust2 = "=0.12.0"
+
+# --- runtime, logging, errors, testing (SETUP.md §2.6) ---
+anyhow = "=1.0.104"
+insta = "=1.48.0"
+sysinfo = "=0.39.6"
+thiserror = "=2.0.20"
+tokio = "=1.53.1"
+tracing = "=0.1.44"
+tracing-appender = "=0.2.5"
+tracing-subscriber = "=0.3.23"
+
+# --- tauri (SETUP.md §2.1) ---
+tauri = "=2.11.5"
+tauri-build = "=2.6.3"
+tauri-plugin-clipboard-manager = "=2.3.3"
+tauri-plugin-dialog = "=2.7.3"
+tauri-plugin-fs = "=2.5.2"
+tauri-plugin-global-shortcut = "=2.3.2"
+tauri-plugin-log = "=2.9.1"
+tauri-plugin-notification = "=2.4.0"
+tauri-plugin-opener = "=2.5.5"
+tauri-plugin-single-instance = "=2.4.4"
+tauri-plugin-updater = "=2.11.0"
+
+[profile.release]
+# Audio work is realtime-sensitive; do not let a debug-ish release profile in.
+lto = true
+codegen-units = 1

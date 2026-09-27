@@ -1,0 +1,53 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'r=$(git rev-parse --show-toplevel 2>/dev/null) && [ -x \"$r/.claude/hooks/tree-snapshot.sh\" ] && \"$r/.claude/hooks/tree-snapshot.sh\"; exit 0'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify hook-guard search"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify hook-guard read"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'r=$(git rev-parse --show-toplevel 2>/dev/null) && [ -x \"$r/.claude/hooks/pre-destructive-git.sh\" ] && \"$r/.claude/hooks/pre-destructive-git.sh\"; exit 0'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'r=$(git rev-parse --show-toplevel 2>/dev/null) && [ -x \"$r/.claude/hooks/tree-snapshot.sh\" ] && \"$r/.claude/hooks/tree-snapshot.sh\"; exit 0'"
+          }
+        ]
+      }
+    ]
+  }
+}
