@@ -171,6 +171,45 @@ impl WavWriter {
     pub fn header_frames(&self) -> u64 {
         self.header_frames
     }
+
+    /// Reopen an existing WAV file — one written by an earlier
+    /// [`WavWriter`] for an earlier segment of the *same* recording — and
+    /// continue appending after its declared audio, instead of truncating.
+    ///
+    /// Contract: "one WAV per channel, segments concatenated in `idx`
+    /// order" (`crates/audio/src/segments.rs`). A segment boundary (a device
+    /// change mid-call) tears down and rebuilds the OS-level capture stream,
+    /// but the archive file itself must stay one continuous per-channel WAV
+    /// — so the new segment's writer has to pick up exactly where the old
+    /// one's last `patch_header` left off, not start a fresh file.
+    ///
+    /// Seeks to the header's *declared* length, not the file's actual size,
+    /// and truncates away anything past it with `File::set_len`. A graceful
+    /// segment close (`fsync_data` + `patch_header`, same as
+    /// `AudioSource::stop`) leaves the two equal, so this is a no-op in the
+    /// normal case; it only bites if a previous run was killed mid-checkpoint
+    /// and left up to one checkpoint's worth of undeclared bytes past the
+    /// header (§7). Discarding rather than keeping that excess is
+    /// deliberate: those bytes were never accounted for in any
+    /// `segments.json` this writer's caller controls, and keeping them would
+    /// silently insert audio no anchor ever measured.
+    ///
+    /// `header_frames`/`synced_frames`/`appended_frames` all start at the
+    /// *previous* declared count and grow from there — the header always
+    /// describes the whole file, not just the reopened segment.
+    pub fn open_append(path: &Path) -> io::Result<Self> {
+        let existing_frames = read_header_frames(path)?;
+        let mut file = OpenOptions::new().read(true).write(true).open(path)?;
+        let data_end = HEADER_LEN + existing_frames * BYTES_PER_SAMPLE as u64;
+        file.set_len(data_end)?;
+        file.seek(SeekFrom::Start(data_end))?;
+        Ok(Self {
+            file,
+            appended_frames: existing_frames,
+            synced_frames: existing_frames,
+            header_frames: existing_frames,
+        })
+    }
 }
 
 /// Read back only the frame count a WAV header at `path` declares, without
@@ -479,6 +518,95 @@ mod tests {
         let (frames, samples) = read_declared(&path).unwrap();
         assert_eq!(frames, 160);
         assert_eq!(samples, real);
+    }
+
+    /// A device-change segment reopen: the old segment's writer closes
+    /// cleanly, a *new* `WavWriter` reopens the same path, and its own
+    /// checkpoints must land after the first segment's audio, not overwrite
+    /// or duplicate it — this is what makes "one WAV per channel, segments
+    /// concatenated in `idx` order" true on disk, not just in `segments.json`.
+    #[test]
+    fn open_append_continues_the_same_file_across_a_segment_reopen() {
+        let path = temp_path("reopen.wav");
+        let _ = std::fs::remove_file(&path);
+
+        let first_segment = tone(1600, 440.0); // 100ms
+        {
+            let mut w = WavWriter::create(&path).unwrap();
+            w.append(&first_segment).unwrap();
+            w.fsync_data().unwrap();
+            w.patch_header().unwrap();
+            assert_eq!(w.header_frames(), 1600);
+        }
+
+        let second_segment = tone(800, 880.0); // 50ms, a different tone
+        let mut w = WavWriter::open_append(&path).unwrap();
+        assert_eq!(
+            w.header_frames(),
+            1600,
+            "reopening must start from the prior segment's declared count, not zero"
+        );
+        w.append(&second_segment).unwrap();
+        w.fsync_data().unwrap();
+        w.patch_header().unwrap();
+
+        assert_eq!(w.header_frames(), 2400);
+        let (frames, samples) = read_declared(&path).unwrap();
+        assert_eq!(frames, 2400);
+        assert_eq!(&samples[..1600], &first_segment[..], "first segment intact");
+        assert_eq!(
+            &samples[1600..],
+            &second_segment[..],
+            "second segment appended immediately after, not overlapping"
+        );
+    }
+
+    /// The prior segment's writer was killed before it could patch its
+    /// header (contract §7's bounded excess): `open_append` must discard the
+    /// undeclared tail rather than keep it as an unaccounted gap in the
+    /// middle of the file.
+    #[test]
+    fn open_append_truncates_undeclared_bytes_left_by_a_prior_kill_dash_9() {
+        let path = temp_path("reopen-after-kill.wav");
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let mut w = WavWriter::create(&path).unwrap();
+            w.append(&tone(1600, 440.0)).unwrap();
+            w.fsync_data().unwrap();
+            w.patch_header().unwrap(); // header now declares 1600
+
+            // Simulate a kill -9: more audio lands on disk but is never
+            // fsynced or declared.
+            w.append(&tone(400, 440.0)).unwrap();
+            drop(w);
+        }
+
+        let actual_len_before = std::fs::metadata(&path).unwrap().len();
+        assert!(
+            actual_len_before > HEADER_LEN + 1600 * BYTES_PER_SAMPLE as u64,
+            "the undeclared tail must actually be on disk for this test to mean anything"
+        );
+
+        let second_segment = tone(400, 880.0);
+        let mut w = WavWriter::open_append(&path).unwrap();
+        assert_eq!(w.header_frames(), 1600);
+        w.append(&second_segment).unwrap();
+        w.fsync_data().unwrap();
+        w.patch_header().unwrap();
+
+        assert_eq!(
+            w.header_frames(),
+            2000,
+            "must be exactly the declared 1600 plus the new 400, not the killed tail too"
+        );
+        let (frames, samples) = read_declared(&path).unwrap();
+        assert_eq!(frames, 2000);
+        assert_eq!(
+            &samples[1600..],
+            &second_segment[..],
+            "the second segment must follow immediately, with the killed tail discarded"
+        );
     }
 
     #[test]
