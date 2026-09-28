@@ -65,8 +65,9 @@ export function RecordControl({
   const transitioning = status.phase === "starting" || status.phase === "stopping";
 
   // Denied is the only state that disables the control. "Unknown" must not —
-  // nothing has measured permission yet (the tone check is still being built),
-  // and locking the user out on a guess would be worse than letting them try.
+  // it covers both "hasn't checked yet" and "the check itself couldn't run"
+  // (no output device, etc.), neither of which is evidence of a denial, and
+  // locking the user out on a guess would be worse than letting them try.
   const denied = permission?.state === "denied";
   const disabled = denied || busy || transitioning;
 

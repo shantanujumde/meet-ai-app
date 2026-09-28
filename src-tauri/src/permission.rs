@@ -1,20 +1,23 @@
 //! Audio-capture permission, as the onboarding flow sees it.
 //!
-//! **This module owns the screen, not the measurement.** The measurement is the
-//! Phase 0a/0 problem and belongs to `crates/audio` (TUR-4/TUR-5). SPEC §8.1 is
-//! blunt about why it is hard: on denial *every* `OSStatus` is `noErr` and the
-//! process tap delivers bit-exact zeros, which is indistinguishable from a
-//! granted capture of a silent Mac. So a return code is not evidence and an RMS
-//! floor is not evidence. The only proof is a positive control — play a ~200 ms
-//! known tone from meet-ai's own process and confirm it comes back through the
-//! tap.
+//! **This module owns the screen, not the measurement.** The measurement is
+//! [`audio::permission_check`]. SPEC §8.1 is blunt about why it is hard: on
+//! denial *every* `OSStatus` is `noErr` and the process tap delivers bit-exact
+//! zeros, which is indistinguishable from a granted capture of a silent Mac.
+//! So a return code is not evidence and an RMS floor is not evidence. The only
+//! proof is a positive control — play a ~200 ms known tone from meet-ai's own
+//! process and confirm it comes back through the tap.
 //!
-//! Until that lands, this reports [`State::Unknown`] and says so in words. It
-//! does **not** report `Granted` optimistically: an onboarding screen that
-//! claims permission it has not measured is worse than one that admits it does
-//! not know, because the user only finds out when a real meeting records
-//! silence.
+//! [`status`] never measures anything — it is the fast, always-safe default,
+//! and the thing `cargo test` calls, so a test run never touches real audio
+//! hardware. [`measure`] is the real, on-demand check: it takes real
+//! wall-clock time and must be run off the UI thread (see
+//! `commands::permission_status`). Neither reports `Granted`
+//! optimistically: an onboarding screen that claims permission it has not
+//! measured is worse than one that admits it does not know, because the user
+//! only finds out when a real meeting records silence.
 
+use audio::permission_check::{self, ChannelResult, ChannelState};
 use serde::{Deserialize, Serialize};
 
 /// Where the user stands with audio permission.
@@ -45,37 +48,101 @@ pub struct Status {
     pub detail: String,
 }
 
-/// Ask the system where permission stands.
+/// The fast, always-safe default: never measured, never `Granted`.
 ///
-/// Returns `Unknown` today. The `MEET_AI_FAKE_PERMISSION` override exists so
-/// the denied path — the screen a user actually lands on after saying No — can
-/// be built and reviewed before the capture layer can produce a real denial.
-/// It is compiled out of release builds so it can never affect a shipped app.
+/// Used as the pre-check placeholder and as the fallback if [`measure`]'s
+/// blocking task itself cannot be joined. The `MEET_AI_FAKE_PERMISSION`
+/// override exists so the denied path — the screen a user actually lands on
+/// after saying No — can be built and reviewed without needing a real denial
+/// on hand. It is compiled out of release builds so it can never affect a
+/// shipped app.
 pub fn status() -> Status {
     #[cfg(debug_assertions)]
-    if let Ok(forced) = std::env::var("MEET_AI_FAKE_PERMISSION") {
-        let state = match forced.as_str() {
-            "granted" => State::Granted,
-            "denied" => State::Denied,
-            _ => State::Unknown,
-        };
-        return Status {
-            state,
-            measured: true,
-            detail: format!(
-                "Simulated by MEET_AI_FAKE_PERMISSION={forced}. This override only exists in \
-                 development builds."
-            ),
-        };
+    if let Some(forced) = forced_status() {
+        return forced;
     }
 
     Status {
         state: State::Unknown,
         measured: false,
-        detail: "meet-ai cannot check this yet. The check plays a short tone and listens for it \
-                 coming back, and that part of the recorder is still being built."
-            .into(),
+        detail: "meet-ai has not checked audio permission yet.".into(),
     }
+}
+
+/// Run the real positive-control measurement (SPEC §8.1/A6): a start/stop
+/// probe against the microphone, and the permission chime played through the
+/// default output device and listened for on the system-audio tap.
+///
+/// Takes real wall-clock time — at least
+/// [`audio::chime::ONSET_TIMEOUT_MILLIS`] for the system-audio half alone —
+/// and must be run off the UI thread. See `commands::permission_status`.
+pub fn measure() -> Status {
+    #[cfg(debug_assertions)]
+    if let Some(forced) = forced_status() {
+        return forced;
+    }
+
+    combine(
+        permission_check::check_mic(),
+        permission_check::check_system(),
+    )
+}
+
+/// Fold the two channel readings into one [`Status`].
+///
+/// Denied wins over everything else — if either channel is definitely off,
+/// the meeting will be half-recorded regardless of what the other channel
+/// says. Granted requires *both* channels to have measured cleanly; anything
+/// else (a device missing, a read failing) is `Unknown`, never a guess in
+/// either direction, because guessing wrong sends someone to instructions
+/// that cannot help them (a false denial) or lets a broken check pass silently
+/// (a false grant).
+fn combine(mic: ChannelResult, system: ChannelResult) -> Status {
+    let state = if mic.state == ChannelState::Denied || system.state == ChannelState::Denied {
+        State::Denied
+    } else if mic.state == ChannelState::Granted && system.state == ChannelState::Granted {
+        State::Granted
+    } else {
+        State::Unknown
+    };
+
+    let detail = match state {
+        State::Granted => "meet-ai played a short tone and confirmed it can hear both the \
+                            microphone and system audio."
+            .to_string(),
+        State::Denied => format!(
+            "microphone: {}. system audio: {}.",
+            mic.detail, system.detail
+        ),
+        State::Unknown => format!(
+            "meet-ai could not finish checking. microphone: {}. system audio: {}.",
+            mic.detail, system.detail
+        ),
+    };
+
+    Status {
+        state,
+        measured: true,
+        detail,
+    }
+}
+
+#[cfg(debug_assertions)]
+fn forced_status() -> Option<Status> {
+    let forced = std::env::var("MEET_AI_FAKE_PERMISSION").ok()?;
+    let state = match forced.as_str() {
+        "granted" => State::Granted,
+        "denied" => State::Denied,
+        _ => State::Unknown,
+    };
+    Some(Status {
+        state,
+        measured: true,
+        detail: format!(
+            "Simulated by MEET_AI_FAKE_PERMISSION={forced}. This override only exists in \
+             development builds."
+        ),
+    })
 }
 
 /// System Settings panes worth deep-linking to.
@@ -137,6 +204,58 @@ mod tests {
             !status.detail.is_empty(),
             "every status carries a sentence the UI can show"
         );
+    }
+
+    fn reading(state: ChannelState) -> ChannelResult {
+        ChannelResult {
+            state,
+            detail: "test reading".into(),
+        }
+    }
+
+    #[test]
+    fn either_channel_denied_reports_denied_even_if_the_other_is_granted() {
+        // A half-recorded meeting is what this guards: one grant is not enough.
+        let status = combine(
+            reading(ChannelState::Denied),
+            reading(ChannelState::Granted),
+        );
+        assert_eq!(status.state, State::Denied);
+        assert!(status.measured);
+
+        let status = combine(
+            reading(ChannelState::Granted),
+            reading(ChannelState::Denied),
+        );
+        assert_eq!(status.state, State::Denied);
+    }
+
+    #[test]
+    fn both_channels_granted_is_the_only_path_to_granted() {
+        let status = combine(
+            reading(ChannelState::Granted),
+            reading(ChannelState::Granted),
+        );
+        assert_eq!(status.state, State::Granted);
+        assert!(status.measured);
+    }
+
+    #[test]
+    fn an_unmeasurable_channel_never_reports_granted_or_denied() {
+        // No output device, a read failure, etc. — the check simply did not
+        // run, which is not evidence of a grant or a denial either way.
+        let status = combine(
+            reading(ChannelState::Granted),
+            reading(ChannelState::Unmeasurable),
+        );
+        assert_eq!(status.state, State::Unknown);
+        assert!(status.measured, "an attempt was still made");
+
+        let status = combine(
+            reading(ChannelState::Unmeasurable),
+            reading(ChannelState::Unmeasurable),
+        );
+        assert_eq!(status.state, State::Unknown);
     }
 
     #[test]
