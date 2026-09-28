@@ -86,6 +86,7 @@ pub fn run() {
             commands::list_meetings,
             commands::read_meeting,
             commands::save_notes,
+            commands::change_meetings_folder,
             commands::reveal_meeting,
             commands::permission_status,
             commands::open_privacy_settings,

@@ -8,6 +8,8 @@
 //! The matching TypeScript wrappers are in `src/ipc/client.ts`; the two files
 //! are a pair and should be edited together.
 
+use std::path::PathBuf;
+
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt as _;
 
@@ -17,7 +19,7 @@ use crate::error::UiError;
 use crate::meetings::{self, MeetingDetail, MeetingList};
 use crate::onboarding;
 use crate::permission;
-use crate::recording::{Recorder, Status};
+use crate::recording::{Phase, Recorder, Status};
 
 // --- meetings ------------------------------------------------------------
 
@@ -36,6 +38,26 @@ pub fn save_notes(id: String, body: String) -> Result<(), UiError> {
     meetings::write_notes(&id, &body)
 }
 
+/// Move the meetings folder somewhere else, taking every existing meeting
+/// with it.
+///
+/// Refused while a recording is in flight: the recorder is mid-write to a
+/// folder under the *old* root, and a move underneath it would either corrupt
+/// that write or silently vanish the in-progress meeting.
+#[tauri::command]
+pub fn change_meetings_folder(
+    recorder: State<'_, Recorder>,
+    new_root: String,
+) -> Result<MeetingList, UiError> {
+    if recorder.status().phase != Phase::Idle {
+        return Err(UiError::app(
+            "recording-in-progress",
+            "Stop the current recording before changing the meetings folder.",
+        ));
+    }
+    meetings::change_root(PathBuf::from(new_root))
+}
+
 /// Open a meeting's folder in Finder.
 ///
 /// L7 makes the files the product, so "where is it on disk" is a first-class
@@ -50,9 +72,14 @@ pub fn reveal_meeting(app: AppHandle, id: String) -> Result<(), UiError> {
 
 // --- permission and onboarding -------------------------------------------
 
+/// Runs the real positive-control check (SPEC §8.1/A6): plays the permission
+/// chime and probes the microphone. Real wall-clock time, so it runs on a
+/// blocking thread rather than parking a tokio worker.
 #[tauri::command]
-pub fn permission_status() -> permission::Status {
-    permission::status()
+pub async fn permission_status() -> permission::Status {
+    tauri::async_runtime::spawn_blocking(permission::measure)
+        .await
+        .unwrap_or_else(|_| permission::status())
 }
 
 /// Open System Settings at the pane the user needs.

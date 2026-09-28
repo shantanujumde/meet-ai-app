@@ -11,10 +11,11 @@
  * * **macOS needs two separate grants.** The microphone carries the `You`
  *   channel and the system audio tap carries `Others` (L5). Granting one and
  *   not the other produces a half-recorded meeting, so both are named.
- * * **"Not checked" is not "denied".** meet-ai cannot measure audio-capture
- *   permission yet — on denial every status code is `noErr` and the tap returns
- *   silence, so only a positive control tone proves it (SPEC §8.1). Until that
- *   lands the screen says it does not know, rather than claiming a grant it has
+ * * **"Not checked" is not "denied".** On denial every status code is `noErr`
+ *   and the tap returns silence, so only a positive control tone proves
+ *   permission (SPEC §8.1) — the backend plays it and listens on every check.
+ *   If that check cannot run at all (no output device, a read failure), the
+ *   screen still says it does not know, rather than claiming a grant it has
  *   not verified.
  */
 
@@ -23,7 +24,8 @@ import { useNavigate, useParams } from "react-router";
 import { openPrivacySettings, revealMeeting } from "@/ipc/client";
 import type { PermissionStatus } from "@/ipc/types";
 import { useAppStore } from "@/state/app";
-import { Checking } from "@/ui/states";
+import { Checking, ErrorState } from "@/ui/states";
+import { useChangeFolder } from "@/ui/useChangeFolder";
 import { EngineSummary } from "./Settings";
 
 const STEPS = ["welcome", "permission", "speech", "folder"] as const;
@@ -301,6 +303,7 @@ function Speech({ onNext }: { onNext: () => void }) {
 function Folder({ onFinish }: { onFinish: () => void }) {
   const meetings = useAppStore((state) => state.meetings);
   const root = meetings?.root ?? "~/Meetings";
+  const { busy, error, pick } = useChangeFolder();
 
   return (
     <>
@@ -313,22 +316,38 @@ function Folder({ onFinish }: { onFinish: () => void }) {
         in a git repo if you want.
       </p>
       <div className="card">
-        <div className="row" style={{ padding: 0 }}>
-          <span className="row__label">
-            <span className="row__name">Meetings folder</span>
-            <span className="row__detail">{root}</span>
-          </span>
-          {meetings?.rootExists ? (
-            <button
-              type="button"
-              className="btn btn--small"
-              onClick={() => void revealFirstMeeting()}
+        <div className="row" style={{ padding: 0, flexDirection: "column", alignItems: "stretch" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-5)" }}>
+            <span className="row__label">
+              <span className="row__name">Meetings folder</span>
+              <span className="row__detail">{root}</span>
+            </span>
+            <span
+              className="row__value"
+              style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}
             >
-              Show in Finder
-            </button>
-          ) : (
-            <span className="badge">Created on first recording</span>
-          )}
+              {meetings?.rootExists ? (
+                <button
+                  type="button"
+                  className="btn btn--small"
+                  onClick={() => void revealFirstMeeting()}
+                >
+                  Show in Finder
+                </button>
+              ) : (
+                <span className="badge">Created on first recording</span>
+              )}
+              <button
+                type="button"
+                className="btn btn--small"
+                disabled={busy}
+                onClick={() => void pick()}
+              >
+                {busy ? "Moving…" : "Change…"}
+              </button>
+            </span>
+          </div>
+          {error ? <ErrorState error={error} busy={busy} /> : null}
         </div>
       </div>
       <p className="prose">
