@@ -251,8 +251,14 @@ fn whisper_reads_the_same_recording_accurately() {
         eprintln!("  expected: {}", expected.join(" "));
         eprintln!("  actual:   {}", actual.join(" "));
 
+        // Measured on the pinned small.en-q5_1 model (2026-09-28, TUR-66):
+        // mic.wav 3.2%, system.wav 0.0%. Greedy decoding at temperature 0 is
+        // deterministic here, so this is not a "happened to land here" number
+        // — it reproduced exactly across repeated runs. 15% leaves headroom
+        // for a proper noun or a spelled-out numeral while still tripping on
+        // an actual regression; the old 30% was loose enough to hide one.
         assert!(
-            wer < 0.30,
+            wer < 0.15,
             "{track}: word error rate {:.1}% is too high\n  expected: {}\n  actual:   {}",
             wer * 100.0,
             expected.join(" "),
