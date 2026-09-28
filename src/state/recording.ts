@@ -23,7 +23,6 @@ const IDLE: RecordingStatus = {
   phase: "idle",
   meetingId: null,
   startedAtMs: null,
-  stub: true,
 };
 
 type RecordingStore = {

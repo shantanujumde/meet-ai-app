@@ -26,7 +26,6 @@ vi.mock("@/ipc/client", () => ({
     phase: "idle",
     meetingId: null,
     startedAtMs: null,
-    stub: true,
   }),
   toggleRecording: vi.fn(),
   openPrivacySettings: vi.fn(),

@@ -96,18 +96,6 @@ export function Shell() {
           </div>
         ) : null}
 
-        {/* Recording with no capture behind it is the single most misleading
-            state this app could have, so it is said out loud rather than
-            inferred from a stub flag nobody can see. */}
-        {status.phase === "recording" && status.stub ? (
-          <div className="banner" role="status">
-            <p className="banner__text">
-              This is the recording controls working end to end. The audio capture itself is not
-              wired up yet, so no sound is being saved.
-            </p>
-          </div>
-        ) : null}
-
         <Outlet />
       </main>
     </div>
