@@ -1,20 +1,26 @@
 //! The recording lifecycle: start, stop, and what ⌘⇧R does.
 //!
-//! The **state machine is real and lands now**; the recorder behind it is a
-//! stub until TUR-4 wires `crates/audio`'s `meet-rec` in. That split is
-//! deliberate — the interesting bugs here are the transitions (a double-fire
-//! from the global shortcut, a stop that races a start, a start attempted
-//! without permission), and they are cheaper to get right against a stub than
-//! against a live Core Audio tap.
+//! The recorder behind this is real (TUR-94's `audio::session::RecordingSession`):
+//! start opens the microphone and, where available, the system-audio tap and
+//! writes into the SPEC §3.1 meeting folder this module creates; stop closes
+//! both cleanly and leaves `mic.wav`, `system.wav` and `segments.json` complete,
+//! with no later repair step needed.
 //!
-//! What the stub does do is create the SPEC §3.1 meeting folder, so the rest of
-//! the shell has something real to list, open and take notes against. It writes
-//! **no audio and no transcript lines** — inventing either would be worse than
-//! useless. When TUR-4 lands, folder creation moves into the recorder and this
-//! file keeps only the transitions.
+//! Starting and stopping both take real wall-clock time — SPEC §8.1's
+//! positive-control permission measurement, then Core Audio warming up each
+//! channel — so every entry point here is meant to be called off a thread that
+//! must stay responsive. `commands::toggle_recording`/`stop_recording` run this
+//! on a blocking thread the same way `commands::permission_status` does; the
+//! ⌘⇧R handler in `lib.rs` gives it a worker thread of its own so the shortcut
+//! callback never blocks. Nothing here needs to know which caller it is: the
+//! phase check and transition happen inside one `Mutex`, so whichever caller's
+//! lock lands first wins a race and the other sees `Starting`/`Stopping` and
+//! no-ops, rather than racing a second tap open.
 
 use std::sync::Mutex;
 
+use audio::AudioSource;
+use audio::session::RecordingSession;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter as _};
 
@@ -28,10 +34,10 @@ pub const STATE_EVENT: &str = "recording://state";
 
 /// Where the recorder is right now.
 ///
-/// `Starting` and `Stopping` are not decoration: once a real recorder is behind
-/// this, opening the tap and flushing the last WAV header both take long enough
-/// to see, and a shortcut pressed twice in that window must be ignored rather
-/// than queued.
+/// `Starting` and `Stopping` are not decoration: opening the tap (and, on
+/// start, the SPEC §8.1 permission measurement ahead of it) and flushing the
+/// last WAV header both take long enough to see, and a shortcut pressed twice
+/// in that window must be ignored rather than queued.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Phase {
@@ -51,9 +57,6 @@ pub struct Status {
     /// Unix epoch milliseconds the recording started, so the UI can run its own
     /// timer instead of being fed a tick per second over IPC.
     pub started_at_ms: Option<i64>,
-    /// No real capture is running behind this state. The UI says so plainly
-    /// rather than letting someone believe a meeting is being recorded.
-    pub stub: bool,
 }
 
 impl Status {
@@ -62,7 +65,23 @@ impl Status {
             phase: Phase::Idle,
             meeting_id: None,
             started_at_ms: None,
-            stub: true,
+        }
+    }
+}
+
+/// The recorder's status plus the live capture session behind it, one Mutex
+/// so a phase transition and the session it owns can never observe each other
+/// half-updated.
+struct Inner {
+    status: Status,
+    session: Option<RecordingSession>,
+}
+
+impl Inner {
+    fn idle() -> Self {
+        Self {
+            status: Status::idle(),
+            session: None,
         }
     }
 }
@@ -70,29 +89,45 @@ impl Status {
 /// Managed Tauri state. One recorder per app, because two would fight over the
 /// system audio tap — the same reason the single-instance plugin is wired up.
 pub struct Recorder {
-    status: Mutex<Status>,
+    inner: Mutex<Inner>,
 }
 
 impl Default for Recorder {
     fn default() -> Self {
         Self {
-            status: Mutex::new(Status::idle()),
+            inner: Mutex::new(Inner::idle()),
         }
     }
 }
 
 impl Recorder {
     pub fn status(&self) -> Status {
-        self.lock().clone()
+        self.lock().status.clone()
     }
 
     /// A poisoned lock here means a previous call panicked while holding it.
-    /// The state is a plain struct with no invariant a panic could half-break,
-    /// so recovering is strictly better than taking the whole app down.
-    fn lock(&self) -> std::sync::MutexGuard<'_, Status> {
-        self.status
+    /// Recovering is strictly better than taking the whole app down; the worst
+    /// case is a stuck phase, not a half-broken invariant.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
+        self.inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Mutate the state and tell the whole app about it in one step, so a
+    /// transition can never land without an event.
+    fn transition(&self, app: &AppHandle, change: impl FnOnce(&mut Inner)) -> Status {
+        let next = {
+            let mut inner = self.lock();
+            change(&mut inner);
+            inner.status.clone()
+        };
+        // A webview that has gone away is not an error worth propagating up
+        // into a recording control.
+        if let Err(error) = app.emit(STATE_EVENT, &next) {
+            tracing::warn!(%error, "could not tell the window about a recording state change");
+        }
+        next
     }
 
     /// Start if idle, stop if recording, and do nothing mid-transition.
@@ -100,8 +135,7 @@ impl Recorder {
     /// One entry point for the button, the menu item and the global shortcut,
     /// so all three cannot disagree about what "toggle" means.
     pub fn toggle(&self, app: &AppHandle) -> Result<Status, UiError> {
-        let phase = self.lock().phase;
-        match phase {
+        match self.status().phase {
             Phase::Idle => self.start(app),
             Phase::Recording => self.stop(app),
             // Mid-transition. Returning the current state rather than an error
@@ -111,72 +145,133 @@ impl Recorder {
         }
     }
 
+    /// Claim `Idle -> Starting`, or report the phase that beat us to it.
+    fn claim_starting(&self, app: &AppHandle) -> Result<(), Status> {
+        let mut inner = self.lock();
+        if inner.status.phase != Phase::Idle {
+            return Err(inner.status.clone());
+        }
+        inner.status.phase = Phase::Starting;
+        let status = inner.status.clone();
+        drop(inner);
+        if let Err(error) = app.emit(STATE_EVENT, &status) {
+            tracing::warn!(%error, "could not tell the window about a recording state change");
+        }
+        Ok(())
+    }
+
     pub fn start(&self, app: &AppHandle) -> Result<Status, UiError> {
-        if self.lock().phase != Phase::Idle {
-            return Ok(self.status());
+        if let Err(status) = self.claim_starting(app) {
+            return Ok(status);
         }
 
-        // Refuse rather than record silence. SPEC §8.1 says the controls stay
-        // visibly disabled while permission is absent instead of failing at
-        // click time, so the UI should never let this fire — but the global
-        // shortcut works with the window unfocused and hidden, where there is
-        // no disabled button to stop anyone.
-        if permission::status().state == permission::State::Denied {
-            return Err(UiError::app(
-                "permission-denied",
-                "meet-ai is not allowed to record this Mac's audio, so starting a recording would \
-                 capture nothing but silence.",
+        // SPEC §8.1: a denied tap returns `noErr` and delivers bit-exact
+        // zeros, so a return code cannot tell us anything — only the positive
+        // control (a tone played and listened for) can. The UI already keeps
+        // the controls disabled while permission is absent; this measurement
+        // is the backstop for the one path that has no button to disable, the
+        // global shortcut firing with the window unfocused or hidden.
+        if permission::measure().state == permission::State::Denied {
+            return Err(self.fail_start(
+                app,
+                None,
+                UiError::app(
+                    "permission-denied",
+                    "meet-ai is not allowed to record this Mac's audio, so starting a recording \
+                     would capture nothing but silence.",
+                ),
             ));
         }
 
-        self.set(app, |status| {
-            status.phase = Phase::Starting;
-        });
-
         let started = chrono::Local::now();
         let id = meeting_id(started);
-        match create_meeting_folder(&id) {
-            Ok(()) => {}
-            Err(error) => {
-                // Back to idle, not stuck in Starting. A failed start that
-                // leaves the UI showing a spinner forever is the worst outcome.
-                self.set(app, |status| *status = Status::idle());
-                return Err(error);
-            }
+        if let Err(error) = create_meeting_folder(&id) {
+            return Err(self.fail_start(app, Some(&id), error));
         }
 
-        Ok(self.set(app, |status| {
-            status.phase = Phase::Recording;
-            status.meeting_id = Some(id);
-            status.started_at_ms = Some(started.timestamp_millis());
-        }))
+        let audio_dir = match crate::meetings::root() {
+            Ok(root) => root.join(&id).join("audio"),
+            Err(error) => return Err(self.fail_start(app, Some(&id), error)),
+        };
+
+        let mic: Box<dyn AudioSource> = Box::new(audio::mic::MicSource::new());
+        let sys = audio::session::default_system_source();
+
+        match RecordingSession::start(audio_dir, mic, sys) {
+            Ok(session) => Ok(self.transition(app, |inner| {
+                inner.status.phase = Phase::Recording;
+                inner.status.meeting_id = Some(id.clone());
+                inner.status.started_at_ms = Some(started.timestamp_millis());
+                inner.session = Some(session);
+            })),
+            Err(message) => {
+                Err(self.fail_start(app, Some(&id), UiError::app("recorder-failed", message)))
+            }
+        }
+    }
+
+    /// Back to idle, never stuck in `Starting`, and never leaving a meeting
+    /// folder with no audio in it behind — sitting in `Recording` with nothing
+    /// written is the exact shape of the TUR-90 report; a folder from a start
+    /// that never got that far is the same failure one step earlier.
+    fn fail_start(&self, app: &AppHandle, id: Option<&str>, error: UiError) -> UiError {
+        self.transition(app, |inner| *inner = Inner::idle());
+        if let Some(id) = id {
+            match crate::meetings::root() {
+                Ok(root) => {
+                    if let Err(remove_error) = std::fs::remove_dir_all(root.join(id)) {
+                        tracing::warn!(
+                            %remove_error,
+                            meeting_id = id,
+                            "could not remove the meeting folder left by a failed recording start"
+                        );
+                    }
+                }
+                Err(root_error) => tracing::warn!(
+                    message = %root_error.message,
+                    "could not resolve the meetings root to clean up a failed recording start"
+                ),
+            }
+        }
+        error
     }
 
     pub fn stop(&self, app: &AppHandle) -> Result<Status, UiError> {
-        if self.lock().phase != Phase::Recording {
-            return Ok(self.status());
+        let session = match self.claim_stopping(app) {
+            Err(status) => return Ok(status),
+            Ok(session) => session,
+        };
+
+        let Some(session) = session else {
+            tracing::error!("phase was Recording with no session attached; recovering to idle");
+            return Ok(self.transition(app, |inner| *inner = Inner::idle()));
+        };
+
+        match session.stop() {
+            Ok(_report) => Ok(self.transition(app, |inner| *inner = Inner::idle())),
+            Err(message) => {
+                tracing::warn!(message = %message, "recording did not stop cleanly");
+                self.transition(app, |inner| *inner = Inner::idle());
+                Err(UiError::app("recorder-failed", message))
+            }
         }
-        self.set(app, |status| {
-            status.phase = Phase::Stopping;
-        });
-        // A real stop flushes the last WAV header and closes the tap here.
-        Ok(self.set(app, |status| *status = Status::idle()))
     }
 
-    /// Mutate the state and tell the whole app about it in one step, so a
-    /// transition can never land without an event.
-    fn set(&self, app: &AppHandle, change: impl FnOnce(&mut Status)) -> Status {
-        let next = {
-            let mut status = self.lock();
-            change(&mut status);
-            status.clone()
-        };
-        // A webview that has gone away is not an error worth propagating up
-        // into a recording control.
-        if let Err(error) = app.emit(STATE_EVENT, &next) {
+    /// Claim `Recording -> Stopping` and take the session with it, or report
+    /// the phase that beat us to it.
+    fn claim_stopping(&self, app: &AppHandle) -> Result<Option<RecordingSession>, Status> {
+        let mut inner = self.lock();
+        if inner.status.phase != Phase::Recording {
+            return Err(inner.status.clone());
+        }
+        inner.status.phase = Phase::Stopping;
+        let session = inner.session.take();
+        let status = inner.status.clone();
+        drop(inner);
+        if let Err(error) = app.emit(STATE_EVENT, &status) {
             tracing::warn!(%error, "could not tell the window about a recording state change");
         }
-        next
+        Ok(session)
     }
 }
 
@@ -194,7 +289,10 @@ fn meeting_id(at: chrono::DateTime<chrono::Local>) -> String {
 /// `transcript.md` is created empty and never written to here: §3.4 makes it
 /// append-only and `crates/stt`'s `TranscriptSink` is the only thing allowed to
 /// append. Creating it up front means the review view can open a meeting that
-/// is still recording without a missing-file branch.
+/// is still recording without a missing-file branch. `audio/` is also created
+/// here, ahead of `RecordingSession::start`'s own (idempotent)
+/// `create_dir_all`, so folder creation stays one step even though the audio
+/// inside it is now the session's to write.
 fn create_meeting_folder(id: &str) -> Result<(), UiError> {
     let dir = crate::meetings::root()?.join(id);
     std::fs::create_dir_all(dir.join("audio"))?;
@@ -231,15 +329,11 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_recorder_is_idle_and_honest_about_being_a_stub() {
+    fn a_fresh_recorder_is_idle() {
         let recorder = Recorder::default();
         let status = recorder.status();
         assert_eq!(status.phase, Phase::Idle);
         assert!(status.meeting_id.is_none());
         assert!(status.started_at_ms.is_none());
-        assert!(
-            status.stub,
-            "until TUR-4 lands, the UI must be able to say no real capture is running"
-        );
     }
 }

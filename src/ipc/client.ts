@@ -163,7 +163,7 @@ export function downloadModel(id: string): Promise<string> {
 
 export async function recordingStatus(): Promise<RecordingStatus> {
   if (!hasBackend()) {
-    return { phase: "idle", meetingId: null, startedAtMs: null, stub: true };
+    return { phase: "idle", meetingId: null, startedAtMs: null };
   }
   return call<RecordingStatus>("recording_status");
 }

@@ -126,8 +126,6 @@ export type RecordingStatus = {
   meetingId: string | null;
   /** Unix epoch ms, so the UI runs its own timer instead of being fed ticks. */
   startedAtMs: number | null;
-  /** No real capture behind this state yet. Say so; do not imply otherwise. */
-  stub: boolean;
 };
 
 /** Narrow an unknown thrown value to a {@link UiError}. */

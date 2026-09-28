@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager as _, State};
 use tauri_plugin_opener::OpenerExt as _;
 
 use crate::config;
@@ -186,12 +186,26 @@ pub fn recording_status(recorder: State<'_, Recorder>) -> Status {
     recorder.status()
 }
 
+/// Starting or stopping blocks on real wall-clock time — SPEC §8.1's
+/// positive-control permission measurement on start, Core Audio warming up or
+/// winding down either side — so both run on a blocking thread rather than
+/// parking a tokio worker, the same reason `permission_status` does.
 #[tauri::command]
-pub fn toggle_recording(app: AppHandle, recorder: State<'_, Recorder>) -> Result<Status, UiError> {
-    recorder.toggle(&app)
+pub async fn toggle_recording(app: AppHandle) -> Result<Status, UiError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let recorder = app.state::<Recorder>();
+        recorder.toggle(&app)
+    })
+    .await
+    .map_err(|error| UiError::app("recorder-task-failed", error.to_string()))?
 }
 
 #[tauri::command]
-pub fn stop_recording(app: AppHandle, recorder: State<'_, Recorder>) -> Result<Status, UiError> {
-    recorder.stop(&app)
+pub async fn stop_recording(app: AppHandle) -> Result<Status, UiError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let recorder = app.state::<Recorder>();
+        recorder.stop(&app)
+    })
+    .await
+    .map_err(|error| UiError::app("recorder-task-failed", error.to_string()))?
 }
