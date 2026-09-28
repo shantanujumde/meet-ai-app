@@ -33,6 +33,32 @@ security set-keychain-settings "$K"
 (`set-keychain-settings -lut 36000`), so run that line again after any
 `--rotate`.
 
+### If macOS starts stacking "Keychain Not Found" dialogs
+
+Symptom: repeated *"A keychain cannot be found to store 'Chrome'"* windows
+piling up on the desktop. Nothing is wrong with the login keychain file — it has
+fallen off the **user keychain search list**, so Chromium-based apps can no
+longer reach their `… Safe Storage` item and re-ask on every attempt.
+
+The cause is `security list-keychains -d user -s …`: `-s` *replaces* the list.
+Run under a redirected `$HOME` (any sandboxed agent shell) it reads an empty
+list back and writes the signing keychain in as the only entry. `make-identity.sh`
+now refuses to write an empty list (TUR-10, FINDINGS §10.6), but a hand-run
+`list-keychains -s` can still do it.
+
+Click **Cancel**, not *Reset To Defaults*, then put the list back:
+
+```sh
+security list-keychains -d user -s \
+  ~/Library/Keychains/login.keychain-db \
+  ~/Library/Keychains/meet-ai-signing.keychain-db
+security default-keychain -s ~/Library/Keychains/login.keychain-db
+security list-keychains          # login + meet-ai-signing + System
+```
+
+Run it in a normal Terminal with your real `$HOME` — under a redirected one it
+writes a different preference file and changes nothing.
+
 ## 1. Pick the version
 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html), while the version is below 1.0:
