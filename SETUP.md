@@ -581,6 +581,13 @@ open src-tauri/target/release/bundle/macos/meet-ai.app
 Pass = the prompt appears, names **meet-ai** (not the helper), and non-silent samples arrive.
 ⚠️ Prompt appears but samples are silent = **fail**, not pass.
 
+⚠️ If System Settings shows more than one row named **meet-ai** (Microphone or
+"System Audio Recording Only"), do not guess which one to toggle — the extras
+are almost always permanent path-keyed rows left over from pre-identity ad-hoc
+builds (or, if you built `spikes/phase0a-tcc` instead of the real app, a second
+real bundle ID, `pro.saleschat.meetai.tap-probe`). `tccutil reset` above only
+ever reaches `pro.saleschat.meetai`. Full recipe and root cause: FINDINGS §11.
+
 Then commit and start Phase 0.
 
 ---
