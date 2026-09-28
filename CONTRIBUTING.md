@@ -70,6 +70,25 @@ just check
 
 `just fmt` fixes everything that is automatically fixable.
 
+**`just check` does not run the whisper hallucination guard.** SPEC §5's Phase 1
+gate — "silence produces no invented text" — has a whisper-specific test,
+`whisper_writes_nothing_for_silence` in `crates/stt/tests/silence.rs`, behind
+the `whisper-model-tests` feature. It is gated off `just check` on purpose: it
+needs a 190 MB model on disk, and `just check` must stay something a fresh
+clone can run with no network. That test is not optional, just not automatic —
+run it yourself:
+
+```bash
+just model            # downloads + checksum-verifies small.en-q5_1, once
+just check-whisper     # cargo test -p stt --features whisper-model-tests
+```
+
+Run `just check-whisper` whenever you touch `crates/stt/src/vad.rs`,
+`crates/stt/src/whisper.rs`, the phrase blocklist, or the model catalog in
+`crates/stt/src/model.rs` — those are the only things that can break this gate
+— and again before any Phase 1 sign-off. Verified green against the real
+`small.en-q5_1` model on 2026-09-28; see SPEC.md A9.
+
 ### 3. Run it
 
 ```bash

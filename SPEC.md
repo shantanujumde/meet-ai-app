@@ -517,6 +517,41 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A9 — 2026-09-28 · Whisper half of the silence-hallucination guard verified on real hardware (closes TUR-67; amends nothing in §1)
+
+`whisper_writes_nothing_for_silence` (`crates/stt/tests/silence.rs`) has existed
+since Phase 1 landed but sat behind the `whisper-model-tests` feature, which
+`just check` deliberately never turns on. Nobody had run it against a real
+model. That is a real gap: §5's Phase 1 exit gate names "silence produces no
+invented text" for **both** engines, and only the Apple half and the pure-VAD
+half (`apple_engine_writes_nothing_for_silence`,
+`vad_finds_no_speech_in_either_silence_fixture`) had ever gone green.
+
+**Run today**, on the arm64 dev machine, against the real, checksum-verified
+`ggml-small.en-q5_1.bin` (SPEC §2.4): `just model` then `just check-whisper`.
+Result: **118 tests passed, 0 failed**, including
+`whisper_writes_nothing_for_silence` against both `silence-30s.wav` and
+`room-tone-30s.wav`, and `whisper_streams_nothing_over_thirty_quiet_seconds`
+(the live-session path). No hallucinated line on either fixture — the existing
+three-layer guard (A4: VAD gating, `no_speech_thold`, the shape-plus-phrase
+blocklist) holds against the real model, not just in theory. **No change was
+needed to the VAD gating or thresholds** — this amendment records a
+verification, not a fix.
+
+**How this stays a guard and not a one-time check.** The test itself was
+already a standing regression test, not a script someone ran once — that part
+was never the gap. The gap was that it is feature-gated (correctly — `just
+check` must not need 190 MB and a network call) and nothing made anyone
+actually flip that feature on. There is still no CI in this repo, so the
+repeatable mechanism is a documented manual gate, not an automated one:
+`just check-whisper` is now named explicitly in `CONTRIBUTING.md`'s check
+section, with the trigger conditions that make it non-optional — any change to
+`crates/stt/src/vad.rs`, `crates/stt/src/whisper.rs`, or the model catalog, and
+every Phase 1 sign-off. Adding this to an actual CI pipeline is future work,
+not spent here — this repo has no CI for anything else yet either, and
+standing one up is a bigger, separate decision (macOS runner, ~190 MB model
+caching strategy) than this ticket's scope.
+
 ### A8 — 2026-09-27 · OS floor rises to **macOS 26+** (amends L2, L4, §2.4, §2.5, §2.9; closes TUR-37)
 
 **Decision: meet-ai ships macOS 26 and later only.** Board call, made on the icon evidence below, and it settles the OS floor for the whole project — not just for icons.

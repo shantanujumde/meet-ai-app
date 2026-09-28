@@ -189,7 +189,19 @@ impl MicSource {
         let device_rate = config.sample_rate;
         let channels = config.channels as usize;
 
-        let writer = WavWriter::create(&dest)?;
+        // A segment reopen (device change) restarts capture against the same
+        // `dest` a previous `MicSource` already wrote to — the WAV stays one
+        // continuous per-channel archive across segments (contract:
+        // "concatenated in idx order"), only the OS-level stream is rebuilt.
+        // `Shared::frames` still starts at 0 here regardless: it is
+        // segment-relative (`crate::segments`'s per-segment frame counts),
+        // while `WavWriter::open_append` is what carries the file-wide,
+        // cross-segment total the header must keep declaring.
+        let writer = if dest.exists() {
+            WavWriter::open_append(&dest)?
+        } else {
+            WavWriter::create(&dest)?
+        };
         let shared = Arc::new(Mutex::new(Shared {
             writer,
             frames: 0,
