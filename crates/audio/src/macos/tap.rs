@@ -451,7 +451,16 @@ impl SystemSource {
         }
 
         // 4. WAV + ring buffer, then the IO proc.
-        let writer = WavWriter::create(&dest)?;
+        //
+        // A segment reopen (default-output-device change) rebuilds the tap
+        // and aggregate device from scratch against `dest`, but the archive
+        // itself stays one continuous file across segments — see the
+        // matching comment in `crate::mic::MicSource::build`.
+        let writer = if dest.exists() {
+            WavWriter::open_append(&dest)?
+        } else {
+            WavWriter::create(&dest)?
+        };
         let shared = Arc::new(Mutex::new(Shared {
             writer,
             frames: 0,

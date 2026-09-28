@@ -10,14 +10,18 @@
 //! write `segments.json`, then patch every channel's header — never the
 //! other order.
 //!
-//! Honest gap: this binary writes exactly one segment per recording. Device
-//! changes (SPEC §5's AirPods swap) and sleep/wake are supposed to close and
-//! reopen a segment (contract §5/§11's F1) — that reopening is not wired up
-//! yet, so today's `meet-rec` cannot itself demonstrate the AirPods-survival
-//! exit-gate condition. Everything the *format* needs for that (`close_segment`,
-//! close anchors, `start_continuous_ns`) already exists in
-//! [`audio::segments`]; what is missing is the device-change detection that
-//! would call it.
+//! On macOS, the main loop also polls `kAudioHardwarePropertyDefaultOutputDevice`
+//! and `...DefaultInputDevice` ([`audio::macos::device_watch`]) and, on a
+//! change, closes the current segment and reopens a new one
+//! ([`reopen_segment`]) — SPEC §5's AirPods connect/disconnect exit-gate
+//! condition. Both channels are rebuilt on any single device change, even
+//! though only one of them physically needs it: `segments.json`'s frame
+//! counts are segment-relative (`audio::segments`), so the channel that did
+//! not change still needs its counter reset to 0 for that to hold. The one
+//! `AudioSource` boundary the format still has no reopen path for is
+//! sleep/wake (`reason::SYSTEM_WAKE`) — that needs a different detection
+//! mechanism (an `IOKit`/`NSWorkspace` sleep notification, not a polled
+//! property) and is not wired up here.
 
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
@@ -178,6 +182,158 @@ fn pad_frames_for_gap(gap_ns: u64) -> u64 {
     ((gap_ns as f64 / 1e9) * SAMPLE_RATE_HZ as f64).round() as u64
 }
 
+/// Contract §6's head-pad: measure each channel's first resampled buffer,
+/// take the earlier one as the segment's `start_host_ns`, and pad whichever
+/// channel came up later with that much silence so frame 0 of both channels
+/// lands on the same instant.
+///
+/// Factored out of `record()` so both the recording's first segment and
+/// every later reopen ([`reopen_segment`]) go through the identical
+/// alignment logic instead of two copies that could drift apart — exactly
+/// the kind of duplication contract revision 3 above exists to avoid.
+fn align_and_pad(
+    mic: &mut dyn AudioSource,
+    sys: &mut Option<Box<dyn AudioSource>>,
+) -> Result<u64, String> {
+    let mic_first = wait_first_position(mic, FIRST_BUFFER_TIMEOUT)
+        .map_err(|e| format!("microphone produced no audio: {e}"))?;
+    let sys_first = match sys.as_deref() {
+        Some(source) => Some(
+            wait_first_position(source, FIRST_BUFFER_TIMEOUT)
+                .map_err(|e| format!("system audio produced no audio: {e}"))?,
+        ),
+        None => None,
+    };
+
+    let start_host_ns = match sys_first {
+        Some((sys_ns, _)) => mic_first.0.min(sys_ns),
+        None => mic_first.0,
+    };
+
+    if mic_first.0 > start_host_ns {
+        let pad = pad_frames_for_gap(mic_first.0 - start_host_ns);
+        println!("meet-rec: padding microphone head with {pad} frames of silence");
+        mic.pad_leading_silence(pad)
+            .map_err(|e| format!("padding microphone head: {e}"))?;
+    }
+    if let (Some(source), Some((sys_ns, _))) = (sys.as_deref_mut(), sys_first)
+        && sys_ns > start_host_ns
+    {
+        let pad = pad_frames_for_gap(sys_ns - start_host_ns);
+        println!("meet-rec: padding system-audio head with {pad} frames of silence");
+        source
+            .pad_leading_silence(pad)
+            .map_err(|e| format!("padding system-audio head: {e}"))?;
+    }
+
+    Ok(start_host_ns)
+}
+
+/// Close the current segment and open a new one, rebuilding whichever
+/// channel(s) need a fresh OS-level stream after a default-device change
+/// (contract §5/§11's F1; SPEC §5's AirPods-swap gate).
+///
+/// Always rebuilds *both* channels — see this file's module docs for why a
+/// spurious restart on the unaffected channel is the right trade against the
+/// alternative (a per-channel segment-relative baseline offset).
+///
+/// Stops both channels *first*, then reads their final position — never the
+/// other order. `stop()` halts the capture stream and joins its worker
+/// thread before its own internal `fsync_data`/`patch_header`, so once it
+/// returns, `position()` and the just-patched header are guaranteed to agree
+/// exactly. Reading `position()` first and calling `stop()` after would
+/// leave a window where the (still-running) worker thread appends more audio
+/// that `stop()`'s internal fsync then picks up — so the header would end up
+/// declaring more frames than the close anchor this function commits to
+/// `segments.json`, reproducing the exact header-ahead-of-segments bug
+/// `WavWriter::patch_header`'s `synced_frames` freeze was built to prevent
+/// one layer down (TUR-54; `crates/audio/src/wav_writer.rs`). Caught by
+/// running this function against real hardware and checking `drift-check`'s
+/// own invariant check, not by inspection.
+#[allow(clippy::too_many_arguments)]
+fn reopen_segment(
+    mic: &mut Box<dyn AudioSource>,
+    sys: &mut Option<Box<dyn AudioSource>>,
+    writer: &mut SegmentsWriter,
+    segments_path: &Path,
+    mic_path: &Path,
+    sys_path: &Path,
+    reason: &str,
+) -> Result<(), String> {
+    mic.stop()
+        .map_err(|e| format!("stopping microphone for reopen: {e}"))?;
+    if let Some(s) = sys.as_mut() {
+        s.stop()
+            .map_err(|e| format!("stopping system audio for reopen: {e}"))?;
+    }
+
+    let mic_close = mic
+        .position()
+        .ok_or_else(|| "microphone stopped producing audio before a segment reopen".to_string())?;
+    let sys_close = match sys.as_deref() {
+        Some(s) => s.position().unwrap_or((0, 0)),
+        None => (0, 0),
+    };
+
+    let mut new_mic: Box<dyn AudioSource> = Box::new(MicSource::new());
+    new_mic
+        .start(mic_path.to_path_buf())
+        .map_err(|e| format!("restarting microphone after reopen: {e}"))?;
+
+    let mut new_sys: Option<Box<dyn AudioSource>> = if sys.is_some() {
+        match make_system_source() {
+            Some(mut source) => match source.start(sys_path.to_path_buf()) {
+                Ok(()) => Some(source),
+                Err(e) => {
+                    eprintln!(
+                        "meet-rec: system audio unavailable after reopen ({e}); \
+                         continuing microphone-only"
+                    );
+                    None
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    let new_start_host_ns = align_and_pad(&mut *new_mic, &mut new_sys)?;
+
+    let start_unix_ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .ok();
+    let next_open = SegmentOpen {
+        start_host_ns: new_start_host_ns,
+        start_continuous_ns: None,
+        start_unix_ns,
+        mic_rate: SAMPLE_RATE_HZ,
+        sys_rate: if new_sys.is_some() { SAMPLE_RATE_HZ } else { 0 },
+        mic_device_rate: None,
+        sys_device_rate: None,
+        reason: reason.to_string(),
+    };
+
+    writer.update_frames(mic_close.1, sys_close.1);
+    writer.close_segment(
+        Anchor {
+            mic_host_ns: mic_close.0,
+            mic_frames: mic_close.1,
+            sys_host_ns: sys_close.0,
+            sys_frames: sys_close.1,
+        },
+        next_open,
+    );
+    writer
+        .write_atomic(segments_path)
+        .map_err(|e| format!("writing segments.json at segment reopen: {e}"))?;
+
+    *mic = new_mic;
+    *sys = new_sys;
+    Ok(())
+}
+
 /// §7/§11's checkpoint order for one mid-recording checkpoint: fsync every
 /// channel's data, then let the caller write `segments.json`, then patch
 /// every channel's header. This function does steps 1 and 3 and the anchor
@@ -253,36 +409,7 @@ fn record(dir: PathBuf, duration: Option<Duration>) -> Result<(), String> {
     // Head-pad (contract §6): align frame 0 of both channels to whichever
     // channel's hardware came up first, by padding the other with silence.
     println!("meet-rec: measuring channel start alignment…");
-    let mic_first = wait_first_position(&*mic, FIRST_BUFFER_TIMEOUT)
-        .map_err(|e| format!("microphone produced no audio: {e}"))?;
-    let sys_first = match sys.as_deref() {
-        Some(source) => Some(
-            wait_first_position(source, FIRST_BUFFER_TIMEOUT)
-                .map_err(|e| format!("system audio produced no audio: {e}"))?,
-        ),
-        None => None,
-    };
-
-    let start_host_ns = match sys_first {
-        Some((sys_ns, _)) => mic_first.0.min(sys_ns),
-        None => mic_first.0,
-    };
-
-    if mic_first.0 > start_host_ns {
-        let pad = pad_frames_for_gap(mic_first.0 - start_host_ns);
-        println!("meet-rec: padding microphone head with {pad} frames of silence");
-        mic.pad_leading_silence(pad)
-            .map_err(|e| format!("padding microphone head: {e}"))?;
-    }
-    if let (Some(source), Some((sys_ns, _))) = (sys.as_mut(), sys_first)
-        && sys_ns > start_host_ns
-    {
-        let pad = pad_frames_for_gap(sys_ns - start_host_ns);
-        println!("meet-rec: padding system-audio head with {pad} frames of silence");
-        source
-            .pad_leading_silence(pad)
-            .map_err(|e| format!("padding system-audio head: {e}"))?;
-    }
+    let start_host_ns = align_and_pad(&mut *mic, &mut sys)?;
 
     let start_unix_ns = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -320,6 +447,15 @@ fn record(dir: PathBuf, duration: Option<Duration>) -> Result<(), String> {
         Some(d) => println!("meet-rec: recording for {:.0}s…", d.as_secs_f64()),
     }
 
+    // SPEC §5's AirPods-swap gate: baseline the default devices right after
+    // the segment they belong to has already opened, so a swap mid-startup
+    // (unlikely, but free to handle correctly) is not mistaken for one that
+    // happened during the recording.
+    #[cfg(target_os = "macos")]
+    let mut last_output_device = audio::macos::device_watch::default_output_device().ok();
+    #[cfg(target_os = "macos")]
+    let mut last_input_device = audio::macos::device_watch::default_input_device().ok();
+
     let started = Instant::now();
     let checkpoint_interval = Duration::from_secs(CHECKPOINT_INTERVAL_S);
     let mut last_checkpoint = Instant::now();
@@ -328,6 +464,44 @@ fn record(dir: PathBuf, duration: Option<Duration>) -> Result<(), String> {
 
         let hit_duration = duration.is_some_and(|d| started.elapsed() >= d);
         let hit_stop = stop.load(Ordering::Acquire);
+
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(current) = audio::macos::device_watch::default_output_device() {
+                if last_output_device.is_some_and(|prev| prev != current) {
+                    println!("meet-rec: default output device changed — reopening segment");
+                    reopen_segment(
+                        &mut mic,
+                        &mut sys,
+                        &mut writer,
+                        &segments_path,
+                        &mic_path,
+                        &sys_path,
+                        segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED,
+                    )?;
+                    last_input_device = audio::macos::device_watch::default_input_device().ok();
+                    last_checkpoint = Instant::now();
+                }
+                last_output_device = Some(current);
+            }
+            if let Ok(current) = audio::macos::device_watch::default_input_device() {
+                if last_input_device.is_some_and(|prev| prev != current) {
+                    println!("meet-rec: default input device changed — reopening segment");
+                    reopen_segment(
+                        &mut mic,
+                        &mut sys,
+                        &mut writer,
+                        &segments_path,
+                        &mic_path,
+                        &sys_path,
+                        segments::reason::DEFAULT_INPUT_DEVICE_CHANGED,
+                    )?;
+                    last_output_device = audio::macos::device_watch::default_output_device().ok();
+                    last_checkpoint = Instant::now();
+                }
+                last_input_device = Some(current);
+            }
+        }
 
         if last_checkpoint.elapsed() >= checkpoint_interval {
             checkpoint(&mut *mic, &mut sys, &mut writer, &segments_path)?;
@@ -431,5 +605,120 @@ fn report_result(mic_path: &Path, sys_path: &Path, segments_path: &Path, has_sys
             Err(e) => println!("meet-rec: drift not measurable: {e}"),
         },
         None => println!("meet-rec: could not re-read segments.json to report drift"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    /// A hardware-free `AudioSource` for exercising [`align_and_pad`]'s
+    /// alignment maths, which is the one piece of this file's device-change
+    /// handling that does not itself need Core Audio or `cpal` — everything
+    /// else in [`reopen_segment`] is OS integration, verified on real
+    /// hardware instead (see `crates/audio/tests/*_closed_loop.rs`).
+    ///
+    /// `padded_frames` is an `Arc` specifically so a test can keep its own
+    /// handle to it after the `FakeSource` has been moved into a
+    /// `Box<dyn AudioSource>` — taking a raw reference to a field and moving
+    /// the struct afterward would leave that reference dangling.
+    struct FakeSource {
+        channel: Channel,
+        position: Option<(u64, u64)>,
+        padded_frames: Arc<Mutex<Option<u64>>>,
+    }
+
+    impl FakeSource {
+        fn new(channel: Channel, position: Option<(u64, u64)>) -> Self {
+            Self {
+                channel,
+                position,
+                padded_frames: Arc::new(Mutex::new(None)),
+            }
+        }
+    }
+
+    impl AudioSource for FakeSource {
+        fn start(&mut self, _dest: PathBuf) -> Result<(), AudioError> {
+            Ok(())
+        }
+        fn stop(&mut self) -> Result<(), AudioError> {
+            Ok(())
+        }
+        fn channel(&self) -> Channel {
+            self.channel
+        }
+        fn position(&self) -> Option<(u64, u64)> {
+            self.position
+        }
+        fn fsync_data(&mut self) -> Result<(), AudioError> {
+            Ok(())
+        }
+        fn patch_header(&mut self) -> Result<(), AudioError> {
+            Ok(())
+        }
+        fn pad_leading_silence(&mut self, frames: u64) -> Result<(), AudioError> {
+            *self.padded_frames.lock().unwrap() = Some(frames);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn align_and_pad_pads_whichever_channel_came_up_later() {
+        let mut mic = FakeSource::new(Channel::Mic, Some((1_000_000_000, 0)));
+        let mic_padded = Arc::clone(&mic.padded_frames);
+        let sys_source = FakeSource::new(Channel::System, Some((1_050_000_000, 0)));
+        let sys_padded = Arc::clone(&sys_source.padded_frames);
+        let mut sys: Option<Box<dyn AudioSource>> = Some(Box::new(sys_source));
+
+        let start = align_and_pad(&mut mic, &mut sys).expect("both channels report a position");
+
+        assert_eq!(
+            start, 1_000_000_000,
+            "start_host_ns must be the earlier of the two channels"
+        );
+        assert_eq!(
+            *mic_padded.lock().unwrap(),
+            None,
+            "the channel that came up first is never padded"
+        );
+        assert_eq!(
+            *sys_padded.lock().unwrap(),
+            Some(800),
+            "the later channel is padded by exactly the gap: 50ms at 16kHz is 800 frames"
+        );
+    }
+
+    #[test]
+    fn align_and_pad_pads_the_mic_when_the_mic_comes_up_later() {
+        let mut mic = FakeSource::new(Channel::Mic, Some((1_100_000_000, 0)));
+        let mic_padded = Arc::clone(&mic.padded_frames);
+        let sys_source = FakeSource::new(Channel::System, Some((1_000_000_000, 0)));
+        let sys_padded = Arc::clone(&sys_source.padded_frames);
+        let mut sys: Option<Box<dyn AudioSource>> = Some(Box::new(sys_source));
+
+        let start = align_and_pad(&mut mic, &mut sys).unwrap();
+
+        assert_eq!(start, 1_000_000_000);
+        assert_eq!(*sys_padded.lock().unwrap(), None);
+        assert_eq!(
+            *mic_padded.lock().unwrap(),
+            Some(1600),
+            "100ms at 16kHz is 1600 frames"
+        );
+    }
+
+    #[test]
+    fn align_and_pad_with_no_system_channel_uses_mic_alone() {
+        let mut mic = FakeSource::new(Channel::Mic, Some((2_000_000_000, 0)));
+        let mic_padded = Arc::clone(&mic.padded_frames);
+        let mut sys: Option<Box<dyn AudioSource>> = None;
+
+        let start = align_and_pad(&mut mic, &mut sys).unwrap();
+
+        assert_eq!(start, 2_000_000_000);
+        assert_eq!(*mic_padded.lock().unwrap(), None);
     }
 }
