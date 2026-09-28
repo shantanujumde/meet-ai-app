@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use crate::apple::AppleEngine;
+use crate::apple::{AppleEngine, Probe};
 use crate::{Error, SttEngine};
 
 // whisper-rs compiles whisper.cpp for the target, so the engine itself is
@@ -102,6 +102,31 @@ impl Environment {
     }
 }
 
+/// Say precisely which of the four ways Apple's engine can be unavailable
+/// happened, so the UI can tell a genuine incompatibility (this Mac is too
+/// old, or this build was not given the sidecar) apart from "not ready yet"
+/// (the on-device model for this locale has not finished installing).
+fn apple_unavailable_detail(apple: &Option<Result<Probe, Error>>, locale: &str) -> String {
+    match apple {
+        None => "the meet-stt sidecar was not found in the app bundle".to_string(),
+        Some(Err(error)) => error.to_string(),
+        // `main.swift` only ever sets `reason` from its top-level
+        // `#available(macOS 26, *)` guard — exactly the "this Mac is too old"
+        // case. When `runProbe` itself reports `available: false` (this Mac
+        // *is* on 26+, but `SpeechTranscriber.isAvailable` said no —
+        // unsupported hardware or language), it sends no reason, because
+        // there is no OS-version story to tell. Falling back to "below macOS
+        // 26" in that case would be a false claim, so the fallback text stays
+        // agnostic about which of those two it is.
+        Some(Ok(probe)) if !probe.available => probe.reason.clone().unwrap_or_else(|| {
+            "Apple's on-device speech engine reports it cannot run on this Mac (usually \
+             unsupported hardware or language, not something a download fixes)"
+                .to_string()
+        }),
+        Some(Ok(_)) => format!("the on-device model for {locale} is not installed yet"),
+    }
+}
+
 /// Decide which engine to use, without constructing it.
 ///
 /// Split out from [`select`] so the UI can show "will use X" on the settings
@@ -125,20 +150,7 @@ pub fn resolve(preference: Preference, environment: &Environment) -> Result<Sele
                     reason: "config asked for Apple's on-device speech engine".into(),
                 });
             }
-            // Say precisely which of the three ways it can be unavailable
-            // happened, so the UI can offer the right next step.
-            let detail = match &apple {
-                None => "the meet-stt sidecar was not found in the app bundle".to_string(),
-                Some(Err(error)) => error.to_string(),
-                Some(Ok(probe)) if !probe.available => probe
-                    .reason
-                    .clone()
-                    .unwrap_or_else(|| "this Mac is below macOS 26".into()),
-                Some(Ok(_)) => format!(
-                    "the on-device model for {} is not installed yet",
-                    environment.locale
-                ),
-            };
+            let detail = apple_unavailable_detail(&apple, &environment.locale);
             Err(Error::EngineUnavailable(format!(
                 "Apple's speech engine cannot be used: {detail}"
             )))
@@ -165,17 +177,24 @@ pub fn resolve(preference: Preference, environment: &Environment) -> Result<Sele
                         .into(),
                 })
             } else if environment.whisper_model.is_some() {
+                let detail = apple_unavailable_detail(&apple, &environment.locale);
                 Ok(Selection {
                     engine: Kind::Whisper,
-                    reason: "Apple's speech engine is unavailable, so the whisper fallback is used"
-                        .into(),
+                    reason: format!(
+                        "Apple's speech engine is unavailable ({detail}), so the whisper fallback \
+                         is used"
+                    ),
                 })
             } else {
-                Err(Error::EngineUnavailable(
-                    "no speech engine is ready: Apple's is unavailable and no whisper model is \
-                     downloaded"
-                        .into(),
-                ))
+                // Two different situations look the same from here — a Mac
+                // that can never run Apple's engine, and one that just hasn't
+                // downloaded a whisper model yet — so name which one this is
+                // rather than collapsing both into "Apple's is unavailable".
+                let detail = apple_unavailable_detail(&apple, &environment.locale);
+                Err(Error::EngineUnavailable(format!(
+                    "no speech engine is ready: Apple's speech engine cannot be used ({detail}), \
+                     and no whisper model is downloaded yet — download one below to continue"
+                )))
             }
         }
     }
@@ -242,6 +261,13 @@ mod tests {
 
         let selection = resolve(Preference::Auto, &env).unwrap();
         assert_eq!(selection.engine, Kind::Whisper);
+        // The success case still gets to say *why* Apple's was skipped —
+        // not just that whisper was picked instead.
+        assert!(
+            selection.reason.contains("meet-stt sidecar was not found"),
+            "unhelpful reason: {}",
+            selection.reason
+        );
     }
 
     #[test]
@@ -250,6 +276,23 @@ mod tests {
         assert!(
             matches!(error, Error::EngineUnavailable(_)),
             "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn auto_with_nothing_available_names_why_apple_specifically_is_unavailable() {
+        // TUR-81: "Apple's is unavailable" alone does not tell a user whether
+        // this Mac can never run it (incompatible) or just has not finished
+        // setup (not ready yet). The message must say which.
+        let error = resolve(Preference::Auto, &environment()).unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("meet-stt sidecar was not found"),
+            "message does not explain why Apple's engine is unavailable: {message}"
+        );
+        assert!(
+            message.contains("no whisper model is downloaded"),
+            "message does not mention the actionable next step: {message}"
         );
     }
 
