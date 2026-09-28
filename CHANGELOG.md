@@ -11,6 +11,49 @@ Developer ID, and are not notarized.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-28
+
+Recording now survives a device switch mid-call, and the transcription
+engine is chosen from `config.jsonc` instead of being hardcoded.
+
+### Added
+
+- Mid-recording device changes (for example, swapping to AirPods) close the
+  current segment and open a new one, instead of writing one segment for the
+  whole call. `meet-rec` polls the default input and output devices on its
+  existing 200 ms loop and rebuilds both audio sources on a change. Verified
+  on real hardware.
+- `WavWriter::open_append`, so a new segment continues the same per-channel
+  WAV file rather than truncating it.
+- `drift-check` binary: reads `segments.json` and the WAV headers, reports
+  per-channel drift, skew and boundary gaps, and exits 0/1/2 for
+  pass/fail/not-measurable (SPEC §6).
+- `transcription.engine` and `transcription.model` are read from
+  `config.jsonc` (SPEC §3.5). A missing or broken file falls back to the
+  defaults; an unknown engine name is logged and rejected rather than
+  silently treated as `auto`.
+- `offline_meeting` example, which runs the full transcription path over a
+  copied meeting folder with one engine forced, to prove it works with the
+  network off.
+- `just check-whisper` documented in CONTRIBUTING.md as the manual gate for
+  the real-model whisper tests, with when to run it.
+
+### Fixed
+
+- A force-quit could leave the WAV headers declaring more frames than
+  `segments.json` accounted for. The writer now freezes the synced frame
+  count at fsync time and the header only ever declares that count.
+- Segment reopening read the mic position before stopping it, which could
+  reproduce the same header-ahead race one layer up.
+
+### Changed
+
+- Whisper word-error-rate threshold tightened from 30% to 15% now that it has
+  been measured (3.2% on `mic.wav`, 0.0% on `system.wav` with
+  `small.en-q5_1`).
+- The whisper silence-hallucination guard has now been run against the real
+  model and holds without changes (SPEC amendment A9).
+
 ## [0.1.0] — 2026-09-27
 
 First tagged release. Audio capture and local speech-to-text are built and
@@ -117,5 +160,6 @@ Calendar integration, Claude Code analysis, ticket generation, the MCP server,
 notarization, and Windows support. See SPEC.md §7 for the phase order and §8
 for the seams each of those lands on.
 
-[unreleased]: https://github.com/shantanujumde/meet-ai-app/compare/v0.1.0...HEAD
+[unreleased]: https://github.com/shantanujumde/meet-ai-app/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/shantanujumde/meet-ai-app/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/shantanujumde/meet-ai-app/releases/tag/v0.1.0
