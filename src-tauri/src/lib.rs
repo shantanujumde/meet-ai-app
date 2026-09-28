@@ -10,6 +10,7 @@
 use tauri_plugin_log::log;
 
 mod commands;
+mod config;
 mod engine;
 mod error;
 mod meetings;

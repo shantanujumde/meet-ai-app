@@ -23,6 +23,11 @@ chrono.workspace = true
 # `~/Meetings` is built with dirs + PathBuf::join and no literal `~`, per the
 # Windows seam in SPEC §8.2.
 dirs.workspace = true
+# `config.jsonc` allows `//` comments (SPEC §3.5), which `serde_json` alone
+# rejects. The "serde" feature turns on `parse_to_serde_value`, so `config.rs`
+# can deserialize straight into `Transcription` instead of hand-walking a
+# `JsonValue` tree.
+jsonc-parser = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 # `tray-icon` is the menu-bar item. `image-png` is what turns the bundled
