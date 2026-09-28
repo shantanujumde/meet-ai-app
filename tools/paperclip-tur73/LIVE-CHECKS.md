@@ -74,6 +74,18 @@ The start time must be *after* the patch was applied. `apply.mjs --check`
 reporting `already-applied` says nothing about the running process — Node
 caches modules at first import.
 
+**And the install it would start from has to parse.** On 28 Sep all three npx
+caches held a double-applied `task-watchdog-scope.js` — two copies of
+`taskWatchdogObservedSignature`, a SyntaxError, a server that cannot boot. The
+board stayed up only because the running process had read the file before the
+second apply landed. `apply.mjs` now refuses to write a file with a duplicate
+export and reports an install already in that state, but the cheap direct check
+is worth keeping:
+
+```sh
+node --check "$INSTALL/dist/services/task-watchdog-scope.js"
+```
+
 ## 1. `board` as an unblock owner stops returning 403
 
 **Gotcha found on 28 Sep:** `unblockDescriptor` is validated for
