@@ -10,6 +10,10 @@ version.workspace = true
 name = "meet-rec"
 path = "src/bin/meet-rec.rs"
 
+[[bin]]
+name = "drift-check"
+path = "src/bin/drift-check.rs"
+
 [dependencies]
 cpal.workspace = true
 dirs.workspace = true

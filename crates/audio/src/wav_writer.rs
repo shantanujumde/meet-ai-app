@@ -50,6 +50,17 @@ pub struct WavWriter {
     /// ahead of `header_frames` by up to one checkpoint's worth — those bytes
     /// exist on disk but the header does not admit to them yet.
     appended_frames: u64,
+    /// `appended_frames` as of the most recent [`WavWriter::fsync_data`] call —
+    /// the count [`WavWriter::patch_header`] is allowed to declare. A worker
+    /// thread may keep appending (unsynced) frames between a caller's
+    /// `fsync_data` and `patch_header` calls (e.g. while the caller writes
+    /// `segments.json` in between, per contract §7); patching against the
+    /// live `appended_frames` at that later moment would let the header
+    /// declare more frames than `segments.json` was told about, breaking the
+    /// `sum(*_frames) >= header_frames` invariant in the one direction that
+    /// isn't safe. Freezing the count at `fsync_data` time keeps the header
+    /// always at or behind whatever `position()` reported afterward.
+    synced_frames: u64,
     /// Frames the on-disk header currently declares. Only ever grows.
     header_frames: u64,
 }
@@ -69,6 +80,7 @@ impl WavWriter {
         Ok(Self {
             file,
             appended_frames: 0,
+            synced_frames: 0,
             header_frames: 0,
         })
     }
@@ -90,17 +102,24 @@ impl WavWriter {
 
     /// Step 1 of the checkpoint order: durably commit appended sample bytes
     /// before anything downstream (`segments.json`) is allowed to claim them.
+    /// Freezes `synced_frames` at the current `appended_frames` so a later
+    /// [`WavWriter::patch_header`] call can't declare frames appended (by a
+    /// concurrent worker thread) after this sync, but before the header is
+    /// actually patched.
     pub fn fsync_data(&mut self) -> io::Result<()> {
-        self.file.sync_data()
+        self.file.sync_data()?;
+        self.synced_frames = self.appended_frames;
+        Ok(())
     }
 
     /// Step 3 of the checkpoint order: patch the header to declare
-    /// `appended_frames`. RIFF size is written before `data` size, so a crash
-    /// mid-patch leaves `data`'s declared length at its previous, smaller,
-    /// already-fsynced value rather than a new one the bytes don't fully
-    /// back yet.
+    /// `synced_frames` — the count as of the last [`WavWriter::fsync_data`]
+    /// call, not whatever `appended_frames` has grown to since. RIFF size is
+    /// written before `data` size, so a crash mid-patch leaves `data`'s
+    /// declared length at its previous, smaller, already-fsynced value rather
+    /// than a new one the bytes don't fully back yet.
     pub fn patch_header(&mut self) -> io::Result<()> {
-        let frames = self.appended_frames;
+        let frames = self.synced_frames;
         let data_len = frames * BYTES_PER_SAMPLE as u64;
 
         self.file.seek(SeekFrom::Start(RIFF_SIZE_OFFSET))?;
@@ -294,6 +313,42 @@ mod tests {
         let (frames, samples) = read_declared(&path).unwrap();
         assert_eq!(frames, 4000);
         assert_eq!(samples.len(), 4000);
+    }
+
+    /// Reproduces the exact bug found on real hardware (TUR-54, force-quit at
+    /// 14s / last checkpoint at 10s): the header ended up declaring 342 more
+    /// frames than `segments.json` had been told about. Root cause was a
+    /// concurrent worker thread appending more audio in the window between a
+    /// checkpoint's `fsync_data()` (after which the caller reads `position()`
+    /// and commits a frame count to `segments.json`) and that same
+    /// checkpoint's `patch_header()` — which used to re-read the *live*
+    /// `appended_frames`, ahead of what `segments.json` had just committed to.
+    /// `sum(*_frames) >= header_frames` must hold in that direction always;
+    /// this fixture is the other direction and must never reproduce.
+    #[test]
+    fn patch_header_never_declares_more_than_the_last_fsync_even_if_more_was_appended_since() {
+        let path = temp_path("racing-append.wav");
+        let _ = std::fs::remove_file(&path);
+        let mut w = WavWriter::create(&path).unwrap();
+
+        let checkpoint = tone(80_000, 440.0); // 5 s, a full checkpoint
+        w.append(&checkpoint).unwrap();
+        w.fsync_data().unwrap();
+        // `segments.json` would be written here, committing to 80_000 frames.
+        // Simulate the worker thread landing one more chunk in that window,
+        // before this checkpoint's patch_header() runs.
+        w.append(&tone(1_600, 440.0)).unwrap(); // 100ms, unsynced
+
+        w.patch_header().unwrap();
+
+        assert_eq!(
+            w.header_frames(),
+            80_000,
+            "header must declare exactly what was fsynced and committed to segments.json, \
+             not the extra frames a concurrent append landed afterward"
+        );
+        let (frames, _) = read_declared(&path).unwrap();
+        assert_eq!(frames, 80_000);
     }
 
     /// The gate condition itself: "whatever was recorded up to that moment is
