@@ -188,6 +188,46 @@ through are real, and the implementations are not written yet.
   filenames.
 - **Never commit a key, a recording, or a real transcript.**
 
+## Agent runs and the working tree
+
+Automated runs used to share this one checkout. Two runs editing the same files
+at the same time cost us `crates/modelfetch/src/lib.rs`, which existed only in
+the working tree and was gone by the time anyone looked (TUR-16). Two things now
+stand between us and a repeat.
+
+**Each run gets its own git worktree.** Worktrees are created under
+`../.meet-ai-worktrees/`, outside this repo, branched from `main`. Inside one,
+`git rev-parse --show-toplevel` resolves to the worktree — a run cannot reach
+this checkout by walking up the directory tree, which is how it used to happen.
+Note that worktrees do not carry `target/` or `node_modules/`, because both are
+ignored: a fresh worktree pays a full cold build.
+
+**The tree is snapshotted, not trusted.** `.claude/hooks/tree-snapshot.sh` commits
+the entire working tree — tracked changes *and* untracked, non-ignored files — to
+a ref under `refs/tree-snapshot/`. It runs at session start, at session end, and
+before any Bash command that looks like it discards state (`clean`, `reset`,
+`restore`, `stash`, a destructive `checkout`, `rm -r`). It writes through a
+throwaway index, so it never touches your staging area or a single file on disk,
+and it is safe to run mid-edit.
+
+```bash
+.claude/hooks/tree-snapshot.sh list          # snapshots, newest first
+.claude/hooks/tree-snapshot.sh show <ref>    # what that snapshot changed
+git checkout <ref> -- path/to/file           # get a file back
+```
+
+Snapshot refs live in the shared ref namespace, so a snapshot taken in one
+worktree is recoverable from any of them. The newest 300 are kept.
+
+A run that ends with untracked files under `crates/`, `src/`, `src-tauri/`,
+`sidecar/` or `design-system/` gets a loud warning naming them, and the snapshot
+holds a copy — but it is **not** blocked. Commit your own paths before you
+finish; the snapshot is a safety net, not a substitute.
+
+One hazard the net does not cover: `git clean -xdf` at the repo root deletes
+`.paperclip/`, which is ignored and holds the live Paperclip instance database.
+Snapshots skip ignored paths, so nothing brings that back. Do not run it here.
+
 ## Where the repo differs from SETUP.md
 
 Five differences. Each one is a `SETUP.md` step that does not work as written.
