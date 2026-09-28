@@ -1,15 +1,16 @@
 //! Audio capture for meet-ai.
 //!
-//! Phase 0 territory (SPEC §5). The Core Audio process tap itself is not
-//! wired up yet — [`Channel::System`] has no real implementation. What is
-//! real: the on-disk contract ([`segments`]), the crash-safe writer that
-//! produces the WAV half of it ([`wav_writer`]), the permission chime
-//! ([`chime`]), the device-rate resampler ([`resample`]), and, as of this
-//! module, a real microphone [`AudioSource`] ([`mic`]).
+//! Phase 0 territory (SPEC §5). Both [`AudioSource`] implementations are real:
+//! [`mic::MicSource`] and the Core Audio process tap,
+//! [`macos::tap::SystemSource`]. Also real: the on-disk contract
+//! ([`segments`]), the crash-safe writer that produces the WAV half of it
+//! ([`wav_writer`]), the permission chime and its detector ([`chime`]), the
+//! measurement built on top of it ([`permission_check`]), and the device-rate
+//! resampler ([`resample`]).
 //!
-//! [`AudioSource`] exists from day one even though only [`mic::MicSource`] is
-//! implemented so far (SPEC §4), so that the Windows port (SPEC §8.2) is
-//! additive rather than a rewrite once the process tap lands.
+//! [`AudioSource`] is one trait implemented per platform (SPEC §4) so the
+//! Windows port (SPEC §8.2) is additive rather than a rewrite — today only the
+//! macOS side exists.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
@@ -73,6 +74,12 @@ pub mod resample;
 /// unlike the process tap, `cpal` already runs on Windows, so this is not
 /// gated under `macos`.
 pub mod mic;
+
+/// The real audio-permission measurement: runs the [`chime`] positive control
+/// against a live [`macos::tap::SystemSource`], and a start/stop probe against
+/// [`mic::MicSource`]. This is the "measurement" `src-tauri/src/permission.rs`
+/// defers to — see that module's doc comment.
+pub mod permission_check;
 
 /// Which side of the conversation a stream came from.
 ///
