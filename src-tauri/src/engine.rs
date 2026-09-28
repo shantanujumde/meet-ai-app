@@ -22,7 +22,13 @@ use tauri::{AppHandle, Emitter as _};
 
 use crate::error::UiError;
 
-/// SPEC §3.5's defaults, until `config.jsonc` is read in Phase 6.
+/// SPEC §3.5's defaults.
+///
+/// `DEFAULT_MODEL` is only the fallback: `crate::config::transcription` reads
+/// `transcription.model` (and `transcription.engine`) from `config.jsonc` and
+/// wins when it is set. `DEFAULT_LOCALE` has no config key yet —
+/// `transcription.language` is Phase 6, same as every other key in §3.5 beside
+/// `engine` and `model`.
 pub const DEFAULT_LOCALE: &str = "en-US";
 pub const DEFAULT_MODEL: &str = "large-v3-turbo-q5_0";
 
