@@ -9,12 +9,20 @@
 //!
 //! The two channels fail differently, so they are checked differently:
 //!
-//! - **Microphone**: [`check_mic`] starts and immediately stops a
-//!   [`crate::mic::MicSource`]. Cpal's `build_input_stream` has a real
-//!   denial errno on this path, and [`crate::AUDIO_PERMISSION_TIMEOUT`]
-//!   already turns "nobody answered the dialog" into
-//!   [`crate::Error::PermissionDenied`] rather than a hang — see
-//!   `MicSource::build`'s doc comment. No tone needed.
+//! - **Microphone**: [`check_mic`] first asks the public, synchronous
+//!   `AVCaptureDevice.authorizationStatus(for: .audio)` (SPEC §8.1 names this
+//!   as the mic's likely exemption from the tap's "every OSStatus lies"
+//!   problem, but left it unverified). **TUR-127 verified it the hard way**:
+//!   a stored **Denied** decision lets `cpal`'s `build_input_stream` /
+//!   `AudioUnitInitialize` open cleanly and a recording capture real,
+//!   non-zero audio anyway — indistinguishable, by cpal's return code alone,
+//!   from a genuine grant. So a `Denied`/`Restricted` answer from
+//!   `AVCaptureDevice` is now trusted outright and the mic is never opened;
+//!   only `NotDetermined` (no stored decision yet) falls through to the
+//!   open-and-see probe below — which is what actually triggers the OS
+//!   consent dialog — and [`crate::AUDIO_PERMISSION_TIMEOUT`] still turns
+//!   "nobody answered that dialog" into [`crate::Error::PermissionDenied`]
+//!   rather than a hang, see `MicSource::build`'s doc comment.
 //! - **System audio**: FINDINGS §10.1 measured that a denied tap returns
 //!   `noErr` and bit-exact zero samples at the normal callback rate, so a
 //!   return code proves nothing. [`check_system`] plays the permission chime
@@ -76,11 +84,59 @@ fn cleanup(dir: &std::path::Path, dest: &std::path::Path) {
     let _ = std::fs::remove_dir(dir);
 }
 
+/// Ask macOS directly whether the microphone is authorized, without opening
+/// any stream.
+///
+/// `AVCaptureDevice.authorizationStatus(for: .audio)` is a public, documented,
+/// synchronous TCC query — a different mechanism entirely from the process
+/// tap's `OSStatus`/sample-payload path that FINDINGS §10.1 proved lies on
+/// denial. It reads the same `kTCCServiceMicrophone` record `cpal`'s
+/// CoreAudio path is ultimately gated by, for this same process, so a
+/// `Denied`/`Restricted` answer here is authoritative.
+#[cfg(target_os = "macos")]
+fn mic_authorization_status() -> objc2_av_foundation::AVAuthorizationStatus {
+    use objc2_av_foundation::{AVCaptureDevice, AVMediaTypeAudio};
+    // SAFETY: `AVMediaTypeAudio` is an Apple-provided static that is always
+    // present once the AVFoundation image is loaded; `authorizationStatusForMediaType`
+    // reads TCC state and has no other preconditions.
+    unsafe {
+        let media_type =
+            AVMediaTypeAudio.expect("AVFoundation always provides the AVMediaTypeAudio constant");
+        AVCaptureDevice::authorizationStatusForMediaType(media_type)
+    }
+}
+
 /// Start the mic briefly and see whether Core Audio lets it through.
 ///
 /// Bounded by [`crate::AUDIO_PERMISSION_TIMEOUT`] inside `MicSource::start`:
 /// worst case this blocks that long waiting for a dialog nobody answers.
 pub fn check_mic() -> ChannelResult {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_av_foundation::AVAuthorizationStatus;
+        let status = mic_authorization_status();
+        if status == AVAuthorizationStatus::Denied {
+            return ChannelResult {
+                state: ChannelState::Denied,
+                detail: "macOS reports the microphone permission as explicitly denied \
+                         (AVAuthorizationStatusDenied)"
+                    .into(),
+            };
+        }
+        if status == AVAuthorizationStatus::Restricted {
+            return ChannelResult {
+                state: ChannelState::Denied,
+                detail: "macOS reports the microphone as restricted (parental controls or an \
+                         MDM profile), which this client cannot change"
+                    .into(),
+            };
+        }
+        // `Authorized` and `NotDetermined` both fall through: `Authorized`
+        // still opens the stream below to also confirm a device exists,
+        // `NotDetermined` opens it because that is what triggers the OS
+        // consent dialog in the first place.
+    }
+
     let (dir, dest) = match scratch_dir("mic") {
         Ok(paths) => paths,
         Err(error) => {
