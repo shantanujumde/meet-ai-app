@@ -1,15 +1,19 @@
 # TUR-73 — live checks to run after the server restart
 
-## Results (28 Sep; checks 1–4 on the 20:14 server, 14 edits)
+## Results
+
+Checks 1–4 were taken on the 20:14 server (14 edits). Checks 1 and 2 were
+re-taken on the 21:04 server (16 edits) to confirm the last two edits did not
+regress them.
 
 | # | Check | Result |
 |---|-------|--------|
-| 1 | `board` as unblock owner | **passes** — HTTP 200 on a genuinely blocked issue |
-| 2 | One PATCH clears a blocker and moves off `blocked` | **passes** — HTTP 200, TUR-126 went `blocked` → `todo` in one call |
+| 1 | `board` as unblock owner | **passes** — HTTP 200 on a genuinely blocked issue; re-confirmed on 16 edits (TUR-136) |
+| 2 | One PATCH clears a blocker and moves off `blocked` | **passes** — HTTP 200 in one call; re-confirmed on 16 edits (TUR-136 `blocked` → `todo`) |
 | 3 | New child not born blocked | **passes** — TUR-133 created under TUR-125 with `blockedBy: []` while TUR-131 sat open |
 | 4 | Watchdog run gets a second write | **passes** — write 2 of the TUR-125 pass returned 200, no stale-fingerprint 409 |
-| 5 | A run may write after its own liveness flip | pending — needs a watchdog pass on the 16-edit server |
-| 6 | A watchdog can comment on the tree it repaired | pending — needs a watchdog pass on the 16-edit server |
+| 5 | A run may write after its own liveness flip | armed — waiting on the TUR-135 watchdog pass |
+| 6 | A watchdog can comment on the tree it repaired | armed — waiting on the TUR-135 watchdog pass |
 
 Checks 5 and 6 are defects the TUR-125 watchdog pass exposed *after* 1–4
 passed: writes 3, 4 and 5 of that pass all 409'd with a different message
@@ -103,6 +107,16 @@ The 409 to watch for here is `Issue follow-up blocked by unresolved blockers`,
 *not* the stale-fingerprint one from the issue report. They are different
 guards that both fire on this call.
 
+**Check 2 has a third precondition: park the probe afterwards.** A pass leaves
+the probe `todo` *with* an assignee, which is precisely the shape the scheduler
+picks up — it starts a real run on a throwaway issue within seconds. Once that
+run holds the checkout, every status write (`cancelled`, `done`, `backlog`,
+re-block) comes back `409 Issue run ownership conflict`, and the probe cannot be
+reclaimed at all; it has to be talked down with a comment or cancelled from the
+board. This happened on 28 Sep with TUR-136. `restart.sh` now PATCHes the probe
+back to `{"status":"backlog","assigneeAgentId":null}` straight after the check.
+The window is small but not zero.
+
 `restart.sh` now runs checks 1 and 2 itself once the server is healthy and
 appends the answers to `.paperclip/tur73-restart.log`. Set `PROBE_TOKEN` to a
 live API key and `PROBE_BLOCKED_ISSUE` to a genuinely blocked issue id before
@@ -158,11 +172,21 @@ The guard no longer counted the run's own fingerprint changes, but the moment
 write 2 made the subtree live the verdict stopped being `stopped` at all, and
 no signature could match. The run created a task and could not assign it.
 
-Observation point, not a probe — it needs a real watchdog run:
+Observation point, not a probe — it needs a real watchdog run. The TUR-125 rig
+that proved checks 3 and 4 was torn down by its own cleanup task (TUR-133), so
+a second one is installed for checks 5 and 6:
 
-```sh
-node -e '…' # or read the watchdog issue comments after the next pass
-```
+| issue | role |
+|---|---|
+| **TUR-135** | the watched parent; watchdog registered on it |
+| TUR-136 | leftover from checks 1–2; the scheduler grabbed it, see the note above |
+| TUR-137 | open unassigned sibling, standing in for TUR-28 |
+| TUR-138 | blocked and unassigned, so the subtree has no live path |
+
+Its instructions tell the pass to make five writes in order and record the HTTP
+code of each on its own review issue — create a follow-up, move it to `todo`
+(the write that flips the subtree live), assign it (check 5), comment on
+TUR-135 (check 6), then re-read the siblings.
 
 A pass that creates a follow-up **and** assigns it, in one run, is the proof.
 The allowance is narrow on purpose: it only fires when every issue the

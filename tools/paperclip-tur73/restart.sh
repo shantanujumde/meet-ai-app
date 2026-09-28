@@ -140,6 +140,16 @@ probe() {
   echo "--- resulting state ---"
   curl -s -m 10 -H "Authorization: Bearer $PROBE_TOKEN" "$api" \
     | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const i=JSON.parse(s);console.log(JSON.stringify({identifier:i.identifier,status:i.status,blockedBy:(i.blockedBy||[]).map(b=>b.identifier)}))}catch(e){console.log("unparsed: "+s.slice(0,200))}})'
+  # Check 2 leaves the probe `todo` WITH an assignee, which is exactly the shape
+  # the scheduler picks up -- it starts a real run on a throwaway issue, and
+  # once that run holds the checkout every status write comes back
+  # "Issue run ownership conflict". Park it immediately. The window is small but
+  # not zero; if this 409s, the probe already has a live run and has to be
+  # cancelled from the board.
+  echo "--- parking the probe so the scheduler does not pick it up ---"
+  curl -s -m 10 -w '\nHTTP %{http_code}\n' -X PATCH \
+    -H "Authorization: Bearer $PROBE_TOKEN" -H 'Content-Type: application/json' \
+    -d '{"status":"backlog","assigneeAgentId":null}' "$api" | tail -c 200
 }
 
 if [ "$healthy" -eq 0 ]; then
