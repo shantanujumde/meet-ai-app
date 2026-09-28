@@ -3,9 +3,16 @@
  * render into.
  *
  * The titlebar is a drag region with a 78px inset for the traffic lights.
- * Everything interactive inside it re-declares `no-drag`, or it stops
- * responding to clicks — a bug that looks like a dead button rather than like a
- * drag-region mistake.
+ *
+ * The CSS `-webkit-app-region: drag` in app.css is not enough on Tauri's
+ * macOS WKWebView (TUR-83: the window could not be dragged at all once
+ * onboarding finished and the record control mounted). Real dragging goes
+ * through Tauri's `data-tauri-drag-region` attribute, wired to the native
+ * `start_dragging` command and gated by the `core:window:allow-start-dragging`
+ * permission in capabilities/default.json. The attribute only applies to the
+ * element it is on, not its descendants, so it is repeated on every plain
+ * element in the row; `RecordControl`'s button is deliberately left without
+ * it so clicks keep working.
  */
 
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
@@ -34,9 +41,11 @@ export function Shell() {
 
   return (
     <div className={focused ? "shell shell--focused" : "shell"}>
-      <header className="titlebar">
-        <h1 className="titlebar__title">meet-ai</h1>
-        <span className="titlebar__spacer" />
+      <header className="titlebar" data-tauri-drag-region>
+        <h1 className="titlebar__title" data-tauri-drag-region>
+          meet-ai
+        </h1>
+        <span className="titlebar__spacer" data-tauri-drag-region />
         {!focused ? (
           <RecordControl
             status={status}
