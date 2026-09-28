@@ -437,7 +437,7 @@ measured in FINDINGS §10.3–10.4.
 
 ```bash
 spikes/phase0a-tcc/make-identity.sh          # ~7s, no admin password needed
-spikes/phase0a-tcc/make-identity.sh --print  # leaf SHA-1: be3fb2c8…
+spikes/phase0a-tcc/make-identity.sh --print  # leaf SHA-1: eafb73d2…
 ```
 
 The script generates the cert, puts it in its own keychain
@@ -457,7 +457,7 @@ Use `--print` to read the fingerprint back, and check a built bundle against it:
 
 ```bash
 codesign -d -r- build/meet-ai.app
-# designated => identifier "pro.saleschat.meetai" and certificate leaf = H"be3fb2c8…"
+# designated => identifier "pro.saleschat.meetai" and certificate leaf = H"eafb73d2…"
 ```
 
 Verify with `security find-identity -v -p codesigning ~/Library/Keychains/meet-ai-signing.keychain-db`
