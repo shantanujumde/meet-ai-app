@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// TUR-73 — local fix for four task-watchdog defects in @paperclipai/server.
+// TUR-73 — local fix for six task-watchdog defects in @paperclipai/server.
 //
 // Paperclip ships to this machine as a published npm package that npx unpacks
 // into a content-addressed cache directory, so there is no upstream checkout to
@@ -129,10 +129,43 @@ export async function repinTaskWatchdogSelfWriteSignature(db, scope, signature) 
 }
 //# sourceMappingURL=task-watchdog-scope.js.map`,
     },
+
+    // ---------------------------------------------------------------- defect 5
+    // The re-pin above only covers "stopped -> stopped, different fingerprint".
+    // When the run's own write is the one that makes the subtree live again, the
+    // verdict flips to live/pending_first_run and no signature captured on the
+    // previous response can match: the scheduler's side effects land after the
+    // response finishes, so the state the next write sees was never observed by
+    // anyone. Name the issues the classifier blames for the flip instead, so the
+    // guard can ask the only question that matters — did this run cause it?
+    {
+      file: "dist/services/task-watchdog-scope.js",
+      find: `export function taskWatchdogObservedSignature(classification) {`,
+      replace: `// ${MARKER} (defect 5): the issues the classifier blames for a non-stopped
+// verdict. Returns null for verdicts with no attributable issue (already
+// reviewed, not applicable), which keeps those on the strict path.
+export function taskWatchdogRecoveryAttributableIssueIds(classification) {
+    if (!isPlainRecord(classification))
+        return null;
+    const state = readString(classification.state);
+    const key = state === "live"
+        ? "liveIssueIds"
+        : state === "pending_first_run"
+            ? "pendingIssueIds"
+            : null;
+    if (!key || !Array.isArray(classification[key]))
+        return null;
+    const ids = classification[key].filter((id) => typeof id === "string" && id.length > 0);
+    return ids.length > 0 ? ids : null;
+}
+
+export function taskWatchdogObservedSignature(classification) {`,
+    },
+
     {
       file: "dist/routes/issues.js",
       find: `import { TASK_WATCHDOG_ORIGIN_KIND, resolveTaskWatchdogMutationScope, taskWatchdogScopeAllowsIssueMutation, } from "../services/task-watchdog-scope.js";`,
-      replace: `import { TASK_WATCHDOG_ORIGIN_KIND, resolveTaskWatchdogMutationScope, taskWatchdogScopeAllowsIssueMutation, repinTaskWatchdogSelfWriteSignature, taskWatchdogObservedSignature, } from "../services/task-watchdog-scope.js";`,
+      replace: `import { TASK_WATCHDOG_ORIGIN_KIND, resolveTaskWatchdogMutationScope, taskWatchdogScopeAllowsIssueMutation, repinTaskWatchdogSelfWriteSignature, taskWatchdogObservedSignature, taskWatchdogRecoveryAttributableIssueIds, } from "../services/task-watchdog-scope.js";`,
     },
     {
       file: "dist/routes/issues.js",
@@ -169,6 +202,19 @@ export async function repinTaskWatchdogSelfWriteSignature(db, scope, signature) 
             })();
         });
     }
+    // ${MARKER} (defect 5): which issues has this run already written to? The
+    // activity log records the run id on every issue mutation, so this is exact
+    // provenance rather than a guess, and it does not depend on a re-pin having
+    // won a race against the write's own downstream effects.
+    async function taskWatchdogRunWrittenIssueIds(scope) {
+        if (!scope?.runId)
+            return new Set();
+        const rows = await db
+            .select({ entityId: activityLog.entityId })
+            .from(activityLog)
+            .where(and(eq(activityLog.runId, scope.runId), eq(activityLog.entityType, "issue")));
+        return new Set(rows.map((row) => row.entityId).filter((id) => typeof id === "string"));
+    }
     async function taskWatchdogMutationFreshness(res, scope) {
         const revalidated = await taskWatchdogsSvc.revalidateMutationScope(scope);
         if (revalidated.allowed) {
@@ -179,6 +225,18 @@ export async function repinTaskWatchdogSelfWriteSignature(db, scope, signature) 
         if (observed && scope.selfWriteSignature && observed === scope.selfWriteSignature) {
             armTaskWatchdogSelfWriteRepin(res, scope);
             return { ...revalidated, allowed: true, selfWrite: true };
+        }
+        // ${MARKER} (defect 5): the subtree is no longer stopped. Let the run
+        // finish the writes that go with the recovery it just performed — but
+        // only when every issue the classifier credits for that recovery is one
+        // this run wrote to. A path someone else revived still closes the guard.
+        const attributable = taskWatchdogRecoveryAttributableIssueIds(revalidated.classification);
+        if (attributable) {
+            const written = await taskWatchdogRunWrittenIssueIds(scope);
+            if (written.size > 0 && attributable.every((issueId) => written.has(issueId))) {
+                armTaskWatchdogSelfWriteRepin(res, scope);
+                return { ...revalidated, allowed: true, selfWrite: true, selfRecovered: true };
+            }
         }
         return revalidated;
     }
@@ -210,6 +268,25 @@ export async function repinTaskWatchdogSelfWriteSignature(db, scope, signature) 
                     if (!revalidated.allowed) {`,
       replace: `                    const revalidated = await taskWatchdogMutationFreshness(res, watchdogScope); // ${MARKER}
                     if (!revalidated.allowed) {`,
+    },
+
+    // ---------------------------------------------------------------- defect 6
+    // The freshness gate also covered comments, so once a watchdog restored a
+    // live path it could no longer write any record to the tree it had just
+    // repaired — including the summary comment its own mandate asks for. A
+    // comment sets no status, no blocker and no assignee, so a stale review
+    // cannot make one dangerous. The subtree scope check above still applies.
+    {
+      file: "dist/routes/issues.js",
+      // The sibling call site is identical except for the "issue:mutate"
+      // permission on the next line, so the anchor runs on to "issue:comment".
+      find: `            return assertFreshTaskWatchdogSourceMutation(res, watchdogScope, issue);
+        }
+        const boundaryDecision = await decideIssueAccess(req, issue, "issue:comment");`,
+      replace: `            // ${MARKER} (defect 6): comments are records, not state changes.
+            return true;
+        }
+        const boundaryDecision = await decideIssueAccess(req, issue, "issue:comment");`,
     },
 
     // ---------------------------------------------------------------- defect 2
@@ -473,6 +550,10 @@ function run(pkgRoot) {
   }
 
   const results = [];
+  // Some edits anchor on text an earlier edit introduces. `apply` sees that
+  // because it writes as it goes; `--check` has to simulate it in memory, or it
+  // reports a phantom missing anchor for every chained edit.
+  const pending = new Map();
   for (const edit of edits()) {
     const file = path.join(pkgRoot, edit.file);
     const backup = `${file}.tur73.orig`;
@@ -480,7 +561,7 @@ function run(pkgRoot) {
       results.push({ edit: edit.file, status: "missing-file" });
       continue;
     }
-    const source = readFileSync(file, "utf8");
+    const source = pending.get(file) ?? readFileSync(file, "utf8");
 
     if (mode === "revert") {
       if (existsSync(backup)) {
@@ -506,6 +587,7 @@ function run(pkgRoot) {
       continue;
     }
     if (mode === "check") {
+      pending.set(file, source.replace(edit.find, edit.replace));
       results.push({ edit: edit.file, status: "would-apply" });
       continue;
     }
