@@ -73,6 +73,11 @@ function edits() {
     },
     {
       file: "dist/services/task-watchdog-scope.js",
+      // The defect-5 edit below rewrites text *inside* this block, so the block
+      // as written here stops appearing verbatim once both are applied. Match on
+      // a line no later edit touches instead, or a second run re-appends the
+      // whole thing and the module ends up with two copies of each export.
+      appliedMarker: `export async function repinTaskWatchdogSelfWriteSignature(db, scope, signature) {`,
       find: `//# sourceMappingURL=task-watchdog-scope.js.map`,
       replace: `// ${MARKER} (defect 1) ------------------------------------------------------
 // A fingerprint alone only describes the "stopped" verdict. To recognise state
@@ -514,9 +519,13 @@ async function findInstalls() {
     process.env.HOME,
     homeFromWorkspace,
   ].filter((value) => typeof value === "string" && value.length > 0);
-  const roots = [
-    ...new Set([...explicit, ...homes.map((home) => path.join(home, ".npm", "_npx"))]),
-  ];
+  // `--npx-root=` names the caches to work on, it does not add to them. It used
+  // to add, so `--revert --npx-root=<throwaway>` silently reverted every real
+  // install as well.
+  const roots =
+    explicit.length > 0
+      ? [...new Set(explicit)]
+      : [...new Set(homes.map((home) => path.join(home, ".npm", "_npx")))];
   const found = [];
   for (const root of roots) {
     if (!existsSync(root)) continue;
@@ -542,6 +551,25 @@ function versionOf(pkgRoot) {
     return null;
   }
 }
+
+/**
+ * Exported function names declared more than once. Two `export function foo`
+ * declarations in one module are a SyntaxError, and the server only reports it
+ * at the next restart — long after the run that caused it has finished.
+ */
+function duplicateDeclarations(source) {
+  const counts = new Map();
+  for (const match of source.matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z0-9_$]+)/gm)) {
+    counts.set(match[1], (counts.get(match[1]) ?? 0) + 1);
+  }
+  return [...counts].filter(([, count]) => count > 1).map(([name]) => name);
+}
+
+const isFailureStatus = (status) =>
+  status.startsWith("anchor-") ||
+  status.startsWith("duplicate-") ||
+  status.startsWith("not-written") ||
+  status === "missing-file";
 
 function run(pkgRoot) {
   const version = versionOf(pkgRoot);
@@ -574,7 +602,7 @@ function run(pkgRoot) {
       continue;
     }
 
-    if (source.includes(edit.replace)) {
+    if (source.includes(edit.appliedMarker ?? edit.replace)) {
       results.push({ edit: edit.file, status: "already-applied" });
       continue;
     }
@@ -586,14 +614,37 @@ function run(pkgRoot) {
       });
       continue;
     }
-    if (mode === "check") {
-      pending.set(file, source.replace(edit.find, edit.replace));
-      results.push({ edit: edit.file, status: "would-apply" });
+    pending.set(file, source.replace(edit.find, edit.replace));
+    results.push({ edit: edit.file, status: mode === "check" ? "would-apply" : "applied" });
+  }
+
+  if (mode === "revert") return { pkgRoot, version, status: "processed", results };
+
+  // Nothing reaches disk until the finished file is checked. A file that is
+  // already fully patched is checked too, so a corrupt install is reported even
+  // when this run has nothing left to apply.
+  const touched = new Set(edits().map((edit) => path.join(pkgRoot, edit.file)));
+  for (const file of touched) {
+    if (!existsSync(file)) continue;
+    const next = pending.get(file) ?? readFileSync(file, "utf8");
+    const duplicates = duplicateDeclarations(next);
+    if (duplicates.length > 0) {
+      const relative = path.relative(pkgRoot, file);
+      for (const result of results) {
+        if (result.edit === relative && result.status === "applied") {
+          result.status = "not-written";
+        }
+      }
+      results.push({
+        edit: relative,
+        status: `duplicate-declaration(${duplicates.join(",")})`,
+      });
       continue;
     }
+    if (mode === "check" || !pending.has(file)) continue;
+    const backup = `${file}.tur73.orig`;
     if (!existsSync(backup)) copyFileSync(file, backup);
-    writeFileSync(file, source.replace(edit.find, edit.replace), "utf8");
-    results.push({ edit: edit.file, status: "applied" });
+    writeFileSync(file, next, "utf8");
   }
   return { pkgRoot, version, status: "processed", results };
 }
@@ -605,6 +656,7 @@ if (installs.length === 0) {
 }
 
 let failed = false;
+let duplicated = false;
 for (const pkgRoot of installs) {
   const outcome = run(pkgRoot);
   console.log(`\n${pkgRoot}  (v${outcome.version ?? "unknown"})`);
@@ -615,20 +667,25 @@ for (const pkgRoot of installs) {
   const counts = new Map();
   for (const r of outcome.results) {
     counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
-    if (r.status.startsWith("anchor-") || r.status === "missing-file") {
+    if (isFailureStatus(r.status)) {
       failed = true;
+      if (r.status.startsWith("duplicate-")) duplicated = true;
       console.log(`  ${r.status.padEnd(20)} ${r.edit}`);
     }
   }
   for (const [status, count] of [...counts].sort()) {
-    if (status.startsWith("anchor-") || status === "missing-file") continue;
+    if (isFailureStatus(status)) continue;
     console.log(`  ${status.padEnd(20)} ${count}`);
   }
 }
 
 console.log(
-  failed
-    ? "\nSome edits did not apply. The shipped build probably changed; re-derive the anchors."
-    : `\nDone (${mode}). Restart the Paperclip server for changes to take effect.`,
+  duplicated
+    ? "\nThis install has an export declared twice, so the module will not load and\n" +
+      "nothing was written. Restore it with `--revert` and re-apply, or copy the file\n" +
+      "from a healthy install of the same version."
+    : failed
+      ? "\nSome edits did not apply. The shipped build probably changed; re-derive the anchors."
+      : `\nDone (${mode}). Restart the Paperclip server for changes to take effect.`,
 );
 process.exit(failed ? 1 : 0);

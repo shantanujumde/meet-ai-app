@@ -33,6 +33,27 @@ async function findInstall() {
   return null;
 }
 
+async function findInstalls() {
+  const explicit = process.argv[2];
+  if (explicit) return [explicit];
+  const homes = [process.env.PAPERCLIP_GITHUB_HOST_HOME, homedir(), process.env.HOME].filter(
+    Boolean,
+  );
+  const found = new Set();
+  for (const home of homes) {
+    const root = path.join(home, ".npm", "_npx");
+    if (!existsSync(root)) continue;
+    for (const entry of await readdir(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const pkg = path.join(root, entry.name, "node_modules", "@paperclipai", "server");
+      const manifest = path.join(pkg, "package.json");
+      if (!existsSync(manifest)) continue;
+      if (JSON.parse(readFileSync(manifest, "utf8")).version === TARGET_VERSION) found.add(pkg);
+    }
+  }
+  return [...found];
+}
+
 const pkgRoot = await findInstall();
 if (!pkgRoot) {
   console.error(`No @paperclipai/server v${TARGET_VERSION} install found.`);
@@ -379,6 +400,28 @@ check("every readiness read by issue.id is one of the three known sites", () => 
   assert.equal(reads, 3, `expected 3 readiness reads by issue.id, found ${reads}`);
   // Site 2 must be the fallback arm of the ternary, not an unconditional read.
   assert.match(routeSource, /\n                : await svc\.getDependencyReadiness\(issue\.id\);/);
+});
+
+// --- every install, not just the one imported above ------------------------
+// apply.mjs patches every install it finds, and the server can be started from
+// any of them. A re-apply once left two copies of the same export in the file —
+// a SyntaxError that nothing noticed until the next restart failed.
+await checkAsync("no install declares the same export twice", async () => {
+  const installs = await findInstalls();
+  assert.ok(installs.length > 0, "no install found");
+  for (const install of installs) {
+    for (const relative of ["dist/services/task-watchdog-scope.js", "dist/routes/issues.js"]) {
+      const file = path.join(install, relative);
+      if (!existsSync(file)) continue;
+      const counts = new Map();
+      const source = readFileSync(file, "utf8");
+      for (const m of source.matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z0-9_$]+)/gm)) {
+        counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
+      }
+      const duplicates = [...counts].filter(([, n]) => n > 1).map(([name]) => name);
+      assert.deepEqual(duplicates, [], `${file} declares ${duplicates.join(", ")} twice`);
+    }
+  }
 });
 
 let failures = 0;
