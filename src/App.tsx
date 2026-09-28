@@ -80,9 +80,16 @@ function Bootstrap() {
 
   useEffect(() => {
     if (onboardingLoading || onboarding === null) return;
-    if (onboarding.completedAt !== null) return;
-    if (location.pathname.startsWith("/onboarding")) return;
-    navigate("/onboarding", { replace: true });
+    const onOnboardingRoute = location.pathname.startsWith("/onboarding");
+    if (onboarding.completedAt === null) {
+      // Not finished yet: keep the user inside the wizard.
+      if (!onOnboardingRoute) navigate("/onboarding", { replace: true });
+      return;
+    }
+    // Already finished: a wizard URL left over from a previous, unfinished
+    // session (the single-instance window was simply refocused, never
+    // re-loaded) must not trap an otherwise-done user on setup forever.
+    if (onOnboardingRoute) navigate("/meetings", { replace: true });
   }, [onboarding, onboardingLoading, location.pathname, navigate]);
 
   return null;
