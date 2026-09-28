@@ -8,6 +8,7 @@ here stops being true, fix this file in the same commit.
 | File | Read it when |
 |---|---|
 | [`SPEC.md`](./SPEC.md) | Always, first. v2, locked decisions L1–L18, phase order and exit gates in §5. It wins over everything else. |
+| [`RELEASING.md`](./RELEASING.md) | You are cutting a release: version bump, tag, signed app, GitHub release. |
 | [`SETUP.md`](./SETUP.md) | You are adding or changing a dependency. It pins every version and says why. |
 | [`PROBLEM.md`](./PROBLEM.md) | You want to know what the product is for. |
 | [`FINDINGS.md`](./FINDINGS.md) | You want the research behind a dependency choice. |
@@ -124,7 +125,7 @@ of this reproduce here:
 
 ```bash
 $ HOME=/Users/<you> security find-identity -v -p codesigning
-  1) BE3FB2C8… "meet-ai Local Signing"
+  1) EAFB73D2… "meet-ai Local Signing"
      1 valid identities found
 $ HOME="$TMPDIR" security find-identity -v -p codesigning
      0 valid identities found
