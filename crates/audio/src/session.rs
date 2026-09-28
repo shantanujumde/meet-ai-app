@@ -1,0 +1,826 @@
+//! The recording session: a start/tick/stop lifecycle the caller controls,
+//! instead of a blocking call bounded by a `--duration`.
+//!
+//! Moved out of `meet-rec.rs`'s `record()` (TUR-94) so `meet-rec` and, later,
+//! the app both drive the same in-process seam rather than risking drift
+//! across a subprocess boundary — exactly the question TUR-31 already
+//! answered for `stt`. Behaviour is unchanged from the binary's old loop:
+//! segment reopen on a device change ([`reopen_segment`]), the drift
+//! checkpoints ([`checkpoint`]), the gap padding ([`align_and_pad`]), and the
+//! first-position wait ([`wait_first_position`]) all moved verbatim; only the
+//! caller-facing shape changed.
+//!
+//! [`RecordingSession::start`] takes the two [`AudioSource`]s already
+//! constructed rather than building them itself, so a caller without real
+//! hardware — this module's own tests, chiefly — can hand it a stub and
+//! exercise the whole checkpoint/reopen/stop machinery without Core Audio or
+//! a microphone TCC grant.
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use crate::segments::{
+    self, Anchor, CHECKPOINT_INTERVAL_S, SAMPLE_RATE_HZ, SegmentOpen, SegmentsWriter,
+};
+use crate::{AudioSource, Channel, Error as AudioError};
+
+/// How long to wait for each channel's very first resampled buffer before
+/// giving up on head-pad alignment (contract §6) and reporting that channel
+/// as broken rather than hanging. Generous relative to the ~50ms warm-path
+/// setup Tess measured (TUR-4), because a cold run — first launch after a
+/// permission grant — can still show that dialog's latency on top of it.
+const FIRST_BUFFER_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The system-audio [`AudioSource`], where one exists on this platform. `None`
+/// on any platform without a process-tap implementation yet (SPEC §8.2's
+/// Windows stub) — contract §9's "absent track" path, not an error.
+///
+/// Exported so `meet-rec` and every future in-process caller (the app,
+/// TUR-92) build the same default rather than each growing their own copy of
+/// this `cfg` — the drift this ticket exists to prevent.
+pub fn default_system_source() -> Option<Box<dyn AudioSource>> {
+    #[cfg(target_os = "macos")]
+    {
+        Some(Box::new(crate::macos::tap::SystemSource::new()))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// Poll `source.position()` until it reports its first resampled buffer, or
+/// give up after `budget`. Busy-polls at 1ms rather than sleeping longer,
+/// because the whole point is to catch the *first* buffer as close to its
+/// arrival as this process can — sleeping coarsely here would reintroduce the
+/// same flush-latency error contract §11 rejects for anchors.
+fn wait_first_position(source: &dyn AudioSource, budget: Duration) -> Result<(u64, u64), String> {
+    let started = Instant::now();
+    loop {
+        if let Some(pos) = source.position() {
+            return Ok(pos);
+        }
+        if started.elapsed() >= budget {
+            return Err(format!(
+                "no audio arrived within {:.1}s of starting capture",
+                budget.as_secs_f64()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn pad_frames_for_gap(gap_ns: u64) -> u64 {
+    ((gap_ns as f64 / 1e9) * SAMPLE_RATE_HZ as f64).round() as u64
+}
+
+/// Contract §6's head-pad: measure each channel's first resampled buffer,
+/// take the earlier one as the segment's `start_host_ns`, and pad whichever
+/// channel came up later with that much silence so frame 0 of both channels
+/// lands on the same instant.
+///
+/// Factored out so both the recording's first segment and every later reopen
+/// ([`reopen_segment`]) go through the identical alignment logic instead of
+/// two copies that could drift apart.
+fn align_and_pad(
+    mic: &mut dyn AudioSource,
+    sys: &mut Option<Box<dyn AudioSource>>,
+) -> Result<u64, String> {
+    let mic_first = wait_first_position(mic, FIRST_BUFFER_TIMEOUT)
+        .map_err(|e| format!("microphone produced no audio: {e}"))?;
+    let sys_first = match sys.as_deref() {
+        Some(source) => Some(
+            wait_first_position(source, FIRST_BUFFER_TIMEOUT)
+                .map_err(|e| format!("system audio produced no audio: {e}"))?,
+        ),
+        None => None,
+    };
+
+    let start_host_ns = match sys_first {
+        Some((sys_ns, _)) => mic_first.0.min(sys_ns),
+        None => mic_first.0,
+    };
+
+    if mic_first.0 > start_host_ns {
+        let pad = pad_frames_for_gap(mic_first.0 - start_host_ns);
+        tracing::info!("padding microphone head with {pad} frames of silence");
+        mic.pad_leading_silence(pad)
+            .map_err(|e| format!("padding microphone head: {e}"))?;
+    }
+    if let (Some(source), Some((sys_ns, _))) = (sys.as_deref_mut(), sys_first)
+        && sys_ns > start_host_ns
+    {
+        let pad = pad_frames_for_gap(sys_ns - start_host_ns);
+        tracing::info!("padding system-audio head with {pad} frames of silence");
+        source
+            .pad_leading_silence(pad)
+            .map_err(|e| format!("padding system-audio head: {e}"))?;
+    }
+
+    Ok(start_host_ns)
+}
+
+/// Close the current segment and open a new one, rebuilding whichever
+/// channel(s) need a fresh OS-level stream after a default-device change
+/// (contract §5/§11's F1; SPEC §5's AirPods-swap gate).
+///
+/// Always rebuilds *both* channels — a spurious restart on the unaffected
+/// channel is the right trade against the alternative (a per-channel
+/// segment-relative baseline offset).
+///
+/// Stops both channels *first*, then reads their final position — never the
+/// other order. `stop()` halts the capture stream and joins its worker
+/// thread before its own internal `fsync_data`/`patch_header`, so once it
+/// returns, `position()` and the just-patched header are guaranteed to agree
+/// exactly. Reading `position()` first and calling `stop()` after would
+/// leave a window where the (still-running) worker thread appends more audio
+/// that `stop()`'s internal fsync then picks up — so the header would end up
+/// declaring more frames than the close anchor this function commits to
+/// `segments.json`, reproducing the exact header-ahead-of-segments bug
+/// `WavWriter::patch_header`'s `synced_frames` freeze was built to prevent
+/// one layer down (TUR-54; `crate::wav_writer`). Caught by running this
+/// function against real hardware and checking `drift-check`'s own invariant
+/// check, not by inspection.
+#[allow(clippy::too_many_arguments)]
+fn reopen_segment(
+    mic: &mut Box<dyn AudioSource>,
+    sys: &mut Option<Box<dyn AudioSource>>,
+    writer: &mut SegmentsWriter,
+    segments_path: &Path,
+    mic_path: &Path,
+    sys_path: &Path,
+    reason: &str,
+) -> Result<(), String> {
+    mic.stop()
+        .map_err(|e| format!("stopping microphone for reopen: {e}"))?;
+    if let Some(s) = sys.as_mut() {
+        s.stop()
+            .map_err(|e| format!("stopping system audio for reopen: {e}"))?;
+    }
+
+    let mic_close = mic
+        .position()
+        .ok_or_else(|| "microphone stopped producing audio before a segment reopen".to_string())?;
+    let sys_close = match sys.as_deref() {
+        Some(s) => s.position().unwrap_or((0, 0)),
+        None => (0, 0),
+    };
+
+    let mut new_mic: Box<dyn AudioSource> = Box::new(crate::mic::MicSource::new());
+    new_mic
+        .start(mic_path.to_path_buf())
+        .map_err(|e| format!("restarting microphone after reopen: {e}"))?;
+
+    let mut new_sys: Option<Box<dyn AudioSource>> = if sys.is_some() {
+        match default_system_source() {
+            Some(mut source) => match source.start(sys_path.to_path_buf()) {
+                Ok(()) => Some(source),
+                Err(e) => {
+                    tracing::warn!(
+                        "system audio unavailable after reopen ({e}); continuing microphone-only"
+                    );
+                    None
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    let new_start_host_ns = align_and_pad(&mut *new_mic, &mut new_sys)?;
+
+    let start_unix_ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .ok();
+    let next_open = SegmentOpen {
+        start_host_ns: new_start_host_ns,
+        start_continuous_ns: None,
+        start_unix_ns,
+        mic_rate: SAMPLE_RATE_HZ,
+        sys_rate: if new_sys.is_some() { SAMPLE_RATE_HZ } else { 0 },
+        mic_device_rate: None,
+        sys_device_rate: None,
+        reason: reason.to_string(),
+    };
+
+    writer.update_frames(mic_close.1, sys_close.1);
+    writer.close_segment(
+        Anchor {
+            mic_host_ns: mic_close.0,
+            mic_frames: mic_close.1,
+            sys_host_ns: sys_close.0,
+            sys_frames: sys_close.1,
+        },
+        next_open,
+    );
+    writer
+        .write_atomic(segments_path)
+        .map_err(|e| format!("writing segments.json at segment reopen: {e}"))?;
+
+    *mic = new_mic;
+    *sys = new_sys;
+    Ok(())
+}
+
+/// §7/§11's checkpoint order for one mid-recording checkpoint: fsync every
+/// channel's data, then let the caller write `segments.json`, then patch
+/// every channel's header. This function does steps 1 and 3 and the anchor
+/// bookkeeping; the caller supplies the write in between.
+fn checkpoint(
+    mic: &mut dyn AudioSource,
+    sys: &mut Option<Box<dyn AudioSource>>,
+    writer: &mut SegmentsWriter,
+    segments_path: &Path,
+) -> Result<(), String> {
+    mic.fsync_data().map_err(|e| format!("mic fsync: {e}"))?;
+    if let Some(sys) = sys.as_deref_mut() {
+        sys.fsync_data().map_err(|e| format!("system fsync: {e}"))?;
+    }
+
+    let (mic_host_ns, mic_frames) = mic
+        .position()
+        .ok_or_else(|| "microphone stopped producing audio mid-recording".to_string())?;
+    let (sys_host_ns, sys_frames) = match sys.as_deref() {
+        Some(sys) => sys.position().unwrap_or((0, 0)),
+        None => (0, 0),
+    };
+
+    writer.update_frames(mic_frames, sys_frames);
+    writer.checkpoint_anchor(Anchor {
+        mic_host_ns,
+        mic_frames,
+        sys_host_ns,
+        sys_frames,
+    });
+    writer
+        .write_atomic(segments_path)
+        .map_err(|e| format!("writing segments.json: {e}"))?;
+
+    mic.patch_header()
+        .map_err(|e| format!("mic header patch: {e}"))?;
+    if let Some(sys) = sys.as_deref_mut() {
+        sys.patch_header()
+            .map_err(|e| format!("system header patch: {e}"))?;
+    }
+    Ok(())
+}
+
+fn microphone_error(e: AudioError) -> String {
+    match e {
+        AudioError::PermissionDenied => {
+            "meet-ai does not have permission to record the microphone — grant it in \
+             System Settings > Privacy & Security > Microphone"
+                .to_string()
+        }
+        other => format!("microphone: {other}"),
+    }
+}
+
+/// What [`RecordingSession::status`] reports — "ask it how it is doing"
+/// without either side needing to poll the filesystem.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionStatus {
+    /// Wall-clock time since [`RecordingSession::start`] returned.
+    pub elapsed: Duration,
+    /// Whether the system-audio channel is currently being captured — `false`
+    /// from the start on a platform with no tap yet, and also `false` after a
+    /// tap that failed to (re)start falls back to microphone-only.
+    pub has_system_audio: bool,
+}
+
+/// What stopping a session reports back: where the files landed, and whether
+/// the system-audio channel was ever part of this recording. Deliberately
+/// not frame counts or drift — the role charter says to report what the
+/// bytes on disk contain, and the honest way to do that is to read the
+/// headers back after the fact, which is a presentation concern for the
+/// caller (`meet-rec`'s `report_result`), not the session's.
+#[derive(Debug, Clone)]
+pub struct StopReport {
+    pub mic_path: PathBuf,
+    pub sys_path: PathBuf,
+    pub segments_path: PathBuf,
+    pub has_system_audio: bool,
+}
+
+/// A start/tick/stop-controlled capture session: two [`AudioSource`]s writing
+/// into one meeting folder, kept aligned and checkpointed, instead of a
+/// blocking call bounded by a fixed duration.
+///
+/// The caller owns the polling cadence: call [`RecordingSession::tick`] on
+/// some interval (`meet-rec` uses [`crate::segments::CHECKPOINT_INTERVAL_S`]-scale
+/// polling; see that binary's `POLL_INTERVAL`) to let device-change detection
+/// and periodic checkpoints run, then call [`RecordingSession::stop`] once to
+/// finish cleanly. Neither `tick` nor `stop` block waiting for anything beyond
+/// the calls `AudioSource` itself makes.
+pub struct RecordingSession {
+    mic: Box<dyn AudioSource>,
+    sys: Option<Box<dyn AudioSource>>,
+    writer: SegmentsWriter,
+    mic_path: PathBuf,
+    sys_path: PathBuf,
+    segments_path: PathBuf,
+    start_host_ns: u64,
+    started: Instant,
+    last_checkpoint: Instant,
+    #[cfg(target_os = "macos")]
+    last_output_device: Option<objc2_core_audio::AudioObjectID>,
+    #[cfg(target_os = "macos")]
+    last_input_device: Option<objc2_core_audio::AudioObjectID>,
+}
+
+impl RecordingSession {
+    /// Start a session writing `mic.wav`/`system.wav`/`segments.json` into
+    /// `dir`, capturing from `mic` and, when present, `sys`.
+    ///
+    /// `sys` is `None` outright on a platform with no system-audio tap
+    /// (SPEC §8.2's Windows stub); when `Some` but that source fails to
+    /// start, the session falls back to microphone-only (contract §9: absent
+    /// track, `sys_rate` 0 in `segments.json`) rather than failing the whole
+    /// recording over a channel that was never required.
+    ///
+    /// Takes both sources already constructed, rather than building them
+    /// itself, so a caller without real hardware — this module's own tests —
+    /// can hand it a stub and exercise the checkpoint/reopen/stop machinery
+    /// without Core Audio or a microphone TCC grant. `meet-rec` and the app
+    /// both build their sources the same way, via [`crate::mic::MicSource`]
+    /// and [`default_system_source`], so the two callers cannot quietly
+    /// diverge on what "the real recorder" means.
+    pub fn start(
+        dir: PathBuf,
+        mut mic: Box<dyn AudioSource>,
+        mut sys: Option<Box<dyn AudioSource>>,
+    ) -> Result<Self, String> {
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+
+        let mic_path = dir.join(Channel::Mic.wav_filename());
+        let sys_path = dir.join(Channel::System.wav_filename());
+        let segments_path = dir.join("segments.json");
+
+        tracing::info!("starting microphone capture");
+        mic.start(mic_path.clone()).map_err(microphone_error)?;
+
+        if let Some(source) = sys.as_mut() {
+            tracing::info!("starting system-audio capture");
+            if let Err(e) = source.start(sys_path.clone()) {
+                tracing::warn!(
+                    "system audio unavailable ({e}); recording microphone only \
+                     (contract §9: absent track, sys_rate 0 in segments.json)"
+                );
+                sys = None;
+            }
+        } else {
+            tracing::info!(
+                "no system-audio capture on this platform yet (SPEC §8.2); \
+                 recording microphone only"
+            );
+        }
+
+        // Head-pad (contract §6): align frame 0 of both channels to whichever
+        // channel's hardware came up first, by padding the other with silence.
+        tracing::info!("measuring channel start alignment");
+        let start_host_ns = align_and_pad(&mut *mic, &mut sys)?;
+
+        let start_unix_ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .ok();
+
+        let open = SegmentOpen {
+            start_host_ns,
+            start_continuous_ns: None,
+            start_unix_ns,
+            mic_rate: SAMPLE_RATE_HZ,
+            sys_rate: if sys.is_some() { SAMPLE_RATE_HZ } else { 0 },
+            mic_device_rate: None,
+            sys_device_rate: None,
+            reason: segments::reason::START.to_string(),
+        };
+        let writer = SegmentsWriter::new(open);
+        // First segments.json write happens at the first checkpoint, not
+        // here — nothing has been fsynced yet for it to honestly describe.
+
+        // SPEC §5's AirPods-swap gate: baseline the default devices right
+        // after the segment they belong to has already opened, so a swap
+        // mid-startup (unlikely, but free to handle correctly) is not
+        // mistaken for one that happened during the recording.
+        #[cfg(target_os = "macos")]
+        let last_output_device = crate::macos::device_watch::default_output_device().ok();
+        #[cfg(target_os = "macos")]
+        let last_input_device = crate::macos::device_watch::default_input_device().ok();
+
+        Ok(Self {
+            mic,
+            sys,
+            writer,
+            mic_path,
+            sys_path,
+            segments_path,
+            start_host_ns,
+            started: Instant::now(),
+            last_checkpoint: Instant::now(),
+            #[cfg(target_os = "macos")]
+            last_output_device,
+            #[cfg(target_os = "macos")]
+            last_input_device,
+        })
+    }
+
+    /// Ask the session how it is doing, without touching disk.
+    pub fn status(&self) -> SessionStatus {
+        SessionStatus {
+            elapsed: self.started.elapsed(),
+            has_system_audio: self.sys.is_some(),
+        }
+    }
+
+    /// Run one iteration of the poll loop: check for a default-device change
+    /// (macOS only — SPEC §5's AirPods-swap gate) and, if
+    /// [`crate::segments::CHECKPOINT_INTERVAL_S`] has elapsed since the last
+    /// one, run an ordinary checkpoint. The caller decides how often to call
+    /// this; nothing here sleeps or blocks on a timer of its own.
+    pub fn tick(&mut self) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(current) = crate::macos::device_watch::default_output_device() {
+                if self.last_output_device.is_some_and(|prev| prev != current) {
+                    tracing::info!("default output device changed — reopening segment");
+                    reopen_segment(
+                        &mut self.mic,
+                        &mut self.sys,
+                        &mut self.writer,
+                        &self.segments_path,
+                        &self.mic_path,
+                        &self.sys_path,
+                        segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED,
+                    )?;
+                    self.last_input_device =
+                        crate::macos::device_watch::default_input_device().ok();
+                    self.last_checkpoint = Instant::now();
+                }
+                self.last_output_device = Some(current);
+            }
+            if let Ok(current) = crate::macos::device_watch::default_input_device() {
+                if self.last_input_device.is_some_and(|prev| prev != current) {
+                    tracing::info!("default input device changed — reopening segment");
+                    reopen_segment(
+                        &mut self.mic,
+                        &mut self.sys,
+                        &mut self.writer,
+                        &self.segments_path,
+                        &self.mic_path,
+                        &self.sys_path,
+                        segments::reason::DEFAULT_INPUT_DEVICE_CHANGED,
+                    )?;
+                    self.last_output_device =
+                        crate::macos::device_watch::default_output_device().ok();
+                    self.last_checkpoint = Instant::now();
+                }
+                self.last_input_device = Some(current);
+            }
+        }
+
+        if self.last_checkpoint.elapsed() >= Duration::from_secs(CHECKPOINT_INTERVAL_S) {
+            checkpoint(
+                &mut *self.mic,
+                &mut self.sys,
+                &mut self.writer,
+                &self.segments_path,
+            )?;
+            self.last_checkpoint = Instant::now();
+            tracing::info!("checkpoint at {:.0}s", self.started.elapsed().as_secs_f64());
+        }
+        Ok(())
+    }
+
+    /// Stop cleanly: both channels stopped (WAV headers finalised), a final
+    /// anchor latched, and `segments.json` written — contract §7's "equality
+    /// on graceful stop", taken only after both streams are fully stopped so
+    /// it is exact rather than a checkpoint's necessarily-slightly-behind
+    /// approximation.
+    pub fn stop(mut self) -> Result<StopReport, String> {
+        tracing::info!("stopping");
+        self.mic
+            .stop()
+            .map_err(|e| format!("stopping microphone: {e}"))?;
+        if let Some(source) = self.sys.as_mut() {
+            source
+                .stop()
+                .map_err(|e| format!("stopping system audio: {e}"))?;
+        }
+
+        let (mic_ns, mic_frames) = self.mic.position().unwrap_or((self.start_host_ns, 0));
+        let (sys_ns, sys_frames) = self
+            .sys
+            .as_deref()
+            .and_then(|source| source.position())
+            .unwrap_or((0, 0));
+        self.writer.update_frames(mic_frames, sys_frames);
+        self.writer.checkpoint_anchor(Anchor {
+            mic_host_ns: mic_ns,
+            mic_frames,
+            sys_host_ns: sys_ns,
+            sys_frames,
+        });
+        self.writer
+            .write_atomic(&self.segments_path)
+            .map_err(|e| format!("writing segments.json: {e}"))?;
+
+        Ok(StopReport {
+            mic_path: self.mic_path,
+            sys_path: self.sys_path,
+            segments_path: self.segments_path,
+            has_system_audio: self.sys.is_some(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use crate::wav_writer::WavWriter;
+
+    /// A hardware-free `AudioSource` for exercising [`align_and_pad`]'s
+    /// alignment maths, which is the one piece of the device-change handling
+    /// that does not itself need Core Audio or `cpal` — everything else in
+    /// [`reopen_segment`] is OS integration, verified on real hardware
+    /// instead (see `crates/audio/tests/*_closed_loop.rs`).
+    ///
+    /// `padded_frames` is an `Arc` specifically so a test can keep its own
+    /// handle to it after the `FakeSource` has been moved into a
+    /// `Box<dyn AudioSource>` — taking a raw reference to a field and moving
+    /// the struct afterward would leave that reference dangling.
+    struct FakeSource {
+        channel: Channel,
+        position: Option<(u64, u64)>,
+        padded_frames: Arc<Mutex<Option<u64>>>,
+    }
+
+    impl FakeSource {
+        fn new(channel: Channel, position: Option<(u64, u64)>) -> Self {
+            Self {
+                channel,
+                position,
+                padded_frames: Arc::new(Mutex::new(None)),
+            }
+        }
+    }
+
+    impl AudioSource for FakeSource {
+        fn start(&mut self, _dest: PathBuf) -> Result<(), AudioError> {
+            Ok(())
+        }
+        fn stop(&mut self) -> Result<(), AudioError> {
+            Ok(())
+        }
+        fn channel(&self) -> Channel {
+            self.channel
+        }
+        fn position(&self) -> Option<(u64, u64)> {
+            self.position
+        }
+        fn fsync_data(&mut self) -> Result<(), AudioError> {
+            Ok(())
+        }
+        fn patch_header(&mut self) -> Result<(), AudioError> {
+            Ok(())
+        }
+        fn pad_leading_silence(&mut self, frames: u64) -> Result<(), AudioError> {
+            *self.padded_frames.lock().unwrap() = Some(frames);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn align_and_pad_pads_whichever_channel_came_up_later() {
+        let mut mic = FakeSource::new(Channel::Mic, Some((1_000_000_000, 0)));
+        let mic_padded = Arc::clone(&mic.padded_frames);
+        let sys_source = FakeSource::new(Channel::System, Some((1_050_000_000, 0)));
+        let sys_padded = Arc::clone(&sys_source.padded_frames);
+        let mut sys: Option<Box<dyn AudioSource>> = Some(Box::new(sys_source));
+
+        let start = align_and_pad(&mut mic, &mut sys).expect("both channels report a position");
+
+        assert_eq!(
+            start, 1_000_000_000,
+            "start_host_ns must be the earlier of the two channels"
+        );
+        assert_eq!(
+            *mic_padded.lock().unwrap(),
+            None,
+            "the channel that came up first is never padded"
+        );
+        assert_eq!(
+            *sys_padded.lock().unwrap(),
+            Some(800),
+            "the later channel is padded by exactly the gap: 50ms at 16kHz is 800 frames"
+        );
+    }
+
+    #[test]
+    fn align_and_pad_pads_the_mic_when_the_mic_comes_up_later() {
+        let mut mic = FakeSource::new(Channel::Mic, Some((1_100_000_000, 0)));
+        let mic_padded = Arc::clone(&mic.padded_frames);
+        let sys_source = FakeSource::new(Channel::System, Some((1_000_000_000, 0)));
+        let sys_padded = Arc::clone(&sys_source.padded_frames);
+        let mut sys: Option<Box<dyn AudioSource>> = Some(Box::new(sys_source));
+
+        let start = align_and_pad(&mut mic, &mut sys).unwrap();
+
+        assert_eq!(start, 1_000_000_000);
+        assert_eq!(*sys_padded.lock().unwrap(), None);
+        assert_eq!(
+            *mic_padded.lock().unwrap(),
+            Some(1600),
+            "100ms at 16kHz is 1600 frames"
+        );
+    }
+
+    #[test]
+    fn align_and_pad_with_no_system_channel_uses_mic_alone() {
+        let mut mic = FakeSource::new(Channel::Mic, Some((2_000_000_000, 0)));
+        let mic_padded = Arc::clone(&mic.padded_frames);
+        let mut sys: Option<Box<dyn AudioSource>> = None;
+
+        let start = align_and_pad(&mut mic, &mut sys).unwrap();
+
+        assert_eq!(start, 2_000_000_000);
+        assert_eq!(*mic_padded.lock().unwrap(), None);
+    }
+
+    /// A hardware-free `AudioSource` that writes a real, playable WAV — SPEC
+    /// §8.2's Windows "stub-audio" shape, reused here so a session can be
+    /// exercised start-to-stop without Core Audio or a microphone TCC grant.
+    /// Unlike [`FakeSource`] above (which only fakes `position()` to test
+    /// alignment maths in isolation), this one really appends samples through
+    /// a real [`WavWriter`], so [`RecordingSession::stop`]'s output is real
+    /// bytes on disk, not an assumption.
+    struct StubSource {
+        channel: Channel,
+        writer: Option<WavWriter>,
+        frames: u64,
+        started: Option<Instant>,
+    }
+
+    impl StubSource {
+        fn new(channel: Channel) -> Self {
+            Self {
+                channel,
+                writer: None,
+                frames: 0,
+                started: None,
+            }
+        }
+
+        /// One buffer of silence, appended synchronously — a real capture
+        /// device warms up over milliseconds to seconds, but nothing this
+        /// test cares about needs that delay reproduced.
+        const BUFFER_FRAMES: u64 = 160; // 10ms at 16kHz
+
+        fn append_buffer(&mut self) -> Result<(), AudioError> {
+            let writer = self.writer.as_mut().expect("started before appending");
+            writer.append(&vec![0i16; Self::BUFFER_FRAMES as usize])?;
+            self.frames += Self::BUFFER_FRAMES;
+            Ok(())
+        }
+    }
+
+    impl AudioSource for StubSource {
+        fn start(&mut self, dest: PathBuf) -> Result<(), AudioError> {
+            let writer = if dest.exists() {
+                WavWriter::open_append(&dest)?
+            } else {
+                WavWriter::create(&dest)?
+            };
+            self.writer = Some(writer);
+            self.frames = 0;
+            self.append_buffer()?;
+            self.started = Some(Instant::now());
+            Ok(())
+        }
+
+        fn stop(&mut self) -> Result<(), AudioError> {
+            if let Some(writer) = self.writer.as_mut() {
+                writer.fsync_data()?;
+                writer.patch_header()?;
+            }
+            Ok(())
+        }
+
+        fn channel(&self) -> Channel {
+            self.channel
+        }
+
+        fn position(&self) -> Option<(u64, u64)> {
+            let started = self.started?;
+            Some((started.elapsed().as_nanos() as u64, self.frames))
+        }
+
+        fn fsync_data(&mut self) -> Result<(), AudioError> {
+            if let Some(writer) = self.writer.as_mut() {
+                writer.fsync_data()?;
+            }
+            Ok(())
+        }
+
+        fn patch_header(&mut self) -> Result<(), AudioError> {
+            if let Some(writer) = self.writer.as_mut() {
+                writer.patch_header()?;
+            }
+            Ok(())
+        }
+
+        fn pad_leading_silence(&mut self, frames: u64) -> Result<(), AudioError> {
+            if let Some(writer) = self.writer.as_mut() {
+                writer.prepend_silence(frames)?;
+                self.frames += frames;
+            }
+            Ok(())
+        }
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "meet-ai-session-test-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// The gate this ticket names: start a session against a stub source for
+    /// each channel, stop it, and get back complete WAVs and a valid
+    /// `segments.json` — the whole start/tick/stop lifecycle exercised
+    /// without any real hardware.
+    #[test]
+    fn a_session_against_stub_sources_produces_complete_wavs_and_valid_segments() {
+        let dir = temp_dir("start-stop");
+
+        let mic: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::Mic));
+        let sys: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::System));
+        let mut session =
+            RecordingSession::start(dir.clone(), mic, Some(sys)).expect("session starts cleanly");
+
+        assert!(session.status().has_system_audio);
+
+        // Exercise `tick()` too, even though nothing is due yet (no device
+        // watch off macOS, no checkpoint inside 5s) — it must be a harmless
+        // no-op rather than something the caller has to avoid calling early.
+        session
+            .tick()
+            .expect("an early tick is a no-op, not an error");
+
+        let report = session.stop().expect("session stops cleanly");
+        assert!(report.has_system_audio);
+
+        let mic_frames =
+            crate::wav_writer::read_header_frames(&report.mic_path).expect("mic.wav is playable");
+        let sys_frames = crate::wav_writer::read_header_frames(&report.sys_path)
+            .expect("system.wav is playable");
+        assert!(mic_frames > 0, "mic.wav must declare real frames");
+        assert!(sys_frames > 0, "system.wav must declare real frames");
+
+        let json =
+            std::fs::read_to_string(&report.segments_path).expect("segments.json was written");
+        let segments = crate::segments::Segments::from_json(&json)
+            .expect("segments.json must parse as the §3.4 shape");
+        segments
+            .check_wav_header(Channel::Mic, mic_frames)
+            .expect("segments.json must account for at least what mic.wav declares");
+        segments
+            .check_wav_header(Channel::System, sys_frames)
+            .expect("segments.json must account for at least what system.wav declares");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A caller with no system-audio implementation on this platform yet
+    /// (SPEC §8.2's Windows stub) must still get a complete recording —
+    /// contract §9's "absent track" path, not an error.
+    #[test]
+    fn a_session_with_no_system_source_still_produces_a_complete_mic_only_recording() {
+        let dir = temp_dir("mic-only");
+
+        let mic: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::Mic));
+        let session =
+            RecordingSession::start(dir.clone(), mic, None).expect("session starts cleanly");
+        assert!(!session.status().has_system_audio);
+
+        let report = session.stop().expect("session stops cleanly");
+        assert!(!report.has_system_audio);
+
+        let mic_frames =
+            crate::wav_writer::read_header_frames(&report.mic_path).expect("mic.wav is playable");
+        assert!(mic_frames > 0);
+        assert!(
+            !report.sys_path.exists(),
+            "no system-audio source means system.wav is never created"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

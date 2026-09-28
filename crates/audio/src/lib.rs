@@ -81,6 +81,11 @@ pub mod mic;
 /// defers to — see that module's doc comment.
 pub mod permission_check;
 
+/// The capture session: a start/tick/stop lifecycle over two [`AudioSource`]s
+/// (SPEC §5, TUR-94). `meet-rec` and the app both drive one of these rather
+/// than each owning their own copy of the checkpoint/reopen loop.
+pub mod session;
+
 /// Which side of the conversation a stream came from.
 ///
 /// L5 locks speaker labelling to the two channels we capture: the microphone is
