@@ -14,6 +14,11 @@
 /// module docs for the honest state of hardware verification.
 pub mod tap;
 
+/// Default-output/input-device polling, for detecting the AirPods swap SPEC
+/// §5's exit gate names — see the module docs for why this polls instead of
+/// registering a Core Audio property listener.
+pub mod device_watch;
+
 /// The real tap/IOProc creation call site (once written) uses
 /// [`crate::AUDIO_PERMISSION_TIMEOUT`] — moved there because [`crate::mic`]
 /// needs the identical bound on `cpal`'s stream creation, and both are the

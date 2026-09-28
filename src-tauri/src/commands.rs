@@ -11,6 +11,7 @@
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt as _;
 
+use crate::config;
 use crate::engine::{self, Downloads, EnvironmentView, ModelView, SelectionView};
 use crate::error::UiError;
 use crate::meetings::{self, MeetingDetail, MeetingList};
@@ -95,9 +96,14 @@ pub fn reset_onboarding() -> Result<onboarding::State, UiError> {
 // --- engine and models ----------------------------------------------------
 
 /// Filesystem-only, sub-millisecond. The settings route blocks on this.
+///
+/// `config::transcription` is itself a filesystem read, not a probe, so it
+/// belongs on this side of the cheap/expensive split described in the module
+/// doc comment.
 #[tauri::command]
 pub fn engine_environment() -> EnvironmentView {
-    engine::environment(engine::DEFAULT_LOCALE, engine::DEFAULT_MODEL)
+    let transcription = config::transcription();
+    engine::environment(engine::DEFAULT_LOCALE, &transcription.model)
 }
 
 /// Runs `meet-stt --probe`, median ~160 ms. The settings route renders a
@@ -107,10 +113,11 @@ pub async fn engine_selection() -> Result<SelectionView, UiError> {
     // The probe spawns a process and waits on it, which would otherwise park a
     // tokio worker thread for the whole 160 ms.
     tauri::async_runtime::spawn_blocking(|| {
+        let transcription = config::transcription();
         engine::resolve(
-            stt::registry::Preference::Auto,
+            transcription.engine,
             engine::DEFAULT_LOCALE,
-            engine::DEFAULT_MODEL,
+            &transcription.model,
         )
     })
     .await
