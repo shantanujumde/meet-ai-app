@@ -12,7 +12,7 @@ shipped `dist/` JavaScript in place.
 ```sh
 node tools/paperclip-tur73/apply.mjs --check   # show what would change
 node tools/paperclip-tur73/apply.mjs           # apply (idempotent)
-node tools/paperclip-tur73/verify.mjs          # 19 checks against the patched install
+node tools/paperclip-tur73/verify.mjs          # 24 checks against the patched install
 node tools/paperclip-tur73/apply.mjs --revert  # restore the .tur73.orig backups
 
 tools/paperclip-tur73/restart.sh 0              # stop the server and start it again
@@ -71,6 +71,9 @@ few milliseconds later would be absorbed into the re-pin. Closing that needs
 the recompute to run inside the mutation's transaction, which is not reachable
 from a route-level patch.
 
+This covers `stopped → stopped, different fingerprint`. The case where the
+run's write makes the subtree *live* again is fix 5.
+
 ### 2. Follow-ups no longer chain behind an unrelated sibling
 
 Watchdog follow-ups are serialized so they run one at a time, and
@@ -103,3 +106,38 @@ read dependency readiness from the stored blocker set and ignored the
 still counted and the call 409'd. Two other call sites in the same file already
 prefer the requested set when it is present; this one now does too. An
 independent reason a one-write budget could never repair a blocked issue.
+
+### 5. A run may finish the writes that go with the recovery it just made
+
+Found on a live watchdog pass after fixes 1–4 were running. The one-write cap
+was gone, but a second cap sat behind it: the moment the run's own write made
+the subtree live, the classifier's verdict flipped from `stopped` to
+`live`/`pending_first_run`, and every later write got a 409 reading
+`currentState: live, currentStopFingerprint: null`. A watchdog could create a
+task but not assign it, which is the TUR-72 orphan again with a better failure
+mode.
+
+The signature re-pin from fix 1 cannot catch this. The state a write produces
+is not final when its response finishes — scheduling side effects land after
+that — so the signature recomputed on `finish` describes a state nobody will
+see again. The observed run pinned `pending_first_run|…` and the next write
+arrived to find `live`.
+
+So the guard asks for provenance instead of a matching snapshot. Every issue
+mutation writes an `activity_log` row carrying the run id, so
+`taskWatchdogRunWrittenIssueIds(scope)` is an exact record of what this run
+touched. When revalidation fails and the verdict is non-stopped, the guard
+takes the issues the classifier credits for that verdict — `liveIssueIds` for
+`live`, `pendingIssueIds` for `pending_first_run` — and allows the write only
+if the run wrote to every one of them. A path someone *else* revived still
+closes the guard, and verdicts with no attributable issue
+(`already_reviewed`, `not_applicable`) stay on the strict path.
+
+### 6. A watchdog can still comment on the tree it just repaired
+
+The freshness gate covered `POST /api/issues/{id}/comments` too, so a run that
+restored a live path could no longer write any record to the watched subtree —
+including the summary comment the watchdog mandate asks it to leave. A comment
+sets no status, no blocker and no assignee, so a stale review cannot make one
+dangerous. Comments now skip the freshness check. The subtree scope check still
+runs, so a watchdog still cannot comment outside the tree it watches.

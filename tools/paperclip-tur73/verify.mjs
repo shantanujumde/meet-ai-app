@@ -42,6 +42,7 @@ if (!pkgRoot) {
 const scope = await import(path.join(pkgRoot, "dist/services/task-watchdog-scope.js"));
 const {
   taskWatchdogObservedSignature,
+  taskWatchdogRecoveryAttributableIssueIds,
   repinTaskWatchdogSelfWriteSignature,
   resolveTaskWatchdogMutationScope,
 } = scope;
@@ -114,6 +115,51 @@ check("stopped and live never collide", () => {
 check("junk classifications produce no signature", () => {
   for (const value of [null, undefined, {}, [], "stopped", { state: "" }]) {
     assert.equal(taskWatchdogObservedSignature(value), null);
+  }
+});
+
+// --- recovery attribution --------------------------------------------------
+// Which issues does the classifier blame for the subtree no longer being
+// stopped? The guard allows a run to keep writing only when it wrote to all of
+// them, so this list being right is the whole safety argument.
+
+check("a live verdict is attributed to its live issues", () => {
+  assert.deepEqual(
+    taskWatchdogRecoveryAttributableIssueIds({
+      state: "live",
+      includedIssueIds: ["i1", "i2"],
+      liveIssueIds: ["i2"],
+    }),
+    ["i2"],
+  );
+});
+
+check("a pending-first-run verdict is attributed to its pending issues", () => {
+  assert.deepEqual(
+    taskWatchdogRecoveryAttributableIssueIds({
+      state: "pending_first_run",
+      includedIssueIds: ["i1", "i2"],
+      pendingIssueIds: ["i1"],
+    }),
+    ["i1"],
+  );
+});
+
+check("verdicts with nobody to blame stay on the strict path", () => {
+  // No attributable list means the guard falls through to the 409. Allowing
+  // these would turn "the tree recovered" into "any stale review may write".
+  for (const classification of [
+    { state: "stopped", stopFingerprint: "task_watchdog_stop:aaa", includedIssueIds: ["i1"] },
+    { state: "already_reviewed", stopFingerprint: "task_watchdog_stop:aaa" },
+    { state: "not_applicable", includedIssueIds: [] },
+    { state: "live", includedIssueIds: ["i1"] },
+    { state: "live", includedIssueIds: ["i1"], liveIssueIds: [] },
+    null,
+    undefined,
+    [],
+    "live",
+  ]) {
+    assert.equal(taskWatchdogRecoveryAttributableIssueIds(classification), null);
   }
 });
 
@@ -257,7 +303,7 @@ const routeSource = readFileSync(path.join(pkgRoot, "dist/routes/issues.js"), "u
 check("route imports the new helpers", () => {
   assert.match(
     routeSource,
-    /repinTaskWatchdogSelfWriteSignature, taskWatchdogObservedSignature, \} from "\.\.\/services\/task-watchdog-scope\.js"/,
+    /repinTaskWatchdogSelfWriteSignature, taskWatchdogObservedSignature, taskWatchdogRecoveryAttributableIssueIds, \} from "\.\.\/services\/task-watchdog-scope\.js"/,
   );
 });
 check("no guard site bypasses the freshness helper", () => {
@@ -268,6 +314,30 @@ check("no guard site bypasses the freshness helper", () => {
   assert.equal(raw, 2, `expected 2 direct revalidate calls, found ${raw}`);
   const guarded = routeSource.split("await taskWatchdogMutationFreshness(").length - 1;
   assert.equal(guarded, 3, `expected 3 guard sites, found ${guarded}`);
+});
+check("the run's own recovery is checked against the activity log, not a re-pin", () => {
+  // Provenance has to come from a record written inside the mutation, not from
+  // a signature captured on the previous response — the scheduler's side
+  // effects land after that response finishes, so a re-pin always loses.
+  assert.match(routeSource, /async function taskWatchdogRunWrittenIssueIds\(scope\)/);
+  assert.match(routeSource, /eq\(activityLog\.runId, scope\.runId\), eq\(activityLog\.entityType, "issue"\)/);
+  assert.match(routeSource, /attributable\.every\(\(issueId\) => written\.has\(issueId\)\)/);
+  // An empty write set must never satisfy `every`, which is vacuously true.
+  assert.match(routeSource, /written\.size > 0 && attributable\.every\(/);
+});
+check("comments are no longer gated by the freshness check", () => {
+  assert.match(
+    routeSource,
+    /\(defect 6\): comments are records, not state changes\.\n            return true;\n        \}\n        const boundaryDecision = await decideIssueAccess\(req, issue, "issue:comment"\);/,
+  );
+  // The subtree scope check must still run before that return: dropping the
+  // freshness check must not let a watchdog comment outside its own subtree.
+  const start = routeSource.indexOf("async function assertAgentIssueCommentAllowed(");
+  assert.notEqual(start, -1, "comment guard not found");
+  const body = routeSource.slice(start, routeSource.indexOf('"issue:comment"', start));
+  assert.match(body, /taskWatchdogScopeAllowsIssueMutation\(db, watchdogScope, issue\)/);
+  assert.match(body, /if \(scopeResult\.kind === "invalid"\)/);
+  assert.doesNotMatch(body, /assertFreshTaskWatchdogSourceMutation/);
 });
 check("serialization anchor is filtered by follow-up author", () => {
   assert.match(

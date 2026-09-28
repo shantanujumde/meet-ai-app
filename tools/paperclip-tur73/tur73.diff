@@ -1,19 +1,30 @@
 ===== routes/issues.js =====
---- @paperclipai/server/dist/routes/issues.js.tur73.orig	2026-09-28 18:03:14
-+++ @paperclipai/server/dist/routes/issues.js	2026-09-28 20:04:54
+--- @paperclipai/server/dist/routes/issues.js.tur73.orig
++++ @paperclipai/server/dist/routes/issues.js
 @@ -27,7 +27,7 @@
  import { buildDocumentReviewContext, buildPlanReviewContext, } from "../services/plan-review-context.js";
  import { decideIssueReviewPathRecovery, ISSUE_REVIEW_PATH_LOST_WAKE_REASON, isReviewPathRecoveryIdempotencyConflict, REVIEW_PATH_RECOVERY_INSTRUCTION, } from "../services/recovery/review-path-recovery.js";
  import { hydrateSuccessfulRunHandoffLiveness } from "../services/successful-run-handoff-state.js";
 -import { TASK_WATCHDOG_ORIGIN_KIND, resolveTaskWatchdogMutationScope, taskWatchdogScopeAllowsIssueMutation, } from "../services/task-watchdog-scope.js";
-+import { TASK_WATCHDOG_ORIGIN_KIND, resolveTaskWatchdogMutationScope, taskWatchdogScopeAllowsIssueMutation, repinTaskWatchdogSelfWriteSignature, taskWatchdogObservedSignature, } from "../services/task-watchdog-scope.js";
++import { TASK_WATCHDOG_ORIGIN_KIND, resolveTaskWatchdogMutationScope, taskWatchdogScopeAllowsIssueMutation, repinTaskWatchdogSelfWriteSignature, taskWatchdogObservedSignature, taskWatchdogRecoveryAttributableIssueIds, } from "../services/task-watchdog-scope.js";
  import { logger } from "../middleware/logger.js";
  import { badRequest, conflict, forbidden, HttpError, notFound, unauthorized, unprocessable, } from "../errors.js";
  import { privateJsonEtag } from "../middleware/private-json-etag.js";
-@@ -3497,12 +3497,50 @@
+@@ -3347,7 +3347,8 @@
+                 });
+                 return false;
+             }
+-            return assertFreshTaskWatchdogSourceMutation(res, watchdogScope, issue);
++            // TUR-73 local fix (defect 6): comments are records, not state changes.
++            return true;
+         }
+         const boundaryDecision = await decideIssueAccess(req, issue, "issue:comment");
+         if (!boundaryDecision.allowed) {
+@@ -3496,13 +3497,76 @@
+             });
          }
          return true;
-     }
++    }
 +    // TUR-73 local fix (defect 1): arm a one-shot re-pin. When the response this guard
 +    // cleared finishes 2xx, recompute the subtree classification and store its
 +    // signature on the run row, so the run's next write is compared against the
@@ -38,6 +49,19 @@
 +                }
 +            })();
 +        });
+     }
++    // TUR-73 local fix (defect 5): which issues has this run already written to? The
++    // activity log records the run id on every issue mutation, so this is exact
++    // provenance rather than a guess, and it does not depend on a re-pin having
++    // won a race against the write's own downstream effects.
++    async function taskWatchdogRunWrittenIssueIds(scope) {
++        if (!scope?.runId)
++            return new Set();
++        const rows = await db
++            .select({ entityId: activityLog.entityId })
++            .from(activityLog)
++            .where(and(eq(activityLog.runId, scope.runId), eq(activityLog.entityType, "issue")));
++        return new Set(rows.map((row) => row.entityId).filter((id) => typeof id === "string"));
 +    }
 +    async function taskWatchdogMutationFreshness(res, scope) {
 +        const revalidated = await taskWatchdogsSvc.revalidateMutationScope(scope);
@@ -49,6 +73,18 @@
 +        if (observed && scope.selfWriteSignature && observed === scope.selfWriteSignature) {
 +            armTaskWatchdogSelfWriteRepin(res, scope);
 +            return { ...revalidated, allowed: true, selfWrite: true };
++        }
++        // TUR-73 local fix (defect 5): the subtree is no longer stopped. Let the run
++        // finish the writes that go with the recovery it just performed — but
++        // only when every issue the classifier credits for that recovery is one
++        // this run wrote to. A path someone else revived still closes the guard.
++        const attributable = taskWatchdogRecoveryAttributableIssueIds(revalidated.classification);
++        if (attributable) {
++            const written = await taskWatchdogRunWrittenIssueIds(scope);
++            if (written.size > 0 && attributable.every((issueId) => written.has(issueId))) {
++                armTaskWatchdogSelfWriteRepin(res, scope);
++                return { ...revalidated, allowed: true, selfWrite: true, selfRecovered: true };
++            }
 +        }
 +        return revalidated;
 +    }
@@ -62,7 +98,7 @@
          if (revalidated.allowed)
              return true;
          res.status(409).json({
-@@ -3632,7 +3670,7 @@
+@@ -3632,7 +3696,7 @@
                      message: scopeResult.detail,
                  });
              }
@@ -71,7 +107,7 @@
              if (!revalidated.allowed) {
                  return denyIssueThreadInteractionResolution(res, {
                      status: 403,
-@@ -3757,7 +3795,7 @@
+@@ -3757,7 +3821,7 @@
                              message: "Suggested-task creation is outside the current watchdog scope",
                          });
                      }
@@ -80,7 +116,7 @@
                      if (!revalidated.allowed) {
                          return denyIssueThreadInteractionResolution(res, {
                              status: 403,
-@@ -3914,9 +3952,12 @@
+@@ -3914,9 +3978,12 @@
      }
      async function resolveWatchdogFollowUpSerializationContext(req, parent) {
          if (parent.originKind === TASK_WATCHDOG_ORIGIN_KIND) {
@@ -93,7 +129,7 @@
              };
          }
          if (req.actor.type !== "agent")
-@@ -3927,6 +3968,9 @@
+@@ -3927,6 +3994,9 @@
          return {
              enabled: true,
              watchdogParentIssueId: scope.watchdogIssueId,
@@ -103,7 +139,7 @@
          };
      }
      function mergeIssueBlockerIds(existing, blockerIssueId) {
-@@ -3937,7 +3981,11 @@
+@@ -3937,7 +4007,11 @@
              ? [...new Set([...current, blockerIssueId])]
              : [...new Set(current)];
      }
@@ -116,7 +152,7 @@
          const children = await db
              .select({
              id: issueRows.id,
-@@ -3949,7 +3997,7 @@
+@@ -3949,7 +4023,7 @@
              "in_progress",
              "in_review",
              "blocked",
@@ -125,7 +161,7 @@
              .orderBy(asc(issueRows.issueNumber), asc(issueRows.createdAt), asc(issueRows.id));
          return children[0] ?? null;
      }
-@@ -4311,7 +4359,27 @@
+@@ -4311,7 +4385,27 @@
              return false;
          }
          if (issue.status === "blocked") {
@@ -154,7 +190,7 @@
              if (readiness.unresolvedBlockerCount > 0) {
                  res.status(409).json({
                      error: "Issue follow-up blocked by unresolved blockers",
-@@ -8464,7 +8532,7 @@
+@@ -8464,7 +8558,7 @@
          const actor = getActorInfo(req);
          const serializationContext = await resolveWatchdogFollowUpSerializationContext(req, parent);
          const currentSerializedChild = serializationContext
@@ -163,7 +199,7 @@
              : null;
          const executionPolicy = applyActorMonitorScheduledBy(normalizeIssueExecutionPolicy(createBody.executionPolicy), actor.actorType);
          await assertCanManageIssueMonitor(access, req, parent.companyId, createBody.assigneeAgentId ?? null, Boolean(executionPolicy?.monitor));
-@@ -8658,7 +8726,7 @@
+@@ -8658,7 +8752,7 @@
          }
          const serializationContext = await resolveWatchdogFollowUpSerializationContext(req, sourceIssue);
          const existingSerializedChild = serializationContext
@@ -172,7 +208,7 @@
              : null;
          const serializedBlockedChildIds = new Set();
          if (serializationContext) {
-@@ -9102,9 +9170,22 @@
+@@ -9102,9 +9196,22 @@
          const updateReferenceSummaryBefore = titleOrDescriptionChanged
              ? await issueReferencesSvc.listIssueReferenceSummary(existing.id)
              : null;
@@ -197,7 +233,7 @@
              : false;
          if (resumeRequested === true &&
              isBlocked &&
-@@ -9245,9 +9326,12 @@
+@@ -9245,9 +9352,12 @@
          const descriptor = updateFields.unblockDescriptor ?? null;
          if (descriptor && typeof descriptor === "object") {
              const owner = descriptor.owner;
@@ -214,8 +250,8 @@
                  const target = await db
 
 ===== services/task-watchdog-scope.js =====
---- @paperclipai/server/dist/services/task-watchdog-scope.js.tur73.orig	2026-09-28 18:03:14
-+++ @paperclipai/server/dist/services/task-watchdog-scope.js	2026-09-28 18:03:14
+--- @paperclipai/server/dist/services/task-watchdog-scope.js.tur73.orig
++++ @paperclipai/server/dist/services/task-watchdog-scope.js
 @@ -16,6 +16,8 @@
      return {
          watchedIssueId: readString(taskWatchdog?.watchedIssueId) ?? readString(context?.watchedIssueId),
@@ -235,7 +271,7 @@
      };
  }
  export async function issueIsInTaskWatchdogSubtree(db, companyId, issueId, watchedIssueId) {
-@@ -122,4 +127,57 @@
+@@ -122,4 +127,75 @@
          detail: "Task-watchdog runs can only mutate the watched issue subtree.",
      };
  }
@@ -245,6 +281,24 @@
 +// name, the stop fingerprint when there is one, and the issue-id lists the
 +// classifier reports. Two different worlds cannot share a signature, so an
 +// outside edit still fails the guard even after this run has written once.
++// TUR-73 local fix (defect 5): the issues the classifier blames for a non-stopped
++// verdict. Returns null for verdicts with no attributable issue (already
++// reviewed, not applicable), which keeps those on the strict path.
++export function taskWatchdogRecoveryAttributableIssueIds(classification) {
++    if (!isPlainRecord(classification))
++        return null;
++    const state = readString(classification.state);
++    const key = state === "live"
++        ? "liveIssueIds"
++        : state === "pending_first_run"
++            ? "pendingIssueIds"
++            : null;
++    if (!key || !Array.isArray(classification[key]))
++        return null;
++    const ids = classification[key].filter((id) => typeof id === "string" && id.length > 0);
++    return ids.length > 0 ? ids : null;
++}
++
 +export function taskWatchdogObservedSignature(classification) {
 +    if (!classification || typeof classification !== "object" || Array.isArray(classification))
 +        return null;
