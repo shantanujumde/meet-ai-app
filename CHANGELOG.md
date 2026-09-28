@@ -11,6 +11,14 @@ Developer ID, and are not notarized.
 
 ## [Unreleased]
 
+### Added
+
+- A "Change…" button next to the meetings folder, in Settings and in the
+  onboarding folder step. Picking a new folder moves every existing meeting
+  into it (merging rather than overwriting if the folder already has
+  something in it); nothing is left behind at the old location. Refused
+  while a recording is in progress.
+
 ## [0.2.0] — 2026-09-28
 
 Recording now survives a device switch mid-call, and the transcription

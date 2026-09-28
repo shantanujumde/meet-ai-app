@@ -33,6 +33,7 @@ vi.mock("@/ipc/client", () => ({
   revealMeeting: vi.fn(),
   readMeeting: vi.fn(),
   saveNotes: vi.fn(),
+  changeMeetingsFolder: vi.fn(),
   engineEnvironment: vi.fn().mockResolvedValue({
     sidecar: null,
     whisperModel: null,
