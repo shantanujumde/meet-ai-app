@@ -12,7 +12,7 @@ shipped `dist/` JavaScript in place.
 ```sh
 node tools/paperclip-tur73/apply.mjs --check   # show what would change
 node tools/paperclip-tur73/apply.mjs           # apply (idempotent)
-node tools/paperclip-tur73/verify.mjs          # 30 checks against the patched install
+node tools/paperclip-tur73/verify.mjs          # 31 checks against the patched install
 node tools/paperclip-tur73/apply.mjs --revert  # restore the .tur73.orig backups
 
 tools/paperclip-tur73/restart.sh 0              # stop the server and start it again
