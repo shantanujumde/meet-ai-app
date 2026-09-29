@@ -12,7 +12,7 @@ shipped `dist/` JavaScript in place.
 ```sh
 node tools/paperclip-tur73/apply.mjs --check   # show what would change
 node tools/paperclip-tur73/apply.mjs           # apply (idempotent)
-node tools/paperclip-tur73/verify.mjs          # 24 checks against the patched install
+node tools/paperclip-tur73/verify.mjs          # 30 checks against the patched install
 node tools/paperclip-tur73/apply.mjs --revert  # restore the .tur73.orig backups
 
 tools/paperclip-tur73/restart.sh 0              # stop the server and start it again
@@ -88,6 +88,24 @@ The anchor is now restricted to children created by the watchdog agent itself.
 When the parent *is* the watchdog issue every child is a follow-up by
 construction, so that path keeps its existing behaviour.
 
+**That was not enough, and a live pass proved it.** The watchdog's own *review*
+issue is also a child of the watched issue and is also created by the watchdog
+agent, so it matched the author filter and became the anchor — TUR-140 was born
+blocked behind TUR-136, the very review issue that was creating it. A review
+issue is not a follow-up, so the anchor query now also excludes every
+`task_watchdog`-origin sibling. `origin_kind` is `NOT NULL` with default
+`'manual'`, so `notInArray` has no three-valued-logic trap here. The exclusion
+sits inside the author-filtered arm only: when the parent is the watchdog issue
+the filter list stays empty, which is correct.
+
+**The 201 also lied about what it had done.** Serialization writes its blocker
+edges *after* the row in the response body is composed, so a child that had just
+been made a blocker of its sibling came back with `blocks: []` and only a later
+GET showed the edge. A caller that trusted the 201 — as the TUR-72 run did —
+could not see what it had wired up. The row is now re-read after serialization,
+on the serialization path only, so ordinary child creation keeps its single
+read.
+
 ### 3. `unblockDescriptor.owner: "board"` is accepted from agents
 
 The published PATCH schema lists `board` as a valid unblock owner; the runtime
@@ -141,3 +159,20 @@ including the summary comment the watchdog mandate asks it to leave. A comment
 sets no status, no blocker and no assignee, so a stale review cannot make one
 dangerous. Comments now skip the freshness check. The subtree scope check still
 runs, so a watchdog still cannot comment outside the tree it watches.
+
+### 7. "Assign it and start it" is accepted as one PATCH
+
+`PATCH /api/issues/{id}` with `{assigneeAgentId, status: "todo"}` in one body
+returned `409 Issue follow-up requires an assigned agent`. The follow-up gate
+read `assigneeAgentId` from the pre-write row, so it could not see the
+assignment the same request was making. Splitting the call in two worked
+immediately, which is what made this look like a nuisance — but it is exactly
+the write shape a recovering watchdog wants, and under the old one-write cap it
+was fatal: the single write a run was allowed would be the one shape that always
+fails.
+
+The gate now reads `issue.assigneeAgentId ?? req.body.assigneeAgentId`. The
+stored value wins when it exists, so an already-assigned issue behaves exactly
+as it did before; this widens only the branch that was previously an
+unconditional 409. The order matters — the reverse would let any caller claim
+someone else's issue by naming themselves in the body.
