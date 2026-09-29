@@ -476,6 +476,25 @@ await checkAsync("no install declares the same export twice", async () => {
   }
 });
 
+// Twice now an edit has been reported as `anchor-missing` on an install that was
+// in fact fully patched, because a later edit rewrites the text the earlier one
+// inserted and the default already-applied test is "does `replace` still appear
+// verbatim". A checker that fails on a healthy install is worse than no checker:
+// restart.sh reads it, and a false "some edits did not apply" stops a good
+// restart. Assert the end state directly — on a patched install, --check must be
+// clean.
+await checkAsync("apply.mjs --check calls a fully patched install clean", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const applyPath = path.join(path.dirname(new URL(import.meta.url).pathname), "apply.mjs");
+  const { stdout } = await promisify(execFile)(process.execPath, [applyPath, "--check"]);
+  const offenders = stdout
+    .split("\n")
+    .filter((line) => /^\s{2}(anchor-|missing-file|not-written|duplicate-)/.test(line));
+  assert.deepEqual(offenders, [], `--check reported failures on a patched install:\n${stdout}`);
+  assert.match(stdout, /already-applied/);
+});
+
 let failures = 0;
 for (const [ok, name] of checks) {
   if (!ok) failures += 1;
