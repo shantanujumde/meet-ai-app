@@ -108,6 +108,39 @@ creates a real follow-up, read:
 - whether the watchdog's own review issue appears in that `blockedBy` — it must
   not (check 7).
 
+### Taking that reading without being awake for it
+
+`check78-scan.mjs` does it from stored board state, so nobody has to be watching
+when a follow-up finally appears:
+
+```sh
+node tools/paperclip-tur73/check78-scan.mjs        # exit 1 on a check-7 failure
+node tools/paperclip-tur73/check78-scan.mjs <iso>  # override the patch epoch
+```
+
+It finds every issue whose `originRunId` belongs to a run of a watchdog review
+issue — that is what "created by a watchdog run" means, and it is the only kind
+of run that reaches the serialization code — and reads check 7 off each one.
+
+Three things it refuses to do, each of them a false signal this issue already
+paid for once:
+
+- **Pre-patch follow-ups are not evidence.** Six exist (TUR-73, TUR-44, TUR-29,
+  TUR-41, TUR-34, TUR-72) and all read clean today. They are listed and skipped.
+- **A repaired issue is not a pass.** `blockedBy` is current state; check 7 is
+  about birth. If `issue.blockers_updated` appears in the activity log more than
+  ten seconds after creation, the verdict is INCONCLUSIVE, not PASS. TUR-72 —
+  the original orphan, born blocked and unblocked by hand — is the test case:
+  without this guard the scanner calls it a pass.
+- **Check 8 is never claimed.** It compares the 201 body against a later GET,
+  and only the creating run ever sees the 201. The scanner says so and points at
+  the review issue where that run should have recorded it.
+
+The TUR-127 watchdog's instructions now ask any pass that creates a follow-up to
+record both readings — and explicitly tell it not to create anything in order to
+produce one. Note that this watchdog's mandate is a re-ping comment, so it may
+never create a follow-up at all; checks 7 and 8 may wait a long time.
+
 The second pass on the TUR-157 rig claimed check 7 passed by pointing at an
 existing child. That reading is void: the child was created by an ordinary run,
 which never enters the serialization path.
