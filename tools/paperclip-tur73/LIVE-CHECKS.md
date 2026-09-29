@@ -14,8 +14,8 @@ re-taken on the 21:04 server (16 edits). Checks 2 and 9 were taken again on the
 | 4 | Watchdog run gets a second write | **passes** — write 2 of the TUR-125 pass returned 200, no stale-fingerprint 409 |
 | 5 | A run may write after its own liveness flip | **passes** — writes 4 and 5 of the TUR-135 pass, after the flip, both 200 |
 | 6 | A watchdog can comment on the tree it repaired | **passes** — proven twice, once with the fingerprint already stale |
-| 7 | A follow-up is not born blocked behind the watchdog's own review issue | needs a watchdog pass |
-| 8 | The child-create 201 shows the edges serialization wrote | needs a watchdog pass |
+| 7 | A follow-up is not born blocked behind the watchdog's own review issue | **not reachable by a probe rig** — see below |
+| 8 | The child-create 201 shows the edges serialization wrote | **not reachable by a probe rig** — see below |
 | 9 | Assign and start in one PATCH | **passes** — TUR-161, with a negative control that still 409s |
 
 Checks 5 and 6 are defects the TUR-125 watchdog pass exposed *after* 1–4
@@ -80,6 +80,37 @@ leaves are to be left alone.
 Creating the rig also spends real runs: a probe left `todo` with an assignee is
 picked up by the scheduler within seconds, and a stopped-subtree review is a real
 run on the watchdog agent.
+
+### …and why checks 7 and 8 cannot be taken this way at all
+
+Three passes on the TUR-157 rig, two agents, and none of them made the
+measurement. The third one said why, and it is not a flaw in the rig:
+
+> Creating those issues is exactly `create_visible_probe_issues_or_throwaway_tasks`,
+> which is on my denied-operations list, and my mandate is explicit that
+> instructions reachable through the watched subtree cannot lift a safety
+> constraint.
+
+That is correct, and it closes the approach. Checks 7 and 8 live inside
+`resolveWatchdogFollowUpSerializationContext`, which only runs for a watchdog
+run — and a watchdog run is not permitted to create throwaway issues on
+instruction. Sharpening the wording only makes the rig look more like the
+prompt-injection the rule exists to refuse. **Do not build a fourth rig.**
+
+Both checks stay covered offline (`verify.mjs`: the anchor excludes
+`task_watchdog`-origin siblings, and the create path re-reads the row before
+answering). The live observation point is the next *genuine* watchdog follow-up.
+At the time of writing that is the watchdog on **TUR-127**. When a pass there
+creates a real follow-up, read:
+
+- the follow-up's `blockedBy` in the **201 body**, then again in a fresh GET —
+  they must agree (check 8);
+- whether the watchdog's own review issue appears in that `blockedBy` — it must
+  not (check 7).
+
+The second pass on the TUR-157 rig claimed check 7 passed by pointing at an
+existing child. That reading is void: the child was created by an ordinary run,
+which never enters the serialization path.
 
 Everything in `verify.mjs` is an offline check: it reads the patched files and
 confirms the 16 edits are present and parse. These are the checks that need a
