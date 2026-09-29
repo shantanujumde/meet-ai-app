@@ -1,257 +1,5 @@
-===== routes/issues.js =====
---- @paperclipai/server/dist/routes/issues.js.tur73.orig
-+++ @paperclipai/server/dist/routes/issues.js
-@@ -27,7 +27,7 @@
- import { buildDocumentReviewContext, buildPlanReviewContext, } from "../services/plan-review-context.js";
- import { decideIssueReviewPathRecovery, ISSUE_REVIEW_PATH_LOST_WAKE_REASON, isReviewPathRecoveryIdempotencyConflict, REVIEW_PATH_RECOVERY_INSTRUCTION, } from "../services/recovery/review-path-recovery.js";
- import { hydrateSuccessfulRunHandoffLiveness } from "../services/successful-run-handoff-state.js";
--import { TASK_WATCHDOG_ORIGIN_KIND, resolveTaskWatchdogMutationScope, taskWatchdogScopeAllowsIssueMutation, } from "../services/task-watchdog-scope.js";
-+import { TASK_WATCHDOG_ORIGIN_KIND, resolveTaskWatchdogMutationScope, taskWatchdogScopeAllowsIssueMutation, repinTaskWatchdogSelfWriteSignature, taskWatchdogObservedSignature, taskWatchdogRecoveryAttributableIssueIds, } from "../services/task-watchdog-scope.js";
- import { logger } from "../middleware/logger.js";
- import { badRequest, conflict, forbidden, HttpError, notFound, unauthorized, unprocessable, } from "../errors.js";
- import { privateJsonEtag } from "../middleware/private-json-etag.js";
-@@ -3347,7 +3347,8 @@
-                 });
-                 return false;
-             }
--            return assertFreshTaskWatchdogSourceMutation(res, watchdogScope, issue);
-+            // TUR-73 local fix (defect 6): comments are records, not state changes.
-+            return true;
-         }
-         const boundaryDecision = await decideIssueAccess(req, issue, "issue:comment");
-         if (!boundaryDecision.allowed) {
-@@ -3496,13 +3497,76 @@
-             });
-         }
-         return true;
-+    }
-+    // TUR-73 local fix (defect 1): arm a one-shot re-pin. When the response this guard
-+    // cleared finishes 2xx, recompute the subtree classification and store its
-+    // signature on the run row, so the run's next write is compared against the
-+    // state the run itself just produced instead of the now-stale original pin.
-+    const TASK_WATCHDOG_REPIN_ARMED = Symbol.for("paperclip.tur73.taskWatchdogRepinArmed");
-+    function armTaskWatchdogSelfWriteRepin(res, scope) {
-+        if (!res || typeof res.on !== "function" || res[TASK_WATCHDOG_REPIN_ARMED])
-+            return;
-+        res[TASK_WATCHDOG_REPIN_ARMED] = true;
-+        res.on("finish", () => {
-+            if (res.statusCode < 200 || res.statusCode >= 300)
-+                return;
-+            void (async () => {
-+                try {
-+                    const after = await taskWatchdogsSvc.revalidateMutationScope(scope);
-+                    const signature = taskWatchdogObservedSignature(after.classification);
-+                    if (signature)
-+                        await repinTaskWatchdogSelfWriteSignature(db, scope, signature);
-+                }
-+                catch {
-+                    // Leaving the old pin in place is the pre-patch behaviour.
-+                }
-+            })();
-+        });
-     }
-+    // TUR-73 local fix (defect 5): which issues has this run already written to? The
-+    // activity log records the run id on every issue mutation, so this is exact
-+    // provenance rather than a guess, and it does not depend on a re-pin having
-+    // won a race against the write's own downstream effects.
-+    async function taskWatchdogRunWrittenIssueIds(scope) {
-+        if (!scope?.runId)
-+            return new Set();
-+        const rows = await db
-+            .select({ entityId: activityLog.entityId })
-+            .from(activityLog)
-+            .where(and(eq(activityLog.runId, scope.runId), eq(activityLog.entityType, "issue")));
-+        return new Set(rows.map((row) => row.entityId).filter((id) => typeof id === "string"));
-+    }
-+    async function taskWatchdogMutationFreshness(res, scope) {
-+        const revalidated = await taskWatchdogsSvc.revalidateMutationScope(scope);
-+        if (revalidated.allowed) {
-+            armTaskWatchdogSelfWriteRepin(res, scope);
-+            return revalidated;
-+        }
-+        const observed = taskWatchdogObservedSignature(revalidated.classification);
-+        if (observed && scope.selfWriteSignature && observed === scope.selfWriteSignature) {
-+            armTaskWatchdogSelfWriteRepin(res, scope);
-+            return { ...revalidated, allowed: true, selfWrite: true };
-+        }
-+        // TUR-73 local fix (defect 5): the subtree is no longer stopped. Let the run
-+        // finish the writes that go with the recovery it just performed — but
-+        // only when every issue the classifier credits for that recovery is one
-+        // this run wrote to. A path someone else revived still closes the guard.
-+        const attributable = taskWatchdogRecoveryAttributableIssueIds(revalidated.classification);
-+        if (attributable) {
-+            const written = await taskWatchdogRunWrittenIssueIds(scope);
-+            if (written.size > 0 && attributable.every((issueId) => written.has(issueId))) {
-+                armTaskWatchdogSelfWriteRepin(res, scope);
-+                return { ...revalidated, allowed: true, selfWrite: true, selfRecovered: true };
-+            }
-+        }
-+        return revalidated;
-+    }
-     async function assertFreshTaskWatchdogSourceMutation(res, scope, issue) {
-         if (scope.kind !== "watchdog")
-             return true;
-         if (scope.watchdogIssueId && issue.id === scope.watchdogIssueId)
-             return true;
--        const revalidated = await taskWatchdogsSvc.revalidateMutationScope(scope);
-+        const revalidated = await taskWatchdogMutationFreshness(res, scope);
-         if (revalidated.allowed)
-             return true;
-         res.status(409).json({
-@@ -3632,7 +3696,7 @@
-                     message: scopeResult.detail,
-                 });
-             }
--            const revalidated = await taskWatchdogsSvc.revalidateMutationScope(watchdogScope);
-+            const revalidated = await taskWatchdogMutationFreshness(res, watchdogScope); // TUR-73 local fix
-             if (!revalidated.allowed) {
-                 return denyIssueThreadInteractionResolution(res, {
-                     status: 403,
-@@ -3757,7 +3821,7 @@
-                             message: "Suggested-task creation is outside the current watchdog scope",
-                         });
-                     }
--                    const revalidated = await taskWatchdogsSvc.revalidateMutationScope(watchdogScope);
-+                    const revalidated = await taskWatchdogMutationFreshness(res, watchdogScope); // TUR-73 local fix
-                     if (!revalidated.allowed) {
-                         return denyIssueThreadInteractionResolution(res, {
-                             status: 403,
-@@ -3914,9 +3978,12 @@
-     }
-     async function resolveWatchdogFollowUpSerializationContext(req, parent) {
-         if (parent.originKind === TASK_WATCHDOG_ORIGIN_KIND) {
-+            // Every child of a watchdog issue is a follow-up by construction, so
-+            // no author filter is needed to identify the serialization anchor.
-             return {
-                 enabled: true,
-                 watchdogParentIssueId: parent.id,
-+                followUpAuthorAgentId: null,
-             };
-         }
-         if (req.actor.type !== "agent")
-@@ -3927,6 +3994,9 @@
-         return {
-             enabled: true,
-             watchdogParentIssueId: scope.watchdogIssueId,
-+            // TUR-73 local fix (defect 2): under a watched issue the siblings are ordinary
-+            // work, so the anchor must be one of this watchdog's own follow-ups.
-+            followUpAuthorAgentId: typeof req.actor.agentId === "string" ? req.actor.agentId : null,
-         };
-     }
-     function mergeIssueBlockerIds(existing, blockerIssueId) {
-@@ -3937,7 +4007,11 @@
-             ? [...new Set([...current, blockerIssueId])]
-             : [...new Set(current)];
-     }
--    async function findCurrentSerializedWatchdogChild(parent) {
-+    async function findCurrentSerializedWatchdogChild(parent, followUpAuthorAgentId = null) {
-+        // TUR-73 local fix (defect 2): only chain behind this watchdog's own follow-ups.
-+        const authorFilter = followUpAuthorAgentId
-+            ? [eq(issueRows.createdByAgentId, followUpAuthorAgentId)]
-+            : [];
-         const children = await db
-             .select({
-             id: issueRows.id,
-@@ -3949,7 +4023,7 @@
-             "in_progress",
-             "in_review",
-             "blocked",
--        ]), isNull(issueRows.hiddenAt)))
-+        ]), isNull(issueRows.hiddenAt), ...authorFilter))
-             .orderBy(asc(issueRows.issueNumber), asc(issueRows.createdAt), asc(issueRows.id));
-         return children[0] ?? null;
-     }
-@@ -4311,7 +4385,27 @@
-             return false;
-         }
-         if (issue.status === "blocked") {
--            const readiness = await svc.getDependencyReadiness(issue.id);
-+            // TUR-73 local fix (defect 4, part 2): when the same request rewrites the
-+            // blocker set, judge readiness against the set being requested.
-+            // Absent that field this is the stored set, exactly as before.
-+            const requestedBlockerIds = Array.isArray(req.body?.blockedByIssueIds)
-+                ? [...new Set(req.body.blockedByIssueIds)]
-+                : null;
-+            const readiness = requestedBlockerIds
-+                ? await (async () => {
-+                    if (requestedBlockerIds.length === 0) {
-+                        return { unresolvedBlockerCount: 0, unresolvedBlockerIssueIds: [] };
-+                    }
-+                    const open = await db
-+                        .select({ id: issueRows.id })
-+                        .from(issueRows)
-+                        .where(and(eq(issueRows.companyId, issue.companyId), inArray(issueRows.id, requestedBlockerIds), notInArray(issueRows.status, ["done", "cancelled"])));
-+                    return {
-+                        unresolvedBlockerCount: open.length,
-+                        unresolvedBlockerIssueIds: open.map((row) => row.id),
-+                    };
-+                })()
-+                : await svc.getDependencyReadiness(issue.id);
-             if (readiness.unresolvedBlockerCount > 0) {
-                 res.status(409).json({
-                     error: "Issue follow-up blocked by unresolved blockers",
-@@ -8464,7 +8558,7 @@
-         const actor = getActorInfo(req);
-         const serializationContext = await resolveWatchdogFollowUpSerializationContext(req, parent);
-         const currentSerializedChild = serializationContext
--            ? await findCurrentSerializedWatchdogChild(parent)
-+            ? await findCurrentSerializedWatchdogChild(parent, serializationContext.followUpAuthorAgentId ?? null)
-             : null;
-         const executionPolicy = applyActorMonitorScheduledBy(normalizeIssueExecutionPolicy(createBody.executionPolicy), actor.actorType);
-         await assertCanManageIssueMonitor(access, req, parent.companyId, createBody.assigneeAgentId ?? null, Boolean(executionPolicy?.monitor));
-@@ -8658,7 +8752,7 @@
-         }
-         const serializationContext = await resolveWatchdogFollowUpSerializationContext(req, sourceIssue);
-         const existingSerializedChild = serializationContext
--            ? await findCurrentSerializedWatchdogChild(sourceIssue)
-+            ? await findCurrentSerializedWatchdogChild(sourceIssue, serializationContext.followUpAuthorAgentId ?? null)
-             : null;
-         const serializedBlockedChildIds = new Set();
-         if (serializationContext) {
-@@ -9102,9 +9196,22 @@
-         const updateReferenceSummaryBefore = titleOrDescriptionChanged
-             ? await issueReferencesSvc.listIssueReferenceSummary(existing.id)
-             : null;
-+        // TUR-73 local fix (defect 4): a request that also rewrites blockedByIssueIds is
-+        // asking about the blockers it is setting, not the ones it is clearing.
-+        const requestedBlockerIdsForMoveToTodo = Array.isArray(req.body.blockedByIssueIds)
-+            ? [...new Set(req.body.blockedByIssueIds)]
-+            : null;
-         const hasUnresolvedFirstClassBlockers = isBlocked && effectiveMoveToTodoRequested
--            ? (await svc.getDependencyReadiness(existing.id))
--                .unresolvedBlockerCount > 0
-+            ? requestedBlockerIdsForMoveToTodo
-+                ? requestedBlockerIdsForMoveToTodo.length > 0 &&
-+                    (await db
-+                        .select({ id: issueRows.id })
-+                        .from(issueRows)
-+                        .where(and(eq(issueRows.companyId, existing.companyId), inArray(issueRows.id, requestedBlockerIdsForMoveToTodo), notInArray(issueRows.status, ["done", "cancelled"])))
-+                        .limit(1)
-+                        .then((rows) => rows.length > 0))
-+                : (await svc.getDependencyReadiness(existing.id))
-+                    .unresolvedBlockerCount > 0
-             : false;
-         if (resumeRequested === true &&
-             isBlocked &&
-@@ -9245,9 +9352,12 @@
-         const descriptor = updateFields.unblockDescriptor ?? null;
-         if (descriptor && typeof descriptor === "object") {
-             const owner = descriptor.owner;
-+            // TUR-73 local fix (defect 3): "board" is a published owner value and is the
-+            // only honest disposition for work that genuinely needs a human.
-             if (req.actor.type === "agent" &&
--                (owner === "board" || "userId" in owner)) {
--                throw forbidden("Agents may only name themselves as an unblock owner");
-+                owner !== "board" &&
-+                "userId" in owner) {
-+                throw forbidden("Agents may not name another user as an unblock owner");
-             }
-             if (owner !== "board" && "agentId" in owner) {
-                 const target = await db
-
-===== services/task-watchdog-scope.js =====
---- @paperclipai/server/dist/services/task-watchdog-scope.js.tur73.orig
-+++ @paperclipai/server/dist/services/task-watchdog-scope.js
+--- a/dist/services/task-watchdog-scope.js
++++ b/dist/services/task-watchdog-scope.js
 @@ -16,6 +16,8 @@
      return {
          watchedIssueId: readString(taskWatchdog?.watchedIssueId) ?? readString(context?.watchedIssueId),
@@ -348,4 +96,298 @@
 +}
  //# sourceMappingURL=task-watchdog-scope.js.map
 \ No newline at end of file
-
+--- a/dist/routes/issues.js
++++ b/dist/routes/issues.js
+@@ -27,7 +27,7 @@
+ import { buildDocumentReviewContext, buildPlanReviewContext, } from "../services/plan-review-context.js";
+ import { decideIssueReviewPathRecovery, ISSUE_REVIEW_PATH_LOST_WAKE_REASON, isReviewPathRecoveryIdempotencyConflict, REVIEW_PATH_RECOVERY_INSTRUCTION, } from "../services/recovery/review-path-recovery.js";
+ import { hydrateSuccessfulRunHandoffLiveness } from "../services/successful-run-handoff-state.js";
+-import { TASK_WATCHDOG_ORIGIN_KIND, resolveTaskWatchdogMutationScope, taskWatchdogScopeAllowsIssueMutation, } from "../services/task-watchdog-scope.js";
++import { TASK_WATCHDOG_ORIGIN_KIND, resolveTaskWatchdogMutationScope, taskWatchdogScopeAllowsIssueMutation, repinTaskWatchdogSelfWriteSignature, taskWatchdogObservedSignature, taskWatchdogRecoveryAttributableIssueIds, } from "../services/task-watchdog-scope.js";
+ import { logger } from "../middleware/logger.js";
+ import { badRequest, conflict, forbidden, HttpError, notFound, unauthorized, unprocessable, } from "../errors.js";
+ import { privateJsonEtag } from "../middleware/private-json-etag.js";
+@@ -3347,7 +3347,8 @@
+                 });
+                 return false;
+             }
+-            return assertFreshTaskWatchdogSourceMutation(res, watchdogScope, issue);
++            // TUR-73 local fix (defect 6): comments are records, not state changes.
++            return true;
+         }
+         const boundaryDecision = await decideIssueAccess(req, issue, "issue:comment");
+         if (!boundaryDecision.allowed) {
+@@ -3496,13 +3497,76 @@
+             });
+         }
+         return true;
++    }
++    // TUR-73 local fix (defect 1): arm a one-shot re-pin. When the response this guard
++    // cleared finishes 2xx, recompute the subtree classification and store its
++    // signature on the run row, so the run's next write is compared against the
++    // state the run itself just produced instead of the now-stale original pin.
++    const TASK_WATCHDOG_REPIN_ARMED = Symbol.for("paperclip.tur73.taskWatchdogRepinArmed");
++    function armTaskWatchdogSelfWriteRepin(res, scope) {
++        if (!res || typeof res.on !== "function" || res[TASK_WATCHDOG_REPIN_ARMED])
++            return;
++        res[TASK_WATCHDOG_REPIN_ARMED] = true;
++        res.on("finish", () => {
++            if (res.statusCode < 200 || res.statusCode >= 300)
++                return;
++            void (async () => {
++                try {
++                    const after = await taskWatchdogsSvc.revalidateMutationScope(scope);
++                    const signature = taskWatchdogObservedSignature(after.classification);
++                    if (signature)
++                        await repinTaskWatchdogSelfWriteSignature(db, scope, signature);
++                }
++                catch {
++                    // Leaving the old pin in place is the pre-patch behaviour.
++                }
++            })();
++        });
++    }
++    // TUR-73 local fix (defect 5): which issues has this run already written to? The
++    // activity log records the run id on every issue mutation, so this is exact
++    // provenance rather than a guess, and it does not depend on a re-pin having
++    // won a race against the write's own downstream effects.
++    async function taskWatchdogRunWrittenIssueIds(scope) {
++        if (!scope?.runId)
++            return new Set();
++        const rows = await db
++            .select({ entityId: activityLog.entityId })
++            .from(activityLog)
++            .where(and(eq(activityLog.runId, scope.runId), eq(activityLog.entityType, "issue")));
++        return new Set(rows.map((row) => row.entityId).filter((id) => typeof id === "string"));
++    }
++    async function taskWatchdogMutationFreshness(res, scope) {
++        const revalidated = await taskWatchdogsSvc.revalidateMutationScope(scope);
++        if (revalidated.allowed) {
++            armTaskWatchdogSelfWriteRepin(res, scope);
++            return revalidated;
++        }
++        const observed = taskWatchdogObservedSignature(revalidated.classification);
++        if (observed && scope.selfWriteSignature && observed === scope.selfWriteSignature) {
++            armTaskWatchdogSelfWriteRepin(res, scope);
++            return { ...revalidated, allowed: true, selfWrite: true };
++        }
++        // TUR-73 local fix (defect 5): the subtree is no longer stopped. Let the run
++        // finish the writes that go with the recovery it just performed — but
++        // only when every issue the classifier credits for that recovery is one
++        // this run wrote to. A path someone else revived still closes the guard.
++        const attributable = taskWatchdogRecoveryAttributableIssueIds(revalidated.classification);
++        if (attributable) {
++            const written = await taskWatchdogRunWrittenIssueIds(scope);
++            if (written.size > 0 && attributable.every((issueId) => written.has(issueId))) {
++                armTaskWatchdogSelfWriteRepin(res, scope);
++                return { ...revalidated, allowed: true, selfWrite: true, selfRecovered: true };
++            }
++        }
++        return revalidated;
+     }
+     async function assertFreshTaskWatchdogSourceMutation(res, scope, issue) {
+         if (scope.kind !== "watchdog")
+             return true;
+         if (scope.watchdogIssueId && issue.id === scope.watchdogIssueId)
+             return true;
+-        const revalidated = await taskWatchdogsSvc.revalidateMutationScope(scope);
++        const revalidated = await taskWatchdogMutationFreshness(res, scope);
+         if (revalidated.allowed)
+             return true;
+         res.status(409).json({
+@@ -3632,7 +3696,7 @@
+                     message: scopeResult.detail,
+                 });
+             }
+-            const revalidated = await taskWatchdogsSvc.revalidateMutationScope(watchdogScope);
++            const revalidated = await taskWatchdogMutationFreshness(res, watchdogScope); // TUR-73 local fix
+             if (!revalidated.allowed) {
+                 return denyIssueThreadInteractionResolution(res, {
+                     status: 403,
+@@ -3757,7 +3821,7 @@
+                             message: "Suggested-task creation is outside the current watchdog scope",
+                         });
+                     }
+-                    const revalidated = await taskWatchdogsSvc.revalidateMutationScope(watchdogScope);
++                    const revalidated = await taskWatchdogMutationFreshness(res, watchdogScope); // TUR-73 local fix
+                     if (!revalidated.allowed) {
+                         return denyIssueThreadInteractionResolution(res, {
+                             status: 403,
+@@ -3914,9 +3978,12 @@
+     }
+     async function resolveWatchdogFollowUpSerializationContext(req, parent) {
+         if (parent.originKind === TASK_WATCHDOG_ORIGIN_KIND) {
++            // Every child of a watchdog issue is a follow-up by construction, so
++            // no author filter is needed to identify the serialization anchor.
+             return {
+                 enabled: true,
+                 watchdogParentIssueId: parent.id,
++                followUpAuthorAgentId: null,
+             };
+         }
+         if (req.actor.type !== "agent")
+@@ -3927,6 +3994,9 @@
+         return {
+             enabled: true,
+             watchdogParentIssueId: scope.watchdogIssueId,
++            // TUR-73 local fix (defect 2): under a watched issue the siblings are ordinary
++            // work, so the anchor must be one of this watchdog's own follow-ups.
++            followUpAuthorAgentId: typeof req.actor.agentId === "string" ? req.actor.agentId : null,
+         };
+     }
+     function mergeIssueBlockerIds(existing, blockerIssueId) {
+@@ -3937,7 +4007,16 @@
+             ? [...new Set([...current, blockerIssueId])]
+             : [...new Set(current)];
+     }
+-    async function findCurrentSerializedWatchdogChild(parent) {
++    async function findCurrentSerializedWatchdogChild(parent, followUpAuthorAgentId = null) {
++        // TUR-73 local fix (defect 2): only chain behind this watchdog's own follow-ups.
++        const authorFilter = followUpAuthorAgentId
++            ? [
++                eq(issueRows.createdByAgentId, followUpAuthorAgentId),
++                // TUR-73 local fix (defect 2, part 2): a watchdog review issue is a
++                // same-agent child of the watched issue, but it is not a follow-up.
++                notInArray(issueRows.originKind, [TASK_WATCHDOG_ORIGIN_KIND]),
++            ]
++            : [];
+         const children = await db
+             .select({
+             id: issueRows.id,
+@@ -3949,7 +4028,7 @@
+             "in_progress",
+             "in_review",
+             "blocked",
+-        ]), isNull(issueRows.hiddenAt)))
++        ]), isNull(issueRows.hiddenAt), ...authorFilter))
+             .orderBy(asc(issueRows.issueNumber), asc(issueRows.createdAt), asc(issueRows.id));
+         return children[0] ?? null;
+     }
+@@ -4311,7 +4390,27 @@
+             return false;
+         }
+         if (issue.status === "blocked") {
+-            const readiness = await svc.getDependencyReadiness(issue.id);
++            // TUR-73 local fix (defect 4, part 2): when the same request rewrites the
++            // blocker set, judge readiness against the set being requested.
++            // Absent that field this is the stored set, exactly as before.
++            const requestedBlockerIds = Array.isArray(req.body?.blockedByIssueIds)
++                ? [...new Set(req.body.blockedByIssueIds)]
++                : null;
++            const readiness = requestedBlockerIds
++                ? await (async () => {
++                    if (requestedBlockerIds.length === 0) {
++                        return { unresolvedBlockerCount: 0, unresolvedBlockerIssueIds: [] };
++                    }
++                    const open = await db
++                        .select({ id: issueRows.id })
++                        .from(issueRows)
++                        .where(and(eq(issueRows.companyId, issue.companyId), inArray(issueRows.id, requestedBlockerIds), notInArray(issueRows.status, ["done", "cancelled"])));
++                    return {
++                        unresolvedBlockerCount: open.length,
++                        unresolvedBlockerIssueIds: open.map((row) => row.id),
++                    };
++                })()
++                : await svc.getDependencyReadiness(issue.id);
+             if (readiness.unresolvedBlockerCount > 0) {
+                 res.status(409).json({
+                     error: "Issue follow-up blocked by unresolved blockers",
+@@ -4330,16 +4429,23 @@
+             res.status(403).json({ error: "Agent authentication required" });
+             return false;
+         }
+-        if (!issue.assigneeAgentId) {
++        // TUR-73 local fix (defect 6): judge the gate against the assignee this request
++        // is setting when the row has none yet. An already-assigned issue is
++        // unaffected — effectiveAssigneeAgentId is then the stored value.
++        const requestedAssigneeAgentId = typeof req.body?.assigneeAgentId === "string"
++            ? req.body.assigneeAgentId
++            : null;
++        const effectiveAssigneeAgentId = issue.assigneeAgentId ?? requestedAssigneeAgentId;
++        if (!effectiveAssigneeAgentId) {
+             res.status(409).json({
+                 error: "Issue follow-up requires an assigned agent",
+                 details: { issueId: issue.id, actorAgentId },
+             });
+             return false;
+         }
+-        if (issue.assigneeAgentId === actorAgentId)
++        if (effectiveAssigneeAgentId === actorAgentId)
+             return true;
+-        if (await hasActiveCheckoutManagementOverride(actorAgentId, issue.companyId, issue.assigneeAgentId)) {
++        if (await hasActiveCheckoutManagementOverride(actorAgentId, issue.companyId, effectiveAssigneeAgentId)) {
+             return true;
+         }
+         const boundaryDecision = await decideIssueAccess(req, issue, "issue:mutate");
+@@ -8464,7 +8570,7 @@
+         const actor = getActorInfo(req);
+         const serializationContext = await resolveWatchdogFollowUpSerializationContext(req, parent);
+         const currentSerializedChild = serializationContext
+-            ? await findCurrentSerializedWatchdogChild(parent)
++            ? await findCurrentSerializedWatchdogChild(parent, serializationContext.followUpAuthorAgentId ?? null)
+             : null;
+         const executionPolicy = applyActorMonitorScheduledBy(normalizeIssueExecutionPolicy(createBody.executionPolicy), actor.actorType);
+         await assertCanManageIssueMonitor(access, req, parent.companyId, createBody.assigneeAgentId ?? null, Boolean(executionPolicy?.monitor));
+@@ -8586,7 +8692,12 @@
+             currentChildIssueId: currentSerializedChild?.id ?? issue.id,
+         });
+         await queueTaskWatchdogEvaluation(issue, actor.runId);
+-        res.status(201).json(issue);
++        // TUR-73 local fix (defect 2, part 3): report the blocker edges serialization
++        // just wrote, instead of the pre-serialization snapshot.
++        const createdIssueForResponse = serializationContext
++            ? ((await svc.getById(issue.id)) ?? issue)
++            : issue;
++        res.status(201).json(createdIssueForResponse);
+     });
+     router.get("/issues/:id/accepted-plan-decompositions", async (req, res) => {
+         const sourceIssueId = req.params.id;
+@@ -8658,7 +8769,7 @@
+         }
+         const serializationContext = await resolveWatchdogFollowUpSerializationContext(req, sourceIssue);
+         const existingSerializedChild = serializationContext
+-            ? await findCurrentSerializedWatchdogChild(sourceIssue)
++            ? await findCurrentSerializedWatchdogChild(sourceIssue, serializationContext.followUpAuthorAgentId ?? null)
+             : null;
+         const serializedBlockedChildIds = new Set();
+         if (serializationContext) {
+@@ -9102,9 +9213,22 @@
+         const updateReferenceSummaryBefore = titleOrDescriptionChanged
+             ? await issueReferencesSvc.listIssueReferenceSummary(existing.id)
+             : null;
++        // TUR-73 local fix (defect 4): a request that also rewrites blockedByIssueIds is
++        // asking about the blockers it is setting, not the ones it is clearing.
++        const requestedBlockerIdsForMoveToTodo = Array.isArray(req.body.blockedByIssueIds)
++            ? [...new Set(req.body.blockedByIssueIds)]
++            : null;
+         const hasUnresolvedFirstClassBlockers = isBlocked && effectiveMoveToTodoRequested
+-            ? (await svc.getDependencyReadiness(existing.id))
+-                .unresolvedBlockerCount > 0
++            ? requestedBlockerIdsForMoveToTodo
++                ? requestedBlockerIdsForMoveToTodo.length > 0 &&
++                    (await db
++                        .select({ id: issueRows.id })
++                        .from(issueRows)
++                        .where(and(eq(issueRows.companyId, existing.companyId), inArray(issueRows.id, requestedBlockerIdsForMoveToTodo), notInArray(issueRows.status, ["done", "cancelled"])))
++                        .limit(1)
++                        .then((rows) => rows.length > 0))
++                : (await svc.getDependencyReadiness(existing.id))
++                    .unresolvedBlockerCount > 0
+             : false;
+         if (resumeRequested === true &&
+             isBlocked &&
+@@ -9245,9 +9369,12 @@
+         const descriptor = updateFields.unblockDescriptor ?? null;
+         if (descriptor && typeof descriptor === "object") {
+             const owner = descriptor.owner;
++            // TUR-73 local fix (defect 3): "board" is a published owner value and is the
++            // only honest disposition for work that genuinely needs a human.
+             if (req.actor.type === "agent" &&
+-                (owner === "board" || "userId" in owner)) {
+-                throw forbidden("Agents may only name themselves as an unblock owner");
++                owner !== "board" &&
++                "userId" in owner) {
++                throw forbidden("Agents may not name another user as an unblock owner");
+             }
+             if (owner !== "board" && "agentId" in owner) {
+                 const target = await db

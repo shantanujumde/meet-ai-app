@@ -67,8 +67,16 @@ The bug that wasted a pass on 28 Sep: the restart never fired, so the process
 was still the one started on 27 Sep and every "fix" was inert.
 
 ```sh
-ps -axo pid=,lstart=,command= | grep 'paperclipai onboard' | grep -v grep
+ps -axo pid=,lstart=,command= | grep -E 'paperclipai (onboard|run)' | grep -v grep
 ```
+
+**Match both spellings.** The server gets started two ways — `bin/paperclip
+onboard` and `paperclipai run` — and on 29 Sep it was running as `run`.
+`restart.sh` only knew `onboard`, so it would have killed nothing, started a
+second instance that lost the port race, and still logged `health OK`, because
+the *old* server was the one answering. A 200 from `/api/health` proves a
+server is up, not that it is a new one. `restart.sh` now compares the server
+pids before and after and fails loudly if a pre-restart pid survived.
 
 The start time must be *after* the patch was applied. `apply.mjs --check`
 reporting `already-applied` says nothing about the running process — Node
@@ -218,6 +226,73 @@ curl -s -w '\n%{http_code}\n' -X POST "${AUTH[@]}" \
 
 Before: 409 once the subtree was live. After: accepted. A comment outside the
 watched subtree must still be refused — the scope check is untouched.
+
+## 7. A new child is not born blocked behind the watchdog's own review issue
+
+Check 3 passed on the TUR-125 rig by luck: the only sibling there was
+`backlog`, and `backlog` siblings were never anchor candidates. On the TUR-135
+rig the sibling that got picked was TUR-136 — the watchdog's *own review issue*,
+which is a child of the watched issue and is created by the watchdog agent, so
+the author filter from fix 2 matched it. TUR-140 came back blocked behind the
+issue that was creating it.
+
+Needs a real watchdog run; no ordinary API call reaches the serialization path.
+The rig needs a watched issue whose children include the watchdog review issue
+in `in_progress` or `in_review` — which is automatic, since the review issue is
+mid-run at the moment it creates the follow-up.
+
+```sh
+# from inside a watchdog pass, under the watched issue
+curl -s "${AUTH[@]}" -X POST -d '{"title":"probe follow-up"}' \
+  "$B/api/issues/$WATCHED_ISSUE_ID/children"
+```
+
+Before: `status: "blocked"`, `blockedBy: [<the watchdog review issue>]`.
+After: `status` as requested, `blockedBy: []`.
+
+Serialization behind a genuine earlier follow-up must still happen — create two
+follow-ups in one pass and the second should chain behind the first. A rig where
+that stops working means the exclusion was applied too widely.
+
+## 8. The child-create 201 shows the blocker edges it just wrote
+
+Independent of check 7, and it is what made the earlier readings so slippery:
+the 201 body was composed before serialization wired its edges, so it reported
+`blocks: []` on a child that had just been made a blocker of its sibling. The
+edge only appeared on a later GET.
+
+```sh
+CHILD=$(curl -s "${AUTH[@]}" -X POST -d '{"title":"probe"}' \
+  "$B/api/issues/$WATCHED_ISSUE_ID/children")
+echo "$CHILD" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["id"], d.get("blocks"), d.get("blockedBy"))'
+# then re-read and compare — the two must now agree
+curl -s "${AUTH[@]}" "$B/api/issues/$(echo "$CHILD" | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')"
+```
+
+Before: the 201 and the follow-up GET disagreed. After: identical.
+
+## 9. Assign and start in one PATCH
+
+Reachable from an ordinary run — no watchdog needed. It must be run against an
+issue that is currently **unassigned**, because that is the branch that was an
+unconditional 409.
+
+```sh
+curl -s -w '\n%{http_code}\n' -X PATCH "${AUTH[@]}" \
+  -d "{\"assigneeAgentId\":\"$PAPERCLIP_AGENT_ID\",\"status\":\"todo\"}" \
+  "$B/api/issues/$PROBE_ISSUE_ID"
+```
+
+Before: `409 Issue follow-up requires an assigned agent`. After: 200.
+
+Also check the guard did not open too far: PATCHing an issue **already assigned
+to another agent**, naming yourself in the body, must still be refused with
+`Agent cannot request follow-up for another agent's issue`. The stored assignee
+wins when it exists; if that check starts passing, the `??` order was inverted.
+
+Same hazard as check 2 — an issue left `todo` with an assignee is exactly what
+the scheduler picks up, and once it holds the checkout you cannot get it back.
+Park the probe to `backlog`/unassigned immediately afterwards.
 
 ## Known limits of the fix
 

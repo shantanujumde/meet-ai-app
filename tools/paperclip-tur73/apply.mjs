@@ -496,6 +496,104 @@ export function taskWatchdogObservedSignature(classification) {`,
                 res.status(409).json({
                     error: "Issue follow-up blocked by unresolved blockers",`,
     },
+
+    // ------------------------------------------------------- defect 2, part 2
+    // The author filter above was not enough. A watchdog's own *review* issue is
+    // also a child of the watched issue and is also created by the watchdog
+    // agent, so it matched the filter and became the anchor — and a follow-up was
+    // born blocked behind the very review issue that was creating it. Observed
+    // live: TUR-140 born blocked behind TUR-136. A review issue is not a
+    // follow-up. Exclude every task_watchdog-origin sibling.
+    //
+    // `origin_kind` is NOT NULL with default 'manual' (@paperclipai/db
+    // schema/issues.js), so notInArray has no three-valued-logic trap here.
+    // This only narrows the author-filtered branch: when the parent *is* the
+    // watchdog issue the filter list is empty and behaviour is unchanged,
+    // which is correct — there every child really is a follow-up.
+    {
+      file: "dist/routes/issues.js",
+      find: `        const authorFilter = followUpAuthorAgentId
+            ? [eq(issueRows.createdByAgentId, followUpAuthorAgentId)]
+            : [];`,
+      replace: `        const authorFilter = followUpAuthorAgentId
+            ? [
+                eq(issueRows.createdByAgentId, followUpAuthorAgentId),
+                // ${MARKER} (defect 2, part 2): a watchdog review issue is a
+                // same-agent child of the watched issue, but it is not a follow-up.
+                notInArray(issueRows.originKind, [TASK_WATCHDOG_ORIGIN_KIND]),
+            ]
+            : [];`,
+    },
+
+    // ------------------------------------------------------- defect 2, part 3
+    // Serialization wires its blocker edges *after* the row in the 201 body was
+    // composed, so the response showed `blocks: []` on a child that had just been
+    // made a blocker of its sibling. A caller that trusts the 201 — as the TUR-72
+    // run did — cannot see the edge it just created, and only a later GET reveals
+    // it. Re-read the row before answering, but only on the serialization path so
+    // ordinary child creation keeps its single write.
+    {
+      file: "dist/routes/issues.js",
+      find: `            currentChildIssueId: currentSerializedChild?.id ?? issue.id,
+        });
+        await queueTaskWatchdogEvaluation(issue, actor.runId);
+        res.status(201).json(issue);`,
+      replace: `            currentChildIssueId: currentSerializedChild?.id ?? issue.id,
+        });
+        await queueTaskWatchdogEvaluation(issue, actor.runId);
+        // ${MARKER} (defect 2, part 3): report the blocker edges serialization
+        // just wrote, instead of the pre-serialization snapshot.
+        const createdIssueForResponse = serializationContext
+            ? ((await svc.getById(issue.id)) ?? issue)
+            : issue;
+        res.status(201).json(createdIssueForResponse);`,
+    },
+
+    // ---------------------------------------------------------------- defect 6
+    // "Assign it and start it" in one PATCH was rejected with
+    // `Issue follow-up requires an assigned agent`, because the follow-up gate
+    // read assigneeAgentId from the stored row and could not see the assignment
+    // the same request was making. Splitting it in two worked, which is what made
+    // it look like a nuisance — but it is the one write shape a recovering
+    // watchdog most wants, and under the old one-write cap it was fatal.
+    //
+    // This widens only the branch that was previously an unconditional 409: when
+    // the stored assignee is non-null, `effectiveAssigneeAgentId` is that stored
+    // value and every downstream check behaves exactly as before.
+    {
+      file: "dist/routes/issues.js",
+      find: `        if (!issue.assigneeAgentId) {
+            res.status(409).json({
+                error: "Issue follow-up requires an assigned agent",
+                details: { issueId: issue.id, actorAgentId },
+            });
+            return false;
+        }
+        if (issue.assigneeAgentId === actorAgentId)
+            return true;
+        if (await hasActiveCheckoutManagementOverride(actorAgentId, issue.companyId, issue.assigneeAgentId)) {
+            return true;
+        }`,
+      replace: `        // ${MARKER} (defect 6): judge the gate against the assignee this request
+        // is setting when the row has none yet. An already-assigned issue is
+        // unaffected — effectiveAssigneeAgentId is then the stored value.
+        const requestedAssigneeAgentId = typeof req.body?.assigneeAgentId === "string"
+            ? req.body.assigneeAgentId
+            : null;
+        const effectiveAssigneeAgentId = issue.assigneeAgentId ?? requestedAssigneeAgentId;
+        if (!effectiveAssigneeAgentId) {
+            res.status(409).json({
+                error: "Issue follow-up requires an assigned agent",
+                details: { issueId: issue.id, actorAgentId },
+            });
+            return false;
+        }
+        if (effectiveAssigneeAgentId === actorAgentId)
+            return true;
+        if (await hasActiveCheckoutManagementOverride(actorAgentId, issue.companyId, effectiveAssigneeAgentId)) {
+            return true;
+        }`,
+    },
   ];
 }
 

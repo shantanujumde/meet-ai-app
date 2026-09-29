@@ -371,6 +371,58 @@ check("serialization anchor is filtered by follow-up author", () => {
   );
   assert.match(routeSource, /eq\(issueRows\.createdByAgentId, followUpAuthorAgentId\)/);
 });
+check("the watchdog's own review issue cannot become the serialization anchor", () => {
+  // The author filter alone still matched the watchdog review issue: it is a
+  // child of the watched issue created by the same agent. That is how TUR-140
+  // was born blocked behind TUR-136.
+  assert.match(
+    routeSource,
+    /notInArray\(issueRows\.originKind, \[TASK_WATCHDOG_ORIGIN_KIND\]\)/,
+  );
+  // The exclusion has to sit inside the author-filtered arm. When the parent is
+  // itself the watchdog issue every child really is a follow-up, and filtering
+  // there would break serialization outright.
+  const start = routeSource.indexOf("const authorFilter = followUpAuthorAgentId");
+  assert.notEqual(start, -1, "author filter not found");
+  const arm = routeSource.slice(start, routeSource.indexOf(": [];", start));
+  assert.match(arm, /notInArray\(issueRows\.originKind/);
+});
+check("TASK_WATCHDOG_ORIGIN_KIND and notInArray are in scope at the anchor site", () => {
+  // Both are used by the edit above; a build that stopped importing either would
+  // turn the filter into a ReferenceError at request time, not at load time.
+  assert.match(routeSource, /\bnotInArray\b[^\n]*from "drizzle-orm"|import \{[^}]*\bnotInArray\b[^}]*\} from "drizzle-orm"/s);
+  assert.match(routeSource, /TASK_WATCHDOG_ORIGIN_KIND/);
+});
+check("the child-create 201 reports the blocker edges serialization wrote", () => {
+  assert.match(routeSource, /const createdIssueForResponse = serializationContext/);
+  assert.match(routeSource, /res\.status\(201\)\.json\(createdIssueForResponse\)/);
+  // The re-read must come after the edges are written, or it reports the same
+  // stale snapshot it replaced.
+  const block = routeSource.indexOf("currentChildIssueId: currentSerializedChild?.id ?? issue.id,");
+  assert.notEqual(block, -1, "serialization call site not found");
+  assert.ok(
+    routeSource.indexOf("const createdIssueForResponse", block) > block,
+    "the response re-read runs before blockWatchdogParentOnCurrentChild",
+  );
+});
+check("the follow-up gate sees an assignment made by the same request", () => {
+  assert.match(routeSource, /const requestedAssigneeAgentId = typeof req\.body\?\.assigneeAgentId === "string"/);
+  assert.match(routeSource, /const effectiveAssigneeAgentId = issue\.assigneeAgentId \?\? requestedAssigneeAgentId/);
+  // The old unconditional read must be gone from the gate, or an already-patched
+  // build could still 409 on the shape this fixes.
+  assert.doesNotMatch(routeSource, /if \(!issue\.assigneeAgentId\) \{\n            res\.status\(409\)\.json\(\{\n                error: "Issue follow-up requires an assigned agent"/);
+  assert.match(routeSource, /if \(effectiveAssigneeAgentId === actorAgentId\)/);
+});
+check("the gate widens only the previously-unconditional-409 branch", () => {
+  // `issue.assigneeAgentId ?? requested` means a non-null stored assignee wins,
+  // so an already-assigned issue behaves exactly as it did before the patch.
+  // The reverse order would let any caller claim someone else's issue.
+  assert.doesNotMatch(routeSource, /requestedAssigneeAgentId \?\? issue\.assigneeAgentId/);
+  assert.match(
+    routeSource,
+    /hasActiveCheckoutManagementOverride\(actorAgentId, issue\.companyId, effectiveAssigneeAgentId\)/,
+  );
+});
 check("agents may name board as an unblock owner", () => {
   assert.doesNotMatch(routeSource, /\(owner === "board" \|\| "userId" in owner\)/);
   assert.match(routeSource, /Agents may not name another user as an unblock owner/);
