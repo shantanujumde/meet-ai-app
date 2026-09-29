@@ -2,18 +2,21 @@
 
 ## Results
 
-Checks 1–4 were taken on the 20:14 server (14 edits). Checks 1 and 2 were
-re-taken on the 21:04 server (16 edits) to confirm the last two edits did not
-regress them.
+Checks 1–4 were taken on the 20:14 server (14 edits). Checks 1, 2 and 5–6 were
+re-taken on the 21:04 server (16 edits). Checks 2 and 9 were taken again on the
+29 Sep 10:00 server, which is the first one running all 19 edits.
 
 | # | Check | Result |
 |---|-------|--------|
 | 1 | `board` as unblock owner | **passes** — HTTP 200 on a genuinely blocked issue; re-confirmed on 16 edits (TUR-136) |
-| 2 | One PATCH clears a blocker and moves off `blocked` | **passes** — HTTP 200 in one call; re-confirmed on 16 edits (TUR-136 `blocked` → `todo`) |
-| 3 | New child not born blocked | **passes** — TUR-133 created under TUR-125 with `blockedBy: []` while TUR-131 sat open |
+| 2 | One PATCH clears a blocker and moves off `blocked` | **passes** — HTTP 200 in one call; re-confirmed on 19 edits (TUR-161 `blocked` → `todo`) |
+| 3 | New child not born blocked | superseded by check 7 — the TUR-133 pass was luck; see check 7 |
 | 4 | Watchdog run gets a second write | **passes** — write 2 of the TUR-125 pass returned 200, no stale-fingerprint 409 |
-| 5 | A run may write after its own liveness flip | armed — waiting on the TUR-135 watchdog pass |
-| 6 | A watchdog can comment on the tree it repaired | armed — waiting on the TUR-135 watchdog pass |
+| 5 | A run may write after its own liveness flip | **passes** — writes 4 and 5 of the TUR-135 pass, after the flip, both 200 |
+| 6 | A watchdog can comment on the tree it repaired | **passes** — proven twice, once with the fingerprint already stale |
+| 7 | A follow-up is not born blocked behind the watchdog's own review issue | needs a watchdog pass |
+| 8 | The child-create 201 shows the edges serialization wrote | needs a watchdog pass |
+| 9 | Assign and start in one PATCH | **passes** — TUR-161, with a negative control that still 409s |
 
 Checks 5 and 6 are defects the TUR-125 watchdog pass exposed *after* 1–4
 passed: writes 3, 4 and 5 of that pass all 409'd with a different message
@@ -50,6 +53,33 @@ a blocker; check 4 passes if the second write is not a stale-fingerprint 409.
 
 Tear down afterwards: `DELETE /api/issues/TUR-125/watchdog`, then delete probes
 TUR-125, TUR-126, TUR-131.
+
+### Building a watchdog probe rig — what it takes
+
+Every rig so far has been torn down by its own cleanup task, so checks 7 and 8
+needed a third one. The recipe, with the two things that go wrong:
+
+1. A watched parent with **at least one non-terminal leaf** under it. `backlog`
+   counts as non-terminal, so parked probe children are enough.
+2. `PUT /api/issues/{parent}/watchdog` with `{agentId, instructions}`.
+3. The subtree is only classified `stopped` once no leaf was created within the
+   **15-second first-run grace window** (`TASK_WATCHDOG_FIRST_RUN_GRACE_MS`) —
+   before that the verdict is `pending_first_run` and nothing fires.
+4. To make it fire *again*, the stop fingerprint has to move, and the
+   fingerprint is built only from each leaf's `status`, assignee, blocker ids
+   and pending interaction/approval ids (`materialLeaf`). Editing a title or a
+   description changes nothing. Adding or re-statusing a leaf does.
+
+**The instructions field is not enough on its own.** The first pass on the
+TUR-157 rig read the probe descriptions — "throwaway, do not work this issue" —
+correctly concluded the stop was intentional, and closed without running a single
+probe call. A watchdog pass reads the issues, not just its registration. Put the
+steps in the **watched issue's description** as well, and say explicitly that the
+leaves are to be left alone.
+
+Creating the rig also spends real runs: a probe left `todo` with an assignee is
+picked up by the scheduler within seconds, and a stopped-subtree review is a real
+run on the watchdog agent.
 
 Everything in `verify.mjs` is an offline check: it reads the patched files and
 confirms the 16 edits are present and parse. These are the checks that need a
@@ -273,26 +303,47 @@ Before: the 201 and the follow-up GET disagreed. After: identical.
 
 ## 9. Assign and start in one PATCH
 
-Reachable from an ordinary run — no watchdog needed. It must be run against an
-issue that is currently **unassigned**, because that is the branch that was an
-unconditional 409.
+Reachable from an ordinary run — no watchdog needed. But it is easy to run
+vacuously, and the first attempt was.
+
+**The probe issue must be `blocked` or closed, and unassigned.** The follow-up
+gate is only reached when an agent changes the status of an issue that is
+`blocked`, or closed and moving to a non-closed status
+(`agentStatusTransitionRequiresResumeAuthority`, `routes/issues.js`). A plain
+`backlog` → `todo` PATCH never touches it, so it returns 200 on the *unpatched*
+build too and proves nothing. That reading cost a pass.
 
 ```sh
-curl -s -w '\n%{http_code}\n' -X PATCH "${AUTH[@]}" \
-  -d "{\"assigneeAgentId\":\"$PAPERCLIP_AGENT_ID\",\"status\":\"todo\"}" \
+# setup: blocked behind a real blocker, unassigned
+curl -s -X PATCH "${AUTH[@]}" \
+  -d "{\"status\":\"blocked\",\"blockedByIssueIds\":[\"$BLOCKER_ID\"]}" \
   "$B/api/issues/$PROBE_ISSUE_ID"
+
+# negative control FIRST — proves the gate is on this path and still closed
+curl -s -w '\n%{http_code}\n' -X PATCH "${AUTH[@]}" \
+  -d '{"blockedByIssueIds":[],"status":"todo"}' "$B/api/issues/$PROBE_ISSUE_ID"
+# must be 409 Issue follow-up requires an assigned agent
+
+# the check: clear the blocker, claim it and start it in one write
+curl -s -w '\n%{http_code}\n' -X PATCH "${AUTH[@]}" \
+  -d "{\"blockedByIssueIds\":[],\"assigneeAgentId\":\"$PAPERCLIP_AGENT_ID\",\"status\":\"todo\"}" \
+  "$B/api/issues/$PROBE_ISSUE_ID"
+# 200, blockedBy [], status todo, assigned
 ```
 
-Before: `409 Issue follow-up requires an assigned agent`. After: 200.
+Before: `409 Issue follow-up requires an assigned agent`. After: 200. This is
+checks 2 and 9 in the single call a recovering watchdog actually wants to make.
 
-Also check the guard did not open too far: PATCHing an issue **already assigned
-to another agent**, naming yourself in the body, must still be refused with
-`Agent cannot request follow-up for another agent's issue`. The stored assignee
-wins when it exists; if that check starts passing, the `??` order was inverted.
+**On the "did the guard open too far" control.** PATCHing an issue already
+assigned to *another* agent while naming yourself does **not** test the `??`
+order: `effectiveAssigneeAgentId` is the stored assignee, so it falls through to
+`decideIssueAccess`, and a default-open boundary allows it — pre-existing
+behaviour this patch never touched. The negative control above is the real one:
+with nobody named anywhere, the 409 must still fire.
 
-Same hazard as check 2 — an issue left `todo` with an assignee is exactly what
-the scheduler picks up, and once it holds the checkout you cannot get it back.
-Park the probe to `backlog`/unassigned immediately afterwards.
+Same hazard as check 2, and it bit again — an issue left `todo` with an assignee
+is exactly what the scheduler picks up, and it took one within seconds. Park the
+probe to `backlog`/unassigned in the very next call.
 
 ## Known limits of the fix
 
