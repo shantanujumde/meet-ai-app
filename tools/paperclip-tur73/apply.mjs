@@ -302,6 +302,14 @@ export function taskWatchdogObservedSignature(classification) {`,
     // children this watchdog agent actually created.
     {
       file: "dist/routes/issues.js",
+      // "defect 2, part 2" below rewrites the `authorFilter` block this edit
+      // introduces, so on a fully patched install `replace` no longer appears
+      // verbatim and the default already-applied test fails — and the `find`
+      // anchor is gone too, so the edit reports a phantom missing anchor and
+      // the whole install looks broken. Match the rewritten function signature,
+      // which no later edit touches.
+      appliedMarker:
+        "async function findCurrentSerializedWatchdogChild(parent, followUpAuthorAgentId = null) {",
       find: `    async function findCurrentSerializedWatchdogChild(parent) {
         const children = await db
             .select({
@@ -680,7 +688,13 @@ function run(pkgRoot) {
   // because it writes as it goes; `--check` has to simulate it in memory, or it
   // reports a phantom missing anchor for every chained edit.
   const pending = new Map();
+  // Edits are reported by position as well as file, because every edit in a
+  // file shares the same path: "anchor-missing dist/routes/issues.js" on its
+  // own does not say which of the thirteen edits in that file failed.
+  let index = 0;
   for (const edit of edits()) {
+    index += 1;
+    edit.label = `#${index} ${edit.file}`;
     const file = path.join(pkgRoot, edit.file);
     const backup = `${file}.tur73.orig`;
     if (!existsSync(file)) {
@@ -708,6 +722,7 @@ function run(pkgRoot) {
     if (hits !== 1) {
       results.push({
         edit: edit.file,
+        label: edit.label,
         status: `anchor-${hits === 0 ? "missing" : `ambiguous(${hits})`}`,
       });
       continue;
@@ -768,7 +783,7 @@ for (const pkgRoot of installs) {
     if (isFailureStatus(r.status)) {
       failed = true;
       if (r.status.startsWith("duplicate-")) duplicated = true;
-      console.log(`  ${r.status.padEnd(20)} ${r.edit}`);
+      console.log(`  ${r.status.padEnd(20)} ${r.label ?? r.edit}`);
     }
   }
   for (const [status, count] of [...counts].sort()) {
