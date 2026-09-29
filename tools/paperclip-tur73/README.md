@@ -16,7 +16,15 @@ node tools/paperclip-tur73/verify.mjs          # 31 checks against the patched i
 node tools/paperclip-tur73/apply.mjs --revert  # restore the .tur73.orig backups
 
 tools/paperclip-tur73/restart.sh 0              # stop the server and start it again
+
+node tools/paperclip-tur73/check78-scan.mjs    # checks 7 and 8, from real board state
 ```
+
+`check78-scan.mjs` is read-only and safe to run at any time. Checks 7 and 8 can
+only be taken from a genuine watchdog follow-up — three probe rigs failed to
+force one, the last because a watchdog is rightly not allowed to create
+throwaway issues on instruction. The scanner waits for a real one instead and
+says plainly when there is nothing yet to measure. See `LIVE-CHECKS.md`.
 
 `apply.mjs` patches every `@paperclipai/server` install it finds under
 `~/.npm/_npx`, refuses any version other than 2026.916.1, keeps a

@@ -21,6 +21,23 @@ SERVER_LOG="$ROOT/.paperclip/paperclip-server.log"
 DELAY="${1:-120}"
 HEALTH="http://127.0.0.1:3100/api/health"
 
+# This script is usually launched from inside an agent run, and that run's
+# environment points HOME, TMPDIR and CLAUDE_CONFIG_DIR at its own throwaway
+# folders. A server started with that env reads Claude logins from the wrong
+# place (so "Connect" fails to verify the local subscription) and makes npx
+# download Paperclip again into an empty cache (which can hang for minutes).
+# So everything that starts the server or touches the npx cache runs with the
+# operator's real home and without the run's PAPERCLIP_/CLAUDE_/ANTHROPIC_ vars.
+REAL_HOME="$(eval echo "~$(id -un)")"
+run_clean() {
+  local strip=(-u TMPDIR -u CLAUDECODE -u npm_config_cache -u NPM_CONFIG_CACHE)
+  local name
+  for name in $(env | grep -oE '^(PAPERCLIP|CLAUDE|ANTHROPIC)_[A-Za-z0-9_]*=' | tr -d '='); do
+    strip+=(-u "$name")
+  done
+  env "${strip[@]}" HOME="$REAL_HOME" "$@"
+}
+
 exec >>"$LOG" 2>&1
 echo "=== TUR-73 restart started $(date) (delay ${DELAY}s) ==="
 
@@ -78,7 +95,7 @@ fi
 
 start_server() {
   cd "$ROOT" || return 1
-  nohup bin/paperclip onboard --yes --no-install-service >>"$SERVER_LOG" 2>&1 &
+  run_clean nohup bin/paperclip onboard --yes --no-install-service >>"$SERVER_LOG" 2>&1 &
   echo "started server, pid $!"
 }
 
@@ -103,11 +120,11 @@ healthy=$?
 
 # npx can re-extract the package into the cache on start, which would silently
 # drop the patch. Re-apply and restart once if that happened.
-check="$(node "$ROOT/tools/paperclip-tur73/apply.mjs" --check 2>&1)"
+check="$(run_clean node "$ROOT/tools/paperclip-tur73/apply.mjs" --check 2>&1)"
 echo "$check"
 if echo "$check" | grep -q 'would-apply'; then
   echo "npx replaced the patched files; re-applying and restarting once more"
-  node "$ROOT/tools/paperclip-tur73/apply.mjs"
+  run_clean node "$ROOT/tools/paperclip-tur73/apply.mjs"
   PIDS="$(pids_matching 'node .*paperclipai (onboard|run)( |$)')"
   for pid in $PIDS; do kill -TERM "$pid" 2>/dev/null; done
   sleep 10
