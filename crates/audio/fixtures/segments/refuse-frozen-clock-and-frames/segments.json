@@ -14,366 +14,66 @@
       "mic_device_rate": 48000,
       "sys_device_rate": 48000,
       "anchors": [
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        },
-        {
-          "mic_host_ns": 6000000000,
-          "mic_frames": 80000,
-          "sys_host_ns": 6000000000,
-          "sys_frames": 80000
-        }
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000},
+        {"mic_host_ns": 6000000000, "mic_frames": 80000, "sys_host_ns": 6000000000, "sys_frames": 80000}
       ]
     }
   ]

@@ -11,7 +11,7 @@
 
 import { NavLink, useNavigate } from "react-router";
 import type { MeetingList, MeetingSummary, RecordingStatus } from "@/ipc/types";
-import { formatLineCount, formatRelativeDate } from "./format";
+import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "./format";
 import { Checking } from "./states";
 
 export function Sidebar({
@@ -101,6 +101,12 @@ function MeetingRow({
         {isRecording ? (
           <span className="meeting-row__badge" style={{ color: "var(--status-recording)" }}>
             ● Recording
+          </span>
+        ) : meeting.recordingState === "interrupted" ? (
+          // Takes the line count's place: the sidebar is too narrow for both,
+          // and the meeting itself says how much was kept.
+          <span className="meeting-row__badge meeting-row__badge--interrupted">
+            {INTERRUPTED_LABEL}
           </span>
         ) : (
           <span className="meeting-row__badge">{formatLineCount(meeting.lineCount)}</span>

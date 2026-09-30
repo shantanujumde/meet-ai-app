@@ -13,6 +13,13 @@ Exported 2026-09-30 from the local Paperclip instance (company **turing**, task 
 - **Stop the server** when you're done: find it with `lsof -nP -iTCP:3100 -sTCP:LISTEN` and stop that process. Its data stays in `.paperclip/` (git-ignored), so you can start it again with `bin/paperclip run` if you ever need to look something up.
 - **118 of the 191 tasks are Paperclip housekeeping** (104 of them are copies of one automatic "Connection-stop auto-recovery sweep" job). They're listed at the end and can be ignored.
 
+## Since this export (2026-09-30)
+
+- **v0.3.0 is released** with TUR-94, TUR-95, TUR-127, TUR-78, TUR-82, TUR-83 and TUR-79 in it.
+- **The Record button records for real.** Smoke test on the shipped zip (FINDINGS §12): ⌘⇧R start/stop works, both WAVs and `segments.json` are written, drift-check passes, and the system track transcribes word for word. That is the TUR-95 happy path. Still unmeasured: a voice on the mic track, and the denial path TUR-127 fixes.
+- **TUR-97 is unblocked** now that TUR-95 has landed. TUR-96 and TUR-99 are being picked up separately.
+- `transcript.md` stays empty after a recording until TUR-96 lands.
+
 ## At a glance
 
 | | done | in_progress | blocked | todo | backlog | cancelled | total |

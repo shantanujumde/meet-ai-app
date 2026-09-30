@@ -157,6 +157,21 @@ pub fn format_transcript_line(utterance: &Utterance) -> String {
 /// mismatch is a bug upstream rather than something to paper over with a
 /// resampler here — `crates/audio` owns resampling (SPEC §2.3).
 pub fn read_wav_16k_mono(path: &Path) -> Result<Vec<i16>, Error> {
+    let mut samples = Vec::new();
+    stream_wav_16k_mono(path, |block| samples.extend_from_slice(block))?;
+    Ok(samples)
+}
+
+/// How much [`stream_wav_16k_mono`] hands over at a time: one second.
+const WAV_BLOCK_SAMPLES: usize = vad::SAMPLE_RATE as usize;
+
+/// Read a 16 kHz mono WAV one block at a time, never holding all of it.
+///
+/// Same format rules as [`read_wav_16k_mono`], which is built on this. It
+/// exists for callers that only need to *look at* every sample once, such as
+/// the Apple engine's silence gate. A 90-minute track is ~173 MB as `i16`,
+/// and holding that just to score it frame by frame would be waste.
+pub fn stream_wav_16k_mono(path: &Path, mut on_block: impl FnMut(&[i16])) -> Result<(), Error> {
     let reader =
         hound::WavReader::open(path).map_err(|e| Error::Wav(format!("{}: {e}", path.display())))?;
     let spec = reader.spec();
@@ -170,26 +185,36 @@ pub fn read_wav_16k_mono(path: &Path) -> Result<Vec<i16>, Error> {
         )));
     }
 
-    let samples = match spec.sample_format {
-        hound::SampleFormat::Int if spec.bits_per_sample == 16 => reader
-            .into_samples::<i16>()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| Error::Wav(format!("{}: {e}", path.display())))?,
-        hound::SampleFormat::Float => reader
-            .into_samples::<f32>()
-            .map(|sample| sample.map(|value| (value.clamp(-1.0, 1.0) * i16::MAX as f32) as i16))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| Error::Wav(format!("{}: {e}", path.display())))?,
-        _ => {
-            return Err(Error::Wav(format!(
-                "{}: unsupported sample format ({} bits)",
-                path.display(),
-                spec.bits_per_sample
-            )));
+    let mut block = Vec::with_capacity(WAV_BLOCK_SAMPLES);
+    let mut deliver = |samples: &mut dyn Iterator<Item = Result<i16, hound::Error>>| {
+        for sample in samples {
+            block.push(sample.map_err(|e| Error::Wav(format!("{}: {e}", path.display())))?);
+            if block.len() == WAV_BLOCK_SAMPLES {
+                on_block(&block);
+                block.clear();
+            }
         }
+        if !block.is_empty() {
+            on_block(&block);
+        }
+        Ok(())
     };
 
-    Ok(samples)
+    match spec.sample_format {
+        hound::SampleFormat::Int if spec.bits_per_sample == 16 => {
+            deliver(&mut reader.into_samples::<i16>())
+        }
+        hound::SampleFormat::Float => {
+            deliver(&mut reader.into_samples::<f32>().map(|sample| {
+                sample.map(|value| (value.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+            }))
+        }
+        _ => Err(Error::Wav(format!(
+            "{}: unsupported sample format ({} bits)",
+            path.display(),
+            spec.bits_per_sample
+        ))),
+    }
 }
 
 /// A transcription backend.

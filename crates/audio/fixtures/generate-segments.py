@@ -142,7 +142,13 @@ def segment(
 
 
 def render(segments: list) -> str:
-    """`segments.json`, one anchor per line so a diff stays readable."""
+    """`segments.json`, one anchor per line so a diff stays readable.
+
+    This layout is the committed one. biome.json excludes `segments/` so
+    `just fmt` cannot re-expand every anchor over five lines: when it did, the
+    stt suite's first-run `generate.sh` rewrote all 18 files back to this
+    layout and left `biome check` red on a clean checkout.
+    """
     out = ['{\n  "version": 1,\n  "segments": [']
     for s_idx, seg in enumerate(segments):
         out.append("    {")

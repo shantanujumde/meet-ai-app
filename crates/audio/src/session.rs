@@ -22,7 +22,40 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::segments::{
     self, Anchor, CHECKPOINT_INTERVAL_S, SAMPLE_RATE_HZ, SegmentOpen, SegmentsWriter,
 };
+use crate::tee::Tee;
 use crate::{AudioSource, Channel, Error as AudioError};
+
+/// The live-transcription copies a session should hand out, one per channel
+/// (TUR-31: per channel, never interleaved). Both `None` is capture-only, which
+/// is what [`RecordingSession::start`] asks for.
+///
+/// Held by the session for its whole life rather than handed to the first pair
+/// of sources and forgotten: [`reopen_segment`] builds brand-new sources after
+/// a device change, and a tee that did not follow them would go quiet at the
+/// first AirPods swap without anything failing.
+#[derive(Debug, Clone, Default)]
+pub struct Tees {
+    pub mic: Option<Tee>,
+    pub sys: Option<Tee>,
+}
+
+impl Tees {
+    /// Give `source` the mic tee, if there is one. Returns it for chaining.
+    fn attach_mic<'a>(&self, source: &'a mut dyn AudioSource) -> &'a mut dyn AudioSource {
+        if let Some(tee) = &self.mic {
+            source.tee(tee.clone());
+        }
+        source
+    }
+
+    /// Give `source` the system tee, if there is one. Returns it for chaining.
+    fn attach_sys<'a>(&self, source: &'a mut dyn AudioSource) -> &'a mut dyn AudioSource {
+        if let Some(tee) = &self.sys {
+            source.tee(tee.clone());
+        }
+        source
+    }
+}
 
 /// How long to wait for each channel's very first resampled buffer before
 /// giving up on head-pad alignment (contract §6) and reporting that channel
@@ -30,6 +63,18 @@ use crate::{AudioSource, Channel, Error as AudioError};
 /// setup Tess measured (TUR-4), because a cold run — first launch after a
 /// permission grant — can still show that dialog's latency on top of it.
 const FIRST_BUFFER_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How often a caller should call [`RecordingSession::tick`]. Coarse next to
+/// [`CHECKPOINT_INTERVAL_S`] — it only bounds how late a due checkpoint or a
+/// default-device change is noticed — and cheap, since a tick with nothing
+/// due is two Core Audio property reads.
+///
+/// Exported (TUR-97) so `meet-rec`'s poll loop and the app's ticker thread
+/// share one cadence rather than two copies of `200ms` that could drift, the
+/// same reason [`default_system_source`] is shared. With it, a checkpoint
+/// lands between `CHECKPOINT_INTERVAL_S` and `CHECKPOINT_INTERVAL_S` +
+/// `TICK_INTERVAL` after the previous one.
+pub const TICK_INTERVAL: Duration = Duration::from_millis(200);
 
 /// The system-audio [`AudioSource`], where one exists on this platform. `None`
 /// on any platform without a process-tap implementation yet (SPEC §8.2's
@@ -150,6 +195,7 @@ fn reopen_segment(
     mic_path: &Path,
     sys_path: &Path,
     reason: &str,
+    tees: &Tees,
 ) -> Result<(), String> {
     mic.stop()
         .map_err(|e| format!("stopping microphone for reopen: {e}"))?;
@@ -167,13 +213,14 @@ fn reopen_segment(
     };
 
     let mut new_mic: Box<dyn AudioSource> = Box::new(crate::mic::MicSource::new());
+    tees.attach_mic(&mut *new_mic);
     new_mic
         .start(mic_path.to_path_buf())
         .map_err(|e| format!("restarting microphone after reopen: {e}"))?;
 
     let mut new_sys: Option<Box<dyn AudioSource>> = if sys.is_some() {
         match default_system_source() {
-            Some(mut source) => match source.start(sys_path.to_path_buf()) {
+            Some(mut source) => match tees.attach_sys(&mut *source).start(sys_path.to_path_buf()) {
                 Ok(()) => Some(source),
                 Err(e) => {
                     tracing::warn!(
@@ -309,8 +356,8 @@ pub struct StopReport {
 /// blocking call bounded by a fixed duration.
 ///
 /// The caller owns the polling cadence: call [`RecordingSession::tick`] on
-/// some interval (`meet-rec` uses [`crate::segments::CHECKPOINT_INTERVAL_S`]-scale
-/// polling; see that binary's `POLL_INTERVAL`) to let device-change detection
+/// some interval ([`TICK_INTERVAL`], which both `meet-rec`'s loop and the app's
+/// ticker thread use) to let device-change detection
 /// and periodic checkpoints run, then call [`RecordingSession::stop`] once to
 /// finish cleanly. Neither `tick` nor `stop` block waiting for anything beyond
 /// the calls `AudioSource` itself makes.
@@ -324,6 +371,10 @@ pub struct RecordingSession {
     start_host_ns: u64,
     started: Instant,
     last_checkpoint: Instant,
+    /// Kept so [`reopen_segment`] can hand them to the rebuilt sources. Only
+    /// macOS watches for device changes today, so only macOS reads it back.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    tees: Tees,
     #[cfg(target_os = "macos")]
     last_output_device: Option<objc2_core_audio::AudioObjectID>,
     #[cfg(target_os = "macos")]
@@ -349,8 +400,23 @@ impl RecordingSession {
     /// diverge on what "the real recorder" means.
     pub fn start(
         dir: PathBuf,
+        mic: Box<dyn AudioSource>,
+        sys: Option<Box<dyn AudioSource>>,
+    ) -> Result<Self, String> {
+        Self::start_with_tees(dir, mic, sys, Tees::default())
+    }
+
+    /// [`Self::start`], plus a live copy of each channel's frames for whoever
+    /// holds the matching [`crate::tee::TeeFeed`] — the app's live transcript.
+    ///
+    /// The tees change nothing about the recording: same WAVs, same
+    /// `segments.json`, same failure behaviour. A tee whose feed is never read,
+    /// or is dropped mid-meeting, costs capture nothing (see [`crate::tee`]).
+    pub fn start_with_tees(
+        dir: PathBuf,
         mut mic: Box<dyn AudioSource>,
         mut sys: Option<Box<dyn AudioSource>>,
+        tees: Tees,
     ) -> Result<Self, String> {
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
@@ -360,11 +426,13 @@ impl RecordingSession {
         let segments_path = dir.join("segments.json");
 
         tracing::info!("starting microphone capture");
-        mic.start(mic_path.clone()).map_err(microphone_error)?;
+        tees.attach_mic(&mut *mic)
+            .start(mic_path.clone())
+            .map_err(microphone_error)?;
 
         if let Some(source) = sys.as_mut() {
             tracing::info!("starting system-audio capture");
-            if let Err(e) = source.start(sys_path.clone()) {
+            if let Err(e) = tees.attach_sys(&mut **source).start(sys_path.clone()) {
                 tracing::warn!(
                     "system audio unavailable ({e}); recording microphone only \
                      (contract §9: absent track, sys_rate 0 in segments.json)"
@@ -421,6 +489,7 @@ impl RecordingSession {
             start_host_ns,
             started: Instant::now(),
             last_checkpoint: Instant::now(),
+            tees,
             #[cfg(target_os = "macos")]
             last_output_device,
             #[cfg(target_os = "macos")]
@@ -455,6 +524,7 @@ impl RecordingSession {
                         &self.mic_path,
                         &self.sys_path,
                         segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED,
+                        &self.tees,
                     )?;
                     self.last_input_device =
                         crate::macos::device_watch::default_input_device().ok();
@@ -473,6 +543,7 @@ impl RecordingSession {
                         &self.mic_path,
                         &self.sys_path,
                         segments::reason::DEFAULT_INPUT_DEVICE_CHANGED,
+                        &self.tees,
                     )?;
                     self.last_output_device =
                         crate::macos::device_watch::default_output_device().ok();
@@ -664,6 +735,7 @@ mod tests {
         writer: Option<WavWriter>,
         frames: u64,
         started: Option<Instant>,
+        tee: Option<Tee>,
     }
 
     impl StubSource {
@@ -673,6 +745,7 @@ mod tests {
                 writer: None,
                 frames: 0,
                 started: None,
+                tee: None,
             }
         }
 
@@ -683,8 +756,12 @@ mod tests {
 
         fn append_buffer(&mut self) -> Result<(), AudioError> {
             let writer = self.writer.as_mut().expect("started before appending");
-            writer.append(&vec![0i16; Self::BUFFER_FRAMES as usize])?;
+            let buffer = vec![0i16; Self::BUFFER_FRAMES as usize];
+            writer.append(&buffer)?;
             self.frames += Self::BUFFER_FRAMES;
+            if let Some(tee) = &self.tee {
+                tee.offer(&buffer);
+            }
             Ok(())
         }
     }
@@ -739,7 +816,14 @@ mod tests {
                 writer.prepend_silence(frames)?;
                 self.frames += frames;
             }
+            if let Some(tee) = &self.tee {
+                tee.offer_silence(frames);
+            }
             Ok(())
+        }
+
+        fn tee(&mut self, tee: Tee) {
+            self.tee = Some(tee);
         }
     }
 
@@ -786,6 +870,149 @@ mod tests {
 
         let json =
             std::fs::read_to_string(&report.segments_path).expect("segments.json was written");
+        let segments = crate::segments::Segments::from_json(&json)
+            .expect("segments.json must parse as the §3.4 shape");
+        segments
+            .check_wav_header(Channel::Mic, mic_frames)
+            .expect("segments.json must account for at least what mic.wav declares");
+        segments
+            .check_wav_header(Channel::System, sys_frames)
+            .expect("segments.json must account for at least what system.wav declares");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Everything that went into a tee, drained after the session stopped.
+    fn drain(feed: &crate::tee::TeeFeed) -> u64 {
+        let mut frames = 0;
+        while let Ok(chunk) = feed.recv_timeout(Duration::ZERO) {
+            frames += chunk.len() as u64;
+        }
+        frames
+    }
+
+    /// TUR-96's hook: each channel's tee gets exactly the frames its WAV got,
+    /// head-pad included, so a live transcript's timestamps land on the same
+    /// timeline as the file a batch re-run would read.
+    #[test]
+    fn a_teed_session_hands_each_channel_exactly_what_its_wav_holds() {
+        let dir = temp_dir("teed");
+        let (mic_tee, mic_feed) = crate::tee::tee();
+        let (sys_tee, sys_feed) = crate::tee::tee();
+
+        let mic: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::Mic));
+        let sys: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::System));
+        let session = RecordingSession::start_with_tees(
+            dir.clone(),
+            mic,
+            Some(sys),
+            Tees {
+                mic: Some(mic_tee),
+                sys: Some(sys_tee),
+            },
+        )
+        .expect("session starts cleanly");
+        let report = session.stop().expect("session stops cleanly");
+
+        let mic_wav = crate::wav_writer::read_header_frames(&report.mic_path).unwrap();
+        let sys_wav = crate::wav_writer::read_header_frames(&report.sys_path).unwrap();
+        assert!(mic_wav > 0 && sys_wav > 0);
+        assert_eq!(drain(&mic_feed), mic_wav, "mic tee and mic.wav disagree");
+        assert_eq!(
+            drain(&sys_feed),
+            sys_wav,
+            "system tee and system.wav disagree"
+        );
+
+        // The session is gone, so every tee clone is too: the feed reports
+        // that as the end of the recording rather than waiting forever.
+        assert!(matches!(
+            mic_feed.recv_timeout(Duration::ZERO),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The independence property (TUR-31, TUR-96): the speech side vanishing
+    /// before the recording even starts changes nothing about the recording.
+    #[test]
+    fn a_tee_nobody_reads_changes_nothing_about_the_recording() {
+        let dir = temp_dir("teed-unread");
+        let (mic_tee, mic_feed) = crate::tee::tee_with_capacity(1);
+        drop(mic_feed);
+
+        let mic: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::Mic));
+        let session = RecordingSession::start_with_tees(
+            dir.clone(),
+            mic,
+            None,
+            Tees {
+                mic: Some(mic_tee),
+                sys: None,
+            },
+        )
+        .expect("a dead tee must not stop a recording from starting");
+        let report = session.stop().expect("or from stopping");
+        assert!(crate::wav_writer::read_header_frames(&report.mic_path).unwrap() > 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The crash-safety half of TUR-97: a recording that is ticked but never
+    /// stopped — `kill -9`, a crash, a power cut — must still leave WAVs whose
+    /// headers declare real frames and a `segments.json` that accounts for
+    /// them, because the checkpoint `tick()` runs is the only thing that
+    /// writes either before `stop()`. The app shipped 0.3.0 without ever
+    /// calling `tick()`, and a killed recording left 0-byte headers over ~16 s
+    /// of PCM and no `segments.json`; this pins the session half of the fix.
+    ///
+    /// Backdates `last_checkpoint` instead of sleeping out
+    /// `CHECKPOINT_INTERVAL_S`, and ends with `mem::forget` rather than
+    /// `stop()` or a drop, so nothing after the tick can patch a header or
+    /// write `segments.json` — the same bytes a killed process leaves behind.
+    #[test]
+    fn a_due_tick_checkpoints_so_a_session_that_never_stops_is_still_readable() {
+        let dir = temp_dir("killed");
+
+        let mic: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::Mic));
+        let sys: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::System));
+        let mut session =
+            RecordingSession::start(dir.clone(), mic, Some(sys)).expect("session starts cleanly");
+        let segments_path = session.segments_path.clone();
+        let (mic_path, sys_path) = (session.mic_path.clone(), session.sys_path.clone());
+
+        assert!(
+            !segments_path.exists(),
+            "segments.json is first written by a checkpoint, never by start"
+        );
+
+        session
+            .tick()
+            .expect("an early tick is a no-op, not an error");
+        assert!(
+            !segments_path.exists(),
+            "a tick inside the checkpoint interval must not checkpoint"
+        );
+
+        session.last_checkpoint = Instant::now()
+            .checked_sub(Duration::from_secs(CHECKPOINT_INTERVAL_S))
+            .expect("the monotonic clock is past one checkpoint interval");
+        session.tick().expect("a due checkpoint succeeds");
+
+        // Simulate the process dying here: no stop, no Drop.
+        std::mem::forget(session);
+
+        let mic_frames =
+            crate::wav_writer::read_header_frames(&mic_path).expect("mic.wav is playable");
+        let sys_frames =
+            crate::wav_writer::read_header_frames(&sys_path).expect("system.wav is playable");
+        assert!(mic_frames > 0, "the checkpoint must patch mic.wav's header");
+        assert!(
+            sys_frames > 0,
+            "the checkpoint must patch system.wav's header"
+        );
+
+        let json = std::fs::read_to_string(&segments_path)
+            .expect("the checkpoint must write segments.json");
         let segments = crate::segments::Segments::from_json(&json)
             .expect("segments.json must parse as the §3.4 shape");
         segments

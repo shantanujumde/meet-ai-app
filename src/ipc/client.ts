@@ -17,6 +17,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { type Event, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   EnvironmentView,
+  LiveTranscriptSnapshot,
   MeetingDetail,
   MeetingList,
   ModelProgress,
@@ -26,14 +27,23 @@ import type {
   PrivacyPane,
   RecordingStatus,
   SelectionView,
+  TranscriptStatus,
+  TranscriptUpdate,
   UiError,
 } from "./types";
 import { toUiError } from "./types";
 
 /** Tauri event names. These are string literals shared with Rust. */
 export const RECORDING_STATE_EVENT = "recording://state";
-export const RECORDING_REFUSED_EVENT = "recording://refused";
+/**
+ * Rust ended a recording on its own because a checkpoint failed (TUR-97), or
+ * refused a ⌘⇧R or menu-bar press (TUR-127). The state event has already moved
+ * to idle; this one says why.
+ */
+export const RECORDING_ERROR_EVENT = "recording://error";
 export const MODEL_PROGRESS_EVENT = "model://progress";
+export const TRANSCRIPT_UPDATE_EVENT = "transcript://update";
+export const TRANSCRIPT_STATUS_EVENT = "transcript://status";
 
 /**
  * Is there a Rust side to talk to?
@@ -192,6 +202,20 @@ export function stopRecording(): Promise<RecordingStatus> {
   return call<RecordingStatus>("stop_recording");
 }
 
+// --- live transcript ------------------------------------------------------
+
+/**
+ * The live pane so far: settled lines, each speaker's in-progress guess, and
+ * whether transcription is running. Events only carry what changed after they
+ * were subscribed to, so this is how a window opened mid-meeting catches up.
+ */
+export async function liveTranscript(): Promise<LiveTranscriptSnapshot> {
+  if (!hasBackend()) {
+    return { status: { state: "idle", engine: null, detail: null }, finals: [], volatile: [] };
+  }
+  return call<LiveTranscriptSnapshot>("live_transcript");
+}
+
 // --- events ---------------------------------------------------------------
 
 /**
@@ -227,14 +251,18 @@ export function onRecordingState(handler: (status: RecordingStatus) => void): ()
   return subscribe<RecordingStatus>(RECORDING_STATE_EVENT, handler);
 }
 
-/**
- * A start or stop the window did not ask for — ⌘⇧R, the menu bar — that Rust
- * refused. The window's own button gets its refusal back from the call.
- */
-export function onRecordingRefused(handler: (error: UiError) => void): () => void {
-  return subscribe<UiError>(RECORDING_REFUSED_EVENT, handler);
+export function onRecordingError(handler: (error: UiError) => void): () => void {
+  return subscribe<UiError>(RECORDING_ERROR_EVENT, handler);
 }
 
 export function onModelProgress(handler: (progress: ModelProgress) => void): () => void {
   return subscribe<ModelProgress>(MODEL_PROGRESS_EVENT, handler);
+}
+
+export function onTranscriptUpdate(handler: (update: TranscriptUpdate) => void): () => void {
+  return subscribe<TranscriptUpdate>(TRANSCRIPT_UPDATE_EVENT, handler);
+}
+
+export function onTranscriptStatus(handler: (status: TranscriptStatus) => void): () => void {
+  return subscribe<TranscriptStatus>(TRANSCRIPT_STATUS_EVENT, handler);
 }

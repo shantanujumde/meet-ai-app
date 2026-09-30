@@ -1065,3 +1065,69 @@ somewhere that doesn't exist.
    version control; flagged here so whoever runs the next gate knows why the
    rows are there and that removing them is safe (they belong to build
    directories from superseded ad-hoc spikes, not the shipped app).
+
+## 12. v0.3.0 release smoke test — the shipped zip records for real (measured, 2026-09-30)
+
+First recording made by the app itself rather than by `meet-rec`. Run against
+the exact artifact users download: `gh release download v0.3.0`, checksum
+checked (`shasum -a 256 -c` → OK), unzipped with `ditto -x -k`, copied to
+`/Applications`, quarantine cleared, `codesign --verify --deep --strict` clean,
+leaf `eafb73d2…`, `CFBundleShortVersionString` 0.3.0. Onboarding was already
+complete on this machine from 0.2.0 runs, so the app opened straight to the
+shell.
+
+### 12.1 What was done
+
+1. `open -a /Applications/meet-ai.app`.
+2. ⌘⇧R sent with `osascript -e 'tell application "System Events" to keystroke "r" using {command down, shift down}'`.
+   The global shortcut fires from a synthesized keystroke, so the Record path
+   can be driven without touching the window.
+3. The same sentence played twice through the speakers with `say -r 170 "…"`.
+4. ⌘⇧R again to stop.
+
+### 12.2 Result — **PASS** for the system track and the stop path
+
+- `~/Meetings/2026-09-30-1129-meeting/` created on start with `notes.md`,
+  `transcript.md` and `audio/`. `mic.wav` and `system.wav` grew while
+  recording (~1.05 MB each after ~33 s, right for 16 kHz mono s16).
+- Stop wrote `audio/segments.json` within a second: one segment, reason
+  `start`, one anchor, 889 813 mic frames vs 889 852 system frames (55.6 s).
+- `drift-check` on the folder: **PASS**, worst 40.0 ms (mic) / 18.6 ms
+  (system) against the 200 ms gate; cross-track skew 21.4 ms.
+- `system.wav` has sound exactly where `say` ran: 18.8–28.5 s and
+  38.8–48.5 s, each ~9.7 s against a 9.95 s reference render of the same
+  sentence, so no speed or rate error. Silent stretches are true digital zero.
+- Apple's engine, through the production path (`registry::select` →
+  `transcribe_meeting`), gives 5 lines for `Others`, both plays word for word.
+  "meet-ai" comes out as "meat I" / "meat RE" — the same mishearing as on the
+  clean reference render, so it is the engine, not the capture.
+
+### 12.3 Not proven by this run
+
+- **Mic content.** `mic.wav` holds steady room noise around −53 dBFS the whole
+  time (live, not digital zero), and the speaker playback did not reach it.
+  Nobody spoke, so a voice on the mic track is still unmeasured. One spoken
+  sentence on the next run closes this.
+- **The permission check and the denial path (TUR-78, TUR-127).** Onboarding
+  was already done, and TCC was already granted, so neither ran. §11.5 is the
+  recipe for the denial run.
+- **Live transcript.** `transcript.md` stays 0 bytes after stop — expected
+  until TUR-96 lands; the app does not transcribe yet.
+
+### 12.4 A trap in the `offline_meeting` example — it wants the flat fixture layout
+
+`cargo run -p stt --example offline_meeting -- transcribe --meeting <folder>`
+copies `<folder>/mic.wav`, `<folder>/system.wav` and `<folder>/segments.json`,
+which is the layout of `crates/audio/fixtures/*`. A meeting folder the app
+writes keeps them in `<folder>/audio/`, so pointed at a real meeting the
+example silently copies nothing and reports **"0 lines via apple-speech"**
+with exit 0 — which reads like the recording is empty. It is not. Until the
+example accepts both layouts, pass the `audio/` subfolder:
+
+```sh
+cargo run -p stt --example offline_meeting -- transcribe --engine apple \
+    --meeting ~/Meetings/<meeting>/audio --scratch /tmp/meet-smoke
+```
+
+`meet-stt <wav>` on a single track is the quickest cross-check when a 0-line
+result looks wrong.

@@ -29,3 +29,7 @@ rusqlite = { workspace = true, features = ["bundled"] }
 
 [dev-dependencies]
 insta.workspace = true
+# Test-only cross-check that `transcript` reads exactly what stt's MarkdownSink
+# writes (SPEC §3.4: the sink is the file's only writer, this crate its reader).
+# Dev-only, so store's normal dependency graph stays light.
+stt.workspace = true

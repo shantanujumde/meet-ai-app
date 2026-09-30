@@ -14,6 +14,7 @@
       "!.claude",
       "!design-system",
       "!spikes",
+      "!crates/audio/fixtures/segments",
       "!src-tauri/gen"
     ]
   },
