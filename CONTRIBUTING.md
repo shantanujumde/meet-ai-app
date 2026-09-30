@@ -10,8 +10,8 @@ here stops being true, fix this file in the same commit.
 | [`SPEC.md`](./SPEC.md) | Always, first. v2, locked decisions L1–L18, phase order and exit gates in §5. It wins over everything else. |
 | [`RELEASING.md`](./RELEASING.md) | You are cutting a release: version bump, tag, signed app, GitHub release. |
 | [`SETUP.md`](./SETUP.md) | You are adding or changing a dependency. It pins every version and says why. |
-| [`PROBLEM.md`](./PROBLEM.md) | You want to know what the product is for. |
-| [`FINDINGS.md`](./FINDINGS.md) | You want the research behind a dependency choice. |
+| [`docs/problem.md`](./docs/problem.md) | You want to know what the product is for. |
+| [`docs/findings.md`](./docs/findings.md) | You want the research behind a dependency choice. |
 | [`design-system/meet-ai/MASTER.md`](./design-system/meet-ai/MASTER.md) | You are writing UI. Start here rather than inventing a second visual language. |
 
 `SETUP.md` is the source of truth for versions. Where this repo differs from it,
@@ -65,7 +65,7 @@ just check
 
 | Step | What it covers |
 |---|---|
-| `just check-windows` | `audio`, `calendar`, `stt`, `prompts`, `detect` still compile for Windows — the SPEC §8.2 seam guard. `store` and `modelfetch` are exempt; see "Where the repo differs from SETUP.md" |
+| `just check-windows` | `audio`, `calendar`, `stt`, `prompts`, `detect`, `meeting-format` still compile for Windows — the SPEC §8.2 seam guard. `store` and `modelfetch` are exempt; see "Where the repo differs from SETUP.md" |
 | `cargo fmt --all --check` | Rust formatting |
 | `cargo clippy --workspace --all-targets -- -D warnings` | Rust lint, warnings are errors |
 | `cargo test --workspace` | Rust tests |
@@ -74,6 +74,9 @@ just check
 | `pnpm vitest run` | Frontend tests |
 
 `just fmt` fixes everything that is automatically fixable.
+
+CI runs the same check on every pull request (`.github/workflows/check.yml`), so
+a green `just check` locally is what a green CI run looks like.
 
 **`just check` does not run the whisper hallucination guard.** SPEC §5's Phase 1
 gate — "silence produces no invented text" — has a whisper-specific test,
@@ -112,7 +115,7 @@ script asks for nothing: it puts the cert in its own keychain and sets trust in
 the *user* domain, which needs no admin password (measured, TUR-10).
 
 ```bash
-./spikes/phase0a-tcc/make-identity.sh   # ~7 s, no sudo, no GUI
+./scripts/signing/make-identity.sh   # ~7 s, no sudo, no GUI
 security find-identity -v -p codesigning  # confirm "meet-ai Local Signing" appears
 just bundle-signed                        # build + sign + verify
 ```
@@ -144,7 +147,7 @@ executable's cdhash, so every rebuild silently drops audio permission and
 `tccutil reset AudioCapture pro.saleschat.meetai` becomes a no-op. With this
 identity the designated requirement is `identifier "pro.saleschat.meetai" and
 certificate leaf = H"be3f…"` — bundle ID plus a stable cert — and the grant
-survives rebuilds (FINDINGS §10.4).
+survives rebuilds (docs/findings.md §10.4).
 
 **`just dev` is not a valid environment for testing audio permission.** TCC keys
 on the signed bundle identity, and dev builds are unsigned at a different path.
@@ -155,6 +158,8 @@ Only `just bundle-signed` proves anything about permissions.
 ```
 crates/audio/      🔴 tap + mic + resample + wav. Has bin/meet-rec.
 crates/stt/        🟡 SttEngine trait, sidecar driver, whisper fallback, transcript format
+crates/meeting-format/ 🟢 the meeting-folder file names and shared schema (transcript, segments).
+                      Pure data, no I/O policy; audio, stt and store all use it.
 crates/modelfetch/ 🟡 whisper model download. Has bin/meet-stt-model. The only
                       crate in the speech path with an HTTP client — see below.
 crates/store/      🟢 meeting-folder read/write + frontmatter (Phase 3a); watcher and

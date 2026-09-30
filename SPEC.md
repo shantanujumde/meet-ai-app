@@ -1,6 +1,6 @@
 # meet-ai — Production Spec v2 (lockable)
 
-**Date:** 2026-09-01 · **Supersedes:** `Readme.md` (Discovery v1) · **Backed by:** `FINDINGS.md` · **Why it exists:** [`PROBLEM.md`](./PROBLEM.md)
+**Date:** 2026-09-01 · **Supersedes:** `Readme.md` (Discovery v1) · **Backed by:** `docs/findings.md` · **Why it exists:** [`docs/problem.md`](./docs/problem.md)
 
 ---
 
@@ -8,7 +8,7 @@
 
 `Readme.md` locked 12 decisions before any code existed. Research against five comparable shipped projects (Muesli 1.1k★, pasrom/meeting-transcriber 151★, Meetily, Hyprnote/anarlog, open-granola) plus Granola's observed behaviour showed six of those decisions were contradicted by evidence, and v1 scope was roughly 3x what one person can vibe-code to a daily-usable state.
 
-This spec is the reconciled version. Every change is traceable to evidence in `FINDINGS.md` §2 and to a user decision recorded in §1 below.
+This spec is the reconciled version. Every change is traceable to evidence in `docs/findings.md` §2 and to a user decision recorded in §1 below.
 
 **The product, unchanged:** botless meeting recorder for developers. Meetings become merged PRs. Audio never leaves the machine.
 
@@ -447,7 +447,7 @@ Pass = prompt appears, names **meet-ai** (not the helper), and non-silent sample
 
 ⚠️ **The `tccutil` line only works on a bundle signed with a real identity.** Under ad-hoc signing TCC keys the record to the executable *path*, and the reset is a silent no-op — measured both ways in FINDINGS §10.4. `just bundle-signed` must therefore use `$SIGN_IDENTITY`, never `codesign -s -`.
 
-⛔ **Do not "copy the bundle to a new path" to force a fresh prompt.** An earlier revision of this line recommended exactly that; it is a one-way door. Each new path makes TCC create a **path-keyed** record, and those are permanent — `tccutil reset` resolves its argument as a bundle ID and returns `-10814` for a path, and deleting the directory leaves the record behind (measured, FINDINGS §10.6). Two are already stuck on the dev machine. Sign with the identity and reset by bundle ID; that is the only repeatable baseline. The identity's leaf SHA-1 is what every grant is keyed to, so it must not be re-minted between gate runs either — `spikes/phase0a-tcc/make-identity.sh` is idempotent for that reason, and `verify-tur10.sh` aborts if the leaf has moved.
+⛔ **Do not "copy the bundle to a new path" to force a fresh prompt.** An earlier revision of this line recommended exactly that; it is a one-way door. Each new path makes TCC create a **path-keyed** record, and those are permanent — `tccutil reset` resolves its argument as a bundle ID and returns `-10814` for a path, and deleting the directory leaves the record behind (measured, FINDINGS §10.6). Two are already stuck on the dev machine. Sign with the identity and reset by bundle ID; that is the only repeatable baseline. The identity's leaf SHA-1 is what every grant is keyed to, so it must not be re-minted between gate runs either — `scripts/signing/make-identity.sh` is idempotent for that reason, and `verify-tur10.sh` aborts if the leaf has moved.
 
 **Phase 1:** `cargo test -p stt` against fixture WAVs, run **once per engine**, incl. a 30s pure-silence file that must yield **zero** transcript lines (the whisper-hallucination guard — Apple's engine should pass it trivially, whisper should only pass it with VAD gating).
 
@@ -587,7 +587,7 @@ caching strategy) than this ticket's scope.
 
 **How it came up.** TUR-22 rebuilt the app icon with large art only (128pt and up). On macOS 26 that is correct and verified on two signed bundles. Below 26, the system has to downscale that art to 16px and 32px itself, and there is no macOS 14.x or 15.x machine or VM here to look at the result. TUR-41 simulated the downscale on this host: readable at every size, near-identical to the old hand-drawn art at 32px and 64px, but visibly softer and greyer at 16px — the crisp tile edge goes, though the two brackets stay separate and the orange dot stays a dot. A good stand-in, explicitly **not** a real-device check: macOS 14's exact filter and rep-selection are not guaranteed to match.
 
-**Why raise the floor rather than accept the simulation.** The simulation could only ever buy confidence in the icon. It could not buy confidence in anything else that was never run below 26 — and nothing in this project ever has been. `FINDINGS.md` records this as a standing limit in its own words: *"macOS 14.4–26. Everything here is macOS 27.0 only."* Keeping 14.4 in the spec was claiming support for a tier with zero executed tests behind it, icons included. Raising the floor makes the spec true instead of aspirational, and it is the option that removes work rather than adding it.
+**Why raise the floor rather than accept the simulation.** The simulation could only ever buy confidence in the icon. It could not buy confidence in anything else that was never run below 26 — and nothing in this project ever has been. `docs/findings.md` records this as a standing limit in its own words: *"macOS 14.4–26. Everything here is macOS 27.0 only."* Keeping 14.4 in the spec was claiming support for a tier with zero executed tests behind it, icons included. Raising the floor makes the spec true instead of aspirational, and it is the option that removes work rather than adding it.
 
 **What this changes:**
 
@@ -600,7 +600,7 @@ caching strategy) than this ticket's scope.
 
 **What this does *not* decide.** whisper-rs stays in the tree and stays in §2.5. It is still the Windows engine (L1: Windows next) and still the safety net behind engine 3, whose APIs are preview. Whether mac should keep a whisper path *at all* — which would also delete the model download manager, the Metal build config and mac-side VAD chunking from v1 — is a separate scope question and is **not** spent here.
 
-**Deliberately left alone.** `FINDINGS.md` and `spikes/phase0a-tcc/build.sh` still say 14.4. They are records of what was true when the research and the Phase 0a spike ran; rewriting them would falsify a result rather than update a decision.
+**Deliberately left alone.** `docs/findings.md` and `spikes/phase0a-tcc/build.sh` still say 14.4. They are records of what was true when the research and the Phase 0a spike ran; rewriting them would falsify a result rather than update a decision.
 
 **Cost, stated plainly:** anyone on macOS 14 or 15 cannot run meet-ai. Given L17 (not public) and a single known user on macOS 26.6.2, that population is currently zero.
 
@@ -620,9 +620,9 @@ Implementation: `crates/audio/src/chime.rs` — a rising two-note chime (A5 880 
 
 ### A6 — 2026-09-27 · L3 resolves to **in-process Rust** (resolves L3; supersedes the §5 Phase-0a pass branch)
 
-L3 did not pre-decide the capture location — it delegated the decision to the Phase 0a spike and named the Swift sidecar only as the thing to *test first*. The spike passed, and §5's table reads "Pass → capture lives in the sidecar". **That branch is not being taken**, and this amendment records why rather than leaving the divergence in `FINDINGS.md` alone. Full evidence: `FINDINGS.md` §9, §9.1, §10.
+L3 did not pre-decide the capture location — it delegated the decision to the Phase 0a spike and named the Swift sidecar only as the thing to *test first*. The spike passed, and §5's table reads "Pass → capture lives in the sidecar". **That branch is not being taken**, and this amendment records why rather than leaving the divergence in `docs/findings.md` alone. Full evidence: `docs/findings.md` §9, §9.1, §10.
 
-**§5 chose the sidecar for one reason, and the spike removed it.** The worry was TCC attribution — that a bundled helper might not inherit the app's audio-capture grant, or would prompt in its own name. `FINDINGS.md` §8.2/§10.4 measured that it inherits cleanly and that the grant is keyed to the bundle ID. With that gone, the choice is ordinary engineering cost, and four things point one way:
+**§5 chose the sidecar for one reason, and the spike removed it.** The worry was TCC attribution — that a bundled helper might not inherit the app's audio-capture grant, or would prompt in its own name. `docs/findings.md` §8.2/§10.4 measured that it inherits cleanly and that the grant is keyed to the bundle ID. With that gone, the choice is ordinary engineering cost, and four things point one way:
 
 1. **Nothing in the capture path needs Swift.** Every call the spike makes is plain C Core Audio (`AudioHardwareCreateProcessTap`, `AudioHardwareCreateAggregateDevice`, `AudioDeviceCreateIOProcIDWithBlock`), plus one Objective-C object, `CATapDescription`, which `objc2-core-audio` already binds. Contrast `SpeechTranscriber` (L4/A2), which is Swift-concurrency-native and genuinely unreachable from Rust — that is what the sidecar exists for.
 2. **The process boundary would land on the hardest exit gate.** Phase 0 is graded on drift < 200 ms between the two tracks. The mic side is already Rust (`cpal`). A capture sidecar means two processes, two clocks, a pipe between them, and two writers for `segments.json` — across the one measurement most likely to fail slowly and silently (§7 🔴).
@@ -639,7 +639,7 @@ L3 did not pre-decide the capture location — it delegated the decision to the 
 - **§5's kill criterion is unchanged and still live:** drift unsolved after 2 weeks → rewrite as native Swift, macOS-only, Windows dropped permanently. This amendment does not spend that escape hatch; it is the fallback if the port fails on its own terms.
 - `sidecar/meet-stt` keeps transcription only, exactly as A2 scoped it. §2.6's table row "System audio capture — only if Phase 0a passes" is now **struck**: capture never goes in the sidecar.
 
-*Decided by Alen (chief of staff) on TUR-4, on the escalation from TUR-3/TUR-10. Recommended by Rune in `FINDINGS.md` §9.*
+*Decided by Alen (chief of staff) on TUR-4, on the escalation from TUR-3/TUR-10. Recommended by Rune in `docs/findings.md` §9.*
 
 ### A5 — 2026-09-27 · `segments.json` gains checkpoint anchors (amends §3.4, §6; no §1 decision touched)
 

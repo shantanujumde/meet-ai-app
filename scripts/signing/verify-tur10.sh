@@ -7,12 +7,13 @@
 # produce. This script wraps both so the human part is two clicks; it does the
 # resetting, rebuilding, measuring and writing-up itself.
 #
-#   ./verify-tur10.sh
+#   scripts/signing/verify-tur10.sh
 #
 # Takes ~2 minutes. Writes /tmp/meet-ai-tur10/report.md. Plays a tone.
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The spike files this drives (build.sh, auto-click.sh, src/) stay in spikes/phase0a-tcc.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../spikes/phase0a-tcc" && pwd)"
 APP="$HERE/build/meet-ai.app"
 BUNDLE_ID="pro.saleschat.meetai"
 IDENTITY="${SIGN_IDENTITY:-meet-ai Local Signing}"
@@ -67,7 +68,7 @@ reap_click() {
 # search list, which is empty under a sandboxed $HOME — it then reports "0 valid
 # identities" for an identity that is present and working.
 if ! security find-identity -v -p codesigning "$KEYCHAIN" 2>/dev/null | grep -qF "$IDENTITY"; then
-  echo "no signing identity '$IDENTITY' in $KEYCHAIN — run ./make-identity.sh first" >&2
+  echo "no signing identity '$IDENTITY' in $KEYCHAIN — run scripts/signing/make-identity.sh first" >&2
   exit 1
 fi
 
