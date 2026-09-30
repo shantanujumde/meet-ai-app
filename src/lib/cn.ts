@@ -5,7 +5,7 @@
  * override a variant's utility (`p-0` over a row's `px-6 py-5`) instead of
  * both landing in the list and leaving the winner to stylesheet order.
  *
- * tailwind-merge has to be told about the `@theme` names in `src/index.css`.
+ * tailwind-merge has to be told about the `@theme` names in `src/theme.css`.
  * It cannot see the stylesheet, and without this it reads `text-body` as a
  * text *colour* — so `text-body text-fg-secondary` would silently lose one.
  */
@@ -31,6 +31,16 @@ const merge = extendTailwindMerge({
       leading: ["tight", "normal", "prose"],
       radius: ["window", "panel", "card", "control", "chip", "capsule"],
       shadow: ["raised", "floating", "sheet"],
+    },
+  },
+  override: {
+    // Stock tailwind-merge drops a `leading-*` that comes before a `text-*`
+    // size, because Tailwind's default sizes carry their own line height.
+    // This theme's sizes do not — the tokens define no `--text-*--line-height`,
+    // so `text-body` sets only `font-size` — and dropping the leading would
+    // change how the text looks. So the two are independent here.
+    conflictingClassGroups: {
+      "font-size": [],
     },
   },
 });

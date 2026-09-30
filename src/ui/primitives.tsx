@@ -5,7 +5,7 @@
  * These replace the `.btn`, `.badge`, `.card` and `.row` blocks that used to
  * live in `app.css`, value for value: every utility here resolves to the same
  * design-system token the old rule used (see the `@theme` block in
- * `src/index.css`). Rules from MASTER.md that are easy to lose in a move, and
+ * `src/theme.css`). Rules from MASTER.md that are easy to lose in a move, and
  * so are restated where they apply:
  *
  * * One tinted control per window: `tone: "primary"`. Everything else is

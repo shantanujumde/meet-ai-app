@@ -15,11 +15,20 @@ export const SETTINGS = "/settings";
 /** The setup wizard. Its steps live under it — see {@link onboardingStepPath}. */
 export const ONBOARDING = "/onboarding";
 
+/** The wizard's steps, in order. The route's `:step` is one of these. */
+export const ONBOARDING_STEPS = ["welcome", "permission", "speech", "folder"] as const;
+export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+
+/** Whether a `:step` param names a real step, rather than a typo or a stale URL. */
+export function isOnboardingStep(value: string | undefined): value is OnboardingStep {
+  return ONBOARDING_STEPS.includes(value as OnboardingStep);
+}
+
 /**
  * The permission step, reached after setup only as a deliberate trip (TUR-127).
  * Navigate there with `openPermissionScreen`, never to this path bare.
  */
-export const PERMISSION_ROUTE = `${ONBOARDING}/permission`;
+export const PERMISSION_ROUTE = onboardingStepPath("permission");
 
 /**
  * One meeting's review screen.
@@ -32,7 +41,7 @@ export function meetingPath(id: string): string {
 }
 
 /** One step of the setup wizard. */
-export function onboardingStepPath(step: string): string {
+export function onboardingStepPath(step: OnboardingStep): string {
   return `${ONBOARDING}/${step}`;
 }
 
