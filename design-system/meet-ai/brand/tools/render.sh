@@ -38,15 +38,16 @@ ICON_BG=00000000
 # pages and is too low here for one reason and too high for another, so it was
 # re-derived from the real files rather than reused:
 #
-#   real icon-path rasters   28% (mark-128, mark-512, the sparsest art)
-#                            .. 85% (icon-16)
-#   tray template            40% (tray-32), 46% (tray-16)
+#   real icon-path rasters   26% (mark-128, mark-512, the sparsest art)
+#                            .. 86% (icon-16)
+#   tray template            34% (tray-32), 41% (tray-16)
 #   blank / broken-<img>     0%
 #   ERR_FILE_NOT_FOUND       0% at 16px, 3% at 512px
 #
-# 3% is uncomfortably close to the 4% proof floor, so the icon path gets its
-# own: 10% is 3.3x above the worst observed failure and 2.8x below the
-# sparsest correct raster. Note the tray template only measures at all because
+# (Re-measured for the "m." mark, 2026-09-30; the [ · ] figures were 28..85%
+# and 40/46%.) 3% is uncomfortably close to the 4% proof floor, so the icon
+# path gets its own: 10% is 3.3x above the worst observed failure and 2.6x
+# below the sparsest correct raster. Note the tray template only measures at all because
 # verify_render.py now counts alpha as a channel — it is pure black artwork
 # whose only varying channel is alpha, and on RGB alone it read 0% ink.
 ICON_INK=0.10
@@ -91,8 +92,9 @@ cp "$STAGE/tray-32.png" "$ICONS/meet-aiTemplate@2x.png"
 #
 #   * rep present at that point size -> the old compositor. Our tile is shrunk
 #     and pasted onto the system's light icon plate, giving a square inside a
-#     square. At 16px the inner tile is ~10px, the brackets collapse, and the
-#     whole thing inverts to a light frame around a dark smudge.
+#     square. At 16px the inner tile is ~10px; with the old dark [ · ] tile
+#     (where this was measured) the brackets collapsed and the whole thing
+#     inverted to a light frame around a dark smudge.
 #   * no rep at that point size -> the modern container. The art is scaled to
 #     fill and the system's own squircle mask and shadow are applied. Correct.
 #

@@ -201,7 +201,7 @@ All four sit behind one trait — `CalendarProvider { list_events(range) -> Vec<
 | Target | `aarch64-apple-darwin` only (v1) |
 | Swift sidecar | `swiftc` from Command Line Tools — **full Xcode not required**. Built by `just sidecar`, signed with the same identity, embedded at `Contents/MacOS/meet-stt` |
 | Info.plist keys | `NSMicrophoneUsageDescription`, **`NSAudioCaptureUsageDescription`** (the tap permission key), `LSMinimumSystemVersion = 26.0` (A8), `CFBundleIconName` (A10) |
-| App icon | Icon Composer source `design-system/meet-ai/brand/meet-ai.icon` (made by `render.sh`), compiled by `actool` into `src-tauri/icons/Assets.car`, which is **committed**. The bundle carries `Assets.car` in `Contents/Resources`; `icon.icns` still ships as the fallback. Xcode 26+ is needed only to regenerate `Assets.car` — routine builds stay CLT-only (A10) |
+| App icon | "m." in white on the Dusk gradient tile, coral to violet (design-system/meet-ai/brand/README.md). Icon Composer source `design-system/meet-ai/brand/meet-ai.icon` (made by `render.sh`), compiled by `actool` into `src-tauri/icons/Assets.car`, which is **committed**. The bundle carries `Assets.car` in `Contents/Resources`; `icon.icns` still ships as the fallback. Xcode 26+ is needed only to regenerate `Assets.car` — routine builds stay CLT-only (A10) |
 | Entitlements | `com.apple.security.device.audio-input` |
 | Signing | **Local self-signed identity + hardened runtime.** Required for TCC to register the app at all — this is not optional even for personal use |
 | Notarization / auto-update / CI | **Out of scope** (L17) |

@@ -40,7 +40,7 @@ shoot_page() {
 
   [[ -f "$html" ]] || {
     print -u2 "   missing input: $html"
-    print -u2 "   run its generator first (node proof.mjs / proximity.mjs / concepts.mjs)."
+    print -u2 "   run its generator first (node proof.mjs, via render-proof.sh)."
     print -u2 "   refusing to invoke Chrome — it would screenshot its own error page."
     return 1
   }

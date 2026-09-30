@@ -13,110 +13,93 @@
    below were taken from what Icon Composer itself reads (the strings in
    IconComposerFoundation) and checked by rendering every macOS appearance
    with Icon Composer's own ictool — not written from memory.
+
+   The folder must stay `meet-ai.icon`: actool names the icon after its stem,
+   and CFBundleIconName in src-tauri/Info.plist has to match it.
    ============================================================================= */
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PALETTE as P, BRACKETS, bracketPaths, f } from "./geometry.mjs";
+import { PALETTE as P, TILE_GRADIENT, GLYPH_GRADIENT, MDOT, mdot } from "./geometry.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(process.argv[2] ?? join(HERE, "..", "meet-ai.icon"));
 
-/* The canvas IS the icon body. The system draws the squircle mask, the edge
+/* The canvas IS the tile. The system draws the squircle mask, the edge
    highlight and the drop shadow over the whole 1024 square, and adds the macOS
    grid margin itself — ictool's macOS export fills the full canvas edge to
    edge. So none of that is drawn here; baking in the 824 squircle from the
    legacy master would mask it twice and shrink the icon inside its own plate.
-
-   The mark keeps the same share of the body it has in the legacy master
-   (build.mjs appIcon: 0.58 of the 824 body). Here the body is 1024 wide, so
-   the mark is 0.58 of that, and the two read at the same size. */
+   MDOT is specified on exactly this canvas, so the layers are drawn at 1:1. */
 const CANVAS = 1024;
-const MARK_SHARE = 0.58;
-
-const g = BRACKETS;
-const vx = g.stemL - g.stroke / 2;
-const vy = g.top - g.stroke / 2;
-const vw = g.stemR - g.stemL + g.stroke;
-const vh = g.bottom - g.top + g.stroke;
-const scale = (CANVAS * MARK_SHARE) / vw;
-const tx = CANVAS / 2 - (vw * scale) / 2;
-const ty = CANVAS / 2 - (vh * scale) / 2;
-const place = `translate(${f(tx)} ${f(ty)}) scale(${f(scale)}) translate(${f(-vx)} ${f(-vy)})`;
+const parts = mdot(MDOT);
 
 /* Every layer is a full-canvas SVG with the art already in place, so no layer
-   needs a position override in icon.json and the two cannot drift apart. */
-const svg = (defs, body) =>
+   needs a position override in icon.json and the two cannot drift apart.
+   Layer art is drawn white: a layer's fill-specializations recolour it per
+   appearance, and white is what the Default appearance wants anyway. */
+const svg = (body) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS} ${CANVAS}" width="${CANVAS}" height="${CANVAS}">
-${defs ? `  <defs>${defs}</defs>\n` : ""}  <g transform="${place}">
-    ${body}
-  </g>
+  ${body}
 </svg>
 `;
-
-const { left, right } = bracketPaths(g);
-const stroke = `fill="none" stroke="${P.chalk}" stroke-width="${g.stroke}" stroke-linecap="round" stroke-linejoin="round"`;
-const brackets = svg("", `<path d="${left}" ${stroke}/><path d="${right}" ${stroke}/>`);
-
-// The same vertical ramp as the legacy master's dot (see build.mjs).
-const dot = svg(
-  `<linearGradient id="dot" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="${P.emberCore}"/>
-    <stop offset="0.5" stop-color="${P.ember}"/>
-    <stop offset="1" stop-color="${P.emberRim}"/>
-  </linearGradient>`,
-  `<circle cx="${g.dot.cx}" cy="${g.dot.cy}" r="${g.dot.r}" fill="url(#dot)"/>`,
+const m = svg(
+  `<path d="${parts.paths.join(" ")}" fill="none" stroke="${P.glyph}" stroke-width="${parts.stroke}" stroke-linecap="round" stroke-linejoin="round"/>`,
 );
+const dot = svg(`<circle cx="${parts.dot.cx}" cy="${parts.dot.cy}" r="${parts.dot.r}" fill="${P.glyph}"/>`);
 
 // "#RRGGBB" -> "srgb:r,g,b,1.00000", the colour syntax icon.json uses.
 const srgb = (hex) => {
   const c = [1, 3, 5].map((i) => (parseInt(hex.slice(i, i + 2), 16) / 255).toFixed(5));
   return `srgb:${c.join(",")},1.00000`;
 };
+const gradient = (top, bottom, orientation) => ({
+  "linear-gradient": [srgb(top), srgb(bottom)],
+  orientation,
+});
 
-/* The body is the document fill, not a layer: the fill is the part the
-   system replaces with its own plate in the tinted and clear appearances,
-   leaving the layers on top to carry the mark.
+/* The tile is the document fill, not a layer: the fill is the part the system
+   replaces with its own plate in the tinted and clear appearances, leaving
+   the layers on top to carry the mark.
 
-   Dark is pinned to the same ink. Left to itself the system replaces the fill
-   with a neutral near-black (#1E1D1D, measured) — the icon is already a dark
-   object, so that only drops the ink's blue cast. */
-const body = {
-  "linear-gradient": [srgb(P.inkTop), srgb(P.inkBottom)],
-  orientation: { start: { x: 0.5, y: 0 }, stop: { x: 0.5, y: 1 } },
-};
+   Default: Dusk, top to bottom (TILE_GRADIENT — the same numbers the legacy
+   SVGs use). Dark: the brand's ink, top to bottom. Left to itself the system
+   would keep Dusk in Dark, a bright tile in a dark Dock; ink is the brand's
+   own dark object, and the colour moves into the glyph instead (below). */
+const dusk = gradient(P.tileTop, P.tileBottom, TILE_GRADIENT);
+const duskGlyph = gradient(P.tileTop, P.tileBottom, GLYPH_GRADIENT);
+const ink = gradient(P.inkTop, P.inkBottom, { start: { x: 0.5, y: 0 }, stop: { x: 0.5, y: 1 } });
 
-/* Glass is off on both layers. With the default Liquid Glass treatment,
-   ictool renders a dark keyline around each bracket and dims the art:
-   brackets F4F5F7 -> E6E7E9, dot FF8A3C -> E2884B at its centre. That is the
-   "no drop shadow under the glyph" and "the mark is a solid object" rules in
-   ../README.md §6, applied by the system instead of by us. Flat layers render
-   the brand swatches exactly (F4F6F7 / FF893D) while the system still owns
-   the mask, the edge highlight and the dark / tinted / clear appearances.
+/* Glass is off on both layers, as the approved prototype had it. With Liquid
+   Glass on, ictool outlined the previous mark's glyph in a dark keyline and
+   dimmed it (TUR-87) — a drop shadow and an effect on a solid object, which
+   README §6 rules out, applied by the system. With it off, the layers render
+   flat white while the system still owns the mask, the edge highlight and the
+   dark / tinted / clear appearances.
 
-   The dot is also translucency-off: it is the record light, and a light that
-   lets the body show through reads as off. With glass off this changes
-   nothing today; it keeps the dot opaque if glass is ever turned back on
-   (with glass on, it took the dot's centre from E2884B back to F08F4E).
+   Dark: the m wears Dusk, spread over its own bounds (a layer gradient maps
+   to the layer's ink, not the canvas) on GLYPH_GRADIENT's diagonal, so it
+   runs coral at the top-left shoulder to violet at the right foot.
+   The dot does NOT get its own copy of the gradient. The approved prototype
+   did that, and a 124-unit dot holding the whole coral-to-violet ramp read as
+   a second, smaller icon. It takes coral instead: the record light, lit, and
+   the one hue that stays distinct from the violet foot beside it, which keeps
+   the full stop visibly separate from the m at 16px and 32px (checked on
+   ictool's renders).
 
-   Tinted and clear are the system's one-colour renderings, so the dot takes
-   the one-colour rule every -mono- file here already follows: same colour as
-   the brackets. Left as ember, the system maps it by luminance and it sinks
-   into the body — #493480 against #5E41AF brackets in TintedDark, nearly gone
-   at 32px. The "tinted" appearance covers the clear renditions too (checked:
-   the ClearDark dot went #ADAEAE -> #E8E8E9). The dot stays readable there
-   because it is the only filled shape, not because of its hue (§3).
+   Tinted and clear: plain white on both layers, pinned explicitly so the Dark
+   gradient cannot carry into TintedDark / ClearDark. The system maps a
+   one-colour rendering by luminance, so white is what gives the glyph the
+   full tint. The "tinted" appearance covers the clear renditions too
+   (checked in TUR-87, and again on this document's ClearDark render).
 
    Two groups, not one, so that turning glass back on later gives the dot its
-   own depth above the brackets rather than fusing them into one slab. The
-   format allows four.
-
-   Not carried over from the legacy master: the specular rim (the system draws
-   its own edge highlight) and the 13% ember halo. The layers are exactly the
-   mark's two solid shapes and nothing soft. */
-const oneColour = { solid: srgb(P.chalk) };
+   own depth above the m rather than fusing them into one slab. The dot also
+   keeps translucency off: with glass on, a record light that lets the tile
+   show through reads as off. With glass off this changes nothing. */
+const white = { solid: srgb(P.glyph) };
 const icon = {
-  "fill-specializations": [{ value: body }, { appearance: "dark", value: body }],
+  "fill-specializations": [{ value: dusk }, { appearance: "dark", value: ink }],
   groups: [
     {
       layers: [
@@ -124,13 +107,26 @@ const icon = {
           "image-name": "dot.svg",
           name: "dot",
           glass: false,
-          "fill-specializations": [{ appearance: "tinted", value: oneColour }],
+          "fill-specializations": [
+            { appearance: "dark", value: { solid: srgb(P.tileTop) } },
+            { appearance: "tinted", value: white },
+          ],
         },
       ],
       translucency: { enabled: false, value: 0.5 },
     },
     {
-      layers: [{ "image-name": "brackets.svg", name: "brackets", glass: false }],
+      layers: [
+        {
+          "image-name": "m.svg",
+          name: "m",
+          glass: false,
+          "fill-specializations": [
+            { appearance: "dark", value: duskGlyph },
+            { appearance: "tinted", value: white },
+          ],
+        },
+      ],
     },
   ],
   "supported-platforms": { squares: ["macOS"] },
@@ -139,7 +135,7 @@ const icon = {
 // Assets/ is written from icon.json's own layer list, so the two cannot
 // disagree. That matters because ictool renders a layer whose image-name points
 // nowhere as if the layer were not there — no error, just a missing dot.
-const artwork = { "dot.svg": dot, "brackets.svg": brackets };
+const artwork = { "dot.svg": dot, "m.svg": m };
 const names = icon.groups.flatMap((grp) => grp.layers).map((l) => l["image-name"]);
 
 rmSync(OUT, { recursive: true, force: true });
