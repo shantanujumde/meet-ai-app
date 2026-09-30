@@ -75,6 +75,19 @@ pub fn run() {
         .manage(recording::Recorder::default())
         .manage(engine::Downloads::default())
         .setup(|_app| {
+            // TUR-97: before the record shortcut exists, so nothing can be
+            // mid-recording while this rewrites a header. Fast — two 44-byte
+            // reads per meeting — and a no-op on every launch after the first
+            // that finds something.
+            {
+                use tauri::Manager as _;
+                let status = _app.state::<recording::Recorder>().status();
+                let rewritten =
+                    meetings::recover_interrupted_audio(meetings::Live::from_status(&status));
+                if rewritten > 0 {
+                    tracing::info!(rewritten, "made interrupted recordings' audio playable");
+                }
+            }
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 register_record_shortcut(_app.handle());
@@ -101,8 +114,23 @@ pub fn run() {
             commands::toggle_recording,
             commands::stop_recording,
         ])
-        .run(tauri::generate_context!())
-        .expect("meet-ai failed to start");
+        .build(tauri::generate_context!())
+        .expect("meet-ai failed to start")
+        .run(|app, event| {
+            // TUR-97: a normal quit mid-recording (⌘Q, the menu bar's Quit, a
+            // logout asking apps to quit) used to leave the files exactly as a
+            // `kill -9` does — up to one checkpoint of audio past the header
+            // and the meeting labelled Interrupted. `Exit` is the last event
+            // before the process ends, so stop the recording here the same way
+            // the Stop button does. A no-op when nothing is recording; a hard
+            // kill never reaches this, which is what the checkpoints are for.
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager as _;
+                if let Err(error) = app.state::<recording::Recorder>().stop(app) {
+                    tracing::error!(message = %error.message, "could not finish the recording on quit");
+                }
+            }
+        });
 }
 
 /// The global-shortcut plugin, with the ⌘⇧R handler attached.

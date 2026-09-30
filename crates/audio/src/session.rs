@@ -31,6 +31,18 @@ use crate::{AudioSource, Channel, Error as AudioError};
 /// permission grant — can still show that dialog's latency on top of it.
 const FIRST_BUFFER_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How often a caller should call [`RecordingSession::tick`]. Coarse next to
+/// [`CHECKPOINT_INTERVAL_S`] — it only bounds how late a due checkpoint or a
+/// default-device change is noticed — and cheap, since a tick with nothing
+/// due is two Core Audio property reads.
+///
+/// Exported (TUR-97) so `meet-rec`'s poll loop and the app's ticker thread
+/// share one cadence rather than two copies of `200ms` that could drift, the
+/// same reason [`default_system_source`] is shared. With it, a checkpoint
+/// lands between `CHECKPOINT_INTERVAL_S` and `CHECKPOINT_INTERVAL_S` +
+/// `TICK_INTERVAL` after the previous one.
+pub const TICK_INTERVAL: Duration = Duration::from_millis(200);
+
 /// The system-audio [`AudioSource`], where one exists on this platform. `None`
 /// on any platform without a process-tap implementation yet (SPEC §8.2's
 /// Windows stub) — contract §9's "absent track" path, not an error.
@@ -309,8 +321,8 @@ pub struct StopReport {
 /// blocking call bounded by a fixed duration.
 ///
 /// The caller owns the polling cadence: call [`RecordingSession::tick`] on
-/// some interval (`meet-rec` uses [`crate::segments::CHECKPOINT_INTERVAL_S`]-scale
-/// polling; see that binary's `POLL_INTERVAL`) to let device-change detection
+/// some interval ([`TICK_INTERVAL`], which both `meet-rec`'s loop and the app's
+/// ticker thread use) to let device-change detection
 /// and periodic checkpoints run, then call [`RecordingSession::stop`] once to
 /// finish cleanly. Neither `tick` nor `stop` block waiting for anything beyond
 /// the calls `AudioSource` itself makes.
@@ -786,6 +798,74 @@ mod tests {
 
         let json =
             std::fs::read_to_string(&report.segments_path).expect("segments.json was written");
+        let segments = crate::segments::Segments::from_json(&json)
+            .expect("segments.json must parse as the §3.4 shape");
+        segments
+            .check_wav_header(Channel::Mic, mic_frames)
+            .expect("segments.json must account for at least what mic.wav declares");
+        segments
+            .check_wav_header(Channel::System, sys_frames)
+            .expect("segments.json must account for at least what system.wav declares");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The crash-safety half of TUR-97: a recording that is ticked but never
+    /// stopped — `kill -9`, a crash, a power cut — must still leave WAVs whose
+    /// headers declare real frames and a `segments.json` that accounts for
+    /// them, because the checkpoint `tick()` runs is the only thing that
+    /// writes either before `stop()`. The app shipped 0.3.0 without ever
+    /// calling `tick()`, and a killed recording left 0-byte headers over ~16 s
+    /// of PCM and no `segments.json`; this pins the session half of the fix.
+    ///
+    /// Backdates `last_checkpoint` instead of sleeping out
+    /// `CHECKPOINT_INTERVAL_S`, and ends with `mem::forget` rather than
+    /// `stop()` or a drop, so nothing after the tick can patch a header or
+    /// write `segments.json` — the same bytes a killed process leaves behind.
+    #[test]
+    fn a_due_tick_checkpoints_so_a_session_that_never_stops_is_still_readable() {
+        let dir = temp_dir("killed");
+
+        let mic: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::Mic));
+        let sys: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::System));
+        let mut session =
+            RecordingSession::start(dir.clone(), mic, Some(sys)).expect("session starts cleanly");
+        let segments_path = session.segments_path.clone();
+        let (mic_path, sys_path) = (session.mic_path.clone(), session.sys_path.clone());
+
+        assert!(
+            !segments_path.exists(),
+            "segments.json is first written by a checkpoint, never by start"
+        );
+
+        session
+            .tick()
+            .expect("an early tick is a no-op, not an error");
+        assert!(
+            !segments_path.exists(),
+            "a tick inside the checkpoint interval must not checkpoint"
+        );
+
+        session.last_checkpoint = Instant::now()
+            .checked_sub(Duration::from_secs(CHECKPOINT_INTERVAL_S))
+            .expect("the monotonic clock is past one checkpoint interval");
+        session.tick().expect("a due checkpoint succeeds");
+
+        // Simulate the process dying here: no stop, no Drop.
+        std::mem::forget(session);
+
+        let mic_frames =
+            crate::wav_writer::read_header_frames(&mic_path).expect("mic.wav is playable");
+        let sys_frames =
+            crate::wav_writer::read_header_frames(&sys_path).expect("system.wav is playable");
+        assert!(mic_frames > 0, "the checkpoint must patch mic.wav's header");
+        assert!(
+            sys_frames > 0,
+            "the checkpoint must patch system.wav's header"
+        );
+
+        let json = std::fs::read_to_string(&segments_path)
+            .expect("the checkpoint must write segments.json");
         let segments = crate::segments::Segments::from_json(&json)
             .expect("segments.json must parse as the §3.4 shape");
         segments

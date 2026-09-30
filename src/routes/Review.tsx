@@ -15,7 +15,7 @@ import { readMeeting, revealMeeting } from "@/ipc/client";
 import type { MeetingDetail, TranscriptLine, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { useAppStore } from "@/state/app";
-import { formatRelativeDate } from "@/ui/format";
+import { describeInterruption, formatRelativeDate, INTERRUPTED_LABEL } from "@/ui/format";
 import { NotesPane } from "@/ui/NotesPane";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
@@ -79,6 +79,7 @@ export function Review() {
   if (!detail) return null;
 
   const { summary, lines, transcriptMissing, unparsedLineCount, path } = detail;
+  const interrupted = summary.recordingState === "interrupted";
 
   return (
     <div className="page">
@@ -89,7 +90,14 @@ export function Review() {
           {summary.time ? <span>{summary.time}</span> : null}
           {summary.lastTimestamp ? <span>Last line at {summary.lastTimestamp}</span> : null}
           {summary.hasAnalysis ? <span>Wrapped up</span> : null}
+          {interrupted ? <span>{INTERRUPTED_LABEL}</span> : null}
         </p>
+        {/* TUR-97: an interrupted meeting opens like any other — everything
+            below still renders — but says in one line that it did not end on
+            purpose, and how much of it was kept. */}
+        {interrupted ? (
+          <p className="page__notice">{describeInterruption(summary.audioMs)}</p>
+        ) : null}
         <div className="btn-row">
           <button
             type="button"

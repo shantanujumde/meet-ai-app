@@ -16,21 +16,26 @@ use tauri_plugin_opener::OpenerExt as _;
 use crate::config;
 use crate::engine::{self, Downloads, EnvironmentView, ModelView, SelectionView};
 use crate::error::UiError;
-use crate::meetings::{self, MeetingDetail, MeetingList};
+use crate::meetings::{self, Live, MeetingDetail, MeetingList};
 use crate::onboarding;
 use crate::permission;
 use crate::recording::{Phase, Recorder, Status};
 
 // --- meetings ------------------------------------------------------------
 
+/// The recorder's state comes along so the meeting being recorded right now is
+/// never labelled interrupted — mid-recording its files look exactly like a
+/// killed one's (TUR-97).
 #[tauri::command]
-pub fn list_meetings() -> Result<MeetingList, UiError> {
-    meetings::list()
+pub fn list_meetings(recorder: State<'_, Recorder>) -> Result<MeetingList, UiError> {
+    let status = recorder.status();
+    meetings::list(Live::from_status(&status))
 }
 
 #[tauri::command]
-pub fn read_meeting(id: String) -> Result<MeetingDetail, UiError> {
-    meetings::detail(&id)
+pub fn read_meeting(recorder: State<'_, Recorder>, id: String) -> Result<MeetingDetail, UiError> {
+    let status = recorder.status();
+    meetings::detail(&id, Live::from_status(&status))
 }
 
 #[tauri::command]
@@ -64,7 +69,8 @@ pub fn change_meetings_folder(
 /// question rather than a debugging affordance.
 #[tauri::command]
 pub fn reveal_meeting(app: AppHandle, id: String) -> Result<(), UiError> {
-    let detail = meetings::detail(&id)?;
+    // Only the path is used, so which meeting is live does not matter here.
+    let detail = meetings::detail(&id, Live::Nothing)?;
     app.opener()
         .open_path(&detail.path, None::<&str>)
         .map_err(|error| UiError::app("open-failed", error.to_string()))

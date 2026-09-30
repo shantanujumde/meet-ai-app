@@ -15,13 +15,36 @@
 //! * **A malformed file is a badge, not an error (SPEC §7).** `store` loads
 //!   every file it can and reports the rest as problems; the unparsed-line
 //!   count below is one of them.
+//!
+//! It also tells a finished meeting from one whose recording was cut short
+//! (TUR-97) — see [`RecordingState`] for the name and [`classify_audio`] for
+//! the rule.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 
+use audio::Channel;
+use audio::segments::{Segments, duration_ms};
+use audio::wav_writer::read_header_frames;
 use serde::{Deserialize, Serialize};
 
 use crate::error::UiError;
+use crate::recording::{Phase, Status};
+
+/// Files inside a meeting folder (SPEC §3.1).
+const AUDIO: &str = "audio";
+const SEGMENTS: &str = "segments.json";
+
+/// The canonical header `audio::wav_writer` writes, and the size of one mono
+/// 16-bit frame. Private there; restated here because the audio check below
+/// compares a file's real length against what its header declares, and
+/// [`read_header_frames`] refuses any file that is not exactly this shape.
+const WAV_HEADER_LEN: u64 = 44;
+const WAV_BYTES_PER_FRAME: u64 = 2;
+/// Where the RIFF chunk size and the `data` chunk size live in that header.
+const WAV_RIFF_SIZE_OFFSET: u64 = 4;
+const WAV_DATA_SIZE_OFFSET: u64 = 40;
 
 /// Where meetings live.
 ///
@@ -132,7 +155,9 @@ pub fn change_root(new_root: PathBuf) -> Result<MeetingList, UiError> {
     }
 
     write_pointer(&new_root)?;
-    list()
+    // The IPC command refuses a move unless the recorder is idle, so nothing
+    // under the new root is being written.
+    list(Live::Nothing)
 }
 
 /// Move everything from `old_root` into `new_root`, merging rather than
@@ -239,6 +264,69 @@ pub struct MeetingSummary {
     pub has_notes: bool,
     /// `meeting.md` exists, i.e. an agent has wrapped this meeting up.
     pub has_analysis: bool,
+    /// Whether the recording ended on purpose. See [`RecordingState`].
+    pub recording_state: RecordingState,
+    /// Milliseconds of audio a player can actually reach: the longer of the
+    /// two tracks, measured from its WAV header (SPEC A5 — header frames are
+    /// the only true duration). `None` when the folder holds no audio at all,
+    /// which is also what a meeting looks like after the retention job (L16)
+    /// has deleted its WAVs.
+    pub audio_ms: Option<u64>,
+}
+
+/// How a meeting's recording ended, as the UI names it (TUR-97).
+///
+/// **The name for a partly written meeting is "Interrupted".** Chosen over the
+/// alternatives because it says what happened and nothing more:
+///
+/// * not *failed*, *corrupt* or *error* — the audio and transcript up to the
+///   cut are good, and opening the meeting is not a failure;
+/// * not *incomplete* or *partial* — those suggest the rest might still turn
+///   up, or that the user should go and find it;
+/// * not *recovered* — that implies a repair step the user took part in, and
+///   TUR-97 says there is none;
+/// * and not *finished*, because it is not one: the recording ended because
+///   the app or the Mac stopped, not because someone pressed Stop.
+///
+/// The list shows the word as a label; the meeting itself says in one line
+/// how much audio was kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecordingState {
+    /// Stopped on purpose, or there is no audio to judge by (a folder from
+    /// before recording existed, or one whose WAVs retention has deleted).
+    Finished,
+    /// The recording was cut short — force quit, `kill -9`, a crash, the
+    /// battery. Opened exactly like any other meeting.
+    Interrupted,
+    /// This app is writing to it right now. Its files look the way an
+    /// interrupted meeting's do — the headers are behind the samples and the
+    /// last segment has not been closed — because it has not been stopped
+    /// *yet*, so it must never be labelled interrupted.
+    Recording,
+}
+
+/// Which meeting, if any, the running app is recording into.
+///
+/// Built from the recorder's [`Status`] so the list can leave a live meeting
+/// alone: mid-recording, its files are indistinguishable from a killed one's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Live<'a> {
+    #[default]
+    Nothing,
+    Meeting(&'a str),
+}
+
+impl<'a> Live<'a> {
+    pub fn from_status(status: &'a Status) -> Self {
+        match (status.phase, status.meeting_id.as_deref()) {
+            (Phase::Idle, _) => Live::Nothing,
+            (_, Some(id)) => Live::Meeting(id),
+            // `Starting` before the recorder has picked an id. It publishes the
+            // id before it creates the folder, so no folder can be live yet.
+            (_, None) => Live::Nothing,
+        }
+    }
 }
 
 /// One parsed transcript line.
@@ -281,8 +369,11 @@ pub struct MeetingList {
 }
 
 /// List every meeting folder under the root, newest first.
-pub fn list() -> Result<MeetingList, UiError> {
-    let root = root()?;
+pub fn list(live: Live<'_>) -> Result<MeetingList, UiError> {
+    list_in(&root()?, live)
+}
+
+fn list_in(root: &Path, live: Live<'_>) -> Result<MeetingList, UiError> {
     if !root.is_dir() {
         return Ok(MeetingList {
             root: root.display().to_string(),
@@ -293,7 +384,14 @@ pub fn list() -> Result<MeetingList, UiError> {
 
     // `scan` skips `.app` and every other dot-folder, sorts newest first, and
     // never lets one unreadable folder hide the rest.
-    let meetings = store::folder::scan(&root)?.iter().map(summarize).collect();
+    let live_id = live_id(live);
+    let meetings = store::folder::scan(root)?
+        .iter()
+        .map(|folder| {
+            let is_live = live_id.as_deref() == Some(folder.id.as_str());
+            summarize(folder, is_live)
+        })
+        .collect();
 
     Ok(MeetingList {
         root: root.display().to_string(),
@@ -302,8 +400,56 @@ pub fn list() -> Result<MeetingList, UiError> {
     })
 }
 
+/// Every meeting folder under `root`, newest first.
+///
+/// One odd entry never fails the whole list: a folder that cannot be stat'd
+/// is logged and left out, the same way a stray file is, rather than turning
+/// every other meeting into an error screen.
+fn meeting_folders(root: &Path) -> Result<Vec<(PathBuf, String)>, UiError> {
+    let mut folders = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                tracing::warn!(%error, "skipping an unreadable entry in the meetings folder");
+                continue;
+            }
+        };
+        match entry.file_type() {
+            Ok(kind) if kind.is_dir() => {}
+            Ok(_) => continue,
+            Err(error) => {
+                tracing::warn!(%error, path = %entry.path().display(), "skipping an entry that could not be inspected");
+                continue;
+            }
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // `.app` holds config, models, logs and the derived index — it is not a
+        // meeting. Skipping every dotfile also covers `.DS_Store` directories
+        // and anything else the OS leaves lying around.
+        if name.starts_with('.') {
+            continue;
+        }
+        folders.push((entry.path(), name));
+    }
+
+    // Folder names start with `YYYY-MM-DD-HHMM`, so a reverse string sort is a
+    // reverse chronological sort. Names that do not match sort to the end,
+    // which is where anything unrecognised belongs.
+    folders.sort_by(|a, b| b.1.cmp(&a.1));
+    Ok(folders)
+}
+
+/// The folder name of the live meeting, if any.
+fn live_id(live: Live<'_>) -> Option<String> {
+    match live {
+        Live::Nothing => None,
+        Live::Meeting(id) => Some(id.to_string()),
+    }
+}
+
 /// Open one meeting: its transcript and its notes.
-pub fn detail(id: &str) -> Result<MeetingDetail, UiError> {
+pub fn detail(id: &str, live: Live<'_>) -> Result<MeetingDetail, UiError> {
     let dir = existing_meeting_dir(id)?;
     let folder = store::folder::load(&dir)?;
 
@@ -324,8 +470,10 @@ pub fn detail(id: &str) -> Result<MeetingDetail, UiError> {
         None => (Vec::new(), 0),
     };
 
+    let is_live = live_id(live).as_deref() == Some(folder.id.as_str());
+
     Ok(MeetingDetail {
-        summary: summarize(&folder),
+        summary: summarize(&folder, is_live),
         path: dir.display().to_string(),
         lines,
         transcript_missing: folder.transcript.is_none(),
@@ -366,8 +514,9 @@ fn existing_meeting_dir(id: &str) -> Result<PathBuf, UiError> {
     Ok(dir)
 }
 
-/// Build a list row from a loaded folder.
-fn summarize(folder: &store::folder::MeetingFolder) -> MeetingSummary {
+/// Build a list row from a loaded folder. The audio beside it is never read,
+/// only its two 44-byte headers and `segments.json` ([`classify_audio`]).
+fn summarize(folder: &store::folder::MeetingFolder, is_live: bool) -> MeetingSummary {
     let (date, time, slug) = split_folder_name(&folder.id);
 
     let (line_count, last_timestamp) = match &folder.transcript {
@@ -388,7 +537,18 @@ fn summarize(folder: &store::folder::MeetingFolder) -> MeetingSummary {
         .or_else(|| slug.map(prettify_slug))
         .unwrap_or_else(|| folder.id.clone());
 
+    let audio = classify_audio(&folder.path.join(AUDIO));
+    let recording_state = if is_live {
+        RecordingState::Recording
+    } else if audio.ended_cleanly {
+        RecordingState::Finished
+    } else {
+        RecordingState::Interrupted
+    };
+
     MeetingSummary {
+        recording_state,
+        audio_ms: audio.header_frames.map(|frames| duration_ms(frames) as u64),
         id: folder.id.clone(),
         title,
         date,
@@ -398,6 +558,202 @@ fn summarize(folder: &store::folder::MeetingFolder) -> MeetingSummary {
         has_notes: !folder.notes.is_empty(),
         has_analysis: folder.meeting.is_some(),
     }
+}
+
+/// What a meeting's `audio/` folder says about how its recording ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AudioCheck {
+    ended_cleanly: bool,
+    /// The longer track's header-declared length, in frames. `None` when
+    /// there is no WAV to read.
+    header_frames: Option<u64>,
+}
+
+/// Did this recording stop on purpose?
+///
+/// SPEC A5 §3 (contract §7): `sum(*_frames) >= wav_header_frames` always,
+/// **with equality after a graceful stop** — and `RecordingSession::stop`
+/// finalises both headers to every sample written before it writes the last
+/// `segments.json`. So a cleanly stopped recording is exactly this, for every
+/// WAV present in `audio/`:
+///
+/// 1. `segments.json` is there and parses. The recorder writes it on every
+///    stop and every checkpoint, even when the system tap failed (SPEC §3.4),
+///    so a WAV with none beside it was killed before its first checkpoint —
+///    which on v0.3.0, where checkpoints never ran, is every killed recording.
+/// 2. The header is canonical and declares exactly the bytes on disk. A kill
+///    leaves samples appended after the last header patch: up to one
+///    checkpoint's worth, or all of them on v0.3.0, whose headers stay at 0.
+/// 3. The header declares exactly the frames `segments.json` gives that
+///    channel. After a kill it lags them (A5's benign crash window); running
+///    ahead of them is something the writer cannot produce at all.
+///
+/// Any one failing means interrupted. No WAVs at all means there is nothing
+/// to judge by, and the meeting is treated as finished: that is a folder from
+/// before recording existed, or one whose audio retention (L16) has deleted.
+///
+/// Cost: one small JSON read, then a 44-byte read and a `stat` per WAV. The
+/// samples are never read.
+///
+/// **The one kill this cannot see** lands after a checkpoint's header patch
+/// and before the next sample reaches the file. Header, file and segments
+/// then agree exactly — `segments.json` has no stop marker, and a stop's
+/// final anchor looks like a checkpoint's — so it reads as finished. The
+/// window is the gap between two buffer flushes, and a meeting caught in it
+/// loses only the label: everything on disk is declared and timestamped.
+fn classify_audio(audio_dir: &Path) -> AudioCheck {
+    let wavs: Vec<(Channel, PathBuf)> = [Channel::Mic, Channel::System]
+        .into_iter()
+        .map(|channel| (channel, audio_dir.join(channel.wav_filename())))
+        .filter(|(_, path)| path.is_file())
+        .collect();
+    if wavs.is_empty() {
+        return AudioCheck {
+            ended_cleanly: true,
+            header_frames: None,
+        };
+    }
+
+    let segments = fs::read_to_string(audio_dir.join(SEGMENTS))
+        .ok()
+        .and_then(|raw| Segments::from_json(&raw).ok());
+    let mut ended_cleanly = segments.is_some();
+    let mut longest: Option<u64> = None;
+
+    for (channel, path) in &wavs {
+        let (Ok(header_frames), Ok(meta)) = (read_header_frames(path), fs::metadata(path)) else {
+            // Not a header meet-ai wrote, or shorter than one. Either way this
+            // is not a recording that was stopped and finalised.
+            ended_cleanly = false;
+            continue;
+        };
+        longest = Some(longest.map_or(header_frames, |l| l.max(header_frames)));
+
+        let declared_len = WAV_HEADER_LEN + header_frames * WAV_BYTES_PER_FRAME;
+        if meta.len() != declared_len {
+            ended_cleanly = false;
+        }
+        if let Some(segments) = &segments
+            && segments.total_frames(*channel) != header_frames
+        {
+            ended_cleanly = false;
+        }
+    }
+
+    AudioCheck {
+        ended_cleanly,
+        header_frames: longest,
+    }
+}
+
+/// Make the audio of v0.3.0-era interrupted recordings playable. Run once at
+/// launch, before anything can start a recording.
+///
+/// A recording killed before its first checkpoint — every killed recording
+/// on v0.3.0, which never checkpointed — leaves WAVs whose headers still say
+/// **0 bytes** of audio over minutes of real samples, and no `segments.json`.
+/// Every conforming reader, `read_header_frames` included, trusts the header,
+/// so that audio is unreachable: QuickTime plays nothing, and the meeting
+/// would claim no audio was kept. TUR-97 rules out a repair step the user has
+/// to take, so this one is silent.
+///
+/// It is deliberately narrow. It only touches a meeting that
+///
+/// * [`classify_audio`] calls interrupted,
+/// * is not the one this app is recording (`live`),
+/// * has **no** `segments.json` — the only shape where the header can be
+///   behind *all* of the audio. A recording that has checkpointed is already
+///   playable to within one checkpoint, and the samples past its header were
+///   never accounted for in any `segments.json`; `WavWriter::open_append`
+///   deliberately discards exactly those, and this does not second-guess it.
+///
+/// and in such a meeting it only rewrites the two size fields of a canonical
+/// 44-byte header, to cover the whole frames already on disk. It never
+/// truncates, moves or reorders a sample, never lowers a size, and a second
+/// run finds nothing to do. The meeting stays labelled interrupted afterwards,
+/// because it still has no `segments.json`.
+///
+/// Returns how many WAV headers it rewrote.
+pub fn recover_interrupted_audio(live: Live<'_>) -> usize {
+    match root() {
+        Ok(root) => recover_in(&root, live),
+        Err(error) => {
+            tracing::warn!(message = %error.message, "no meetings folder to check for interrupted recordings");
+            0
+        }
+    }
+}
+
+fn recover_in(root: &Path, live: Live<'_>) -> usize {
+    if !root.is_dir() {
+        return 0;
+    }
+    let folders = match meeting_folders(root) {
+        Ok(folders) => folders,
+        Err(error) => {
+            tracing::warn!(message = %error.message, "could not list meetings to check for interrupted recordings");
+            return 0;
+        }
+    };
+    let live_id = live_id(live);
+
+    let mut rewritten = 0;
+    for (path, name) in &folders {
+        if live_id.as_deref() == Some(name.as_str()) {
+            continue;
+        }
+        let audio_dir = path.join(AUDIO);
+        if audio_dir.join(SEGMENTS).exists() || classify_audio(&audio_dir).ended_cleanly {
+            continue;
+        }
+        for channel in [Channel::Mic, Channel::System] {
+            let wav = audio_dir.join(channel.wav_filename());
+            if !wav.is_file() {
+                continue;
+            }
+            match expose_unheadered_samples(&wav) {
+                Ok(false) => {}
+                Ok(true) => {
+                    rewritten += 1;
+                    tracing::info!(meeting = %name, file = channel.wav_filename(), "made an interrupted recording's audio playable");
+                }
+                // Left as found. The meeting still opens and still says it
+                // was interrupted; the next launch tries again.
+                Err(error) => {
+                    tracing::warn!(%error, meeting = %name, file = channel.wav_filename(), "could not make an interrupted recording's audio playable")
+                }
+            }
+        }
+    }
+    rewritten
+}
+
+/// Raise a canonical WAV header's declared length to cover every whole frame
+/// on disk. `Ok(false)` when it already does, or when the file is not a
+/// header this app wrote (which is then never touched).
+fn expose_unheadered_samples(path: &Path) -> std::io::Result<bool> {
+    let declared = read_header_frames(path)?;
+    let on_disk = fs::metadata(path)?.len().saturating_sub(WAV_HEADER_LEN) / WAV_BYTES_PER_FRAME;
+    // Both size fields are u32, and RIFF's counts the 36 header bytes after
+    // it. Past ~37 hours of audio the header simply cannot say more.
+    let most = (u64::from(u32::MAX) - (WAV_HEADER_LEN - 8)) / WAV_BYTES_PER_FRAME;
+    let target = on_disk.min(most);
+    if target <= declared {
+        return Ok(false);
+    }
+
+    let data_bytes = target * WAV_BYTES_PER_FRAME;
+    let riff_bytes = data_bytes + (WAV_HEADER_LEN - 8);
+    let mut file = OpenOptions::new().write(true).open(path)?;
+    // RIFF first, `data` last: `read_header_frames` goes by `data`, so a crash
+    // between the two writes leaves the header reading as unrepaired and the
+    // next launch redoes both, instead of stranding a stale RIFF size.
+    file.seek(SeekFrom::Start(WAV_RIFF_SIZE_OFFSET))?;
+    file.write_all(&(riff_bytes as u32).to_le_bytes())?;
+    file.seek(SeekFrom::Start(WAV_DATA_SIZE_OFFSET))?;
+    file.write_all(&(data_bytes as u32).to_le_bytes())?;
+    file.sync_all()?;
+    Ok(true)
 }
 
 /// The §3.4 lines `store` skipped, as the single count the review view shows.
@@ -508,7 +864,7 @@ mod tests {
                 b"---\nid: 2026-09-01-1430-standup\ntitle: Platform Standup\n---\n\n## Summary\n",
             )],
         );
-        let summary = summarize(&folder);
+        let summary = summarize(&folder, false);
         assert_eq!(summary.title, "Platform Standup");
         assert!(summary.has_analysis);
     }
@@ -521,7 +877,7 @@ mod tests {
             "broken-title",
             &[("meeting.md", b"---\ntitle: \"unclosed\n---\n")],
         );
-        let summary = summarize(&folder);
+        let summary = summarize(&folder, false);
         assert_eq!(summary.title, "Platform standup");
         assert!(folder.needs_attention());
     }
@@ -538,7 +894,7 @@ mod tests {
                 ("notes.md", b"remember the Redis ticket"),
             ],
         );
-        let summary = summarize(&folder);
+        let summary = summarize(&folder, false);
         assert_eq!(summary.line_count, 2);
         assert_eq!(summary.last_timestamp.as_deref(), Some("00:01:10"));
         assert!(summary.has_notes);
@@ -549,7 +905,7 @@ mod tests {
     #[test]
     fn an_empty_folder_is_a_meeting_with_nothing_in_it_yet() {
         let folder = load_fixture("empty", &[]);
-        let summary = summarize(&folder);
+        let summary = summarize(&folder, false);
         assert_eq!(summary.line_count, 0);
         assert_eq!(summary.last_timestamp, None);
         assert!(!summary.has_notes);
@@ -667,5 +1023,374 @@ mod tests {
 
         fs::remove_dir_all(&old_root).ok();
         fs::remove_dir_all(&new_root).ok();
+    }
+
+    // --- TUR-97: finished vs interrupted, and the launch-time header fix ---
+    //
+    // Every fixture is written by the recorder's own `WavWriter` and
+    // `SegmentsWriter`, driven through the exact sequence a real stop or a
+    // real kill leaves behind, so these tests break if the recorder's on-disk
+    // shapes change underneath the classification.
+
+    use audio::segments::{Anchor, SegmentOpen, SegmentsWriter};
+    use audio::wav_writer::WavWriter;
+
+    /// One second of audio at the recorder's 16 kHz.
+    const SECOND: u64 = 16_000;
+
+    /// A fresh, empty meetings root unique to this test.
+    fn meetings_root(name: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("meet-ai-state-{name}-{}", std::process::id()));
+        fs::remove_dir_all(&root).ok();
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// A meeting folder the way `recording::create_meeting_folder` makes one.
+    /// Returns its `audio/` folder.
+    fn meeting(root: &Path, id: &str) -> PathBuf {
+        let dir = root.join(id);
+        fs::create_dir_all(dir.join(AUDIO)).unwrap();
+        fs::write(dir.join("transcript.md"), "[00:00:04] You: hello\n").unwrap();
+        fs::write(dir.join("notes.md"), "").unwrap();
+        dir.join(AUDIO)
+    }
+
+    /// A ramp, so a test can tell a sample that moved from one that did not.
+    fn samples(frames: u64) -> Vec<i16> {
+        (0..frames).map(|n| (n % 30_000) as i16).collect()
+    }
+
+    /// Write one track: `checkpointed` frames synced and declared the way a
+    /// checkpoint or a stop does it, then `after` more appended with no header
+    /// patch — the samples a kill strands past the header.
+    fn track(audio_dir: &Path, channel: Channel, checkpointed: u64, after: u64) {
+        let mut wav = WavWriter::create(&audio_dir.join(channel.wav_filename())).unwrap();
+        if checkpointed > 0 {
+            wav.append(&samples(checkpointed)).unwrap();
+            wav.fsync_data().unwrap();
+            wav.patch_header().unwrap();
+        }
+        if after > 0 {
+            wav.append(&samples(after)).unwrap();
+        }
+    }
+
+    /// `segments.json` for one segment, written through the recorder's own
+    /// atomic write. `sys_frames: None` is a tap that never started.
+    fn segments_json(audio_dir: &Path, mic_frames: u64, sys_frames: Option<u64>) {
+        let mut writer = SegmentsWriter::new(SegmentOpen {
+            start_host_ns: 1_000_000_000,
+            start_continuous_ns: Some(1_000_000_000),
+            start_unix_ns: None,
+            mic_rate: 16_000,
+            sys_rate: if sys_frames.is_some() { 16_000 } else { 0 },
+            mic_device_rate: None,
+            sys_device_rate: None,
+            reason: audio::segments::reason::START.into(),
+        });
+        let sys_frames = sys_frames.unwrap_or(0);
+        writer.update_frames(mic_frames, sys_frames);
+        writer.checkpoint_anchor(Anchor {
+            mic_host_ns: 2_000_000_000,
+            mic_frames,
+            sys_host_ns: 2_000_000_000,
+            sys_frames,
+        });
+        writer.write_atomic(&audio_dir.join(SEGMENTS)).unwrap();
+    }
+
+    fn summary_of(root: &Path, id: &str, live: Live<'_>) -> MeetingSummary {
+        list_in(root, live)
+            .unwrap()
+            .meetings
+            .into_iter()
+            .find(|m| m.id == id)
+            .unwrap_or_else(|| panic!("{id} is missing from the list"))
+    }
+
+    fn header_frames(audio_dir: &Path, channel: Channel) -> u64 {
+        read_header_frames(&audio_dir.join(channel.wav_filename())).unwrap()
+    }
+
+    #[test]
+    fn a_recording_stopped_with_the_stop_button_is_finished() {
+        let root = meetings_root("clean");
+        let audio = meeting(&root, "2026-09-30-1129-meeting");
+        // `RecordingSession::stop`: both headers finalised to every sample,
+        // then `segments.json` with the same totals — A5's equality.
+        track(&audio, Channel::Mic, 10 * SECOND, 0);
+        track(&audio, Channel::System, 10 * SECOND + 32, 0);
+        segments_json(&audio, 10 * SECOND, Some(10 * SECOND + 32));
+
+        let summary = summary_of(&root, "2026-09-30-1129-meeting", Live::Nothing);
+
+        assert_eq!(summary.recording_state, RecordingState::Finished);
+        assert_eq!(
+            summary.audio_ms,
+            Some(10_002),
+            "the longer track, from its header"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_v0_3_0_kill_with_zero_byte_headers_and_no_segments_json_is_interrupted() {
+        // The shape on disk at ~/Meetings/2026-09-30-1140-meeting: v0.3.0
+        // never checkpointed, so a kill leaves headers still declaring 0
+        // bytes over the real samples, and no `segments.json` at all.
+        let root = meetings_root("prefix-kill");
+        let audio = meeting(&root, "2026-09-30-1140-meeting");
+        track(&audio, Channel::Mic, 0, 16 * SECOND);
+        track(&audio, Channel::System, 0, 16 * SECOND);
+
+        let summary = summary_of(&root, "2026-09-30-1140-meeting", Live::Nothing);
+
+        assert_eq!(summary.recording_state, RecordingState::Interrupted);
+        assert_eq!(
+            summary.audio_ms,
+            Some(0),
+            "no player can reach audio the header hides"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_kill_between_checkpoints_is_interrupted() {
+        // With 5 s checkpoints: header and segments agree at the last one,
+        // and up to one checkpoint of samples sits past the header.
+        let root = meetings_root("checkpointed-kill");
+        let audio = meeting(&root, "2026-09-30-1200-meeting");
+        track(&audio, Channel::Mic, 60 * SECOND, 3 * SECOND);
+        track(&audio, Channel::System, 60 * SECOND, 3 * SECOND);
+        segments_json(&audio, 60 * SECOND, Some(60 * SECOND));
+
+        let summary = summary_of(&root, "2026-09-30-1200-meeting", Live::Nothing);
+
+        assert_eq!(summary.recording_state, RecordingState::Interrupted);
+        assert_eq!(summary.audio_ms, Some(60_000));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_kill_between_the_segments_json_rename_and_the_header_patch_is_interrupted() {
+        // A5's benign crash window: the segments describe a checkpoint the
+        // headers never got to declare. File length alone misses this one
+        // when nothing was appended after the sync — the segment totals do
+        // not.
+        let root = meetings_root("window-kill");
+        let audio = meeting(&root, "2026-09-30-1210-meeting");
+        track(&audio, Channel::Mic, 55 * SECOND, 0);
+        track(&audio, Channel::System, 55 * SECOND, 0);
+        segments_json(&audio, 60 * SECOND, Some(60 * SECOND));
+
+        let summary = summary_of(&root, "2026-09-30-1210-meeting", Live::Nothing);
+
+        assert_eq!(summary.recording_state, RecordingState::Interrupted);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_meeting_being_recorded_is_never_labelled_interrupted() {
+        let root = meetings_root("live");
+        let older = meeting(&root, "2026-09-30-1140-meeting");
+        track(&older, Channel::Mic, 0, SECOND);
+        let live = meeting(&root, "2026-09-30-1300-meeting");
+        track(&live, Channel::Mic, 0, SECOND);
+        let live_id = "2026-09-30-1300-meeting";
+
+        assert_eq!(
+            summary_of(&root, live_id, Live::Meeting(live_id)).recording_state,
+            RecordingState::Recording
+        );
+        // Being live covers one meeting, not every meeting.
+        assert_eq!(
+            summary_of(&root, "2026-09-30-1140-meeting", Live::Meeting(live_id)).recording_state,
+            RecordingState::Interrupted
+        );
+        // And once nobody is recording into them, the same files are what
+        // they look like.
+        assert_eq!(
+            summary_of(&root, live_id, Live::Nothing).recording_state,
+            RecordingState::Interrupted
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_recorder_status_maps_onto_the_meeting_being_written() {
+        let status = |phase, id: Option<&str>| Status {
+            phase,
+            meeting_id: id.map(str::to_string),
+            started_at_ms: None,
+        };
+        let id = "2026-09-30-1300-meeting";
+        assert_eq!(Live::from_status(&status(Phase::Idle, None)), Live::Nothing);
+        assert_eq!(
+            Live::from_status(&status(Phase::Recording, Some(id))),
+            Live::Meeting(id)
+        );
+        // `Stopping` is still writing: the headers are being finalised.
+        assert_eq!(
+            Live::from_status(&status(Phase::Stopping, Some(id))),
+            Live::Meeting(id)
+        );
+        assert_eq!(
+            Live::from_status(&status(Phase::Starting, None)),
+            Live::Nothing
+        );
+    }
+
+    #[test]
+    fn a_folder_with_no_audio_is_finished_not_interrupted() {
+        let root = meetings_root("no-audio");
+        // No `audio/` at all — the Phase 2a folders on disk look like this.
+        fs::create_dir_all(root.join("2026-09-28-1216-meeting")).unwrap();
+        // An empty `audio/`, and one where retention (L16) deleted the WAVs
+        // but left `segments.json`.
+        meeting(&root, "2026-09-28-1225-meeting");
+        let retained = meeting(&root, "2026-09-28-1235-meeting");
+        segments_json(&retained, 60 * SECOND, Some(60 * SECOND));
+
+        for id in [
+            "2026-09-28-1216-meeting",
+            "2026-09-28-1225-meeting",
+            "2026-09-28-1235-meeting",
+        ] {
+            let summary = summary_of(&root, id, Live::Nothing);
+            assert_eq!(summary.recording_state, RecordingState::Finished, "{id}");
+            assert_eq!(summary.audio_ms, None, "{id}");
+        }
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_clean_stop_with_no_system_audio_is_still_finished() {
+        // SPEC §3.4: a tap that never started still gets a `segments.json`,
+        // with `sys_rate` 0 — and there is no `system.wav` to compare.
+        let root = meetings_root("mic-only");
+        let audio = meeting(&root, "2026-09-30-1400-meeting");
+        track(&audio, Channel::Mic, 30 * SECOND, 0);
+        segments_json(&audio, 30 * SECOND, None);
+
+        assert_eq!(
+            summary_of(&root, "2026-09-30-1400-meeting", Live::Nothing).recording_state,
+            RecordingState::Finished
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn one_odd_folder_never_fails_the_list() {
+        let root = meetings_root("odd");
+        let fine = meeting(&root, "2026-09-30-1129-meeting");
+        track(&fine, Channel::Mic, SECOND, 0);
+        track(&fine, Channel::System, SECOND, 0);
+        segments_json(&fine, SECOND, Some(SECOND));
+
+        // Not a WAV header at all, and a `segments.json` that is not JSON.
+        let odd = meeting(&root, "2026-09-30-1500-meeting");
+        fs::write(odd.join("mic.wav"), b"RIF").unwrap();
+        fs::write(odd.join(SEGMENTS), "{ not json").unwrap();
+        // A stray file beside the meetings.
+        fs::write(root.join("stray.txt"), "hi").unwrap();
+
+        let list = list_in(&root, Live::Nothing).expect("one odd folder must not fail the list");
+
+        assert_eq!(list.meetings.len(), 2);
+        assert_eq!(
+            summary_of(&root, "2026-09-30-1500-meeting", Live::Nothing).recording_state,
+            RecordingState::Interrupted,
+            "a meeting the app cannot show was stopped must not claim it was"
+        );
+        assert_eq!(
+            summary_of(&root, "2026-09-30-1129-meeting", Live::Nothing).recording_state,
+            RecordingState::Finished
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn launch_recovery_makes_a_v0_3_0_kill_playable_without_moving_a_sample() {
+        let root = meetings_root("recover");
+        let audio = meeting(&root, "2026-09-30-1140-meeting");
+        track(&audio, Channel::Mic, 0, 16 * SECOND);
+        track(&audio, Channel::System, 0, 15 * SECOND);
+        // A trailing half-frame: a kill can land mid-sample.
+        let mic_path = audio.join("mic.wav");
+        OpenOptions::new()
+            .append(true)
+            .open(&mic_path)
+            .unwrap()
+            .write_all(&[0x7f])
+            .unwrap();
+        let mic_before = fs::read(&mic_path).unwrap();
+        let sys_before = fs::read(audio.join("system.wav")).unwrap();
+
+        assert_eq!(recover_in(&root, Live::Nothing), 2);
+
+        assert_eq!(header_frames(&audio, Channel::Mic), 16 * SECOND);
+        assert_eq!(header_frames(&audio, Channel::System), 15 * SECOND);
+        let mic_after = fs::read(&mic_path).unwrap();
+        let sys_after = fs::read(audio.join("system.wav")).unwrap();
+        // Only the two size fields changed. Every sample byte, and the file
+        // length, is exactly what the recorder left — odd byte included.
+        assert_eq!(mic_after.len(), mic_before.len());
+        assert_eq!(mic_after[44..], mic_before[44..]);
+        assert_eq!(sys_after[44..], sys_before[44..]);
+        assert_eq!(mic_after[0..4], mic_before[0..4]);
+        assert_eq!(mic_after[8..40], mic_before[8..40]);
+        let riff = u32::from_le_bytes(mic_after[4..8].try_into().unwrap());
+        assert_eq!(u64::from(riff), 36 + 16 * SECOND * 2);
+
+        // Still honest about what happened, and now says how much it kept.
+        let summary = summary_of(&root, "2026-09-30-1140-meeting", Live::Nothing);
+        assert_eq!(summary.recording_state, RecordingState::Interrupted);
+        assert_eq!(summary.audio_ms, Some(16_000));
+
+        // Idempotent: nothing left to do, nothing touched.
+        assert_eq!(recover_in(&root, Live::Nothing), 0);
+        assert_eq!(fs::read(&mic_path).unwrap(), mic_after);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn launch_recovery_leaves_everything_else_exactly_as_it_was() {
+        let root = meetings_root("recover-scope");
+        // A finished meeting.
+        let finished = meeting(&root, "2026-09-30-1129-meeting");
+        track(&finished, Channel::Mic, 5 * SECOND, 0);
+        segments_json(&finished, 5 * SECOND, None);
+        // A checkpointed kill: its excess samples were never in any
+        // `segments.json`, and `WavWriter::open_append` discards exactly
+        // those — this must not resurrect them.
+        let checkpointed = meeting(&root, "2026-09-30-1200-meeting");
+        track(&checkpointed, Channel::Mic, 60 * SECOND, 3 * SECOND);
+        segments_json(&checkpointed, 60 * SECOND, None);
+        // A file whose header this app did not write.
+        let foreign = meeting(&root, "2026-09-30-1210-meeting");
+        let mut junk = vec![0u8; 44];
+        junk.extend_from_slice(&[1u8; 4000]);
+        fs::write(foreign.join("mic.wav"), &junk).unwrap();
+        // The meeting being recorded right now, newest.
+        let live = meeting(&root, "2026-09-30-1300-meeting");
+        track(&live, Channel::Mic, 0, 4 * SECOND);
+
+        let dirs = [&finished, &checkpointed, &foreign, &live];
+        let snapshot = || -> Vec<Vec<u8>> {
+            dirs.iter()
+                .map(|dir| fs::read(dir.join("mic.wav")).unwrap())
+                .collect()
+        };
+        let before = snapshot();
+
+        assert_eq!(
+            recover_in(&root, Live::Meeting("2026-09-30-1300-meeting")),
+            0
+        );
+
+        assert_eq!(before, snapshot());
+        fs::remove_dir_all(&root).ok();
     }
 }
