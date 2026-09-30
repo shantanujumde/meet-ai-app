@@ -189,12 +189,17 @@ function Permission({
             <button type="button" className="btn btn--primary" onClick={onNext}>
               Continue
             </button>
+            {/* Both panes, as on the denied path: the two grants live in
+                different places, and one button can only land on one. */}
+            <button type="button" className="btn" onClick={() => void openSettings("microphone")}>
+              Open Microphone
+            </button>
             <button
               type="button"
               className="btn"
               onClick={() => void openSettings("audio-capture")}
             >
-              Open System Settings
+              Open System Audio Recording
             </button>
           </div>
         </>

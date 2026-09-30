@@ -232,7 +232,7 @@ Snapshots skip ignored paths, so nothing brings that back. Do not run it here.
 
 ## Where the repo differs from SETUP.md
 
-Five differences. Each one is a `SETUP.md` step that does not work as written.
+Six differences. Each one is a `SETUP.md` step that does not work as written.
 
 1. **`rusqlite` features are `["bundled"]`, not `["bundled", "fts5"]`.**
    rusqlite 0.40.2 has no `fts5` feature, so asking for it fails to resolve. The
@@ -283,7 +283,21 @@ Five differences. Each one is a `SETUP.md` step that does not work as written.
    types, because code in `src/` runs in WKWebView where `node:fs` does not
    exist.
 
-Two more things worth knowing:
+6. **The app turns on `tracing`'s `log` feature** (`src-tauri/Cargo.toml`).
+   `SETUP.md` adds `tracing` 0.1.44 with no features. Nothing in the app
+   installs a tracing subscriber, so without it every `tracing::warn!` — "record
+   shortcut refused", a failed permission check — is dropped, and
+   `meet-ai.log` holds only the webview's lines. With it, events fall through to
+   `log`, which `tauri-plugin-log` already writes to that file (TUR-127).
+
+Three more things worth knowing:
+
+- **Building the app needs `just sidecar` first.** `tauri.conf.json` bundles
+  `meet-stt` through `externalBin`, and `tauri-build` checks the
+  `target/meet-stt-<host triple>` copy exists at compile time, so a bare
+  `cargo build -p meet-ai` or `cargo clippy -p meet-ai` fails without it. Every
+  `just` recipe that builds the app runs `sidecar` already. The copy is named
+  for the host, so a `--target` build for another architecture needs its own.
 
 - **`just sign` and `just bundle-signed` target `target/release/bundle/...`**,
   not `src-tauri/target/...` as `SETUP.md` step 6 says. Once the workspace
