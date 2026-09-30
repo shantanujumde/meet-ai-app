@@ -114,8 +114,23 @@ pub fn run() {
             commands::toggle_recording,
             commands::stop_recording,
         ])
-        .run(tauri::generate_context!())
-        .expect("meet-ai failed to start");
+        .build(tauri::generate_context!())
+        .expect("meet-ai failed to start")
+        .run(|app, event| {
+            // TUR-97: a normal quit mid-recording (⌘Q, the menu bar's Quit, a
+            // logout asking apps to quit) used to leave the files exactly as a
+            // `kill -9` does — up to one checkpoint of audio past the header
+            // and the meeting labelled Interrupted. `Exit` is the last event
+            // before the process ends, so stop the recording here the same way
+            // the Stop button does. A no-op when nothing is recording; a hard
+            // kill never reaches this, which is what the checkpoints are for.
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager as _;
+                if let Err(error) = app.state::<recording::Recorder>().stop(app) {
+                    tracing::error!(message = %error.message, "could not finish the recording on quit");
+                }
+            }
+        });
 }
 
 /// The global-shortcut plugin, with the ⌘⇧R handler attached.
