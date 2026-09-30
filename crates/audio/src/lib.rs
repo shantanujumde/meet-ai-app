@@ -86,6 +86,11 @@ pub mod permission_check;
 /// than each owning their own copy of the checkpoint/reopen loop.
 pub mod session;
 
+/// A second copy of each channel's 16 kHz frames, fed alongside the WAV, for
+/// live transcription (TUR-31's stdin decision; wired into the app by TUR-96).
+/// Platform-agnostic: it is a bounded queue and a gap counter, nothing more.
+pub mod tee;
+
 /// Which side of the conversation a stream came from.
 ///
 /// L5 locks speaker labelling to the two channels we capture: the microphone is
@@ -184,6 +189,23 @@ pub trait AudioSource: Send {
     /// the same lock), since unlike the other methods here this one is not
     /// safe to interleave with an in-flight append.
     fn pad_leading_silence(&mut self, frames: u64) -> Result<(), Error>;
+
+    /// Also hand every resampled 16 kHz frame to `tee`, alongside the WAV —
+    /// the live-transcription copy TUR-31 settled on (see [`tee`]).
+    ///
+    /// Call before [`AudioSource::start`]; the tee is picked up when capture
+    /// starts. The WAV path must be unchanged whether or not a tee is set, and
+    /// [`tee::Tee::offer`] must only ever be called from the source's worker
+    /// thread (never the IO callback) and never while holding the writer lock
+    /// [`AudioSource::position`] also takes.
+    ///
+    /// The default ignores it, which is right for a source nobody transcribes
+    /// live — the test stubs, chiefly. [`AudioSource::pad_leading_silence`]
+    /// implementations should offer the same pad to the tee
+    /// ([`tee::Tee::offer_silence`]) so both timelines stay the same length.
+    fn tee(&mut self, tee: tee::Tee) {
+        let _ = tee;
+    }
 }
 
 /// Everything that can go wrong during capture.

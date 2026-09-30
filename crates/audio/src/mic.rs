@@ -18,6 +18,7 @@ use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
 use crate::resample::{Resampler, downmix_to_mono};
+use crate::tee::Tee;
 use crate::wav_writer::WavWriter;
 use crate::{AudioSource, Channel, Error};
 
@@ -92,6 +93,8 @@ pub struct MicSource {
     worker: Option<JoinHandle<()>>,
     running: Arc<AtomicBool>,
     shared: Option<Arc<Mutex<Shared>>>,
+    /// The live-transcription copy, if one was asked for ([`AudioSource::tee`]).
+    tee: Option<Tee>,
 }
 
 impl Default for MicSource {
@@ -107,6 +110,7 @@ impl MicSource {
             worker: None,
             running: Arc::new(AtomicBool::new(false)),
             shared: None,
+            tee: None,
         }
     }
 
@@ -117,6 +121,7 @@ impl MicSource {
         shared: Arc<Mutex<Shared>>,
         last_cb_host_ns: Arc<AtomicU64>,
         running: Arc<AtomicBool>,
+        tee: Option<Tee>,
     ) {
         let mut resampler = Resampler::new(device_rate);
         let chunk_raw_len = resampler.input_chunk_frames() * channels.max(1);
@@ -155,6 +160,12 @@ impl MicSource {
                 }
                 guard.frames += i16_buf.len() as u64;
                 guard.last_host_ns = host_ns;
+                // Released before the tee sees anything: the tee never blocks,
+                // but `position()` has no reason to wait on it either way.
+                drop(guard);
+                if let Some(tee) = &tee {
+                    tee.offer(&i16_buf);
+                }
             }
         }
     }
@@ -176,7 +187,7 @@ impl MicSource {
     /// [`MicSource::start`], is what does that: if the dialog is never
     /// answered, this thread stays blocked forever, but the caller gets an
     /// [`Error`] back instead of hanging with it.
-    fn build(dest: PathBuf) -> Result<Built, Error> {
+    fn build(dest: PathBuf, tee: Option<Tee>) -> Result<Built, Error> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
@@ -271,6 +282,7 @@ impl MicSource {
                         shared,
                         last_cb_host_ns,
                         running,
+                        tee,
                     )
                 }
             })
@@ -288,10 +300,11 @@ impl MicSource {
 impl AudioSource for MicSource {
     fn start(&mut self, dest: PathBuf) -> Result<(), Error> {
         let (tx, rx) = std::sync::mpsc::channel();
+        let tee = self.tee.clone();
         std::thread::Builder::new()
             .name("meet-rec-mic-init".to_string())
             .spawn(move || {
-                let _ = tx.send(Self::build(dest));
+                let _ = tx.send(Self::build(dest, tee));
             })
             .expect("spawning the mic init thread");
 
@@ -373,6 +386,14 @@ impl AudioSource for MicSource {
         let mut guard = shared.lock().expect("mic writer mutex poisoned");
         guard.writer.prepend_silence(frames)?;
         guard.frames += frames;
+        drop(guard);
+        if let Some(tee) = &self.tee {
+            tee.offer_silence(frames);
+        }
         Ok(())
+    }
+
+    fn tee(&mut self, tee: Tee) {
+        self.tee = Some(tee);
     }
 }
