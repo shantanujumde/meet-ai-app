@@ -29,7 +29,11 @@ USAGE:
 
 The download is resumable and checksum-verified. Re-running `get` after an
 interrupted attempt continues where it stopped; the file only appears under its
-real name once its SHA-256 matches the pinned digest."
+real name once its SHA-256 matches the pinned digest.
+
+Models go to $MEET_AI_MEETINGS_ROOT/.app/models when that is set, otherwise
+~/Meetings/.app/models. If you moved your meetings folder in the app, pass
+--dir <that folder>/.app/models."
 }
 
 #[tokio::main(flavor = "current_thread")]
