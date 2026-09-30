@@ -12,14 +12,14 @@ notarized.
 
 `just sign` needs the private key in `~/Library/Keychains/meet-ai-signing.keychain-db`.
 macOS keeps that key encrypted until the keychain is unlocked. The password is
-`meetai` (set in `spikes/phase0a-tcc/make-identity.sh`). It only guards this
+`meetai` (set in `scripts/signing/make-identity.sh`). It only guards this
 throwaway local signing key, nothing else.
 
 ```sh
 K=~/Library/Keychains/meet-ai-signing.keychain-db
 security unlock-keychain -p meetai "$K"
 security show-keychain-info "$K"   # should print "no-timeout"
-spikes/phase0a-tcc/make-identity.sh --print   # leaf SHA-1: eafb73d2…
+scripts/signing/make-identity.sh --print   # leaf SHA-1: eafb73d2…
 ```
 
 If `show-keychain-info` prints a timeout instead of `no-timeout`, turn auto-lock
@@ -245,9 +245,9 @@ only ever lives inside that keychain. `~/.meet-ai/signing/cert.pem` is the
 public half only and cannot sign. Make a new identity:
 
 ```sh
-spikes/phase0a-tcc/make-identity.sh --rotate
+scripts/signing/make-identity.sh --rotate
 security set-keychain-settings ~/Library/Keychains/meet-ai-signing.keychain-db
-spikes/phase0a-tcc/make-identity.sh --print   # note the new leaf SHA-1
+scripts/signing/make-identity.sh --print   # note the new leaf SHA-1
 ```
 
 Rotating changes the certificate fingerprint. macOS keys microphone and
@@ -261,8 +261,8 @@ tccutil reset Microphone   pro.saleschat.meetai
 
 Then update the fingerprint wherever it is written down: this file,
 `SETUP.md`, `CONTRIBUTING.md`, the header comment in
-`spikes/phase0a-tcc/make-identity.sh`, and `EXPECT_LEAF` in
-`spikes/phase0a-tcc/verify-tur10.sh`.
+`scripts/signing/make-identity.sh`, and `EXPECT_LEAF` in
+`scripts/signing/verify-tur10.sh`.
 
 ⛔ Never fall back to ad-hoc signing (`codesign -s -`). The permission grant
 would then be tied to the binary itself, so every rebuild would drop it.
