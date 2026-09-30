@@ -289,8 +289,10 @@ export const MDOT = {
 
 /* The symbol for 20..64px rasters and the favicon. It used to push the dot
    16 units further out (76, against the master's old 60), because at 20px 60
-   units was under a pixel of white. The master's 84 is 1.6px at 20px, more
-   than 76 ever gave, so the small artwork is now the master's geometry. The
+   units was under a pixel of white. The master's 84 is about 1.3px at 20px
+   (the app icon draws the glyph onto the 824-wide tile body, so 84 x 824/1024
+   x 20/1024), more than 76 ever gave (about 1.2px), so the small artwork is
+   now the master's geometry. The
    name and its files stay so the raster ladder and anything linking the
    -small- files keep working. */
 export const MDOT_SMALL = MDOT;
