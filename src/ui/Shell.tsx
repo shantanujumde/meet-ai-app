@@ -17,9 +17,10 @@
 
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 import type { PrivacyPane } from "@/ipc/types";
+import { openPermissionScreen } from "@/lib/permissionRoute";
+import { isOnboardingPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
-import { openPermissionScreen } from "./permissionRoute";
 import { RecordControl } from "./RecordControl";
 import { Sidebar } from "./Sidebar";
 
@@ -39,7 +40,7 @@ export function Shell() {
 
   // Onboarding owns the whole window: a half-set-up app should not look
   // browsable, and there is nothing in the sidebar to browse to yet.
-  const focused = location.pathname.startsWith("/onboarding");
+  const focused = isOnboardingPath(location.pathname);
 
   return (
     <div className={focused ? "shell shell--focused" : "shell"}>

@@ -14,7 +14,8 @@
 
 import { useEffect, useState } from "react";
 import type { PermissionStatus, RecordingStatus } from "@/ipc/types";
-import { formatElapsed } from "./format";
+import { SHORTCUT_LABEL } from "@/lib/constants";
+import { formatElapsed } from "@/lib/format";
 
 /** Human wording for each phase. `Starting`/`Stopping` get their own. */
 function labelFor(phase: RecordingStatus["phase"]): string {
@@ -85,7 +86,7 @@ export function RecordControl({
         data-recording={live}
         disabled={disabled}
         aria-label={accessibleName}
-        title={denied ? "Fix audio permission in System Settings first" : "⌘⇧R"}
+        title={denied ? "Fix audio permission in System Settings first" : SHORTCUT_LABEL}
         onClick={onToggle}
       >
         <span
@@ -102,7 +103,7 @@ export function RecordControl({
       </span>
 
       <span className="record__shortcut" aria-hidden="true">
-        ⌘⇧R
+        {SHORTCUT_LABEL}
       </span>
     </div>
   );
