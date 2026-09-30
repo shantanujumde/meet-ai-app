@@ -22,26 +22,55 @@ use crate::onboarding;
 use crate::permission;
 use crate::recording::{Phase, Recorder, Status};
 
+// --- off the main thread -------------------------------------------------
+
+/// Run a command's disk work on Tauri's blocking pool.
+///
+/// A plain `#[tauri::command]` runs on the main thread — the one AppKit draws
+/// the window on — so every one of these used to freeze the app while it
+/// worked. `list_meetings` reads the WAV header of every meeting, and
+/// `change_meetings_folder` can fall back to copying a whole folder tree across
+/// volumes, which takes minutes. `#[tauri::command(async)]` alone would only
+/// move that onto a tokio worker, and parking a worker for minutes starves the
+/// other async commands, so the work goes to the pool built for blocking.
+///
+/// The closure must be `'static`, which is why these commands take an
+/// `AppHandle` and look the recorder up inside rather than borrowing a
+/// `State<'_, Recorder>` across the hop.
+async fn on_blocking_pool<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, UiError> + Send + 'static,
+) -> Result<T, UiError> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| UiError::app("disk-task-failed", error.to_string()))?
+}
+
 // --- meetings ------------------------------------------------------------
 
 /// The recorder's state comes along so the meeting being recorded right now is
 /// never labelled interrupted — mid-recording its files look exactly like a
 /// killed one's (TUR-97).
 #[tauri::command]
-pub fn list_meetings(recorder: State<'_, Recorder>) -> Result<MeetingList, UiError> {
-    let status = recorder.status();
-    meetings::list(Live::from_status(&status))
+pub async fn list_meetings(app: AppHandle) -> Result<MeetingList, UiError> {
+    on_blocking_pool(move || {
+        let status = app.state::<Recorder>().status();
+        meetings::list(Live::from_status(&status))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn read_meeting(recorder: State<'_, Recorder>, id: String) -> Result<MeetingDetail, UiError> {
-    let status = recorder.status();
-    meetings::detail(&id, Live::from_status(&status))
+pub async fn read_meeting(app: AppHandle, id: String) -> Result<MeetingDetail, UiError> {
+    on_blocking_pool(move || {
+        let status = app.state::<Recorder>().status();
+        meetings::detail(&id, Live::from_status(&status))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn save_notes(id: String, body: String) -> Result<(), UiError> {
-    meetings::write_notes(&id, &body)
+pub async fn save_notes(id: String, body: String) -> Result<(), UiError> {
+    on_blocking_pool(move || meetings::write_notes(&id, &body)).await
 }
 
 /// Move the meetings folder somewhere else, taking every existing meeting
@@ -49,32 +78,41 @@ pub fn save_notes(id: String, body: String) -> Result<(), UiError> {
 ///
 /// Refused while a recording is in flight: the recorder is mid-write to a
 /// folder under the *old* root, and a move underneath it would either corrupt
-/// that write or silently vanish the in-progress meeting.
+/// that write or silently vanish the in-progress meeting. The phase is read on
+/// the pool thread, right before the move, rather than before the hop, so the
+/// check sits as close to the move as it did when this ran inline.
 #[tauri::command]
-pub fn change_meetings_folder(
-    recorder: State<'_, Recorder>,
+pub async fn change_meetings_folder(
+    app: AppHandle,
     new_root: String,
 ) -> Result<MeetingList, UiError> {
-    if recorder.status().phase != Phase::Idle {
-        return Err(UiError::app(
-            "recording-in-progress",
-            "Stop the current recording before changing the meetings folder.",
-        ));
-    }
-    meetings::change_root(PathBuf::from(new_root))
+    on_blocking_pool(move || {
+        if app.state::<Recorder>().status().phase != Phase::Idle {
+            return Err(UiError::app(
+                "recording-in-progress",
+                "Stop the current recording before changing the meetings folder.",
+            ));
+        }
+        meetings::change_root(PathBuf::from(new_root))
+    })
+    .await
 }
 
 /// Open a meeting's folder in Finder.
 ///
 /// L7 makes the files the product, so "where is it on disk" is a first-class
-/// question rather than a debugging affordance.
+/// question rather than a debugging affordance. Finding the folder reads the
+/// meeting from disk, so it goes to the blocking pool with the rest.
 #[tauri::command]
-pub fn reveal_meeting(app: AppHandle, id: String) -> Result<(), UiError> {
-    // Only the path is used, so which meeting is live does not matter here.
-    let detail = meetings::detail(&id, Live::Nothing)?;
-    app.opener()
-        .open_path(&detail.path, None::<&str>)
-        .map_err(|error| UiError::app("open-failed", error.to_string()))
+pub async fn reveal_meeting(app: AppHandle, id: String) -> Result<(), UiError> {
+    on_blocking_pool(move || {
+        // Only the path is used, so which meeting is live does not matter here.
+        let detail = meetings::detail(&id, Live::Nothing)?;
+        app.opener()
+            .open_path(&detail.path, None::<&str>)
+            .map_err(|error| UiError::app("open-failed", error.to_string()))
+    })
+    .await
 }
 
 // --- permission and onboarding -------------------------------------------
@@ -82,11 +120,19 @@ pub fn reveal_meeting(app: AppHandle, id: String) -> Result<(), UiError> {
 /// Runs the real positive-control check (SPEC §8.1/A6): plays the permission
 /// chime and probes the microphone. Real wall-clock time, so it runs on a
 /// blocking thread rather than parking a tokio worker.
+///
+/// If the measurement itself dies (a panic on the blocking thread), the answer
+/// falls back to the silent check rather than failing the screen — but it is
+/// logged, because otherwise a broken measurement looks exactly like a working
+/// one.
 #[tauri::command]
 pub async fn permission_status() -> permission::Status {
     tauri::async_runtime::spawn_blocking(permission::measure)
         .await
-        .unwrap_or_else(|_| permission::status())
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "the permission measurement failed; falling back to the silent check");
+            permission::status()
+        })
 }
 
 /// The silent launch-time check — no chime (see `permission::quick`).
@@ -118,19 +164,23 @@ pub fn open_privacy_settings(app: AppHandle, pane: permission::Pane) -> Result<(
     }
 }
 
+/// The onboarding flag is a file under the meetings root (see
+/// [`onboarding`]), so all three go to the blocking pool with the meetings
+/// commands. `onboarding_state` is on the launch path; a slow or sleeping disk
+/// must not hold the first paint.
 #[tauri::command]
-pub fn onboarding_state() -> Result<onboarding::State, UiError> {
-    onboarding::state()
+pub async fn onboarding_state() -> Result<onboarding::State, UiError> {
+    on_blocking_pool(onboarding::state).await
 }
 
 #[tauri::command]
-pub fn complete_onboarding() -> Result<onboarding::State, UiError> {
-    onboarding::complete()
+pub async fn complete_onboarding() -> Result<onboarding::State, UiError> {
+    on_blocking_pool(onboarding::complete).await
 }
 
 #[tauri::command]
-pub fn reset_onboarding() -> Result<onboarding::State, UiError> {
-    onboarding::reset()
+pub async fn reset_onboarding() -> Result<onboarding::State, UiError> {
+    on_blocking_pool(onboarding::reset).await
 }
 
 // --- engine and models ----------------------------------------------------
@@ -171,7 +221,7 @@ pub fn model_catalogue() -> Vec<ModelView> {
 
 /// Download a model, emitting `model://progress` as it goes.
 ///
-/// The claim/release pair is here rather than inside `engine::download` so the
+/// The claim is taken here rather than inside `engine::download` so the
 /// managed `Downloads` state never has to cross into the `'static` task that
 /// does the work. One in-flight download per model: two would resume the same
 /// `.part` file from two directions and race the atomic rename.
@@ -181,15 +231,16 @@ pub async fn download_model(
     downloads: State<'_, Downloads>,
     id: String,
 ) -> Result<String, UiError> {
-    if !downloads.claim(&id) {
+    // Held, not just checked: the claim is given back when `_claim` drops at
+    // the end of this function, even if the download panics or this future is
+    // dropped part-way through.
+    let Some(_claim) = downloads.claim(&id) else {
         return Err(UiError::app(
             "download-already-running",
             "That model is already downloading.",
         ));
-    }
-    let result = engine::download(app, id.clone()).await;
-    downloads.release(&id);
-    result
+    };
+    engine::download(app, id).await
 }
 
 // --- recording ------------------------------------------------------------

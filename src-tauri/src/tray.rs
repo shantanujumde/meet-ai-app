@@ -109,7 +109,9 @@ fn label_for(phase: Phase) -> &'static str {
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
         OPEN_ITEM => show_window(app),
-        TOGGLE_ITEM => toggle_recording(app),
+        // Off the main thread: this callback is delivered on it, and the
+        // toggle blocks for as long as the chime and Core Audio take.
+        TOGGLE_ITEM => crate::spawn_toggle(app, "menu-bar toggle"),
         QUIT_ITEM => app.exit(0),
         other => tracing::warn!(item = other, "unknown menu-bar item"),
     }
@@ -123,21 +125,4 @@ fn show_window(app: &AppHandle) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
-}
-
-fn toggle_recording(app: &AppHandle) {
-    let Some(recorder) = app.try_state::<recording::Recorder>() else {
-        tracing::error!("the recorder state is missing; ignoring the menu-bar toggle");
-        return;
-    };
-    match recorder.toggle(app) {
-        Ok(status) => tracing::info!(phase = ?status.phase, "menu-bar toggle"),
-        Err(error) => {
-            // Same reasoning as the global shortcut: the window may be closed,
-            // so there is no guaranteed place on screen to put an error next to
-            // the control the user just used.
-            tracing::warn!(message = %error.message, "menu-bar toggle refused");
-            crate::notify_refusal(app, &error);
-        }
-    }
 }

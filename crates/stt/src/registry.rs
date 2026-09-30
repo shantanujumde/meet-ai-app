@@ -10,7 +10,7 @@
 //! deserialized `transcription.engine` field and nothing else — and returning a
 //! trait object.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::apple::{AppleEngine, Probe};
 use crate::{Error, SttEngine};
@@ -84,13 +84,26 @@ pub struct Environment {
 }
 
 impl Environment {
-    /// Discover the environment from the filesystem.
+    /// Discover the environment from the filesystem, looking for models under
+    /// the fallback root ([`crate::model::default_model_dir`]).
+    ///
+    /// For callers with no app root to hand — the CLI and the examples. The
+    /// app knows where the user put their meetings and calls
+    /// [`Environment::discover_in`] with that instead, so a model that moved
+    /// with the meetings folder is still found.
+    pub fn discover(locale: &str, model_id: &str) -> Self {
+        let dir = crate::model::default_model_dir().ok();
+        Self::discover_in(dir.as_deref(), locale, model_id)
+    }
+
+    /// Discover the environment from the filesystem, looking for models in
+    /// `models_dir` (`None` when the caller could not work one out, which reads
+    /// as "no whisper model", not as an error).
     ///
     /// Deliberately does not download anything: this answers "what can we do
     /// right now, offline", which is the question selection needs.
-    pub fn discover(locale: &str, model_id: &str) -> Self {
-        let whisper_model = crate::model::default_model_dir()
-            .ok()
+    pub fn discover_in(models_dir: Option<&Path>, locale: &str, model_id: &str) -> Self {
+        let whisper_model = models_dir
             .and_then(|dir| crate::model::find(model_id).map(|spec| dir.join(spec.filename)))
             .filter(|path| path.is_file());
 
@@ -318,5 +331,25 @@ mod tests {
         let parsed: Preference = serde_json::from_str("\"apple-speech\"").unwrap();
         assert_eq!(parsed, Preference::AppleSpeech);
         assert_eq!(Preference::default(), Preference::Auto);
+    }
+
+    #[test]
+    fn discovery_finds_the_whisper_model_in_the_directory_it_is_given() {
+        // The app passes `<its meetings root>/.app/models`. A model that moved
+        // there with the meetings folder must be found, whatever `~` says.
+        let root =
+            std::env::temp_dir().join(format!("meet-ai-registry-discover-{}", std::process::id()));
+        let dir = crate::model::model_dir(&root);
+        std::fs::create_dir_all(&dir).unwrap();
+        let spec = crate::model::find("small.en-q5_1").unwrap();
+        std::fs::write(dir.join(spec.filename), b"not really a model").unwrap();
+
+        let found = Environment::discover_in(Some(&dir), "en-US", spec.id);
+        assert_eq!(found.whisper_model, Some(dir.join(spec.filename)));
+
+        let nowhere = Environment::discover_in(None, "en-US", spec.id);
+        assert_eq!(nowhere.whisper_model, None);
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }
