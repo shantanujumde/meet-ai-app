@@ -6,31 +6,24 @@
 //! here opens it for anything but reading. A second writer would break "a line,
 //! once written, is never rewritten" the first time the two disagreed.
 //!
-//! [`format_line`] is here anyway, as the pure pair of [`parse_line`], so the
-//! parity test with stt can hold both formats to the byte.
+//! [`format_line`] is re-exported here anyway, as the pure pair of
+//! [`parse_line`]. It and stt's writer both render through
+//! `meeting_format::transcript`, and the parity tests below still hold the
+//! file stt writes to what this module reads, to the byte.
 
 use std::path::Path;
 
 use crate::{Error, Problem};
 
-/// The two speaker labels v1 can produce (L5). Mirrors `stt::Speaker`; store's
-/// normal build does not depend on `stt` so it can stay light (stt is only a
-/// dev-dependency, for the parity tests).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum Speaker {
-    You,
-    Others,
-}
+/// The two speaker labels v1 can produce (L5) — the same type `stt` writes
+/// with, from `meeting-format`, so store's normal build still does not depend
+/// on `stt` (stt is only a dev-dependency, for the parity tests).
+pub use meeting_format::Speaker;
 
-impl Speaker {
-    /// The literal label in the file.
-    pub fn label(self) -> &'static str {
-        match self {
-            Speaker::You => "You",
-            Speaker::Others => "Others",
-        }
-    }
-}
+/// Render one line, applying the §3.4 write rules: whitespace collapsed, and
+/// `None` for text that is empty after collapsing. The one rendering, shared
+/// with stt's sink.
+pub use meeting_format::transcript::format_line;
 
 /// One parsed line.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -42,6 +35,10 @@ pub struct Line {
     pub time: String,
     /// The same timestamp in seconds from the start of the recording.
     pub start_sec: u64,
+    /// Serialized as the file's own label (`"You"`/`"Others"`), which is what
+    /// the meeting view has always received — not [`Speaker`]'s lowercase wire
+    /// name, which belongs to the live transcript events.
+    #[serde(serialize_with = "serialize_label")]
     pub speaker: Speaker,
     /// Everything after `Speaker: `, verbatim.
     pub text: String,
@@ -86,23 +83,8 @@ pub fn parse_line(raw: &str) -> Option<(String, u64, Speaker, String)> {
     Some((time.to_string(), start_sec, speaker, text.to_string()))
 }
 
-/// Render one line, applying the §3.4 write rules: whitespace (`\n`, `\r`,
-/// `\t`, runs of spaces) collapsed to single spaces, and `None` for text that
-/// is empty after collapsing — empty text is never written.
-pub fn format_line(start_sec: u64, speaker: Speaker, text: &str) -> Option<String> {
-    // The same collapse as `stt::collapse_whitespace` and the same rendering
-    // as `stt::format_transcript_line`. The reader's idea of the format and
-    // the writer's must agree to the byte; the cross-check test below holds
-    // them to it.
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if text.is_empty() {
-        return None;
-    }
-    let (h, m, s) = (start_sec / 3600, (start_sec % 3600) / 60, start_sec % 60);
-    Some(format!(
-        "[{h:02}:{m:02}:{s:02}] {}: {text}",
-        speaker.label()
-    ))
+fn serialize_label<S: serde::Serializer>(speaker: &Speaker, out: S) -> Result<S::Ok, S::Error> {
+    out.serialize_str(speaker.label())
 }
 
 /// Parse a whole file. Blank lines (including the trailing newline) are file
@@ -335,6 +317,17 @@ mod tests {
             format_line(100 * 3600, Speaker::You, "late").as_deref(),
             Some("[100:00:00] You: late")
         );
+    }
+
+    #[test]
+    fn a_parsed_line_reaches_the_ui_with_the_files_capitalised_label() {
+        // `Speaker` itself serializes lowercase (the live events' wire name);
+        // the meeting view has always been sent the label as written.
+        let t = parse("[00:00:04] You: hi\n[00:00:05] Others: hello\n");
+        let json = serde_json::to_value(&t.lines).unwrap();
+        assert_eq!(json[0]["speaker"], "You");
+        assert_eq!(json[1]["speaker"], "Others");
+        assert_eq!(json[0]["startSec"], 4);
     }
 
     fn to_stt(speaker: Speaker) -> stt::Speaker {

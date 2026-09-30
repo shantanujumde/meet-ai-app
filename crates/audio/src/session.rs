@@ -423,7 +423,7 @@ impl RecordingSession {
 
         let mic_path = dir.join(Channel::Mic.wav_filename());
         let sys_path = dir.join(Channel::System.wav_filename());
-        let segments_path = dir.join("segments.json");
+        let segments_path = dir.join(meeting_format::layout::SEGMENTS_FILE);
 
         tracing::info!("starting microphone capture");
         tees.attach_mic(&mut *mic)
@@ -613,6 +613,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+    use crate::segments::SegmentsExt as _;
     use crate::wav_writer::WavWriter;
 
     /// A hardware-free `AudioSource` for exercising [`align_and_pad`]'s
