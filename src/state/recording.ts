@@ -15,7 +15,7 @@
  */
 
 import { create } from "zustand";
-import { onRecordingError, onRecordingState, recordingStatus, toggleRecording } from "@/ipc/client";
+import { onRecordingState, recordingStatus, toggleRecording } from "@/ipc/client";
 import type { RecordingStatus, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 
@@ -23,11 +23,15 @@ const IDLE: RecordingStatus = {
   phase: "idle",
   meetingId: null,
   startedAtMs: null,
+  error: null,
 };
 
 type RecordingStore = {
   status: RecordingStatus;
-  /** Why the last start or stop was refused. Cleared on the next attempt. */
+  /**
+   * Why the last start or stop was refused, or why a recording ended on its
+   * own. Cleared on the next attempt, from this window or anywhere else.
+   */
   error: UiError | null;
   /** A request is in flight. The button disables so it cannot be double-fired. */
   busy: boolean;
@@ -45,7 +49,7 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
 
   async refresh() {
     try {
-      set({ status: await recordingStatus() });
+      set(withError(await recordingStatus()));
     } catch (thrown) {
       set({ error: toUiError(thrown) });
     }
@@ -55,7 +59,7 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     if (get().busy) return;
     set({ busy: true, error: null });
     try {
-      set({ status: await toggleRecording() });
+      set(withError(await toggleRecording()));
     } catch (thrown) {
       set({ error: toUiError(thrown) });
     } finally {
@@ -64,13 +68,71 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
   },
 
   clearError() {
+    const { error } = get();
+    if (error) rememberDismissed(error);
     set({ error: null });
   },
 
   applyFromBackend(status) {
-    set({ status });
+    set(withError(status));
   },
 }));
+
+/**
+ * A status from Rust, plus what it means for the shown error.
+ *
+ * A recording that ends on its own (a checkpoint could not be written, a
+ * device change could not be followed), or a ⌘⇧R press Rust refused, has no
+ * button press to return an error to, so Rust puts the reason on the idle
+ * status instead (TUR-97, TUR-127). A `starting` status is a new attempt from
+ * somewhere — the button, the menu bar or ⌘⇧R — so the old reason goes, the
+ * same moment Rust drops it. Any other status without an error leaves the
+ * current one alone: the idle event that follows a refused Stop must not wipe
+ * the reason the refusal just showed.
+ */
+function withError(status: RecordingStatus): Partial<RecordingStore> {
+  if (status.phase === "starting") {
+    rememberDismissed(null);
+    return { status, error: null };
+  }
+  if (status.error && !wasDismissed(status.error)) return { status, error: status.error };
+  return { status };
+}
+
+/**
+ * The error the user last dismissed, so it does not come back.
+ *
+ * Rust keeps the reason on the idle status until the next start — it has to,
+ * so a window opened later still learns why — which means every re-read of
+ * that status (a webview reload, `watchRecordingState` subscribing again) hands
+ * back the banner the user already closed. Remembering what was dismissed, and
+ * forgetting it on the next `starting`, keeps it closed without a Rust round
+ * trip. Session storage rather than module state because a reload is one of the
+ * re-reads; it is a per-window convenience, so a storage that throws or comes
+ * back empty only means the banner shows once more.
+ */
+const DISMISSED_KEY = "meet-ai.recording.dismissed-error";
+
+function errorKey(error: UiError): string {
+  return JSON.stringify([error.domain, error.kind, error.message]);
+}
+
+function rememberDismissed(error: UiError | null) {
+  try {
+    if (error) sessionStorage.setItem(DISMISSED_KEY, errorKey(error));
+    else sessionStorage.removeItem(DISMISSED_KEY);
+  } catch {
+    // No storage: the banner may come back once. Nothing else depends on it.
+  }
+}
+
+function wasDismissed(error: UiError): boolean {
+  try {
+    return sessionStorage.getItem(DISMISSED_KEY) === errorKey(error);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Start mirroring Rust's recording state.
@@ -81,17 +143,10 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
  */
 export function watchRecordingState(): () => void {
   void useRecordingStore.getState().refresh();
-  const stopState = onRecordingState((status) => {
+  // A recording Rust stopped by itself (TUR-97), or a ⌘⇧R press it refused
+  // (TUR-127), rides in on this same event as an idle status with `error`
+  // set, and uses the same banner as a refused button press.
+  return onRecordingState((status) => {
     useRecordingStore.getState().applyFromBackend(status);
   });
-  // A recording Rust stopped by itself (TUR-97), or a ⌘⇧R press it refused
-  // (TUR-127), has no button press to hang an error on, so it arrives as its
-  // own event and uses the same banner.
-  const stopError = onRecordingError((error) => {
-    useRecordingStore.setState({ error });
-  });
-  return () => {
-    stopState();
-    stopError();
-  };
 }
