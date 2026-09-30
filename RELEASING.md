@@ -109,13 +109,15 @@ In `CHANGELOG.md`:
 just check
 ```
 
-It has to pass. There is no CI, so this local run is the only gate.
+It has to pass. CI (`.github/workflows/check.yml`) runs the same check on every
+pull request, but run it locally first: a red CI run only tells you after the
+push.
 
 If it stops at `cargo fmt --check` or at a Biome `format` error, run `just fmt`,
 look at the diff, and commit it on its own before the release commit. For
-v0.3.0 that was one `if/else` in `meetings.rs` and line wrapping in
-`tools/paperclip-tur73/`; Biome also rewrote runs of spaces inside regexes to
-` {12}`, which matches the same text.
+v0.3.0 that was one `if/else` in `meetings.rs` and line wrapping in the
+Paperclip patch scripts added in 6548320 (PR #3, since deleted); Biome also
+rewrote runs of spaces inside regexes to ` {12}`, which matches the same text.
 
 ## 4. Commit, open a PR, merge
 
