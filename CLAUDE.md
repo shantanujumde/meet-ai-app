@@ -1,6 +1,6 @@
 ## Quality gate
 
-Every agent run ends with the quality gate (`.claude/hooks/quality-gate-hook.sh`, wired to `Stop` and `SubagentStop`). It checks the files the run changed (plus, on its own branch, everything the branch changed since `main`): biome, typecheck, related vitest tests, cargo fmt/clippy/test for the touched crates, and the repo rules. Fix what it reports; see `docs/quality-rules.md`. Run it by hand with `scripts/quality-gate.sh <files>` or `/quality-gate`.
+Every agent run ends with the quality gate (`.claude/hooks/quality-gate-hook.sh`, wired to `Stop` and `SubagentStop`). It checks the files the run changed (plus, in its own worktree branch, everything the branch changed since `main`; read-only runs pass at once): biome, typecheck, related vitest tests, cargo fmt/clippy/test for the touched crates, and the repo rules. Fix what it reports; see `docs/quality-rules.md`. Run it by hand with `scripts/quality-gate.sh <files>` or `/quality-gate`.
 
 ## graphify
 

@@ -13,12 +13,13 @@
 #
 # Which files: a run is held to account for the files IT changed, not the
 # whole repo. The transcript mode reads the session's Edit / Write / MultiEdit
-# / NotebookEdit tool calls. Edits made through the Bash tool (sed -i, a
-# heredoc) are not in there, so when the run sits on its own branch (the
-# normal case: each run gets its own worktree, see CONTRIBUTING.md "Agent runs
-# and the working tree") the gate adds every file the branch changed since it
-# left main. On main itself only the transcript list is used, because other
-# work may be sitting in that checkout.
+# / NotebookEdit tool calls. A session with none of those and no Bash call is
+# read-only and passes at once. Edits made through the Bash tool (sed -i, a
+# heredoc) are not in the list, so when the run sits in its own linked
+# worktree on its own branch (the normal case, see CONTRIBUTING.md "Agent runs
+# and the working tree") and made at least one edit or Bash call, the gate
+# adds every file the branch changed since it left main. The primary checkout
+# only ever uses the transcript list, because other work may be sitting there.
 #
 # Exit codes: 0 pass (or timed out, see QUALITY_GATE_BUDGET_SECS), 2 fail
 # (short report on stderr), 1 bad usage.
@@ -68,6 +69,7 @@ raw="$tmp/raw"
 list_only=0
 explicit=0
 transcript=0
+calls=0
 
 # Print the file_path of every file-editing tool call in a transcript JSONL.
 from_transcript() {
@@ -115,7 +117,40 @@ branch_files() {
   git ls-files --others --exclude-standard 2>/dev/null
 }
 
-# True when HEAD is a branch other than main/master (a run's own worktree).
+# Count the tool calls in a transcript that can change files: Edit, Write,
+# MultiEdit, NotebookEdit and Bash. Zero means a read-only session.
+change_calls() {
+  local t=$1
+  [ -f "$t" ] || { echo 0; return; }
+  if command -v jq >/dev/null 2>&1; then
+    jq -R -r 'fromjson? | select(type == "object")
+      | .message.content? | arrays | .[]
+      | select(type == "object" and .type == "tool_use")
+      | select(.name == "Edit" or .name == "Write" or .name == "MultiEdit"
+               or .name == "NotebookEdit" or .name == "Bash")
+      | .name' "$t" 2>/dev/null | wc -l | tr -d ' '
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 - "$t" <<'PY'
+import json, sys
+TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"}
+n = 0
+with open(sys.argv[1], encoding="utf-8", errors="replace") as fh:
+    for line in fh:
+        try:
+            content = json.loads(line).get("message", {}).get("content")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(content, list):
+            n += sum(1 for b in content if isinstance(b, dict)
+                     and b.get("type") == "tool_use" and b.get("name") in TOOLS)
+print(n)
+PY
+  else
+    grep -cE '"name":"(Edit|Write|MultiEdit|NotebookEdit|Bash)"' "$t"
+  fi
+}
+
+# True when HEAD is a branch other than main/master.
 on_own_branch() {
   local b
   b=$(git symbolic-ref --short -q HEAD 2>/dev/null) || return 1
@@ -125,12 +160,23 @@ on_own_branch() {
   return 0
 }
 
+# True when this checkout is a linked worktree (`git worktree add`), not the
+# primary checkout. Only then does the branch belong to one run; the primary
+# checkout can hold other runs' files.
+in_linked_worktree() {
+  local gd cd_
+  gd=$(cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd -P) || return 1
+  cd_=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P) || return 1
+  [ "$gd" != "$cd_" ]
+}
+
 while [ $# -gt 0 ]; do
   case $1 in
     --from-transcript)
       [ $# -ge 2 ] || { echo "quality-gate: --from-transcript needs a path" >&2; exit 1; }
       from_transcript "$2" >>"$raw"
       transcript=1
+      calls=$((calls + $(change_calls "$2")))
       shift 2
       ;;
     --list) list_only=1; shift ;;
@@ -143,8 +189,19 @@ done
 
 if [ "$explicit" = 0 ] && [ "$transcript" = 0 ]; then
   branch_files >>"$raw"
-elif [ "$transcript" = 1 ] && [ "${QUALITY_GATE_TRANSCRIPT_ONLY:-0}" != 1 ] && on_own_branch; then
-  branch_files >>"$raw"
+elif [ "$transcript" = 1 ]; then
+  # A session that never edited a file or ran a shell command changed
+  # nothing: do not hold it to account for what the branch already had.
+  if [ "$calls" = 0 ] && [ "$explicit" = 0 ]; then
+    exit 0
+  fi
+  # Bash-tool edits are not in the transcript list. In a run's own linked
+  # worktree the branch is that run's work, so add what the branch changed.
+  # Never in the primary checkout, which other runs share.
+  if [ "$calls" -gt 0 ] && [ "${QUALITY_GATE_TRANSCRIPT_ONLY:-0}" != 1 ] &&
+    in_linked_worktree && on_own_branch; then
+    branch_files >>"$raw"
+  fi
 fi
 
 # Keep files that still exist, sit inside this repo and are not git-ignored.

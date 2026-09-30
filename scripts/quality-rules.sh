@@ -131,11 +131,49 @@ added_lines() {
   cat "$cache"
 }
 
-# Line number of the first #[cfg(test)] / #![cfg(test)] in a Rust file, or a
-# huge number when there is none. Everything from there on counts as test code.
+# Where the test code of a Rust file starts. That is a `#[cfg(test)]` whose
+# next real line (skipping blanks, comments and more attributes) is a `mod`
+# item: the usual `mod tests { ... }` at the bottom. A `#[cfg(test)]` on a
+# single fn or impl block mid-file does NOT start the test region, or the prod
+# code after it would go unchecked. `#![cfg(test)]` makes the whole file test.
+# mode=start prints that line number (999999999 when there is none);
+# mode=count prints how many lines come before it (all lines when none).
+# shellcheck disable=SC2016  # an awk program: $0 is awk's, not the shell's
+TEST_START_AWK='
+  pending {
+    if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#\[/ || $0 ~ /^[[:space:]]*\/\//) next
+    if ($0 ~ /^[[:space:]]*(pub(\([a-z]+\))?[[:space:]]+)?mod[[:space:]]/) { found = start; exit }
+    pending = 0
+  }
+  /^[[:space:]]*#!\[cfg\(test\)\]/ { found = 1; exit }
+  /^[[:space:]]*#\[cfg\(test\)\]/ { pending = 1; start = NR; next }
+  END {
+    if (mode == "count") print (found ? found - 1 : NR + 0)
+    else print (found ? found : 999999999)
+  }'
+
 test_start() {
-  awk '/^[[:space:]]*#!?\[cfg\(test\)\]/ { print NR; found = 1; exit }
-       END { if (!found) print 999999999 }' "$1"
+  awk -v mode=start "$TEST_START_AWK" "$1"
+}
+
+# Print the line numbers that belong to a single #[cfg(test)] item (a
+# test-only fn or impl block mid-file), by counting braces from the attribute
+# until the item closes. Strings and // comments are stripped first.
+cfg_test_item_lines() {
+  awk '
+    !initem && /^[[:space:]]*#\[cfg\(test\)\]/ { initem = 1; depth = 0; opened = 0 }
+    initem {
+      print NR
+      code = $0
+      gsub(/"([^"\\]|\\.)*"/, "\"\"", code)
+      sub(/\/\/.*/, "", code)
+      if (code ~ /^[[:space:]]*#\[/) next
+      opens = gsub(/\{/, "{", code)
+      closes = gsub(/\}/, "}", code)
+      depth += opens - closes
+      if (opens > 0) opened = 1
+      if ((opened && depth <= 0) || (!opened && code ~ /;[[:space:]]*$/)) initem = 0
+    }' "$1"
 }
 
 # Rust files that are test code as a whole.
@@ -154,10 +192,11 @@ is_ts_test_file() {
   return 1
 }
 
-# Count non-test lines on stdin. $1 = "rs" to stop at the first #[cfg(test)].
+# Count non-test lines on stdin. $1 = "rs" to stop where the test module starts
+# (see TEST_START_AWK).
 count_lines() {
   if [ "$1" = rs ]; then
-    awk '/^[[:space:]]*#!?\[cfg\(test\)\]/ { exit } { c++ } END { print c + 0 }'
+    awk -v mode=count "$TEST_START_AWK"
   else
     awk 'END { print NR + 0 }'
   fi
@@ -257,7 +296,11 @@ rule_r4() {
   esac
   is_rust_test_file "$f" && return
   stop=$(test_start "$f")
-  added_text "$f" "$stop" "quality: allow-unwrap" | awk -F "$TAB" '{
+  cfg_test_item_lines "$f" >"$tmp/testitems"
+  added_text "$f" "$stop" "quality: allow-unwrap" | awk -F "$TAB" -v skip="$tmp/testitems" '
+    BEGIN { while ((getline l < skip) > 0) t[l] = 1 }
+    ($1 in t) { next }
+    {
       code = $2
       # Ignore string literals and // comments: "call .unwrap() here" is text.
       gsub(/"([^"\\]|\\.)*"/, "\"\"", code)
