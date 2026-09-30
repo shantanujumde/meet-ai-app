@@ -11,6 +11,7 @@
 
 import { useEffect, useRef } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
+import { onMeetingsChanged } from "@/ipc/client";
 import type { RecordingPhase } from "@/ipc/types";
 import { isRevisit } from "@/lib/permissionRoute";
 import { changesMeetingList } from "@/lib/recordingPhase";
@@ -103,6 +104,14 @@ function Bootstrap() {
       const from = lastPhase.current;
       lastPhase.current = status.phase;
       if (changesMeetingList(from, status.phase)) void loadMeetings();
+    });
+  }, [loadMeetings]);
+
+  // Files changed in the meetings folder outside the app. Refreshes the list
+  // only, and quietly: selection, route and the open notes are left alone.
+  useEffect(() => {
+    return onMeetingsChanged(() => {
+      void loadMeetings({ silent: true });
     });
   }, [loadMeetings]);
 

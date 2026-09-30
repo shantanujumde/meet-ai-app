@@ -1,6 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
-import { PERMISSION_STATUS_EVENT, RECORDING_STATE_EVENT } from "@/ipc/client";
+import {
+  MEETINGS_CHANGED_EVENT,
+  PERMISSION_STATUS_EVENT,
+  RECORDING_STATE_EVENT,
+} from "@/ipc/client";
 import type { PermissionStatus, RecordingStatus, UiError } from "@/ipc/types";
 import { useRecordingStore } from "@/state/recording";
 import { meetingDetail, meetingSummary, transcriptLine } from "@/test/fixtures";
@@ -409,4 +413,30 @@ test("an interrupted meeting opens like any other and says how much audio was ke
   expect(screen.getByText("Can everyone hear me?")).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(readMeeting).toHaveBeenCalledWith("2026-09-30-1140-meeting");
+});
+
+test("a change made outside the app refreshes the list quietly and leaves the open meeting alone", async () => {
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  listMeetings.mockResolvedValue({
+    root: "/Users/test/Meetings",
+    rootExists: true,
+    meetings: [INTERRUPTED],
+  });
+  readMeeting.mockResolvedValue(
+    meetingDetail({ summary: INTERRUPTED, lines: [transcriptLine({ text: "Still here" })] }),
+  );
+  window.location.hash = "#/meetings/2026-09-30-1140-meeting";
+  render(<App />);
+  expect(await screen.findByText("Still here")).toBeInTheDocument();
+  await waitFor(() => expect(listening(MEETINGS_CHANGED_EVENT)).toBe(true));
+  const hash = window.location.hash;
+  listMeetings.mockClear();
+
+  act(() => {
+    emit(MEETINGS_CHANGED_EVENT, { paths: ["/Users/test/Meetings/new"] });
+  });
+
+  await waitFor(() => expect(listMeetings).toHaveBeenCalledTimes(1));
+  expect(window.location.hash).toBe(hash);
+  expect(screen.getByText("Still here")).toBeInTheDocument();
 });
