@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
-import { PERMISSION_STATUS_EVENT, RECORDING_ERROR_EVENT } from "@/ipc/client";
-import type { PermissionStatus, RecordingStatus } from "@/ipc/types";
+import { PERMISSION_STATUS_EVENT, RECORDING_STATE_EVENT } from "@/ipc/client";
+import type { PermissionStatus, RecordingStatus, UiError } from "@/ipc/types";
 import { useRecordingStore } from "@/state/recording";
 import { meetingDetail, meetingSummary, transcriptLine } from "@/test/fixtures";
 import { emit, ipc, listening } from "@/test/ipcMock";
@@ -207,14 +207,21 @@ test("a ⌘⇧R press that is refused says why in the window", async () => {
   onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
   render(<App />);
   await screen.findByRole("heading", { name: /no meetings yet/i });
-  await waitFor(() => expect(listening(RECORDING_ERROR_EVENT)).toBe(true));
+  await waitFor(() => expect(listening(RECORDING_STATE_EVENT)).toBe(true));
 
+  // Rust says it on the idle status the refused start falls back to.
+  const refused: UiError = {
+    domain: "app",
+    kind: "permission-denied",
+    message: "meet-ai is not allowed to record this Mac's audio",
+  };
   act(() => {
-    emit(RECORDING_ERROR_EVENT, {
-      domain: "app",
-      kind: "permission-denied",
-      message: "meet-ai is not allowed to record this Mac's audio",
-    });
+    emit(RECORDING_STATE_EVENT, {
+      phase: "idle",
+      meetingId: null,
+      startedAtMs: null,
+      error: refused,
+    } satisfies RecordingStatus);
   });
 
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -247,6 +254,7 @@ function pushRecording(phase: RecordingStatus["phase"], meetingId: string | null
     phase,
     meetingId,
     startedAtMs: meetingId === null ? null : 1_790_000_000_000,
+    error: null,
   };
   act(() => {
     useRecordingStore.getState().applyFromBackend(status);

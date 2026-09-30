@@ -307,6 +307,7 @@ dependencies = [
  "earshot",
  "hound",
  "insta",
+ "meeting-format",
  "objc2",
  "objc2-av-foundation",
  "objc2-core-audio",
@@ -2881,6 +2882,7 @@ dependencies = [
  "detect",
  "dirs",
  "jsonc-parser",
+ "meeting-format",
  "modelfetch",
  "prompts",
  "serde",
@@ -2902,6 +2904,14 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "meeting-format"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4969,6 +4979,7 @@ dependencies = [
  "dirs",
  "insta",
  "jsonc-parser",
+ "meeting-format",
  "notify",
  "notify-debouncer-full",
  "rusqlite",
@@ -5024,6 +5035,7 @@ dependencies = [
  "earshot",
  "hound",
  "insta",
+ "meeting-format",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

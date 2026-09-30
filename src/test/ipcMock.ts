@@ -36,7 +36,7 @@ import type {
 } from "@/ipc/types";
 import { meetingDetail, meetingSummary } from "./fixtures";
 
-const IDLE: RecordingStatus = { phase: "idle", meetingId: null, startedAtMs: null };
+const IDLE: RecordingStatus = { phase: "idle", meetingId: null, startedAtMs: null, error: null };
 
 const NOT_CHECKED: PermissionStatus = {
   state: "unknown",
@@ -140,7 +140,6 @@ export function mockClient(actual: typeof Client): typeof Client {
     ...actual,
     ...ipc,
     onRecordingState: subscriber(actual.RECORDING_STATE_EVENT),
-    onRecordingError: subscriber(actual.RECORDING_ERROR_EVENT),
     onModelProgress: subscriber(actual.MODEL_PROGRESS_EVENT),
     onPermissionStatus: subscriber(actual.PERMISSION_STATUS_EVENT),
     onTranscriptUpdate: subscriber(actual.TRANSCRIPT_UPDATE_EVENT),
