@@ -72,6 +72,16 @@ export const ipc = {
   })),
   revealMeeting: vi.fn<typeof Client.revealMeeting>(async () => {}),
 
+  listTickets: vi.fn<typeof Client.listTickets>(async () => []),
+  createTicket: vi.fn<typeof Client.createTicket>(async (title, body) => ({
+    id: "TUR-1",
+    title,
+    status: "open",
+    meeting: null,
+    body,
+    hasProblems: false,
+  })),
+
   permissionStatus: vi.fn<typeof Client.permissionStatus>(async () => NOT_CHECKED),
   permissionQuick: vi.fn<typeof Client.permissionQuick>(async () => NOT_CHECKED),
   openPrivacySettings: vi.fn<typeof Client.openPrivacySettings>(async () => {}),

@@ -12,6 +12,8 @@ export const MEETINGS = "/meetings";
 
 export const SETTINGS = "/settings";
 
+export const TICKETS = "/tickets";
+
 /** The setup wizard. Its steps live under it — see {@link onboardingStepPath}. */
 export const ONBOARDING = "/onboarding";
 

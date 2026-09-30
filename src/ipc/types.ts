@@ -245,3 +245,16 @@ export function toUiError(value: unknown): UiError {
 export interface MeetingsChanged {
   paths: string[];
 }
+
+export type TicketStatus = "open" | "in_progress" | "done" | "dropped";
+
+export type TicketSummary = {
+  id: string;
+  title: string;
+  /** Null when the ticket file has no recognisable status. */
+  status: TicketStatus | null;
+  /** The meeting id this ticket came from, if any. */
+  meeting: string | null;
+  body: string;
+  hasProblems: boolean;
+};
