@@ -1,9 +1,8 @@
 //! The meet-ai desktop app.
 //!
-//! Phase 2a (SPEC §5): the app shell. Plugin wiring, the IPC surface in
-//! [`commands`], the recording state machine, and the ⌘⇧R global shortcut.
-//! The live transcript pane is deliberately absent — it belongs to Phase 2b and
-//! waits on the streaming session API.
+//! Phase 2 (SPEC §5): the app shell. Plugin wiring, the IPC surface in
+//! [`commands`], the recording state machine, the ⌘⇧R global shortcut, and
+//! the live transcript that runs alongside a recording ([`live_transcript`]).
 
 // The `log` facade, re-exported by tauri-plugin-log. The Rust crates use
 // `tracing`; only the plugin's own level filters need `log` types.
@@ -13,6 +12,7 @@ mod commands;
 mod config;
 mod engine;
 mod error;
+mod live_transcript;
 mod meetings;
 mod onboarding;
 mod permission;
@@ -73,6 +73,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .manage(recording::Recorder::default())
+        .manage(live_transcript::LiveTranscript::default())
         .manage(engine::Downloads::default())
         .setup(|_app| {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -100,6 +101,7 @@ pub fn run() {
             commands::recording_status,
             commands::toggle_recording,
             commands::stop_recording,
+            commands::live_transcript,
         ])
         .run(tauri::generate_context!())
         .expect("meet-ai failed to start");

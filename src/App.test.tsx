@@ -43,8 +43,15 @@ vi.mock("@/ipc/client", () => ({
   engineSelection: vi.fn().mockResolvedValue({ engine: "apple-speech", reason: "built in" }),
   modelCatalogue: vi.fn().mockResolvedValue([]),
   downloadModel: vi.fn(),
+  liveTranscript: vi.fn().mockResolvedValue({
+    status: { state: "idle", engine: null, detail: null },
+    finals: [],
+    volatile: [],
+  }),
   onRecordingState: () => () => {},
   onModelProgress: () => () => {},
+  onTranscriptUpdate: () => () => {},
+  onTranscriptStatus: () => () => {},
 }));
 
 const EMPTY_LIST: MeetingList = { root: "/Users/test/Meetings", rootExists: false, meetings: [] };

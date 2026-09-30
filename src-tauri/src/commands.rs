@@ -16,6 +16,7 @@ use tauri_plugin_opener::OpenerExt as _;
 use crate::config;
 use crate::engine::{self, Downloads, EnvironmentView, ModelView, SelectionView};
 use crate::error::UiError;
+use crate::live_transcript::{LiveTranscript, Snapshot};
 use crate::meetings::{self, MeetingDetail, MeetingList};
 use crate::onboarding;
 use crate::permission;
@@ -208,4 +209,15 @@ pub async fn stop_recording(app: AppHandle) -> Result<Status, UiError> {
     })
     .await
     .map_err(|error| UiError::app("recorder-task-failed", error.to_string()))?
+}
+
+// --- live transcript ------------------------------------------------------
+
+/// Everything the live pane should show right now, so a window opened
+/// mid-meeting (or reloaded) catches up without replaying events it missed.
+/// In-memory only and cheap; after this, `transcript://update` and
+/// `transcript://status` keep it current, deduplicated by `seq`.
+#[tauri::command]
+pub fn live_transcript(live: State<'_, LiveTranscript>) -> Snapshot {
+    live.snapshot()
 }

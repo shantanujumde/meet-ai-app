@@ -16,15 +16,24 @@
 //! phase check and transition happen inside one `Mutex`, so whichever caller's
 //! lock lands first wins a race and the other sees `Starting`/`Stopping` and
 //! no-ops, rather than racing a second tap open.
+//!
+//! Live transcription (TUR-96) rides alongside, never in front: the session is
+//! started with a tee per channel, and [`crate::live_transcript`] turns those
+//! into lines. It starts only once the audio is already flowing, it cannot fail
+//! a start or a stop, and on stop it is finished *after* the audio is safely
+//! closed — so the worst an engine can do is leave `transcript.md` short, which
+//! the WAVs can always put right.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use audio::AudioSource;
-use audio::session::RecordingSession;
+use audio::session::{RecordingSession, Tees};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter as _};
+use stt::Speaker;
+use tauri::{AppHandle, Emitter as _, Manager as _};
 
 use crate::error::UiError;
+use crate::live_transcript::{self, LiveTranscript, Transcription};
 use crate::permission;
 
 /// The Tauri event the frontend subscribes to. Every transition emits one, so
@@ -75,6 +84,9 @@ impl Status {
 struct Inner {
     status: Status,
     session: Option<RecordingSession>,
+    /// The live transcript riding on `session`'s tees. Taken together with
+    /// the session on stop, so the two always end as a pair.
+    transcription: Option<Transcription>,
 }
 
 impl Inner {
@@ -82,6 +94,7 @@ impl Inner {
         Self {
             status: Status::idle(),
             session: None,
+            transcription: None,
         }
     }
 }
@@ -189,21 +202,47 @@ impl Recorder {
             return Err(self.fail_start(app, Some(&id), error));
         }
 
-        let audio_dir = match crate::meetings::root() {
-            Ok(root) => root.join(&id).join("audio"),
+        let meeting_dir = match crate::meetings::root() {
+            Ok(root) => root.join(&id),
             Err(error) => return Err(self.fail_start(app, Some(&id), error)),
         };
 
         let mic: Box<dyn AudioSource> = Box::new(audio::mic::MicSource::new());
         let sys = audio::session::default_system_source();
 
-        match RecordingSession::start(audio_dir, mic, sys) {
-            Ok(session) => Ok(self.transition(app, |inner| {
-                inner.status.phase = Phase::Recording;
-                inner.status.meeting_id = Some(id.clone());
-                inner.status.started_at_ms = Some(started.timestamp_millis());
-                inner.session = Some(session);
-            })),
+        // One tee per channel (TUR-31). A tee costs capture nothing if nobody
+        // ends up reading it, so they are handed out before knowing whether
+        // the speech engine will start.
+        let (mic_tee, mic_feed) = audio::tee::tee();
+        let (sys_tee, sys_feed) = audio::tee::tee();
+        let tees = Tees {
+            mic: Some(mic_tee),
+            sys: Some(sys_tee),
+        };
+
+        match RecordingSession::start_with_tees(meeting_dir.join("audio"), mic, sys, tees) {
+            Ok(session) => {
+                // Mic is `You`, system audio is `Others` (L5). A system track
+                // that never came up gets no session, rather than a sidecar
+                // idling on a feed that will never carry audio.
+                let mut tracks = vec![(Speaker::You, mic_feed)];
+                if session.status().has_system_audio {
+                    tracks.push((Speaker::Others, sys_feed));
+                }
+                let transcription = app.state::<LiveTranscript>().start(
+                    Arc::new(app.clone()),
+                    meeting_dir.join("transcript.md"),
+                    tracks,
+                    Box::new(live_transcript::open_configured_engine),
+                );
+                Ok(self.transition(app, |inner| {
+                    inner.status.phase = Phase::Recording;
+                    inner.status.meeting_id = Some(id.clone());
+                    inner.status.started_at_ms = Some(started.timestamp_millis());
+                    inner.session = Some(session);
+                    inner.transcription = Some(transcription);
+                }))
+            }
             Err(message) => {
                 Err(self.fail_start(app, Some(&id), UiError::app("recorder-failed", message)))
             }
@@ -237,41 +276,55 @@ impl Recorder {
     }
 
     pub fn stop(&self, app: &AppHandle) -> Result<Status, UiError> {
-        let session = match self.claim_stopping(app) {
+        let (session, transcription) = match self.claim_stopping(app) {
             Err(status) => return Ok(status),
-            Ok(session) => session,
+            Ok(taken) => taken,
         };
 
-        let Some(session) = session else {
-            tracing::error!("phase was Recording with no session attached; recovering to idle");
-            return Ok(self.transition(app, |inner| *inner = Inner::idle()));
-        };
+        // Audio first: it is the part that cannot be redone. Only once the
+        // WAVs are closed — which also means every frame is in the tees — is
+        // the transcript given its (bounded) chance to catch up. Its outcome
+        // reaches the window as a `transcript://status` event, never as an
+        // error from Stop: a short transcript is not a failed recording.
+        let stopped = session.map(RecordingSession::stop);
+        if let Some(transcription) = transcription {
+            transcription.finish(live_transcript::STOP_TIMEOUT);
+        }
 
-        match session.stop() {
-            Ok(_report) => Ok(self.transition(app, |inner| *inner = Inner::idle())),
-            Err(message) => {
+        match stopped {
+            Some(Ok(_report)) => Ok(self.transition(app, |inner| *inner = Inner::idle())),
+            Some(Err(message)) => {
                 tracing::warn!(message = %message, "recording did not stop cleanly");
                 self.transition(app, |inner| *inner = Inner::idle());
                 Err(UiError::app("recorder-failed", message))
             }
+            None => {
+                tracing::error!("phase was Recording with no session attached; recovering to idle");
+                Ok(self.transition(app, |inner| *inner = Inner::idle()))
+            }
         }
     }
 
-    /// Claim `Recording -> Stopping` and take the session with it, or report
-    /// the phase that beat us to it.
-    fn claim_stopping(&self, app: &AppHandle) -> Result<Option<RecordingSession>, Status> {
+    /// Claim `Recording -> Stopping` and take the session and its transcript
+    /// with it, or report the phase that beat us to it.
+    #[allow(clippy::type_complexity)]
+    fn claim_stopping(
+        &self,
+        app: &AppHandle,
+    ) -> Result<(Option<RecordingSession>, Option<Transcription>), Status> {
         let mut inner = self.lock();
         if inner.status.phase != Phase::Recording {
             return Err(inner.status.clone());
         }
         inner.status.phase = Phase::Stopping;
         let session = inner.session.take();
+        let transcription = inner.transcription.take();
         let status = inner.status.clone();
         drop(inner);
         if let Err(error) = app.emit(STATE_EVENT, &status) {
             tracing::warn!(%error, "could not tell the window about a recording state change");
         }
-        Ok(session)
+        Ok((session, transcription))
     }
 }
 
