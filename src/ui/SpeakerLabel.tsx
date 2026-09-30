@@ -7,10 +7,26 @@
  */
 
 import type { TranscriptLine } from "@/ipc/types";
+import { cn } from "@/lib/cn";
 
-export function SpeakerLabel({ speaker }: { speaker: TranscriptLine["speaker"] }) {
+type Speaker = TranscriptLine["speaker"];
+
+const FILL: Record<Speaker, string> = {
+  You: "bg-speaker-1",
+  Others: "bg-speaker-2",
+};
+
+export function SpeakerLabel({ speaker }: { speaker: Speaker }) {
   return (
-    <span className="transcript__speaker" data-speaker={speaker} aria-hidden="true">
+    <span
+      className={cn(
+        "grid size-[18px] place-items-center self-center rounded-capsule",
+        "text-caption2 font-semibold text-on-accent",
+        FILL[speaker],
+      )}
+      data-speaker={speaker}
+      aria-hidden="true"
+    >
       {speaker === "You" ? "Y" : "O"}
     </span>
   );

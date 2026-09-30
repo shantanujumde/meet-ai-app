@@ -5,6 +5,7 @@
 
 import type { ModelProgress, ModelView, UiError } from "@/ipc/types";
 import { formatBytes } from "@/lib/format";
+import { Button, Pill, Row, RowLabel } from "@/ui/primitives";
 import { ErrorState } from "@/ui/states";
 import { DownloadProgress } from "./DownloadProgress";
 
@@ -28,28 +29,22 @@ export function ModelRow({
   const downloading = Boolean(busy) && !model.installed;
 
   return (
-    <div className="row" style={{ flexDirection: "column", alignItems: "stretch" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-5)" }}>
-        <span className="row__label">
-          <span className="row__name">{model.id}</span>
-          {/* The size comes from the pinned catalogue, not from a number typed
-              into a document — SPEC §2.4's "~1.6 GB" is stale by a factor of
-              three. */}
-          <span className="row__detail" style={{ fontFamily: "var(--font-ui)" }}>
-            {formatBytes(model.bytes)} · downloaded once, then kept
-          </span>
-        </span>
+    <Row stacked>
+      <div className="flex justify-between gap-5">
+        {/* The size comes from the pinned catalogue, not from a number typed
+            into a document — SPEC §2.4's "~1.6 GB" is stale by a factor of
+            three. */}
+        <RowLabel
+          name={model.id}
+          detail={`${formatBytes(model.bytes)} · downloaded once, then kept`}
+          mono={false}
+        />
         {model.installed ? (
-          <span className="badge badge--ok">On this Mac</span>
+          <Pill tone="ok">On this Mac</Pill>
         ) : (
-          <button
-            type="button"
-            className="btn btn--small"
-            disabled={downloading}
-            onClick={onDownload}
-          >
+          <Button size="small" disabled={downloading} onClick={onDownload}>
             {downloading ? "Downloading…" : "Download"}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -65,6 +60,6 @@ export function ModelRow({
           onRemedy={onDownload}
         />
       ) : null}
-    </div>
+    </Row>
   );
 }

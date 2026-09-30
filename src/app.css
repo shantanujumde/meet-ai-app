@@ -10,6 +10,11 @@
      * Body text does not live on glass. The notes pane and the transcript
        column are opaque content, not material.
      * Focus rings are 2px at 2px offset and are never removed.
+
+   This file is being retired. Components are moving to Tailwind utilities one
+   at a time (the `@theme` block in index.css maps these same tokens); each
+   block here is deleted as its component moves. Add no new rules — write
+   utilities next to the markup instead.
    ============================================================================= */
 
 /* -----------------------------------------------------------------------------
@@ -281,96 +286,9 @@
   margin: 0;
 }
 
-.prose {
-  font-size: var(--text-callout);
-  line-height: var(--leading-prose);
-  color: var(--text-secondary);
-  max-width: var(--notes-measure);
-  margin: 0;
-}
-
-/* -----------------------------------------------------------------------------
-   Buttons
-   One tinted control per window: `.btn--primary`. Everything else is neutral.
-   -------------------------------------------------------------------------- */
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-3);
-  height: var(--control-h-large);
-  padding-inline: var(--space-5);
-  border-radius: var(--radius-control);
-  border: 0.5px solid var(--rim-border);
-  background: var(--surface-glass-raised);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--text-body);
-  font-weight: var(--weight-medium);
-  cursor: default;
-  white-space: nowrap;
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    transform var(--dur-instant) var(--ease-out);
-}
-
-.btn:hover:not(:disabled) {
-  background: var(--surface-glass-regular);
-}
-
-.btn:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-.btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.btn--primary {
-  background: var(--accent);
-  border-color: transparent;
-  color: var(--text-on-accent);
-}
-
-.btn--primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
-.btn--danger {
-  background: var(--status-danger);
-  border-color: transparent;
-  color: var(--text-on-accent);
-}
-
-.btn--quiet {
-  background: transparent;
-  border-color: transparent;
-  color: var(--text-secondary);
-}
-
-.btn--quiet:hover:not(:disabled) {
-  background: var(--sidebar-row-hover);
-  color: var(--text-primary);
-}
-
-.btn--small {
-  height: var(--control-h-regular);
-  padding-inline: var(--space-4);
-  font-size: var(--text-footnote);
-}
-
-.btn--block {
-  width: 100%;
-}
-
-.btn-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  align-items: center;
-}
+/* Buttons, pills, cards and rows moved to `src/ui/primitives.tsx` as Tailwind
+   utilities. The focus ring stays here: it is the one rule for every
+   focusable element, not a component. */
 
 /* Never removed. A keyboard user cannot operate this app without it. */
 :where(a, button, input, textarea, [tabindex]):focus-visible {
@@ -458,95 +376,6 @@
   50% {
     opacity: var(--record-pulse-min);
   }
-}
-
-/* -----------------------------------------------------------------------------
-   Cards, rows and status
-   -------------------------------------------------------------------------- */
-
-.card {
-  border: 0.5px solid var(--separator);
-  border-radius: var(--radius-panel);
-  padding: var(--space-6);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  background: var(--surface-content-alt);
-}
-
-.card--flush {
-  padding: 0;
-  overflow: hidden;
-}
-
-/* Rows sit flush inside `.card--flush`, whose `overflow: hidden` does the
-   corner clipping. They carry no radius of their own on purpose: the
-   concentric rule would compute `--radius-panel - --space-6` here, which is
-   negative — the sign that these corners are the card's, not the row's. */
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-5);
-  padding: var(--space-5) var(--space-6);
-}
-
-.row + .row {
-  border-top: 0.5px solid var(--separator);
-}
-
-.row__label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.row__name {
-  font-size: var(--text-body);
-  font-weight: var(--weight-medium);
-}
-
-.row__detail {
-  font-size: var(--text-caption1);
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-  overflow-wrap: anywhere;
-}
-
-.row__value {
-  font-size: var(--text-footnote);
-  color: var(--text-secondary);
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: var(--control-h-small);
-  padding-inline: var(--space-4);
-  border-radius: var(--radius-capsule);
-  font-size: var(--text-caption2);
-  font-weight: var(--weight-medium);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: var(--surface-glass-sunken);
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.badge--ok {
-  color: var(--status-success);
-}
-
-.badge--warn {
-  color: var(--status-warning);
-}
-
-.badge--danger {
-  color: var(--status-danger);
 }
 
 /* -----------------------------------------------------------------------------
@@ -645,67 +474,6 @@
 }
 
 /* -----------------------------------------------------------------------------
-   Onboarding steps
-   -------------------------------------------------------------------------- */
-
-.steps {
-  list-style: none;
-  counter-reset: step;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-}
-
-.steps li {
-  counter-increment: step;
-  display: grid;
-  grid-template-columns: var(--control-h-regular) 1fr;
-  gap: var(--space-5);
-  align-items: start;
-  font-size: var(--text-body);
-  line-height: var(--leading-prose);
-  color: var(--text-secondary);
-}
-
-.steps li::before {
-  content: counter(step);
-  display: grid;
-  place-items: center;
-  width: var(--control-h-regular);
-  height: var(--control-h-regular);
-  border-radius: var(--radius-capsule);
-  background: var(--surface-glass-sunken);
-  color: var(--text-primary);
-  font-size: var(--text-caption1);
-  font-weight: var(--weight-semibold);
-  font-variant-numeric: tabular-nums;
-}
-
-.steps strong {
-  color: var(--text-primary);
-  font-weight: var(--weight-semibold);
-}
-
-.progress-dots {
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-}
-
-.progress-dots span {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-capsule);
-  background: var(--separator-strong);
-}
-
-.progress-dots span[data-active="true"] {
-  background: var(--accent);
-}
-
-/* -----------------------------------------------------------------------------
    Transcript (read-only review)
    Opaque content, not glass: this is sustained reading.
    -------------------------------------------------------------------------- */
@@ -733,28 +501,6 @@
   font-family: var(--font-mono);
   font-size: var(--text-caption1);
   color: var(--text-tertiary);
-}
-
-/* Colour is paired with an initial, so the transcript survives colourblindness
-   and greyscale printing (MASTER.md §9). */
-.transcript__speaker {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: var(--radius-capsule);
-  font-size: var(--text-caption2);
-  font-weight: var(--weight-semibold);
-  color: var(--text-on-accent);
-  align-self: center;
-}
-
-.transcript__speaker[data-speaker="You"] {
-  background: var(--speaker-1);
-}
-
-.transcript__speaker[data-speaker="Others"] {
-  background: var(--speaker-2);
 }
 
 .transcript__text {
@@ -872,63 +618,6 @@
 }
 
 /* -----------------------------------------------------------------------------
-   Download progress
-   -------------------------------------------------------------------------- */
-
-.progress {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.progress__track {
-  height: 6px;
-  border-radius: var(--radius-capsule);
-  background: var(--surface-glass-sunken);
-  overflow: hidden;
-}
-
-.progress__fill {
-  height: 100%;
-  border-radius: var(--radius-capsule);
-  background: var(--accent);
-  transition: width var(--dur-normal) var(--ease-out);
-}
-
-/* Hashing has no sub-progress to report, so the bar says "working" rather than
-   sitting at 100% looking frozen. */
-.progress__fill--indeterminate {
-  width: 40%;
-  animation: progress-sweep 1.4s var(--ease-in-out) infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .progress__fill--indeterminate {
-    animation: none;
-    width: 100%;
-    opacity: 0.6;
-  }
-}
-
-@keyframes progress-sweep {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(250%);
-  }
-}
-
-.progress__label {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-5);
-  font-size: var(--text-caption1);
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
-/* -----------------------------------------------------------------------------
    Banner — a persistent, dismissible warning above the content
    -------------------------------------------------------------------------- */
 
@@ -954,33 +643,17 @@
 }
 
 /* Increase Contrast collapses secondary text into primary and turns rims into
-   solid borders — glass is decoration and the interface survives losing it. */
+   solid borders — glass is decoration and the interface survives losing it.
+   The migrated components carry the same rule as `contrast-more:` utilities. */
 @media (prefers-contrast: more) {
-  .prose,
   .state__body,
-  .row__value,
   .page__meta {
     color: var(--text-primary);
   }
 
-  .card,
   .state,
-  .notes__editor,
-  .btn {
+  .notes__editor {
     border-width: 1px;
     border-color: var(--separator-strong);
   }
-}
-
-/* The visually-hidden pattern, for text that only VoiceOver needs. */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
 }

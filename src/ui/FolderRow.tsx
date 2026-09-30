@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
 import { useChangeFolder } from "@/hooks/useChangeFolder";
 import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
 import { useAppStore } from "@/state/app";
+import { Button, Row, RowLabel, RowValue } from "@/ui/primitives";
 import { ErrorState } from "@/ui/states";
 
 export function FolderRow({
@@ -22,7 +23,7 @@ export function FolderRow({
   /** What sits left of "Change…": whether the folder exists yet, or a way into it. */
   status: ReactNode;
   /**
-   * True inside a padded `.card`, where the card's own padding already frames
+   * True inside a padded card, where the card's own padding already frames
    * the row; false as one row of a flush card, where the row pads itself.
    */
   bare?: boolean;
@@ -31,31 +32,17 @@ export function FolderRow({
   const { busy, error, pick } = useChangeFolder();
 
   return (
-    <div
-      className="row"
-      style={{ flexDirection: "column", alignItems: "stretch", ...(bare ? { padding: 0 } : {}) }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-5)" }}>
-        <span className="row__label">
-          <span className="row__name">Meetings folder</span>
-          <span className="row__detail">{root}</span>
-        </span>
-        <span
-          className="row__value"
-          style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}
-        >
+    <Row stacked bare={bare}>
+      <div className="flex justify-between gap-5">
+        <RowLabel name="Meetings folder" detail={root} />
+        <RowValue className="flex items-center gap-4">
           {status}
-          <button
-            type="button"
-            className="btn btn--small"
-            disabled={busy}
-            onClick={() => void pick()}
-          >
+          <Button size="small" disabled={busy} onClick={() => void pick()}>
             {busy ? "Moving…" : "Change…"}
-          </button>
-        </span>
+          </Button>
+        </RowValue>
       </div>
       {error ? <ErrorState error={error} busy={busy} /> : null}
-    </div>
+    </Row>
   );
 }

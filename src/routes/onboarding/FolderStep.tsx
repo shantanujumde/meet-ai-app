@@ -7,6 +7,7 @@ import { revealMeeting } from "@/ipc/client";
 import { SHORTCUT_LABEL } from "@/lib/constants";
 import { useAppStore } from "@/state/app";
 import { FolderRow } from "@/ui/FolderRow";
+import { Button, ButtonRow, Card, Pill, Prose } from "@/ui/primitives";
 
 export function FolderStep({ onFinish }: { onFinish: () => void }) {
   const rootExists = useAppStore((state) => state.meetings?.rootExists ?? false);
@@ -16,39 +17,35 @@ export function FolderStep({ onFinish }: { onFinish: () => void }) {
       <header className="page__header">
         <h1 className="page__title">Where your meetings live</h1>
       </header>
-      <p className="prose">
+      <Prose>
         Every meeting becomes a folder here, holding the transcript, your notes and the audio. They
         are ordinary markdown files: open them in any editor, search them with Spotlight, keep them
         in a git repo if you want.
-      </p>
-      <div className="card">
+      </Prose>
+      <Card>
         <FolderRow
           bare
           status={
             rootExists ? (
-              <button
-                type="button"
-                className="btn btn--small"
-                onClick={() => void revealFirstMeeting()}
-              >
+              <Button size="small" onClick={() => void revealFirstMeeting()}>
                 Show in Finder
-              </button>
+              </Button>
             ) : (
-              <span className="badge">Created on first recording</span>
+              <Pill>Created on first recording</Pill>
             )
           }
         />
-      </div>
-      <p className="prose">
+      </Card>
+      <Prose>
         Audio is deleted after 7 days by default; the text is kept forever. Press{" "}
         <strong>{SHORTCUT_LABEL}</strong> from anywhere to start and stop — you do not need this
         window open, or even visible.
-      </p>
-      <div className="btn-row">
-        <button type="button" className="btn btn--primary" onClick={onFinish}>
+      </Prose>
+      <ButtonRow>
+        <Button tone="primary" onClick={onFinish}>
           Done
-        </button>
-      </div>
+        </Button>
+      </ButtonRow>
     </>
   );
 }

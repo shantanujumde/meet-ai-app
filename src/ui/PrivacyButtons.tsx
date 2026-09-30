@@ -13,6 +13,7 @@
 
 import { openPrivacySettings } from "@/ipc/client";
 import type { PrivacyPane } from "@/ipc/types";
+import { Button } from "./primitives";
 
 const LABEL: Record<PrivacyPane, string> = {
   microphone: "Open Microphone",
@@ -28,14 +29,13 @@ export function PrivacyButtons({ primary }: { primary?: PrivacyPane }) {
   return (
     <>
       {panes.map((pane) => (
-        <button
+        <Button
           key={pane}
-          type="button"
-          className={pane === primary ? "btn btn--primary" : "btn"}
+          tone={pane === primary ? "primary" : "neutral"}
           onClick={() => void openSettings(pane)}
         >
           {LABEL[pane]}
-        </button>
+        </Button>
       ))}
     </>
   );

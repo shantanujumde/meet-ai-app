@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from "react";
 import { engineEnvironment, engineSelection } from "@/ipc/client";
 import type { EnvironmentView, SelectionView, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
+import { Card, Pill, Row, RowLabel, RowValue } from "@/ui/primitives";
 import { Checking, ErrorState } from "@/ui/states";
 import { ModelList } from "./ModelList";
 
@@ -64,37 +65,36 @@ export function EngineSummary() {
         <p className="section__hint">Everything here runs on this Mac</p>
       </div>
 
-      <div className="card card--flush">
-        <div className="row">
-          <span className="row__label">
-            <span className="row__name">Engine</span>
-            <span className="row__detail" style={{ fontFamily: "var(--font-ui)" }}>
-              {selection?.reason ?? "Which engine this Mac can use right now"}
-            </span>
-          </span>
+      <Card flush>
+        <Row>
+          <RowLabel
+            name="Engine"
+            detail={selection?.reason ?? "Which engine this Mac can use right now"}
+            mono={false}
+          />
           {/* The row is present from the first paint and only its right-hand
               side changes, so nothing below it moves when the probe returns. */}
-          <span className="row__value">
+          <RowValue>
             {probing ? (
               <Checking label="Checking…" />
             ) : selection ? (
-              <span className="badge badge--ok">
+              <Pill tone="ok">
                 {selection.engine === "apple-speech" ? "Apple, built in" : "Whisper"}
-              </span>
+              </Pill>
             ) : (
-              <span className="badge badge--warn">Unavailable</span>
+              <Pill tone="warn">Unavailable</Pill>
             )}
-          </span>
-        </div>
+          </RowValue>
+        </Row>
 
-        <div className="row">
-          <span className="row__label">
-            <span className="row__name">Speech helper</span>
-            <span className="row__detail">{environment?.sidecar ?? "Not found in this build"}</span>
-          </span>
-          <span className="row__value">{environment?.locale ?? ""}</span>
-        </div>
-      </div>
+        <Row>
+          <RowLabel
+            name="Speech helper"
+            detail={environment?.sidecar ?? "Not found in this build"}
+          />
+          <RowValue>{environment?.locale ?? ""}</RowValue>
+        </Row>
+      </Card>
 
       {environmentError ? <ErrorState error={environmentError} /> : null}
 

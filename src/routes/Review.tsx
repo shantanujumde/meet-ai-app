@@ -23,6 +23,7 @@ import { useRecordingStore } from "@/state/recording";
 import { useTranscriptStore } from "@/state/transcript";
 import { LiveTranscript } from "@/ui/LiveTranscript";
 import { NotesPane } from "@/ui/NotesPane";
+import { Button, ButtonRow, rowDetailVariants } from "@/ui/primitives";
 import { SpeakerLabel } from "@/ui/SpeakerLabel";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
@@ -134,12 +135,12 @@ export function Review() {
         {interrupted ? (
           <p className="page__notice">{describeInterruption(summary.audioMs)}</p>
         ) : null}
-        <div className="btn-row">
-          <button type="button" className="btn btn--small" onClick={() => void reveal(summary.id)}>
+        <ButtonRow>
+          <Button size="small" onClick={() => void reveal(summary.id)}>
             Show in Finder
-          </button>
-          <span className="row__detail">{path}</span>
-        </div>
+          </Button>
+          <span className={rowDetailVariants()}>{path}</span>
+        </ButtonRow>
         {revealError ? <ErrorState error={revealError} /> : null}
       </header>
 

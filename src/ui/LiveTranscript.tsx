@@ -20,6 +20,7 @@ import { memo, useLayoutEffect, useRef, useState } from "react";
 import type { LiveLine, TranscriptStatus } from "@/ipc/types";
 import { formatElapsed } from "@/lib/format";
 import type { LiveTranscript as LiveState } from "@/state/transcript";
+import { Button } from "./primitives";
 import { SpeakerLabel } from "./SpeakerLabel";
 
 /**
@@ -122,9 +123,9 @@ export function LiveTranscript({ live }: { live: LiveState }) {
         {/* Floats over the pane rather than taking a row of its own, so it
             appearing does not shift the lines the reader is looking at. */}
         {unseen ? (
-          <button type="button" className="btn btn--small live__jump" onClick={jumpToLatest}>
+          <Button size="small" className="live__jump" onClick={jumpToLatest}>
             New lines below
-          </button>
+          </Button>
         ) : null}
       </div>
     </section>

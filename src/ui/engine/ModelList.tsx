@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { downloadModel, modelCatalogue, onModelProgress } from "@/ipc/client";
 import type { ModelView, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
+import { Card } from "@/ui/primitives";
 import { Checking, ErrorState } from "@/ui/states";
 import { ModelRow, type ModelState } from "./ModelRow";
 
@@ -66,7 +67,7 @@ export function ModelList() {
 
   return (
     <>
-      <div className="card card--flush">
+      <Card flush>
         {models.map((model) => (
           <ModelRow
             key={model.id}
@@ -75,7 +76,7 @@ export function ModelList() {
             onDownload={() => void start(model.id)}
           />
         ))}
-      </div>
+      </Card>
       {/* A list that loaded once and then failed to refresh keeps its rows —
           they are still true of what is on disk — and says so underneath. */}
       {listError ? <ErrorState error={listError} onRemedy={() => void refresh()} /> : null}

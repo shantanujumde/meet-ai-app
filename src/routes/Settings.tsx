@@ -11,6 +11,7 @@
 import { useAppStore } from "@/state/app";
 import { EngineSummary } from "@/ui/engine/EngineSummary";
 import { FolderRow } from "@/ui/FolderRow";
+import { Button, Card, Row, RowLabel } from "@/ui/primitives";
 import { ErrorState } from "@/ui/states";
 
 export function Settings() {
@@ -30,24 +31,19 @@ export function Settings() {
         <h2 className="section__title" id="files-heading">
           Files
         </h2>
-        <div className="card card--flush">
+        <Card flush>
           <FolderRow status={rootExists ? "Exists" : "Created on first recording"} />
-          <div className="row">
-            <span className="row__label">
-              <span className="row__name">Setup</span>
-              <span className="row__detail" style={{ fontFamily: "var(--font-ui)" }}>
-                Walk through permission and speech setup again
-              </span>
-            </span>
-            <button
-              type="button"
-              className="btn btn--small"
-              onClick={() => void restartOnboarding()}
-            >
+          <Row>
+            <RowLabel
+              name="Setup"
+              detail="Walk through permission and speech setup again"
+              mono={false}
+            />
+            <Button size="small" onClick={() => void restartOnboarding()}>
               Show setup again
-            </button>
-          </div>
-        </div>
+            </Button>
+          </Row>
+        </Card>
         {onboardingError ? (
           <ErrorState error={onboardingError} onRemedy={() => void restartOnboarding()} />
         ) : null}

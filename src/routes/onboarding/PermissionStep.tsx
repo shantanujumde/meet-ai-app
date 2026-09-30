@@ -7,9 +7,17 @@
  * `routes/Onboarding.tsx` for why.
  */
 
+import type { ReactNode } from "react";
 import type { PermissionStatus } from "@/ipc/types";
 import { PrivacyButtons } from "@/ui/PrivacyButtons";
+import { Button, ButtonRow, Card, Pill, Prose, Row, RowLabel } from "@/ui/primitives";
 import { Checking } from "@/ui/states";
+
+const BADGE = {
+  granted: { tone: "ok", label: "Allowed" },
+  denied: { tone: "danger", label: "Not allowed" },
+  unknown: { tone: "warn", label: "Not checked" },
+} as const;
 
 export function PermissionStep({
   status,
@@ -23,6 +31,7 @@ export function PermissionStep({
   onNext: () => void;
 }) {
   const state = status?.state ?? "unknown";
+  const badge = BADGE[state];
 
   return (
     <>
@@ -30,50 +39,37 @@ export function PermissionStep({
         <h1 className="page__title">Let meet-ai hear your Mac</h1>
       </header>
 
-      <p className="prose">
+      <Prose>
         A meeting has two sides, and macOS guards them separately. <strong>Microphone</strong> is
         you talking. <strong>System Audio Recording</strong> is everyone else, coming out of your
         speakers. meet-ai needs both — with only one, half of every conversation goes missing and
         nothing on screen would tell you which half.
-      </p>
+      </Prose>
 
-      <div className="card">
-        <div className="row" style={{ padding: 0 }}>
-          <span className="row__label">
-            <span className="row__name">Audio permission</span>
-            <span className="row__detail" style={{ fontFamily: "var(--font-ui)" }}>
-              {status?.detail ?? ""}
-            </span>
-          </span>
-          {loading ? (
-            <Checking label="Checking…" />
-          ) : (
-            <span
-              className={`badge badge--${state === "granted" ? "ok" : state === "denied" ? "danger" : "warn"}`}
-            >
-              {state === "granted" ? "Allowed" : state === "denied" ? "Not allowed" : "Not checked"}
-            </span>
-          )}
-        </div>
-      </div>
+      <Card>
+        <Row bare>
+          <RowLabel name="Audio permission" detail={status?.detail ?? ""} mono={false} />
+          {loading ? <Checking label="Checking…" /> : <Pill tone={badge.tone}>{badge.label}</Pill>}
+        </Row>
+      </Card>
 
       {state === "denied" ? <DeniedPath onRecheck={onRecheck} /> : null}
 
       {state !== "denied" ? (
         <>
-          <p className="prose">
+          <Prose>
             The first time you start a recording, macOS will ask. If you say No by accident, this
             screen shows you how to undo it — it is two clicks in System Settings, and nothing is
             lost in the meantime.
-          </p>
-          <div className="btn-row">
-            <button type="button" className="btn btn--primary" onClick={onNext}>
+          </Prose>
+          <ButtonRow>
+            <Button tone="primary" onClick={onNext}>
               Continue
-            </button>
+            </Button>
             {/* Both panes, as on the denied path: the two grants live in
                 different places, and one button can only land on one. */}
             <PrivacyButtons />
-          </div>
+          </ButtonRow>
         </>
       ) : null}
     </>
@@ -97,40 +93,48 @@ function DeniedPath({ onRecheck }: { onRecheck: () => void }) {
         would capture silence. Nothing you have already recorded is affected.
       </p>
 
-      <ol className="steps">
-        <li>
-          <span>
-            Open <strong>System Settings</strong> → <strong>Privacy &amp; Security</strong>. The
-            buttons below jump straight there.
-          </span>
-        </li>
-        <li>
-          <span>
-            Find <strong>System Audio Recording Only</strong> and switch <strong>meet-ai</strong>{" "}
-            on. This is the one that captures the other people in your call.
-          </span>
-        </li>
-        <li>
-          <span>
-            Go back and find <strong>Microphone</strong>, and switch <strong>meet-ai</strong> on
-            there too. This one captures you.
-          </span>
-        </li>
-        <li>
-          <span>
-            Come back here and choose <strong>Check again</strong>. If macOS asks you to quit and
-            reopen meet-ai first, do that — the change does not always take effect while the app is
-            running.
-          </span>
-        </li>
+      <ol className="flex flex-col gap-5 [counter-reset:step]">
+        <Instruction>
+          Open <strong>System Settings</strong> → <strong>Privacy &amp; Security</strong>. The
+          buttons below jump straight there.
+        </Instruction>
+        <Instruction>
+          Find <strong>System Audio Recording Only</strong> and switch <strong>meet-ai</strong> on.
+          This is the one that captures the other people in your call.
+        </Instruction>
+        <Instruction>
+          Go back and find <strong>Microphone</strong>, and switch <strong>meet-ai</strong> on there
+          too. This one captures you.
+        </Instruction>
+        <Instruction>
+          Come back here and choose <strong>Check again</strong>. If macOS asks you to quit and
+          reopen meet-ai first, do that — the change does not always take effect while the app is
+          running.
+        </Instruction>
       </ol>
 
-      <div className="btn-row">
+      <ButtonRow>
         <PrivacyButtons primary="audio-capture" />
-        <button type="button" className="btn" onClick={onRecheck}>
-          Check again
-        </button>
-      </div>
+        <Button onClick={onRecheck}>Check again</Button>
+      </ButtonRow>
     </div>
+  );
+}
+
+/** One numbered step. The number is a CSS counter, drawn in a chip beside the text. */
+function Instruction({ children }: { children: ReactNode }) {
+  return (
+    <li
+      className={[
+        "grid grid-cols-[var(--control-h-regular)_1fr] items-start gap-5",
+        "text-body leading-prose text-fg-secondary [counter-increment:step]",
+        "before:grid before:size-(--control-h-regular) before:place-items-center before:rounded-capsule",
+        "before:bg-glass-sunken before:text-caption1 before:font-semibold before:tabular-nums",
+        "before:text-fg-primary before:content-[counter(step)]",
+        "[&_strong]:font-semibold [&_strong]:text-fg-primary",
+      ].join(" ")}
+    >
+      <span>{children}</span>
+    </li>
   );
 }

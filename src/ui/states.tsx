@@ -14,6 +14,7 @@ import { hasBackend } from "@/ipc/client";
 import { copyFor, detailsFor } from "@/ipc/errors";
 import type { UiError } from "@/ipc/types";
 import { COPIED_RESET_MS } from "@/lib/constants";
+import { Button, ButtonRow } from "./primitives";
 
 /**
  * A designed empty state: what is not here, and what to do about it.
@@ -107,16 +108,14 @@ export function ErrorState({
           and never parsed to decide what to show. */}
       <p className="state__detail">{error.message}</p>
       {showButton ? (
-        <div className="btn-row">
-          <button
-            type="button"
-            className="btn"
+        <ButtonRow>
+          <Button
             disabled={busy}
             onClick={() => (isCopy ? void handleCopy() : onRemedy?.(copy.remedy))}
           >
             {isCopy && copied ? "Copied" : copy.actionLabel}
-          </button>
-        </div>
+          </Button>
+        </ButtonRow>
       ) : null}
     </div>
   );
