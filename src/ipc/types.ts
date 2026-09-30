@@ -240,3 +240,8 @@ export function toUiError(value: unknown): UiError {
     message: "Something went wrong, and meet-ai did not get a reason why.",
   };
 }
+
+/** Payload of `meetings-changed`: files in the meetings folder changed outside the app. */
+export interface MeetingsChanged {
+  paths: string[];
+}

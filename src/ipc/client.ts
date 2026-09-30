@@ -22,6 +22,7 @@ import type {
   LiveTranscriptSnapshot,
   MeetingDetail,
   MeetingList,
+  MeetingsChanged,
   ModelProgress,
   ModelView,
   OnboardingState,
@@ -47,6 +48,7 @@ export const MODEL_PROGRESS_EVENT = "model://progress";
 export const PERMISSION_STATUS_EVENT = "permission://status";
 export const TRANSCRIPT_UPDATE_EVENT = "transcript://update";
 export const TRANSCRIPT_STATUS_EVENT = "transcript://status";
+export const MEETINGS_CHANGED_EVENT = "meetings-changed";
 
 /**
  * Is there a Rust side to talk to?
@@ -260,4 +262,8 @@ export function onTranscriptUpdate(handler: (update: TranscriptUpdate) => void):
 
 export function onTranscriptStatus(handler: (status: TranscriptStatus) => void): () => void {
   return subscribe<TranscriptStatus>(TRANSCRIPT_STATUS_EVENT, handler);
+}
+
+export function onMeetingsChanged(handler: (change: MeetingsChanged) => void): () => void {
+  return subscribe<MeetingsChanged>(MEETINGS_CHANGED_EVENT, handler);
 }
