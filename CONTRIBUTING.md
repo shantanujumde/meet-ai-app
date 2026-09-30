@@ -31,6 +31,10 @@ brew install just cmake
 
 - **Xcode Command Line Tools** are enough. Full Xcode is not required — `swiftc`
   and `codesign` both ship with CLT.
+- **Full Xcode 26+** only if you change the app icon art. `src-tauri/icons/Assets.car`
+  is committed, so builds never compile it; `just icon-car` does, pointing at
+  Xcode itself through `DEVELOPER_DIR`. Leave `xcode-select` on CLT. The
+  one-time setup for that machine is `SETUP.md` step 0.4.
 - **cmake** is not in `SETUP.md`, but `whisper-rs` needs it to build whisper.cpp.
   Without it `cargo build` fails inside `crates/stt` on macOS.
 - **Node** ≥ 20.19. **pnpm** installs itself: `package.json` pins
@@ -173,13 +177,14 @@ not written yet.
 
 - **Read docs.rs for the exact pinned version** before writing against `cpal`
   0.18, `rubato` 5.0, `ringbuf` 0.5, `rusqlite` 0.40, `keyring` 4.2, `vite` 8,
-  `react-router` 8, `tailwindcss` 4, `vitest` 4, `lucide-react` 1, `typescript`
+  `react-router` 8, `tailwindcss` 4, `vitest` 4, `tailwind-merge` 3, `typescript`
   7. Model memory is a liability for all of these — it produces a
   plausible-looking API that silently does not exist.
 - **`objc2` 0.6.4 alongside `objc2-*` 0.3.2 is correct.** Framework crates
   version independently. Never "align" them.
 - **Tailwind v4 has no `tailwind.config.js`.** Config is CSS-first, in
-  `src/index.css`. There is deliberately no such file in this repo.
+  `src/index.css`, with the design-token theme in `src/theme.css`. There is
+  deliberately no such file in this repo.
 - **`Cargo.lock` and `pnpm-lock.yaml` are committed and they matter.** See the
   Tauri note below.
 - **Bundle id `pro.saleschat.meetai` is frozen.** macOS TCC keys audio

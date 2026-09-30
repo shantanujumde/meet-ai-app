@@ -23,8 +23,7 @@ import type { UiError } from "./types";
  *
  * One value, so every screen that hits it says the same thing: the folder
  * picker used to word its own copy, which read like a different problem.
- * `client.ts` still holds an identical private copy for its `call` guard;
- * point that at this one when the file is next edited.
+ * `client.ts` throws this same value from its `call` guard.
  */
 export const NO_BACKEND: UiError = {
   domain: "app",
@@ -149,6 +148,18 @@ const COPY: Record<string, ErrorCopy> = {
   "app/recording-in-progress": {
     headline: "Stop recording first",
     body: "meet-ai is still writing this meeting's files to the current folder. Stop the recording, then change the folder.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
+  "app/folder-move-in-progress": {
+    headline: "Your meetings folder is moving",
+    body: "meet-ai is moving your meetings folder. Try again when it finishes.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
+  "app/folder-busy": {
+    headline: "Your meetings folder is in use",
+    body: "meet-ai is still writing to it, for example a recording starting or stopping, notes being saved, or a model downloading. Change the folder once that finishes.",
     actionLabel: null,
     remedy: { action: "none" },
   },

@@ -9,8 +9,13 @@ import { resetIpcMock } from "./ipcMock";
  * transcript would otherwise leak into the next. Imported lazily, inside the
  * reset, so this setup file never loads a store — and through it
  * `@/ipc/client` — before a test file's `vi.mock` of the client is in place.
+ *
+ * Clears `sessionStorage` too: the recording store remembers which error the
+ * user dismissed there (TUR-127), and a dismissal left over from one test
+ * would hide the banner another test is looking for.
  */
 export async function resetStores(): Promise<void> {
+  sessionStorage.clear();
   const [{ useAppStore }, { useRecordingStore }, { useTranscriptStore }] = await Promise.all([
     import("@/state/app"),
     import("@/state/recording"),

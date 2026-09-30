@@ -1,4 +1,6 @@
-/* Renders the three exploratory directions as standalone SVGs plus one
+/* HISTORICAL — the record of the 2026-09-27 direction choice (A / B / C). Not
+   part of any build or proof run; the live mark is "m." (geometry.mjs).
+   Renders the three exploratory directions as standalone SVGs plus one
    contact sheet. Kept in the repo as the record of what was explored. */
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";

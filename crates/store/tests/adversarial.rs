@@ -999,10 +999,7 @@ fn append_and_check(rng: &mut Rng, path: &Path, count: usize) {
         };
         sink.write(&stt::Utterance {
             start_sec,
-            speaker: match speaker {
-                Speaker::You => stt::Speaker::You,
-                Speaker::Others => stt::Speaker::Others,
-            },
+            speaker,
             text: text.clone(),
         })
         .unwrap();
@@ -1370,9 +1367,9 @@ fn successful_writes_never_leave_a_temp_file_behind() {
 
 #[test]
 fn a_failed_write_leaves_no_temp_file_behind() {
-    // `write_atomic` writes `.notes.md.tmp`, then renames it over the target.
-    // When the rename fails (here: the target is a non-empty folder) the temp
-    // file stays behind.
+    // `write_atomic` writes a dotfile temp (`.notes.md.tmp.<pid>.<n>`), then
+    // renames it over the target. When the rename fails (here: the target is
+    // a non-empty folder) the temp file must be cleaned up, not left behind.
     let scratch = Scratch::new("failed-write");
     let dir = scratch.path();
     fs::create_dir_all(dir.join(NOTES_FILE).join("child")).unwrap();

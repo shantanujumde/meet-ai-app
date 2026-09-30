@@ -19,6 +19,10 @@ cpal.workspace = true
 dirs.workspace = true
 earshot.workspace = true
 hound.workspace = true
+# The `segments.json` schema, `Channel`, the sample rate, the folder layout and
+# the atomic write — shared with `stt` and `store` so the writer here and the
+# readers there cannot define the file twice.
+meeting-format.workspace = true
 ringbuf.workspace = true
 rubato.workspace = true
 serde = { workspace = true, features = ["derive"] }
