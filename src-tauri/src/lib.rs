@@ -22,6 +22,7 @@ mod watch;
 // The menu bar is a desktop surface; the mobile targets have nothing to put an
 // item in.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod tickets;
 mod tray;
 
 /// Start/stop recording from anywhere, including with the window unfocused.
@@ -122,6 +123,8 @@ pub fn run() {
             commands::toggle_recording,
             commands::stop_recording,
             commands::live_transcript,
+            commands::list_tickets,
+            commands::create_ticket,
         ])
         .build(tauri::generate_context!())
         .expect("meet-ai failed to start")
