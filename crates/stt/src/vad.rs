@@ -348,6 +348,162 @@ fn push_span(spans: &mut Vec<SpeechSpan>, raw: SpeechSpan, pcm_len: usize, confi
     spans.push(span);
 }
 
+/// Where the detector heard speech, for an engine that picks its own
+/// utterance boundaries.
+///
+/// The whisper half of the silence gate works *before* inference: whisper
+/// only ever sees the spans [`detect_speech`] returned. Apple's
+/// `SpeechTranscriber` cannot be gated that way. SPEC §2.5 has it stream
+/// long-form audio and decide where utterances start and stop, which is why
+/// engine 1 needs no VAD chunking, so it hears the quiet stretches too. On
+/// quiet pink noise it sometimes settles a line that is not there. The
+/// measured case is `room-tone-30s.wav`: in about half of all pink-noise
+/// draws, Apple finalizes `"I"` over the first few seconds. The fixture's
+/// seed is one of those draws, so the gate is always exercised. Earshot
+/// scores every frame of that noise no higher than digital zeroes.
+///
+/// So the Apple half applies the same judgement *after*. A result is kept only
+/// if the audio range it claims overlaps a span this detector would have
+/// handed whisper. It uses the same detector, the same [`SegmentConfig`], and
+/// the same padding and minimum-length rules ([`detect_speech`] and this type
+/// share [`Segmenter`] and `push_span`), so both engines agree on what counts
+/// as speech. That is what SPEC §5's Phase 1 gate asks of *both* engines:
+/// 30 seconds of silence produces zero transcript lines. The check is
+/// *overlap*, not containment, on purpose. Apple's range for a real line
+/// routinely runs past the VAD span at either end, and one word of heard
+/// speech is enough to keep the whole line. Dropping real speech is a worse
+/// bug than the one this fixes.
+///
+/// Feed it the stream in order with [`Self::push`]. What it keeps is spans,
+/// not audio: one per utterance, so a four-hour meeting holds a few thousand
+/// pairs of integers.
+pub struct SpeechTimeline {
+    config: SegmentConfig,
+    vad: Box<dyn Vad>,
+    segmenter: Segmenter,
+    /// Padded, merged, in order: exactly what [`detect_speech`] would return
+    /// for the audio pushed so far.
+    spans: Vec<SpeechSpan>,
+    /// The tail of the last push that did not fill a frame. The live tap's
+    /// block sizes need not divide [`FRAME_SAMPLES`].
+    carry: Vec<i16>,
+    /// Absolute count of samples pushed so far.
+    fed: usize,
+}
+
+impl SpeechTimeline {
+    /// An empty timeline that will score audio with `vad` under `config`.
+    ///
+    /// Engines want [`Self::with_default_vad`]. Passing both explicitly is the
+    /// seam for tests (a scripted detector) and for a future Silero swap
+    /// (SETUP.md §1.1). Use a fresh detector per stream, because detectors
+    /// carry state from one frame to the next.
+    pub fn new(config: SegmentConfig, vad: Box<dyn Vad>) -> Self {
+        Self {
+            config,
+            vad,
+            segmenter: Segmenter::new(config),
+            spans: Vec::new(),
+            carry: Vec::with_capacity(FRAME_SAMPLES),
+            fed: 0,
+        }
+    }
+
+    /// The default detector and thresholds, which are what whisper uses.
+    pub fn with_default_vad() -> Self {
+        Self::new(SegmentConfig::default(), Box::new(EarshotVad::new()))
+    }
+
+    /// Score the next block of 16 kHz mono PCM, in stream order.
+    pub fn push(&mut self, samples: &[i16]) {
+        self.fed += samples.len();
+        let mut rest = samples;
+
+        if !self.carry.is_empty() {
+            let take = (FRAME_SAMPLES - self.carry.len()).min(rest.len());
+            self.carry.extend_from_slice(&rest[..take]);
+            rest = &rest[take..];
+            if self.carry.len() < FRAME_SAMPLES {
+                return;
+            }
+            let mut frame = [0i16; FRAME_SAMPLES];
+            frame.copy_from_slice(&self.carry);
+            self.carry.clear();
+            self.score(&frame);
+        }
+
+        let (frames, remainder) = rest.as_chunks::<FRAME_SAMPLES>();
+        for frame in frames {
+            self.score(frame);
+        }
+        self.carry.extend_from_slice(remainder);
+    }
+
+    /// End of audio: settle whatever span is still open, under the same
+    /// minimum-length rule [`detect_speech`] applies at end of recording.
+    pub fn finish(&mut self) {
+        if let Some(raw) = self.segmenter.finish() {
+            push_span(&mut self.spans, raw, self.fed, &self.config);
+        }
+        // Now the end of the recording is known, padding may not run past
+        // it, exactly as in `detect_speech`. Only the last span can.
+        if let Some(last) = self.spans.last_mut() {
+            last.end_sample = last.end_sample.min(self.fed);
+        }
+    }
+
+    /// Did the detector hear speech anywhere in `[start_sec, end_sec]`?
+    ///
+    /// An engine result whose range is a single instant (`end_sec` at or
+    /// before `start_sec`) is checked as that instant.
+    ///
+    /// A span that is still open counts even if it has not yet reached
+    /// [`SegmentConfig::min_speech_frames`]. Live, Apple can settle a word
+    /// while the speaker is still inside the hangover. Waiting to find out
+    /// whether the span grows long enough is not an option, because the line
+    /// has to be kept or dropped now and the file is append-only. Leaning
+    /// towards keeping it costs, at worst, a line over a blip too short for
+    /// whisper. The opposite choice would cost a real word.
+    pub fn heard_speech(&self, start_sec: f64, end_sec: f64) -> bool {
+        let rate = SAMPLE_RATE as f64;
+        let start = (start_sec.max(0.0) * rate).floor() as usize;
+        // Float-to-int casts saturate, so an absurd timestamp from the
+        // sidecar lands at `usize::MAX` rather than wrapping. The `+ 1` has
+        // to saturate too, or it would panic on the reader thread in debug.
+        let end =
+            ((end_sec.max(start_sec).max(0.0) * rate).ceil() as usize).max(start.saturating_add(1));
+        let overlaps = |span: &SpeechSpan| span.start_sample < end && start < span.end_sample;
+
+        // Starts and ends are both monotonic, so the first span that ends
+        // after `start` is the only settled one that could overlap.
+        let first = self.spans.partition_point(|span| span.end_sample <= start);
+        if self.spans.get(first).is_some_and(overlaps) {
+            return true;
+        }
+        self.segmenter
+            .open_span()
+            .map(|raw| pad_span(raw, &self.config, 0, usize::MAX))
+            .is_some_and(|open| overlaps(&open))
+    }
+
+    /// Speech spans settled so far. Test affordance, and a way to see what
+    /// the gate is deciding against.
+    pub fn spans(&self) -> &[SpeechSpan] {
+        &self.spans
+    }
+
+    fn score(&mut self, frame: &[i16]) {
+        let is_speech = self.vad.score(frame) >= self.config.threshold;
+        if let Some(raw) = self.segmenter.push(is_speech) {
+            // No ceiling mid-stream. The audio the pad reaches for may simply
+            // not have arrived yet, and cutting the pad off at the end of this
+            // block would make the live answer depend on block sizes and
+            // differ from the batch one. `finish` clips to the real end.
+            push_span(&mut self.spans, raw, usize::MAX, &self.config);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -605,6 +761,149 @@ mod tests {
         let padded = pad_span(span, &generous, floor, ceiling);
         assert_eq!(padded.start_sample, floor, "clamped to the floor");
         assert_eq!(padded.end_sample, ceiling, "clamped to what has arrived");
+    }
+
+    // --- the gate for engines that segment audio themselves ---
+    //
+    // `SpeechTimeline` is how an Apple result gets checked against the same
+    // detector whisper is gated by. These tests pin the gate without the
+    // sidecar: a synthetic result over a silent stretch must not count as heard.
+
+    fn timeline(scores: Vec<f32>, config: SegmentConfig) -> SpeechTimeline {
+        SpeechTimeline::new(config, Box::new(ScriptedVad { scores, next: 0 }))
+    }
+
+    fn sec(frames: usize) -> f64 {
+        (frames * FRAME_SAMPLES) as f64 / SAMPLE_RATE as f64
+    }
+
+    #[test]
+    fn a_result_over_a_silent_stretch_is_not_heard_speech() {
+        // The room-tone failure, in miniature: the whole recording scores as
+        // non-speech, and an engine claims a line over a long stretch of it.
+        let mut heard = timeline(vec![0.0; 600], config());
+        heard.push(&pcm_for(600));
+        heard.finish();
+
+        assert!(heard.spans().is_empty());
+        assert!(
+            !heard.heard_speech(0.0, sec(540)),
+            "a line settled over nothing but quiet must not count as speech"
+        );
+        assert!(
+            !heard.heard_speech(sec(100), sec(100)),
+            "nor an instant of it"
+        );
+    }
+
+    #[test]
+    fn a_result_overlapping_speech_is_kept_even_when_it_overruns_the_span() {
+        // Speech in frames 40..60 only. Apple's ranges for a real line often
+        // start before the detector's span and end after it, so overlap, not
+        // containment, is what keeps a real line.
+        let mut scores = vec![0.0; 200];
+        for score in scores.iter_mut().take(60).skip(40) {
+            *score = 0.9;
+        }
+        let mut heard = timeline(scores, config());
+        heard.push(&pcm_for(200));
+        heard.finish();
+
+        assert!(heard.heard_speech(sec(30), sec(45)), "overlaps the start");
+        assert!(heard.heard_speech(sec(55), sec(90)), "overlaps the end");
+        assert!(heard.heard_speech(sec(0), sec(200)), "covers it entirely");
+        assert!(heard.heard_speech(sec(50), sec(50)), "an instant inside it");
+        assert!(!heard.heard_speech(sec(0), sec(39)), "entirely before it");
+        assert!(!heard.heard_speech(sec(61), sec(200)), "entirely after it");
+    }
+
+    #[test]
+    fn the_padding_whisper_gets_is_the_padding_the_gate_allows() {
+        let mut scores = vec![0.0; 200];
+        for score in scores.iter_mut().take(60).skip(40) {
+            *score = 0.9;
+        }
+        let padded = SegmentConfig {
+            pad_frames: 5,
+            ..config()
+        };
+        let mut heard = timeline(scores, padded);
+        heard.push(&pcm_for(200));
+        heard.finish();
+
+        // The span is frames 40..60, padded to 35..65.
+        assert!(heard.heard_speech(sec(30), sec(36)), "reaches into the pad");
+        assert!(heard.heard_speech(sec(64), sec(90)), "reaches into the pad");
+        assert!(!heard.heard_speech(sec(30), sec(34)), "stops short of it");
+        assert!(!heard.heard_speech(sec(66), sec(90)), "starts past it");
+    }
+
+    #[test]
+    fn the_timeline_settles_the_same_spans_detect_speech_returns() {
+        // One detector, one answer. If these drifted, Apple would keep lines
+        // over audio that whisper was never allowed to hear, or the reverse.
+        let mut scores = vec![0.0; 120];
+        for index in [2, 3, 4, 5, 20, 21, 22, 23, 24, 60, 61, 62, 63, 64, 118, 119] {
+            scores[index] = 0.9;
+        }
+        let padded = SegmentConfig {
+            pad_frames: 8,
+            ..config()
+        };
+        let pcm = pcm_for(120);
+
+        let mut vad = ScriptedVad {
+            scores: scores.clone(),
+            next: 0,
+        };
+        let batch = detect_speech(&pcm, &mut vad, &padded);
+
+        // Pushed in ragged blocks that do not divide a frame, the way the live
+        // tap delivers audio.
+        let mut heard = timeline(scores, padded);
+        for block in pcm.chunks(1_000) {
+            heard.push(block);
+        }
+        heard.finish();
+
+        assert_eq!(heard.spans(), batch.as_slice());
+    }
+
+    #[test]
+    fn an_absurd_timestamp_is_answered_rather_than_panicking() {
+        // The sidecar sanitizes NaN, but nothing stops a corrupt or huge
+        // CMTime from arriving. The reader thread must answer, not panic.
+        let mut scores = vec![0.0; 200];
+        for score in scores.iter_mut().take(60).skip(40) {
+            *score = 0.9;
+        }
+        let mut heard = timeline(scores, config());
+        heard.push(&pcm_for(200));
+
+        assert!(!heard.heard_speech(1e300, 1e300), "far past the end");
+        assert!(!heard.heard_speech(f64::INFINITY, f64::INFINITY));
+        assert!(!heard.heard_speech(f64::MAX, 0.0), "end before start");
+        assert!(
+            heard.heard_speech(0.0, 1e300),
+            "a huge range still overlaps"
+        );
+        assert!(heard.heard_speech(-1e300, f64::INFINITY));
+        assert!(!heard.heard_speech(f64::NAN, f64::NAN), "NaN reads as 0");
+    }
+
+    #[test]
+    fn speech_still_inside_the_hangover_already_counts() {
+        // Live, a line can settle before the detector has closed its span.
+        let mut scores = vec![0.0; 50];
+        for score in scores.iter_mut().take(20).skip(10) {
+            *score = 0.9;
+        }
+        let mut heard = timeline(scores, config());
+        heard.push(&pcm_for(21));
+
+        assert!(heard.spans().is_empty(), "nothing has settled yet");
+        assert!(heard.heard_speech(sec(12), sec(18)));
+        assert!(!heard.heard_speech(sec(0), sec(9)));
     }
 
     #[test]

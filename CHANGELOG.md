@@ -33,6 +33,17 @@ Developer ID, and are not notarized.
   exception: a transcript line with no space after the speaker (`You:text`)
   now counts as unparsed, matching the SPEC §3.4 pattern exactly.
 
+### Fixed
+
+- A silent or quiet stretch of a meeting could get a made-up line in its
+  transcript on the Apple speech engine (`You: I` over room noise). Apple's
+  results now pass the same speech detector the whisper engine already uses:
+  a line is kept only if its time range overlaps audio the detector heard as
+  speech. The same check stops the live pane flashing that word.
+- The room-noise test fixture is now generated from a fixed seed. Before, it
+  drew new noise on every regeneration, and the silence tests passed or failed
+  depending on the draw.
+
 ## [0.3.0] — 2026-09-30
 
 The Record button now records for real, and the permission check in
