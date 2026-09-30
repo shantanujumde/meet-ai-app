@@ -66,17 +66,18 @@ export function applyUpdate(state: LiveTranscript, update: TranscriptUpdate): Li
   const { speaker, seq } = update;
   const guess = state.volatile[speaker];
 
-  if (update.kind === "volatile") {
+  // A blank guess is the recognizer clearing its throat. §3.4 never writes
+  // empty text, so the pane does not show an empty row for it either — it
+  // withdraws the guess, exactly like `dropped`, so an older guess delivered
+  // after it cannot reappear.
+  if (update.kind === "volatile" && update.text.trim() !== "") {
     if (seq <= state.closedThrough[speaker]) return state;
     if (guess && seq < guess.seq) return state;
     const { kind: _, ...line } = update;
-    // A blank guess is the recognizer clearing its throat. §3.4 never writes
-    // empty text, so the pane does not show an empty row for it either.
-    const next = line.text.trim() === "" ? null : line;
-    return { ...state, volatile: { ...state.volatile, [speaker]: next } };
+    return { ...state, volatile: { ...state.volatile, [speaker]: line } };
   }
 
-  // `final` and `dropped` both end the utterance. The guess is cleared only if
+  // `final`, `dropped` and a blank guess all end the utterance. The guess is cleared only if
   // it is not newer than this update — a newer guess is the next utterance.
   const volatile =
     guess && guess.seq <= seq ? { ...state.volatile, [speaker]: null } : state.volatile;
