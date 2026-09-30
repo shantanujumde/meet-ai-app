@@ -341,7 +341,10 @@ check("the run's own recovery is checked against the activity log, not a re-pin"
   // a signature captured on the previous response — the scheduler's side
   // effects land after that response finishes, so a re-pin always loses.
   assert.match(routeSource, /async function taskWatchdogRunWrittenIssueIds\(scope\)/);
-  assert.match(routeSource, /eq\(activityLog\.runId, scope\.runId\), eq\(activityLog\.entityType, "issue"\)/);
+  assert.match(
+    routeSource,
+    /eq\(activityLog\.runId, scope\.runId\), eq\(activityLog\.entityType, "issue"\)/,
+  );
   assert.match(routeSource, /attributable\.every\(\(issueId\) => written\.has\(issueId\)\)/);
   // An empty write set must never satisfy `every`, which is vacuously true.
   assert.match(routeSource, /written\.size > 0 && attributable\.every\(/);
@@ -349,7 +352,7 @@ check("the run's own recovery is checked against the activity log, not a re-pin"
 check("comments are no longer gated by the freshness check", () => {
   assert.match(
     routeSource,
-    /\(defect 6\): comments are records, not state changes\.\n            return true;\n        \}\n        const boundaryDecision = await decideIssueAccess\(req, issue, "issue:comment"\);/,
+    /\(defect 6\): comments are records, not state changes\.\n {12}return true;\n {8}\}\n {8}const boundaryDecision = await decideIssueAccess\(req, issue, "issue:comment"\);/,
   );
   // The subtree scope check must still run before that return: dropping the
   // freshness check must not let a watchdog comment outside its own subtree.
@@ -375,10 +378,7 @@ check("the watchdog's own review issue cannot become the serialization anchor", 
   // The author filter alone still matched the watchdog review issue: it is a
   // child of the watched issue created by the same agent. That is how TUR-140
   // was born blocked behind TUR-136.
-  assert.match(
-    routeSource,
-    /notInArray\(issueRows\.originKind, \[TASK_WATCHDOG_ORIGIN_KIND\]\)/,
-  );
+  assert.match(routeSource, /notInArray\(issueRows\.originKind, \[TASK_WATCHDOG_ORIGIN_KIND\]\)/);
   // The exclusion has to sit inside the author-filtered arm. When the parent is
   // itself the watchdog issue every child really is a follow-up, and filtering
   // there would break serialization outright.
@@ -390,7 +390,10 @@ check("the watchdog's own review issue cannot become the serialization anchor", 
 check("TASK_WATCHDOG_ORIGIN_KIND and notInArray are in scope at the anchor site", () => {
   // Both are used by the edit above; a build that stopped importing either would
   // turn the filter into a ReferenceError at request time, not at load time.
-  assert.match(routeSource, /\bnotInArray\b[^\n]*from "drizzle-orm"|import \{[^}]*\bnotInArray\b[^}]*\} from "drizzle-orm"/s);
+  assert.match(
+    routeSource,
+    /\bnotInArray\b[^\n]*from "drizzle-orm"|import \{[^}]*\bnotInArray\b[^}]*\} from "drizzle-orm"/s,
+  );
   assert.match(routeSource, /TASK_WATCHDOG_ORIGIN_KIND/);
 });
 check("the child-create 201 reports the blocker edges serialization wrote", () => {
@@ -406,11 +409,20 @@ check("the child-create 201 reports the blocker edges serialization wrote", () =
   );
 });
 check("the follow-up gate sees an assignment made by the same request", () => {
-  assert.match(routeSource, /const requestedAssigneeAgentId = typeof req\.body\?\.assigneeAgentId === "string"/);
-  assert.match(routeSource, /const effectiveAssigneeAgentId = issue\.assigneeAgentId \?\? requestedAssigneeAgentId/);
+  assert.match(
+    routeSource,
+    /const requestedAssigneeAgentId = typeof req\.body\?\.assigneeAgentId === "string"/,
+  );
+  assert.match(
+    routeSource,
+    /const effectiveAssigneeAgentId = issue\.assigneeAgentId \?\? requestedAssigneeAgentId/,
+  );
   // The old unconditional read must be gone from the gate, or an already-patched
   // build could still 409 on the shape this fixes.
-  assert.doesNotMatch(routeSource, /if \(!issue\.assigneeAgentId\) \{\n            res\.status\(409\)\.json\(\{\n                error: "Issue follow-up requires an assigned agent"/);
+  assert.doesNotMatch(
+    routeSource,
+    /if \(!issue\.assigneeAgentId\) \{\n {12}res\.status\(409\)\.json\(\{\n {16}error: "Issue follow-up requires an assigned agent"/,
+  );
   assert.match(routeSource, /if \(effectiveAssigneeAgentId === actorAgentId\)/);
 });
 check("the gate widens only the previously-unconditional-409 branch", () => {
@@ -434,10 +446,13 @@ check("resume-authority readiness honours the requested blocker set", () => {
   // A plain agent PATCH off `blocked` never reaches the move-to-todo branch
   // above; it goes through assertExplicitResumeIntentAllowed, which ran its
   // own readiness check against the stored set. Caught on the live server.
-  assert.match(routeSource, /const requestedBlockerIds = Array\.isArray\(req\.body\?\.blockedByIssueIds\)/);
+  assert.match(
+    routeSource,
+    /const requestedBlockerIds = Array\.isArray\(req\.body\?\.blockedByIssueIds\)/,
+  );
   assert.doesNotMatch(
     routeSource,
-    /const readiness = await svc\.getDependencyReadiness\(issue\.id\);\n            if \(readiness\.unresolvedBlockerCount > 0\) \{\n                res\.status\(409\)/,
+    /const readiness = await svc\.getDependencyReadiness\(issue\.id\);\n {12}if \(readiness\.unresolvedBlockerCount > 0\) \{\n {16}res\.status\(409\)/,
     "the resume-authority site still reads readiness from the stored set only",
   );
 });
@@ -451,7 +466,7 @@ check("every readiness read by issue.id is one of the three known sites", () => 
   const reads = routeSource.split("svc.getDependencyReadiness(issue.id)").length - 1;
   assert.equal(reads, 3, `expected 3 readiness reads by issue.id, found ${reads}`);
   // Site 2 must be the fallback arm of the ternary, not an unconditional read.
-  assert.match(routeSource, /\n                : await svc\.getDependencyReadiness\(issue\.id\);/);
+  assert.match(routeSource, /\n {16}: await svc\.getDependencyReadiness\(issue\.id\);/);
 });
 
 // --- every install, not just the one imported above ------------------------
