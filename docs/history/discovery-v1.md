@@ -1,9 +1,9 @@
 > [!WARNING]
 > **SUPERSEDED — historical discovery document.**
-> The implementation contract is **[`SPEC.md`](./SPEC.md)** (Production Spec v2, locked 2026-09-01).
-> Six of the twelve decisions below were reversed after research; see **[`FINDINGS.md`](./FINDINGS.md)** for the evidence behind each reversal.
+> The implementation contract is **[`SPEC.md`](../../SPEC.md)** (Production Spec v2, locked 2026-09-01).
+> Six of the twelve decisions below were reversed after research; see **[`docs/findings.md`](../findings.md)** for the evidence behind each reversal.
 > Kept for the reasoning trail only. Do not implement from this file.
-> To build and run the project, start at **[`CONTRIBUTING.md`](./CONTRIBUTING.md)**.
+> To build and run the project, start at **[`CONTRIBUTING.md`](../../CONTRIBUTING.md)**.
 
 # Botless Meeting Assistant — Design Doc (Discovery v1)
 

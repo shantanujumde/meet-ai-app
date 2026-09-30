@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-02
 **Scope:** v1, macOS, personal use.
-**Related:** `[SPEC.md](./SPEC.md)` is the build contract. `[FINDINGS.md](./FINDINGS.md)` holds the evidence. This file says why any of it should exist.
+**Related:** [`SPEC.md`](../SPEC.md) is the build contract. [`findings.md`](./findings.md) holds the evidence. This file says why any of it should exist.
 
 ---
 

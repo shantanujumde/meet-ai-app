@@ -1,7 +1,7 @@
 # Botless Meeting Assistant — Grounded Review (v2)
 
 **Date:** 2026-09-01
-**Input:** `Readme.md` (Discovery v1, decisions "locked")
+**Input:** [`discovery-v1.md`](./history/discovery-v1.md) (Discovery v1, then the root `Readme.md`, decisions "locked")
 **Purpose:** challenge every decision against what comparable projects actually shipped, then cut v1 down to what is realistically buildable by an LLM-driven (vibe-coded) workflow.
 **Verdict in one line:** product thesis is strong and unoccupied; the *stack* claims are half-supported by the evidence and the v1 scope is roughly 3x too big. Six decisions change, three shrink, three survive intact.
 
@@ -204,7 +204,7 @@ Diarization    2-channel now; sherpa-rs speaker embeddings later  (was: "pyannot
 
 ## 8. Phase 0a — macOS audio-capture permission spike (measured, 2026-09-27)
 
-**Ticket:** TUR-3 · **Code:** [`spikes/phase0a-tcc/`](./spikes/phase0a-tcc/) · **Verdict: PASS on all three parts.**
+**Ticket:** TUR-3 · **Code:** [`spikes/phase0a-tcc/`](../spikes/phase0a-tcc/) · **Verdict: PASS on all three parts.**
 
 This section supersedes the TCC claim in §2 D1 ("a Swift sidecar does not reliably
 inherit the app's TCC permissions"). That claim was inferred from open Tauri
@@ -483,7 +483,7 @@ diverges from SPEC §5.
 
 ## 10. Phase 0a follow-up — the denied path, and a real signing identity (measured, 2026-09-27)
 
-**Ticket:** TUR-10 · **Code:** [`spikes/phase0a-tcc/`](./spikes/phase0a-tcc/) ·
+**Ticket:** TUR-10 · **Code:** [`spikes/phase0a-tcc/`](../spikes/phase0a-tcc/) ·
 Closes the first three items of §8 "Still unverified".
 
 Everything below was measured on the same machine as §8 (macOS 27.0 `26A428`,
