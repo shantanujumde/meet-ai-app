@@ -2,7 +2,8 @@
 # =============================================================================
 # meet-ai brand — raster pipeline
 # Run `node build.mjs` first. This turns the SVG masters into every raster the
-# app ships: src-tauri/icons/*, public/* favicons, and the review proofs.
+# app ships: src-tauri/icons/*, public/* favicons, and the review proofs. It
+# also writes ../meet-ai.icon, the Icon Composer source for Assets.car.
 #
 # Rasterising goes through headless Chrome because this machine has no
 # rsvg-convert / ImageMagick / Inkscape. Chrome is also what actually renders
@@ -115,6 +116,11 @@ cp "$STAGE/tray-32.png" "$ICONS/meet-aiTemplate@2x.png"
 # Still open, and unrelated to the floor: the proper fix is an Icon Composer
 # `.icon` asset, which needs Xcode 26; only Command Line Tools are installed,
 # so it cannot be produced in this workspace.
+#
+# Update (TUR-87): the `.icon` now exists, at ../meet-ai.icon, written further
+# down by build-icon.mjs. Writing it needs only node; Xcode is needed only to
+# compile it into Assets.car. It ships alongside this `.icns`, not instead of
+# it, so everything above still describes the `.icns` exactly.
 SET="$STAGE/meet-ai.iconset"
 rm -rf "$SET"; mkdir -p "$SET"
 cp "$STAGE/icon-128.png"  "$SET/icon_128x128.png"
@@ -130,6 +136,27 @@ python3 make_ico.py "$ICONS/icon.ico" \
   16:"$STAGE/icon-16.png"   24:"$STAGE/icon-24.png"  32:"$STAGE/icon-32.png" \
   48:"$STAGE/icon-48.png"   64:"$STAGE/icon-64.png"  128:"$STAGE/icon-128.png" \
   256:"$STAGE/icon-256.png"
+
+# Icon Composer document (TUR-87) — the macOS 26 source for Assets.car. Built
+# from geometry.mjs, not from the rasters above, so it can never pick up a
+# pre-masked squircle: the system draws the mask itself. See build-icon.mjs for
+# the layer and appearance decisions.
+echo "-- meet-ai.icon"
+node build-icon.mjs "$BRAND/meet-ai.icon"
+
+# ictool is Icon Composer's own renderer and the one thing that can say whether
+# it accepts the document: a malformed icon.json fails it with a non-zero exit.
+# It lives inside Xcode, so on a Command-Line-Tools-only machine this is
+# skipped, not failed — the document above is still written either way.
+ICTOOL="/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"
+if [[ -x "$ICTOOL" ]]; then
+  "$ICTOOL" "$BRAND/meet-ai.icon" --export-image \
+    --output-file "$STAGE/meet-ai-icon-preview.png" --platform macOS \
+    --rendition Default --width 1024 --height 1024 --scale 1 >/dev/null
+  echo "   ictool accepted it -> .render/meet-ai-icon-preview.png"
+else
+  echo "   ictool not found (needs Xcode); document written, not previewed"
+fi
 
 echo "-- public/ favicons"
 PUB="$REPO/public"

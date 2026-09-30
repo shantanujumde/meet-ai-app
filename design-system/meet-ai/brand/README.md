@@ -20,11 +20,14 @@ tools:** `proof-dock-signed-bundle.png`, `proof-dock-signed-bundle-zoom.png`
 and `proof-16px-qa-independent.png`. They are captures of a real signed `.app`
 in the real Dock and an independent 16px measurement, committed as evidence by
 QA. A clean-and-rebuild will not recreate them — do not delete them on the
-assumption that the build will put them back.
+assumption that the build will put them back. The same goes for everything in
+`proofs/tur86/` — the TUR-86 measurements of the real signed bundle, made with
+`tools/iconprobe/verify-icon.sh`.
 
 ```
 node tools/build.mjs        # SVG masters + brand-tokens.css + render manifest
-./tools/render.sh           # PNGs, icon.icns, icon.ico -> src-tauri/icons, public/
+./tools/render.sh           # PNGs, icon.icns, icon.ico -> src-tauri/icons, public/;
+                            #   and meet-ai.icon (via tools/build-icon.mjs)
 ./tools/render-proof.sh     # the review proofs
 ./tools/render-proximity.sh # the prior-art proximity probe
 ```
@@ -71,6 +74,7 @@ Square brackets are also developer syntax, which is the audience. The mark says
 | `meet-ai-appicon-small-fullcolor.svg` | App icon, 20–64px |
 | `meet-ai-appicon-16-fullcolor.svg` | App icon, 16px, drawn on the pixel grid |
 | `meet-ai-appicon-flat-fullcolor.svg` | App icon with no gradient (print, one-colour reproduction) |
+| `meet-ai.icon/` | Icon Composer document — the macOS 26 app-icon source that compiles to `Assets.car` (see §8) |
 | `meet-ai-favicon.svg` | Web favicon |
 | `brand-tokens.css` | Colour tokens |
 | `proofs/` | Rendered review proofs — icon sizes, menu bar, lockups, misuse, prior-art probe. Plus three hand-committed QA captures that the build does not regenerate (see the note at the top) |
@@ -235,17 +239,69 @@ explicitly. An unflagged PNG renders solid black on a dark menu bar, which
 reads as a bug rather than a choice. (Owned by the menu-bar work, not by this
 directory.)
 
+### The Icon Composer `.icon` (TUR-87)
+
+`meet-ai.icon/` is the app icon in Apple's current format: a folder holding
+`icon.json` and the layer art under `Assets/`. On macOS 26 it is how an app
+chooses its own icon container instead of having one applied to a legacy
+`.icns`. It ships **alongside** `icon.icns`, not instead of it.
+
+It is generated like everything else here. `tools/build-icon.mjs` writes it
+from `geometry.mjs`, and `render.sh` runs that step, so do not edit it in Icon
+Composer and commit the result — the next render overwrites it. Writing it needs
+only node.
+
+What is in it, and why:
+
+- **One 1024 composition, no per-size art.** The format has no way to supply a
+  drawing for a particular size; the system renders 16px through 1024px from
+  this one file. The 16px drawing still reaches only the favicon and `.ico`.
+- **The body is the document fill, the mark is two layers** (dot, brackets). The
+  squircle, the grid margin, the edge highlight and the shadow are the system's,
+  so none of them are drawn. The canvas is the body, so the mark is scaled to
+  0.58 of the canvas — the same share of the body it has in the legacy master.
+- **Liquid Glass is off on the mark.** With it on, the system outlines each
+  bracket in a dark keyline and dims both colours (dot `#FF8A3C` → `#E2884B`).
+  That is a drop shadow and an effect on a solid object — §6, applied by the
+  system. With it off, the layers render the brand swatches exactly.
+- **Dark keeps the ink body.** Left alone, the system swaps it for a neutral
+  near-black.
+- **Tinted and clear draw the dot in chalk**, the same colour as the brackets —
+  the one-colour rule the `-mono-` files already follow. In ember, the dot sinks
+  into the body under a dark tint and nearly disappears at 32px.
+
+To check the document, `render.sh` uses Icon Composer's own renderer,
+`ictool`, which ships inside Xcode. When it is present it confirms the document
+parses and leaves a 1024 preview at `tools/.render/meet-ai-icon-preview.png`;
+without Xcode the step is skipped and the document is still written. Every
+appearance can be rendered by hand for review:
+
+```
+ICTOOL="/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"
+"$ICTOOL" meet-ai.icon --export-image --output-file out.png --platform macOS \
+  --rendition Default --width 128 --height 128 --scale 2
+# --rendition: Default Dark TintedLight TintedDark ClearLight ClearDark
+```
+
+**Compiling it into `src-tauri/icons/Assets.car` needs Xcode 26 or later**
+(`actool`), which is why the compiled catalog is committed: routine builds stay
+on Command Line Tools. Re-run the compile step only when this document changes.
+`actool` names the icon after the folder, so its `--app-icon` value, and
+`CFBundleIconName` in the app's `Info.plist`, are both **`meet-ai`**.
+
 ### What `tauri.conf.json` actually reads
 
-It is untouched by the identity work — last modified by the original scaffold
-commit. But it lists **four** of the seven files in `src-tauri/icons/`:
+The identity work left it alone; TUR-85 added one entry. It lists **five** of the
+eight files in `src-tauri/icons/`:
 
 | Referenced by `tauri.conf.json` | Present but unreferenced |
 |---|---|
-| `32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.icns` | `64x64.png`, `icon.png`, `icon.ico` |
+| `32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.icns`, `Assets.car` | `64x64.png`, `icon.png`, `icon.ico` |
 
-The unreferenced three are stock Tauri defaults and harmless — `.icns` is the
-only file macOS reads for the Dock and Finder, and `.ico` is Windows-only on a
+The unreferenced three are stock Tauri defaults and harmless. For the Dock and
+Finder, macOS reads `Assets.car` (named by `CFBundleIconName`) and falls back
+to the `.icns` (named by `CFBundleIconFile`); Tauri copies both into the bundle.
+`.ico` is Windows-only on a
 macOS-26-and-up product. Recorded so nobody later reads "the config already
 points at these paths" as "all seven are wired". If you regenerate the set,
 regenerate all seven anyway: the build pipeline and the `.ico` depend on them.
