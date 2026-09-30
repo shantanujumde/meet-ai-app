@@ -13,11 +13,12 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use crate::session::{LiveEmitter, LiveListener, SessionOptions, SessionOutcome, SttSession};
 use crate::sink::TranscriptSink;
-use crate::vad::SAMPLE_RATE;
+use crate::vad::{SAMPLE_RATE, SpeechTimeline};
 use crate::{Error, Speaker, Utterance, collapse_whitespace};
 
 /// The sidecar's answer to `--probe`.
@@ -55,15 +56,20 @@ enum Line {
     Probe(Box<Probe>),
     Final {
         start_sec: f64,
+        /// Where the audio this result claims ends. The silence gate checks
+        /// the whole `[start_sec, end_sec]` range against the detector. A
+        /// missing end only narrows the check to the start instant.
+        #[serde(default)]
+        end_sec: Option<f64>,
         #[serde(default)]
         text: String,
     },
-    /// Volatile results are UI-only (SPEC §2.5) and are dropped here rather
-    /// than being handed to a sink that would persist them.
+    /// Volatile results are UI-only (SPEC §2.5). The batch path drops them
+    /// here rather than handing them to a sink that would persist them.
     Volatile {
-        #[allow(dead_code)]
         start_sec: f64,
-        #[allow(dead_code)]
+        #[serde(default)]
+        end_sec: Option<f64>,
         #[serde(default)]
         text: String,
     },
@@ -179,6 +185,96 @@ impl AppleEngine {
     }
 }
 
+/// The Apple half of the silence gate: is this result over heard speech?
+///
+/// Logs when it says no, the way whisper logs a segment its own guard drops,
+/// so a missing line can be traced to the gate instead of guessed at.
+///
+/// `heard_speech` is a closure rather than a `&SpeechTimeline` so the live
+/// path can lock the shared timeline for the question alone. The guard is
+/// gone before anything is logged, so a slow log subscriber never stalls
+/// `feed` on the audio thread.
+fn over_heard_speech(
+    heard_speech: impl FnOnce(f64, f64) -> bool,
+    start_sec: f64,
+    end_sec: Option<f64>,
+    text: &str,
+) -> bool {
+    let end_sec = end_sec.unwrap_or(start_sec);
+    let kept = heard_speech(start_sec, end_sec);
+    if !kept {
+        tracing::debug!(
+            text,
+            start_sec,
+            end_sec,
+            "dropped: the detector heard no speech under this result"
+        );
+    }
+    kept
+}
+
+/// Drain `meet-stt <wav>`'s stdout into `sink`.
+///
+/// Every final that passes the silence gate is written. A sidecar `error` line
+/// is handed back instead of returned, because the caller still has to reap
+/// the process before it reports anything.
+fn write_batch_finals(
+    stdout: impl BufRead,
+    heard: &SpeechTimeline,
+    speaker: Speaker,
+    sink: &mut dyn TranscriptSink,
+) -> Result<Option<Error>, Error> {
+    let mut failure = None;
+    for line in stdout.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<Line>(&line) {
+            Ok(Line::Final {
+                start_sec,
+                end_sec,
+                text,
+            }) => {
+                // The sink owns formatting; this only owns normalization.
+                let Some(text) = collapse_whitespace(&text) else {
+                    continue;
+                };
+                let heard_speech = |start, end| heard.heard_speech(start, end);
+                if !over_heard_speech(heard_speech, start_sec, end_sec, &text) {
+                    continue;
+                }
+                sink.write(&Utterance {
+                    // Truncating to whole seconds matches the [HH:MM:SS]
+                    // line format; rounding would put an utterance a
+                    // fraction before its own audio.
+                    start_sec: start_sec.max(0.0) as u64,
+                    speaker,
+                    text,
+                })?;
+            }
+            Ok(Line::Error { code, message }) => {
+                failure = Some(Error::Sidecar(format!("{code}: {message}")));
+            }
+            Ok(
+                Line::Volatile { .. }
+                | Line::Progress { .. }
+                | Line::Done { .. }
+                | Line::Ready { .. },
+            ) => {}
+            Ok(Line::Probe(_)) => {}
+            Err(e) => {
+                // A malformed line is a contract violation, not something
+                // to skip quietly — the sidecar promised JSON lines.
+                return Err(Error::Sidecar(format!(
+                    "unparseable line from meet-stt ({e}): {line}"
+                )));
+            }
+        }
+    }
+    Ok(failure)
+}
+
 impl crate::SttEngine for AppleEngine {
     fn name(&self) -> &'static str {
         Self::NAME
@@ -203,46 +299,28 @@ impl crate::SttEngine for AppleEngine {
             .take()
             .ok_or_else(|| Error::Sidecar("sidecar stdout was not captured".into()))?;
 
-        let mut failure = None;
-        for line in BufReader::new(stdout).lines() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            match serde_json::from_str::<Line>(&line) {
-                Ok(Line::Final { start_sec, text }) => {
-                    // The sink owns formatting; this only owns normalization.
-                    let Some(text) = collapse_whitespace(&text) else {
-                        continue;
-                    };
-                    sink.write(&Utterance {
-                        // Truncating to whole seconds matches the [HH:MM:SS]
-                        // line format; rounding would put an utterance a
-                        // fraction before its own audio.
-                        start_sec: start_sec.max(0.0) as u64,
-                        speaker,
-                        text,
-                    })?;
-                }
-                Ok(Line::Error { code, message }) => {
-                    failure = Some(Error::Sidecar(format!("{code}: {message}")));
-                }
-                Ok(
-                    Line::Volatile { .. }
-                    | Line::Progress { .. }
-                    | Line::Done { .. }
-                    | Line::Ready { .. },
-                ) => {}
-                Ok(Line::Probe(_)) => {}
-                Err(e) => {
-                    // A malformed line is a contract violation, not something
-                    // to skip quietly — the sidecar promised JSON lines.
-                    return Err(Error::Sidecar(format!(
-                        "unparseable line from meet-stt ({e}): {line}"
-                    )));
-                }
-            }
+        // The silence gate's evidence, scored from the same file while the
+        // sidecar reads it. [`SpeechTimeline`] explains why Apple is gated on
+        // its output rather than its input. The file is streamed through in
+        // blocks, never held whole.
+        //
+        // The order matters for which error the caller sees. The sidecar is
+        // already running over the whole file, quiet or not, and every line it
+        // prints is read below as before. So a missing locale or a broken
+        // model is reported the same way for a silent meeting as for a
+        // talkative one. Only a file the gate itself cannot read stops things
+        // first. Nothing may be written without the gate, so there is no
+        // honest way to go on, and the sidecar is stopped rather than left
+        // blocked on a pipe nobody drains.
+        let mut heard = SpeechTimeline::with_default_vad();
+        if let Err(error) = crate::stream_wav_16k_mono(wav, |block| heard.push(block)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
         }
+        heard.finish();
+
+        let failure = write_batch_finals(BufReader::new(stdout), &heard, speaker, sink)?;
 
         let status = child.wait()?;
         if let Some(error) = failure {
@@ -285,6 +363,14 @@ impl crate::SttEngine for AppleEngine {
 /// [`crate::session::SpanAssembler`] here; the analyzer decides utterance
 /// boundaries itself.
 ///
+/// It is still gated the way whisper is. `feed` scores every block with the
+/// crate's detector *before* writing it to the pipe, into a [`SpeechTimeline`]
+/// shared with the reader thread. The sidecar cannot settle audio it has not
+/// read yet, so by the time a result arrives the detector has already heard
+/// everything that result covers. A result over audio with no speech in it is
+/// neither shown nor written. That is the room-tone `"I"` Apple settles over
+/// quiet pink noise.
+///
 /// Reading and writing happen on different threads by construction: `feed`
 /// writes to the child's stdin on the caller's thread — the same thread the
 /// live tap owns — and must never block on anything the sidecar is slow to
@@ -297,6 +383,8 @@ pub struct AppleSession {
     /// `None` after `finish` has taken it, which is what sends the sidecar EOF.
     stdin: Option<ChildStdin>,
     reader: Option<JoinHandle<Result<SessionOutcome, Error>>>,
+    /// Written by `feed`, read by the reader thread to gate each result.
+    heard: Arc<Mutex<SpeechTimeline>>,
     /// Tracked here, not in the reader thread, because `feed` is the only
     /// place that ever sees the sample count — the reader thread only sees
     /// text.
@@ -380,12 +468,17 @@ impl AppleSession {
             }
         }
 
-        let reader = std::thread::spawn(move || read_live_lines(reader, options, sink, listener));
+        let heard = Arc::new(Mutex::new(SpeechTimeline::with_default_vad()));
+        let reader = {
+            let heard = Arc::clone(&heard);
+            std::thread::spawn(move || read_live_lines(reader, &heard, options, sink, listener))
+        };
 
         Ok(Self {
             child,
             stdin: Some(stdin),
             reader: Some(reader),
+            heard,
             samples_written: 0,
         })
     }
@@ -400,6 +493,15 @@ impl SttSession for AppleSession {
         let Some(stdin) = self.stdin.as_mut() else {
             return Err(Error::Sidecar("feed called after finish".into()));
         };
+
+        // Scored before it is written, never after: this ordering is what
+        // guarantees the gate has heard a result's audio before the result
+        // can exist. It is the same detector work whisper's `feed` does on
+        // this thread.
+        self.heard
+            .lock()
+            .expect("speech timeline mutex")
+            .push(samples);
 
         let mut bytes = Vec::with_capacity(samples.len() * 2);
         for sample in samples {
@@ -459,8 +561,17 @@ impl AppleSession {
 /// hits EOF, which happens either because the sidecar finished normally (a
 /// `done` line, then exit) or because it died (the pipe just closes) — the
 /// two are told apart by whether a `done` line was ever seen.
+///
+/// Every final and every volatile passes the silence gate first (see
+/// [`AppleSession`]). A dropped final is simply never written. A dropped
+/// volatile is never shown, so a silent meeting does not flash a phantom word
+/// in the pane either.
+///
+/// Generic over the reader so the gate can be tested with lines written by
+/// hand, without a sidecar.
 fn read_live_lines(
-    reader: BufReader<std::process::ChildStdout>,
+    reader: impl BufRead,
+    heard: &Mutex<SpeechTimeline>,
     options: SessionOptions,
     mut sink: Box<dyn TranscriptSink + Send>,
     listener: Box<dyn LiveListener>,
@@ -481,15 +592,41 @@ fn read_live_lines(
         if line.trim().is_empty() {
             continue;
         }
+        let gate = |start_sec, end_sec, text: &str| {
+            // The guard is a temporary, dropped as soon as the answer is in.
+            let heard_speech = |start, end| {
+                heard
+                    .lock()
+                    .expect("speech timeline mutex")
+                    .heard_speech(start, end)
+            };
+            over_heard_speech(heard_speech, start_sec, end_sec, text)
+        };
         match serde_json::from_str::<Line>(&line) {
-            Ok(Line::Final { start_sec, text }) => {
+            Ok(Line::Final {
+                start_sec,
+                end_sec,
+                text,
+            }) => {
+                if !gate(start_sec, end_sec, &text) {
+                    // A kept final would have cleared the tail, so a dropped
+                    // one must too, or its hypothesis would stay on screen.
+                    emitter.withdraw();
+                    continue;
+                }
                 if let Err(e) = emitter.finalize(start_sec, &text, sink.as_mut()) {
                     failure = Some(e);
                     break;
                 }
             }
-            Ok(Line::Volatile { start_sec, text }) => {
-                emitter.volatile(start_sec, &text);
+            Ok(Line::Volatile {
+                start_sec,
+                end_sec,
+                text,
+            }) => {
+                if gate(start_sec, end_sec, &text) {
+                    emitter.volatile(start_sec, &text);
+                }
             }
             Ok(Line::Done { .. }) => {
                 saw_done = true;
@@ -567,12 +704,180 @@ mod tests {
         let line =
             r#"{"type":"final","start_sec":6.9,"end_sec":8.9,"text":"Sessions are the blocker."}"#;
         match serde_json::from_str::<Line>(line).unwrap() {
-            Line::Final { start_sec, text } => {
+            Line::Final {
+                start_sec,
+                end_sec,
+                text,
+            } => {
                 assert_eq!(start_sec, 6.9);
+                assert_eq!(end_sec, Some(8.9));
                 assert_eq!(text, "Sessions are the blocker.");
             }
             other => panic!("expected a final line, got {other:?}"),
         }
+    }
+
+    // --- the silence gate, without a sidecar ---
+    //
+    // The lines below are the sidecar's real output shape. The room-tone one is
+    // copied from `meet-stt room-tone-30s.wav --volatile` on macOS 27.0, run
+    // against the seeded fixture (`seed=1` in `generate.sh`). The
+    // detector is scripted, because what is under test is the wiring: that
+    // Apple's results are held against the detector at all, on both paths.
+
+    /// Scores 0.9 for frames inside `speech`, 0.0 elsewhere.
+    struct SpeechAt {
+        speech: std::ops::Range<usize>,
+        next: usize,
+    }
+
+    impl crate::vad::Vad for SpeechAt {
+        fn score(&mut self, _frame: &[i16]) -> f32 {
+            let score = if self.speech.contains(&self.next) {
+                0.9
+            } else {
+                0.0
+            };
+            self.next += 1;
+            score
+        }
+
+        fn reset(&mut self) {
+            self.next = 0;
+        }
+    }
+
+    const FRAMES_PER_SEC: usize = SAMPLE_RATE as usize / crate::vad::FRAME_SAMPLES;
+
+    /// 30 s of audio, with speech only in the given whole seconds.
+    fn heard(speech_secs: std::ops::Range<usize>) -> SpeechTimeline {
+        let vad = SpeechAt {
+            speech: speech_secs.start * FRAMES_PER_SEC..speech_secs.end * FRAMES_PER_SEC,
+            next: 0,
+        };
+        let mut timeline = SpeechTimeline::new(crate::vad::SegmentConfig::default(), Box::new(vad));
+        timeline.push(&vec![0; SAMPLE_RATE as usize * 30]);
+        timeline
+    }
+
+    const ROOM_TONE: &str = r#"{"type":"volatile","start_sec":0,"end_sec":30,"text":"I"}
+{"type":"final","start_sec":0,"end_sec":3.84,"text":"I"}
+{"type":"done","duration_sec":30}
+"#;
+
+    const ROOM_TONE_THEN_SPEECH: &str = r#"{"type":"final","start_sec":0,"end_sec":3.84,"text":"I"}
+{"type":"volatile","start_sec":20.0,"end_sec":21.0,"text":"about two"}
+{"type":"final","start_sec":20.0,"end_sec":23.4,"text":"About two days."}
+{"type":"done","duration_sec":30}
+"#;
+
+    #[test]
+    fn a_batch_final_over_silence_never_reaches_the_sink() {
+        let mut timeline = heard(0..0);
+        timeline.finish();
+        let mut sink = crate::CollectingSink::new();
+
+        let failure =
+            write_batch_finals(ROOM_TONE.as_bytes(), &timeline, Speaker::You, &mut sink).unwrap();
+
+        assert!(failure.is_none());
+        assert!(
+            sink.utterances.is_empty(),
+            "a final settled over quiet audio was written: {:?}",
+            sink.lines()
+        );
+    }
+
+    #[test]
+    fn a_batch_final_over_speech_still_reaches_the_sink() {
+        let mut timeline = heard(20..23);
+        timeline.finish();
+        let mut sink = crate::CollectingSink::new();
+
+        write_batch_finals(
+            ROOM_TONE_THEN_SPEECH.as_bytes(),
+            &timeline,
+            Speaker::You,
+            &mut sink,
+        )
+        .unwrap();
+
+        assert_eq!(sink.lines(), ["[00:00:20] You: About two days."]);
+    }
+
+    #[test]
+    fn a_live_final_over_silence_is_neither_written_nor_shown() {
+        let sink = crate::session::SharedCollector::new();
+        let seen = crate::session::CollectingListener::new();
+        let outcome = read_live_lines(
+            ROOM_TONE.as_bytes(),
+            &Mutex::new(heard(0..0)),
+            SessionOptions::new(Speaker::You).with_volatile_per_sec(f64::INFINITY),
+            Box::new(sink.clone()),
+            Box::new(seen.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.finalized, 0);
+        assert!(
+            sink.is_empty(),
+            "quiet audio reached disk: {:?}",
+            sink.lines()
+        );
+        assert!(
+            seen.updates().is_empty(),
+            "the pane was shown something for quiet audio: {:?}",
+            seen.updates()
+        );
+    }
+
+    #[test]
+    fn a_live_final_over_speech_is_written_and_shown() {
+        let sink = crate::session::SharedCollector::new();
+        let seen = crate::session::CollectingListener::new();
+        let outcome = read_live_lines(
+            ROOM_TONE_THEN_SPEECH.as_bytes(),
+            &Mutex::new(heard(20..23)),
+            SessionOptions::new(Speaker::You).with_volatile_per_sec(f64::INFINITY),
+            Box::new(sink.clone()),
+            Box::new(seen.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.finalized, 1);
+        assert_eq!(sink.lines(), ["[00:00:20] You: About two days."]);
+        let volatiles: Vec<_> = seen.volatiles().into_iter().map(|l| l.text).collect();
+        assert_eq!(volatiles, ["about two"]);
+        assert_eq!(seen.tail_for(Speaker::You), None);
+    }
+
+    #[test]
+    fn a_dropped_live_final_still_clears_the_tail_it_settles() {
+        // A hypothesis over real speech whose final lands entirely outside it
+        // is contrived, but a tail left on screen is the failure either way.
+        let lines = r#"{"type":"volatile","start_sec":20.0,"end_sec":21.0,"text":"about"}
+{"type":"final","start_sec":25.0,"end_sec":26.0,"text":"I"}
+{"type":"done","duration_sec":30}
+"#;
+        let seen = crate::session::CollectingListener::new();
+        let sink = crate::session::SharedCollector::new();
+        read_live_lines(
+            lines.as_bytes(),
+            &Mutex::new(heard(20..22)),
+            SessionOptions::new(Speaker::You).with_volatile_per_sec(f64::INFINITY),
+            Box::new(sink.clone()),
+            Box::new(seen.clone()),
+        )
+        .unwrap();
+
+        assert!(sink.is_empty());
+        assert!(matches!(
+            seen.updates().as_slice(),
+            [
+                crate::LiveUpdate::Volatile(_),
+                crate::LiveUpdate::Dropped { .. }
+            ]
+        ));
     }
 
     #[test]
