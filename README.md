@@ -64,7 +64,7 @@ system-audio permission for signed apps. One script makes a local signing
 certificate, no password or admin rights needed:
 
 ```sh
-./spikes/phase0a-tcc/make-identity.sh
+./scripts/signing/make-identity.sh
 just bundle-signed
 ```
 

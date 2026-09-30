@@ -445,11 +445,11 @@ signing (`codesign -s -`) the designated requirement *is* the binary's cdhash, s
 TCC keys the grant to the executable **path** and every rebuild can drop it.
 With an identity the requirement becomes bundle ID + certificate, TCC keys the
 grant to `pro.saleschat.meetai`, and `tccutil reset` starts working. Both halves
-measured in FINDINGS §10.3–10.4.
+measured in docs/findings.md §10.3–10.4.
 
 ```bash
-spikes/phase0a-tcc/make-identity.sh          # ~7s, no admin password needed
-spikes/phase0a-tcc/make-identity.sh --print  # leaf SHA-1: eafb73d2…
+scripts/signing/make-identity.sh          # ~7s, no admin password needed
+scripts/signing/make-identity.sh --print  # leaf SHA-1: eafb73d2…
 ```
 
 The script generates the cert, puts it in its own keychain
@@ -492,7 +492,7 @@ absolute **path**, and path-keyed records cannot be removed by `tccutil reset`
 build directory does not clear them either. Only System Settings by hand, or a
 `TCC.db` write behind Full Disk Access, will. Two such records are already stuck
 on the development machine. `build.sh` now exits 1 rather than ad-hoc sign;
-`ALLOW_ADHOC=1` overrides it if you genuinely need to. Details in FINDINGS §10.6.
+`ALLOW_ADHOC=1` overrides it if you genuinely need to. Details in docs/findings.md §10.6.
 
 ### Step 6 — `justfile` (incl. the ⛔ Windows cross-check)
 
@@ -547,7 +547,7 @@ fixtures:
 ```md
 # meet-ai
 
-Spec: SPEC.md (locked). Versions: SETUP.md. Evidence: FINDINGS.md.
+Spec: SPEC.md (locked). Versions: SETUP.md. Evidence: docs/findings.md.
 
 ## Hard rules
 - Read docs.rs for the EXACT pinned version before writing against: cpal 0.18,
@@ -597,7 +597,7 @@ Pass = the prompt appears, names **meet-ai** (not the helper), and non-silent sa
 are almost always permanent path-keyed rows left over from pre-identity ad-hoc
 builds (or, if you built `spikes/phase0a-tcc` instead of the real app, a second
 real bundle ID, `pro.saleschat.meetai.tap-probe`). `tccutil reset` above only
-ever reaches `pro.saleschat.meetai`. Full recipe and root cause: FINDINGS §11.
+ever reaches `pro.saleschat.meetai`. Full recipe and root cause: docs/findings.md §11.
 
 Then commit and start Phase 0.
 
