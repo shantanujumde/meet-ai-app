@@ -1,4 +1,5 @@
-/* Scratch harness: bracket geometry variants side by side at judging sizes. */
+/* HISTORICAL — scratch harness from tuning the retired `[ · ]` mark: bracket
+   geometry variants side by side at judging sizes. Not part of any build. */
 import { writeFileSync } from "node:fs";
 import { PALETTE as P, bracketPaths } from "./geometry.mjs";
 

@@ -3,7 +3,7 @@
 # Shared page screenshotter for the brand proof scripts.
 #
 # Factored out after review (TUR-12). render.sh had grown a retry loop for
-# Chrome's startup race; render-proof.sh and render-proximity.sh had not, and
+# Chrome's startup race; render-proof.sh and render-proximity.sh (since deleted) had not, and
 # the one that had drifted furthest is the one that shipped a broken proof.
 # One implementation, so a fix lands everywhere.
 #
@@ -40,7 +40,7 @@ shoot_page() {
 
   [[ -f "$html" ]] || {
     print -u2 "   missing input: $html"
-    print -u2 "   run its generator first (node proof.mjs / proximity.mjs / concepts.mjs)."
+    print -u2 "   run its generator first (node proof.mjs, via render-proof.sh)."
     print -u2 "   refusing to invoke Chrome — it would screenshot its own error page."
     return 1
   }
