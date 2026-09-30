@@ -18,11 +18,15 @@ use crate::{Error, Problem};
 /// The two speaker labels v1 can produce (L5) — the same type `stt` writes
 /// with, from `meeting-format`, so store's normal build still does not depend
 /// on `stt` (stt is only a dev-dependency, for the parity tests).
+///
+/// Transitional re-export; new code should import from `meeting_format`.
 pub use meeting_format::Speaker;
 
 /// Render one line, applying the §3.4 write rules: whitespace collapsed, and
 /// `None` for text that is empty after collapsing. The one rendering, shared
 /// with stt's sink.
+///
+/// Transitional re-export; new code should import from `meeting_format`.
 pub use meeting_format::transcript::format_line;
 
 /// One parsed line.
@@ -330,13 +334,6 @@ mod tests {
         assert_eq!(json[0]["startSec"], 4);
     }
 
-    fn to_stt(speaker: Speaker) -> stt::Speaker {
-        match speaker {
-            Speaker::You => stt::Speaker::You,
-            Speaker::Others => stt::Speaker::Others,
-        }
-    }
-
     const CROSS_CHECK: [(u64, Speaker, &str); 4] = [
         (
             4,
@@ -354,11 +351,10 @@ mod tests {
             let ours = format_line(start_sec, speaker, text).unwrap();
             let theirs = stt::format_transcript_line(&stt::Utterance {
                 start_sec,
-                speaker: to_stt(speaker),
+                speaker,
                 text: stt::collapse_whitespace(text).unwrap(),
             });
             assert_eq!(ours, theirs);
-            assert_eq!(speaker.label(), to_stt(speaker).label());
         }
     }
 
@@ -372,7 +368,7 @@ mod tests {
         for (start_sec, speaker, text) in CROSS_CHECK {
             sink.write(&stt::Utterance {
                 start_sec,
-                speaker: to_stt(speaker),
+                speaker,
                 text: text.to_string(),
             })
             .unwrap();

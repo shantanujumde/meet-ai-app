@@ -56,9 +56,13 @@ pub use transcribe::{MeetingPaths, Outcome, transcribe_meeting, transcribe_track
 /// from `audio` itself: SPEC §8.2 forbids `crates/stt` from depending on the
 /// platform-specific capture crate — that dependency is exactly how mac
 /// assumptions leak into portable code and turn a Windows port into a rewrite.
+///
+/// Transitional re-export; new code should import from `meeting_format`.
 pub use meeting_format::{Channel, Speaker};
 
 /// The §3.4 whitespace rule, shared with `store`'s reader.
+///
+/// Transitional re-export; new code should import from `meeting_format`.
 pub use meeting_format::transcript::collapse_whitespace;
 
 /// One finalized thing somebody said.

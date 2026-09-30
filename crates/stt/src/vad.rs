@@ -18,6 +18,8 @@
 
 /// Every engine in SPEC §2.5 takes 16 kHz mono, and `earshot` requires it.
 /// The rate `audio` writes, from the one definition in `meeting-format`.
+///
+/// Transitional re-export; new code should import from `meeting_format`.
 pub use meeting_format::SAMPLE_RATE;
 
 /// `earshot` scores exactly 256 samples at a time — 16 ms at 16 kHz.

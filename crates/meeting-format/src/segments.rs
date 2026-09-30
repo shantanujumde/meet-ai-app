@@ -12,8 +12,9 @@
 //! `start_host_ns` and the two rates), so a hand-written §3.4 fixture or a file
 //! from before a field existed still parses —
 //!
-//! * `version` defaults to [`SCHEMA_VERSION`] (v1 is the first shape that ever
-//!   reached disk, so a file without one is a v1 file);
+//! * `version` defaults to [`UNVERSIONED_SCHEMA`], `1` (v1 is the first shape
+//!   that ever reached disk, so a file without one is a v1 file — whatever
+//!   [`SCHEMA_VERSION`] later becomes);
 //! * `mic_frames`, `sys_frames` and `reason` default to `0`/`""`, because a
 //!   reader placing timestamps would rather extrapolate than refuse a
 //!   recording;
@@ -38,6 +39,14 @@ use crate::Channel;
 /// fields it knows and warns; the contract's additive-only rule makes that
 /// safe.
 pub const SCHEMA_VERSION: u32 = 1;
+
+/// The version a file with no `version` field is, forever.
+///
+/// Not [`SCHEMA_VERSION`]: that is what *this* build writes, and it will move.
+/// A file without the field predates it, and that was v1 — reading it as
+/// "whatever is current" would silently re-interpret an old file under a newer
+/// contract the day the number is bumped.
+pub const UNVERSIONED_SCHEMA: u32 = 1;
 
 /// The `reason` strings a segment can carry.
 ///
@@ -64,15 +73,16 @@ pub mod reason {
 /// `segments.json` in full.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Segments {
-    /// [`SCHEMA_VERSION`]. Defaulted when absent so a hand-written §3.4 fixture,
-    /// or a file predating the field, still parses as v1.
+    /// [`SCHEMA_VERSION`] when written. Defaulted to [`UNVERSIONED_SCHEMA`]
+    /// when absent, so a hand-written §3.4 fixture, or a file predating the
+    /// field, still parses — as v1.
     #[serde(default = "default_version")]
     pub version: u32,
     pub segments: Vec<Segment>,
 }
 
 fn default_version() -> u32 {
-    SCHEMA_VERSION
+    UNVERSIONED_SCHEMA
 }
 
 /// One continuous capture run. A new segment starts whenever a stream had to be
@@ -234,9 +244,19 @@ mod tests {
                 "reason":"start"}]}"#,
         )
         .unwrap();
-        assert_eq!(parsed.version, SCHEMA_VERSION);
+        assert_eq!(parsed.version, 1);
         assert!(parsed.segments[0].anchors.is_empty());
         assert_eq!(parsed.segments[0].start_continuous_ns, None);
+    }
+
+    #[test]
+    fn a_file_without_a_version_is_v1_not_whatever_is_current() {
+        // Pinned to the literal: this must not follow SCHEMA_VERSION when it
+        // is bumped.
+        assert_eq!(UNVERSIONED_SCHEMA, 1);
+        assert_eq!(default_version(), 1);
+        let parsed: Segments = serde_json::from_str(r#"{"segments":[]}"#).unwrap();
+        assert_eq!(parsed.version, 1);
     }
 
     #[test]

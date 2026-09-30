@@ -22,11 +22,18 @@ use std::path::{Path, PathBuf};
 use crate::Channel;
 
 /// The meetings root's folder name under the home folder: `~/Meetings`.
+///
+/// Not read by anything yet: `src-tauri/src/meetings.rs` (`root()`) and
+/// `crates/stt/src/model.rs` still spell `"Meetings"` out, and switch to this
+/// and [`default_root`] in the next pass.
 pub const DEFAULT_ROOT_NAME: &str = "Meetings";
 /// The app's own folder inside the root: config, onboarding flag, models,
 /// index. A dotfolder, so the meeting scan skips it.
 pub const APP_DIR: &str = ".app";
 /// Downloaded speech models, inside [`APP_DIR`].
+///
+/// Not read by anything yet: `crates/stt/src/model.rs`
+/// (`default_model_dir`) switches to this and [`models_dir`] in the next pass.
 pub const MODELS_DIR: &str = "models";
 
 /// `meeting.md` — frontmatter plus the four fixed sections (§3.2).
@@ -40,7 +47,8 @@ pub const AUDIO_DIR: &str = "audio";
 /// The clock-truth record, inside [`AUDIO_DIR`] (§3.4).
 pub const SEGMENTS_FILE: &str = "segments.json";
 
-/// `~/Meetings`, given the home folder.
+/// `~/Meetings`, given the home folder. For the next pass, like
+/// [`DEFAULT_ROOT_NAME`].
 pub fn default_root(home: &Path) -> PathBuf {
     home.join(DEFAULT_ROOT_NAME)
 }
@@ -50,7 +58,7 @@ pub fn app_dir(root: &Path) -> PathBuf {
     root.join(APP_DIR)
 }
 
-/// `<root>/.app/models`.
+/// `<root>/.app/models`. For the next pass, like [`MODELS_DIR`].
 pub fn models_dir(root: &Path) -> PathBuf {
     app_dir(root).join(MODELS_DIR)
 }
