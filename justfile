@@ -1,6 +1,6 @@
 set shell := ["bash", "-uc"]
 
-# Self-signed identity created by `spikes/phase0a-tcc/make-identity.sh`. That
+# Self-signed identity created by `scripts/signing/make-identity.sh`. That
 # script is headless — no sudo, no Keychain Access, no admin password, because
 # the trust setting goes in the *user* domain (measured, TUR-10) — so there is
 # no manual GUI step in this repo's signing path. The default below is the name
@@ -67,7 +67,16 @@ check: check-windows sidecar
 # toolchain. `calendar` is here for the same reason, ahead of its Phase 5 deps.
 check-windows:
     rustup target add x86_64-pc-windows-msvc
-    cargo check --target x86_64-pc-windows-msvc -p audio -p calendar -p stt -p prompts -p detect
+    cargo check --target x86_64-pc-windows-msvc -p audio -p calendar -p stt -p prompts -p detect -p meeting-format
+
+# The TUR-97 gate: does a recording survive the app dying mid-meeting? Drives the
+# real installed app, so it needs a mic, speakers and a signed build; it is not
+# part of `just check`. Options and what each check proves: scripts/gates/tur97-kill/README.md.
+#
+#   just kill-gate                          # 60 s, kill -9
+#   just kill-gate --end quit               # Quit while recording
+kill-gate *ARGS:
+    bash scripts/gates/tur97-kill/gate.sh {{ARGS}}
 
 # Format and autofix everything that can be autofixed.
 fmt:
