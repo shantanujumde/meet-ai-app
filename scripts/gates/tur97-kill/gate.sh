@@ -7,10 +7,10 @@
 # as we recorded, segments.json is there, drift-check can measure it, and the
 # system track transcribes to the sentence we played through the speakers.
 #
-#   tools/tur97-kill-gate/gate.sh                          # 60 s, kill -9
-#   tools/tur97-kill-gate/gate.sh --seconds 3600           # the 1-hour variant
-#   tools/tur97-kill-gate/gate.sh --end quit               # Quit mid-recording
-#   tools/tur97-kill-gate/gate.sh --verify-only <meeting>  # after a manual lid
+#   scripts/gates/tur97-kill/gate.sh                          # 60 s, kill -9
+#   scripts/gates/tur97-kill/gate.sh --seconds 3600           # the 1-hour variant
+#   scripts/gates/tur97-kill/gate.sh --end quit               # Quit mid-recording
+#   scripts/gates/tur97-kill/gate.sh --verify-only <meeting>  # after a manual lid
 #                                                          # close / logout / sleep
 #
 # See README.md next to this file for every option and what each check proves.
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$HERE/../.." && pwd)"
+ROOT="$(cd "$HERE/../../.." && pwd)"
 CHECK="$HERE/check.py"
 
 APP="/Applications/meet-ai.app"

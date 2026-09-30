@@ -5,9 +5,9 @@ meeting. It starts a real recording in the real app, ends it the hard way,
 relaunches the app, and then checks the files a user would open.
 
 ```
-tools/tur97-kill-gate/gate.sh [--app PATH] [--seconds N] [--end kill9|quit]
+scripts/gates/tur97-kill/gate.sh [--app PATH] [--seconds N] [--end kill9|quit]
                               [--out DIR] [--keep] [--stt PATH] [--real-root]
-tools/tur97-kill-gate/gate.sh --verify-only <meeting dir> [--expect-seconds N]
+scripts/gates/tur97-kill/gate.sh --verify-only <meeting dir> [--expect-seconds N]
 ```
 
 | Option | Meaning |
@@ -103,7 +103,7 @@ A WAV header that only breaks past a size limit is exactly the failure this
 catches.
 
 ```
-tools/tur97-kill-gate/gate.sh --seconds 3600 --end kill9
+scripts/gates/tur97-kill/gate.sh --seconds 3600 --end kill9
 ```
 
 This needs about 62 minutes, plus the time to transcribe an hour of audio.
@@ -127,7 +127,7 @@ For every one of these:
 4. Do the ending (see below).
 5. Stop the `say` loop. Make sure meet-ai is not running (quit it if it is),
    then run:
-   `tools/tur97-kill-gate/gate.sh --verify-only ~/Meetings/<the new folder> --expect-seconds <seconds of audio you expect>`
+   `scripts/gates/tur97-kill/gate.sh --verify-only ~/Meetings/<the new folder> --expect-seconds <seconds of audio you expect>`
 
    The script relaunches the app (check 8), quits it, and runs checks 1-7.
    It never moves or deletes the folder.
@@ -160,7 +160,7 @@ the app didn't notice the sleep.
 `check.py` does the file parsing. It walks the WAV chunks without assuming a
 44-byte header. Each subcommand prints one line of JSON and can be run on
 its own:
-`python3 tools/tur97-kill-gate/check.py wav <file.wav> --expect-seconds 60`.
+`python3 scripts/gates/tur97-kill/check.py wav <file.wav> --expect-seconds 60`.
 
 ## Results (2026-09-30)
 
