@@ -318,12 +318,6 @@ pub enum Live<'a> {
     #[default]
     Nothing,
     Meeting(&'a str),
-    /// `Starting`, when the recorder has created the folder (or is about to)
-    /// but has not published its id yet. The newest folder is treated as the
-    /// live one until it does — a brief moment where a genuinely interrupted
-    /// newest meeting goes unlabelled beats flashing "Interrupted" on the
-    /// meeting the user just started.
-    StartingUnnamed,
 }
 
 impl<'a> Live<'a> {
@@ -331,7 +325,9 @@ impl<'a> Live<'a> {
         match (status.phase, status.meeting_id.as_deref()) {
             (Phase::Idle, _) => Live::Nothing,
             (_, Some(id)) => Live::Meeting(id),
-            (_, None) => Live::StartingUnnamed,
+            // `Starting` before the recorder has picked an id. It publishes the
+            // id before it creates the folder, so no folder can be live yet.
+            (_, None) => Live::Nothing,
         }
     }
 }
@@ -390,7 +386,7 @@ fn list_in(root: &Path, live: Live<'_>) -> Result<MeetingList, UiError> {
     }
 
     let folders = meeting_folders(root)?;
-    let live_id = live_id(live, &folders);
+    let live_id = live_id(live);
     let meetings = folders
         .into_iter()
         .map(|(path, name)| {
@@ -446,17 +442,11 @@ fn meeting_folders(root: &Path) -> Result<Vec<(PathBuf, String)>, UiError> {
     Ok(folders)
 }
 
-/// The folder name of the live meeting, resolving [`Live::StartingUnnamed`]
-/// to the newest dated folder.
-fn live_id(live: Live<'_>, folders_newest_first: &[(PathBuf, String)]) -> Option<String> {
+/// The folder name of the live meeting, if any.
+fn live_id(live: Live<'_>) -> Option<String> {
     match live {
         Live::Nothing => None,
         Live::Meeting(id) => Some(id.to_string()),
-        Live::StartingUnnamed => folders_newest_first
-            .iter()
-            .map(|(_, name)| name)
-            .find(|name| split_folder_name(name).0.is_some())
-            .cloned(),
     }
 }
 
@@ -506,13 +496,6 @@ pub fn detail(id: &str, live: Live<'_>) -> Result<MeetingDetail, UiError> {
     let is_live = match live {
         Live::Nothing => false,
         Live::Meeting(live) => live == name,
-        // Only ever reached in the second or so of a start; listing the
-        // folder names is cheap next to reading the transcript above.
-        Live::StartingUnnamed => dir
-            .parent()
-            .and_then(|root| meeting_folders(root).ok())
-            .and_then(|folders| live_id(live, &folders))
-            .is_some_and(|live| live == name),
     };
 
     Ok(MeetingDetail {
@@ -752,7 +735,7 @@ fn recover_in(root: &Path, live: Live<'_>) -> usize {
             return 0;
         }
     };
-    let live_id = live_id(live, &folders);
+    let live_id = live_id(live);
 
     let mut rewritten = 0;
     for (path, name) in &folders {
@@ -1334,11 +1317,6 @@ mod tests {
             summary_of(&root, live_id, Live::Meeting(live_id)).recording_state,
             RecordingState::Recording
         );
-        // `Starting`: the recorder has made the folder but not named it yet.
-        assert_eq!(
-            summary_of(&root, live_id, Live::StartingUnnamed).recording_state,
-            RecordingState::Recording
-        );
         // Being live covers one meeting, not every meeting.
         assert_eq!(
             summary_of(&root, "2026-09-30-1140-meeting", Live::Meeting(live_id)).recording_state,
@@ -1373,7 +1351,7 @@ mod tests {
         );
         assert_eq!(
             Live::from_status(&status(Phase::Starting, None)),
-            Live::StartingUnnamed
+            Live::Nothing
         );
     }
 
@@ -1524,8 +1502,6 @@ mod tests {
             recover_in(&root, Live::Meeting("2026-09-30-1300-meeting")),
             0
         );
-        // The same while the recorder is still starting and has not named it.
-        assert_eq!(recover_in(&root, Live::StartingUnnamed), 0);
 
         assert_eq!(before, snapshot());
         fs::remove_dir_all(&root).ok();

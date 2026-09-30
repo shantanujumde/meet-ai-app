@@ -214,6 +214,11 @@ impl Recorder {
 
         let started = chrono::Local::now();
         let id = meeting_id(started);
+        // TUR-97: publish the id before the folder exists, so a meetings list
+        // taken mid-start (`meetings::Live`) always knows which folder is live
+        // and never mistakes it for an interrupted one. `fail_start` clears it
+        // with the rest of `Inner`.
+        self.lock().status.meeting_id = Some(id.clone());
         if let Err(error) = create_meeting_folder(&id) {
             return Err(self.fail_start(app, Some(&id), error));
         }
