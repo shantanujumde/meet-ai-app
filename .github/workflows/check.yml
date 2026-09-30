@@ -1,0 +1,109 @@
+# The same gate as `just check` on a laptop, plus a production frontend build.
+#
+# Runner: macos-26, not macos-15. `just check` depends on `just sidecar`, which
+# compiles sidecar/meet-stt with swiftc against Apple's SpeechAnalyzer and
+# SpeechTranscriber. Those APIs only exist in the macOS 26 SDK (SPEC L2 and A8
+# set macOS 26 as the floor), and the macos-15 image ships an older SDK.
+#
+# What the tests need, and why nothing extra is set here:
+# - No model downloads. The whisper accuracy tests sit behind the
+#   `whisper-model-tests` cargo feature (`just check-whisper`), which
+#   `just check` does not turn on. The live_transcript_e2e tests are #[ignore]d.
+# - No microphone or TCC grant. Every test that needs real audio hardware or a
+#   TCC decision (crates/audio/tests/mic_closed_loop.rs, permission_check.rs,
+#   system_closed_loop.rs) is #[ignore]d, so `cargo test` skips it.
+# - Apple speech tests in crates/stt/tests/ skip themselves, with a SKIPPED line
+#   in the log, when the sidecar is missing or Apple's en-US model is not
+#   installed on the runner.
+# - The stt tests generate their fixture WAVs on first use with macOS `say` and
+#   ffmpeg. `say` ships with macOS; ffmpeg is installed below if the image does
+#   not have it.
+
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: check-${{ github.event.pull_request.number || github.ref }}
+  # Only PRs cancel: a new push to a PR makes the old run pointless, but every
+  # commit on main should get its own result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-26
+    # A cold cache builds whisper.cpp and the whole workspace from scratch.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history so the PR job can diff against the base branch.
+          fetch-depth: 0
+
+      # rust-toolchain.toml pins the Rust version, rustfmt and clippy, and the
+      # aarch64-apple-darwin target. `rustup toolchain install` with no argument
+      # installs exactly that. The Windows target is not pinned there;
+      # `just check-windows` (part of `just check`) adds it.
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      # No version input: pnpm/action-setup reads `packageManager` from
+      # package.json.
+      - uses: pnpm/action-setup@v4
+
+      # package.json `engines` asks for Node >= 20.19. 24 is the current LTS.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      # cmake builds whisper.cpp inside crates/stt; ffmpeg generates the test
+      # fixtures. Both are usually on the image already.
+      - name: Install cmake and ffmpeg if missing
+        run: |
+          command -v cmake >/dev/null || brew install cmake
+          command -v ffmpeg >/dev/null || brew install ffmpeg
+
+      - name: just check
+        run: just check
+
+      - name: pnpm build
+        run: pnpm build
+
+      # Repo rules (plan Phase 8), run on the files this PR changed. The script
+      # lands in a separate PR, so this step does nothing until it exists.
+      - name: Quality rules on changed files
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ ! -x scripts/quality-rules.sh ]; then
+            echo "scripts/quality-rules.sh not present yet; skipping."
+            exit 0
+          fi
+          changed=()
+          while IFS= read -r file; do
+            changed+=("$file")
+          done < <(git diff --name-only --diff-filter=ACMR "origin/$BASE_REF...HEAD")
+          if [ "${#changed[@]}" -eq 0 ]; then
+            echo "No changed files."
+            exit 0
+          fi
+          scripts/quality-rules.sh "${changed[@]}"

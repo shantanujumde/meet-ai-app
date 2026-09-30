@@ -45,9 +45,9 @@ function detail(lines: MeetingDetail["lines"]): MeetingDetail {
   };
 }
 
-function recording(status: Partial<RecordingStatus>) {
+function recording(status: Partial<Omit<RecordingStatus, "error">>) {
   useRecordingStore.setState({
-    status: { phase: "idle", meetingId: null, startedAtMs: null, ...status },
+    status: { phase: "idle", meetingId: null, startedAtMs: null, error: null, ...status },
   });
 }
 

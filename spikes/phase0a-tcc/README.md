@@ -6,7 +6,7 @@ Answers the question in `SPEC.md` §5, Phase 0a:
 > permission and actually receive non-silent system audio?
 
 **Result: yes, all three parts.** Full write-up with measured numbers is in
-[`FINDINGS.md`](../../FINDINGS.md) §8. Read that first — this file is just how to
+[`docs/findings.md`](../../docs/findings.md) §8. Read that first — this file is just how to
 run it again.
 
 ## What's here

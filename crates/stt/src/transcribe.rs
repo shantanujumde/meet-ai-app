@@ -11,10 +11,13 @@
 
 use std::path::{Path, PathBuf};
 
+use meeting_format::layout;
+
 use crate::sink::{CollectingSink, MarkdownSink, TranscriptSink};
 use crate::{Channel, Error, Speaker, SttEngine, Utterance};
 
-/// The on-disk layout of one meeting, per SPEC §3.1.
+/// The on-disk layout of one meeting, per SPEC §3.1 — the names come from
+/// [`meeting_format::layout`], this just binds them to one meeting folder.
 #[derive(Debug, Clone)]
 pub struct MeetingPaths {
     pub root: PathBuf,
@@ -26,19 +29,19 @@ impl MeetingPaths {
     }
 
     pub fn audio_dir(&self) -> PathBuf {
-        self.root.join("audio")
+        layout::audio_dir(&self.root)
     }
 
     pub fn wav(&self, channel: Channel) -> PathBuf {
-        self.audio_dir().join(channel.wav_filename())
+        layout::wav_path(&self.root, channel)
     }
 
     pub fn segments_json(&self) -> PathBuf {
-        self.audio_dir().join("segments.json")
+        layout::segments_path(&self.root)
     }
 
     pub fn transcript_md(&self) -> PathBuf {
-        self.root.join("transcript.md")
+        layout::transcript_path(&self.root)
     }
 }
 

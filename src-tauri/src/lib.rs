@@ -12,6 +12,7 @@ mod commands;
 mod config;
 mod engine;
 mod error;
+mod folder_move;
 mod live_transcript;
 mod meetings;
 mod onboarding;
@@ -75,6 +76,7 @@ pub fn run() {
         .manage(recording::Recorder::default())
         .manage(live_transcript::LiveTranscript::default())
         .manage(engine::Downloads::default())
+        .manage(folder_move::FolderGate::default())
         .setup(|_app| {
             // TUR-97: before the record shortcut exists, so nothing can be
             // mid-recording while this rewrites a header. Fast — two 44-byte
@@ -141,7 +143,6 @@ pub fn run() {
 // Not generic over `Runtime`: the plugin builder is bound to Wry, and the app
 // below runs on Wry. Making this generic only moves the mismatch.
 fn global_shortcut_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
-    use tauri::Manager as _;
     use tauri_plugin_global_shortcut::ShortcutState;
 
     tauri_plugin_global_shortcut::Builder::new()
@@ -152,39 +153,60 @@ fn global_shortcut_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
             if event.state() != ShortcutState::Pressed {
                 return;
             }
-            if app.try_state::<recording::Recorder>().is_none() {
-                tracing::error!("the recorder state is missing; ignoring the record shortcut");
-                return;
-            }
-            // `Recorder::toggle` blocks on real wall-clock time now (SPEC
-            // §8.1's permission measurement, then Core Audio opening or
-            // closing) — running it straight from this callback would freeze
-            // the app for however long that takes. A worker thread keeps the
-            // callback itself instant; the phase-claiming mutex inside
-            // `Recorder` is what actually makes a double-tapped shortcut a
-            // no-op rather than a race, not the timing of this call.
-            let app = app.clone();
-            if let Err(error) = std::thread::Builder::new()
-                .name("meet-ai-record-shortcut".to_string())
-                .spawn(move || {
-                    let recorder = app.state::<recording::Recorder>();
-                    match recorder.toggle(&app) {
-                        Ok(status) => tracing::info!(phase = ?status.phase, "record shortcut"),
-                        Err(error) => {
-                            // The window may be closed or unfocused — that is the
-                            // whole point of a global shortcut — so there may be
-                            // nothing on screen to put an error next to. A
-                            // notification is the one surface guaranteed visible.
-                            tracing::warn!(message = %error.message, "record shortcut refused");
-                            notify_refusal(&app, &error);
-                        }
-                    }
-                })
-            {
-                tracing::error!(%error, "could not spawn a worker thread for the record shortcut");
-            }
+            spawn_toggle(app, "record shortcut");
         })
         .build()
+}
+
+/// Start or stop the recording from a native surface — ⌘⇧R or the menu-bar
+/// item — without blocking the thread that delivered the event.
+///
+/// Both of those callbacks arrive on the main thread, the one AppKit draws the
+/// window on. `Recorder::toggle` blocks on real wall-clock time (SPEC §8.1's
+/// permission measurement and chime, then Core Audio opening or closing), so
+/// calling it inline froze the whole app for however long that took — which is
+/// exactly what the menu-bar item did until it shared this helper. A worker
+/// thread keeps the callback itself instant. The phase-claiming mutex inside
+/// `Recorder` is what makes a double-tap a no-op rather than a race, not the
+/// timing of this call. The webview's button reaches the same `toggle` through
+/// `commands::toggle_recording`, on a blocking-pool thread for the same reason.
+///
+/// `source` names the surface in the log, so a user-submitted log says which
+/// control they actually used.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub(crate) fn spawn_toggle(app: &tauri::AppHandle, source: &'static str) {
+    use tauri::Manager as _;
+
+    if app.try_state::<recording::Recorder>().is_none() {
+        tracing::error!(source, "the recorder state is missing; ignoring the toggle");
+        return;
+    }
+    let app = app.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name("meet-ai-record-toggle".to_string())
+        .spawn(move || {
+            // Which way this press was meant to go, for the notification's
+            // title. Read before the toggle, because by the time it fails the
+            // recorder is back at `Idle` either way.
+            let stopping =
+                app.state::<recording::Recorder>().status().phase == recording::Phase::Recording;
+            // Through the gate, so a toggle cannot start a recording under the
+            // old root while the meetings folder is moving.
+            match folder_move::toggle_recording(&app) {
+                Ok(status) => tracing::info!(source, phase = ?status.phase, "recording toggled"),
+                Err(error) => {
+                    // The window may be closed or unfocused — that is the whole
+                    // point of a global shortcut and a menu-bar item — so there
+                    // may be nothing on screen to put an error next to. A
+                    // notification is the one surface guaranteed visible.
+                    tracing::warn!(source, message = %error.message, "recording toggle refused");
+                    notify_refusal(&app, stopping, &error);
+                }
+            }
+        })
+    {
+        tracing::error!(source, %error, "could not spawn a worker thread for the recording toggle");
+    }
 }
 
 /// Register ⌘⇧R once the app is up.
@@ -206,25 +228,53 @@ fn register_record_shortcut<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
-/// Tell the user why a shortcut press did nothing, on a surface that does not
-/// need the window to be open — and in the window too, when it is. The
+/// Tell the user why a ⌘⇧R or menu-bar toggle failed — a start refused, or a
+/// stop that could not close cleanly (`stopping`) — on a surface that does not
+/// need the window to be open. The window hears it too, from the idle status
+/// on `recording://state` that carries the refusal (`recording::Status::error`,
+/// set by the recorder or, for a folder-move refusal, by `folder_move`) — the
 /// notification alone is silent whenever meet-ai may not post them, which made
 /// a refused ⌘⇧R look like it had done nothing at all.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn notify_refusal<R: tauri::Runtime>(app: &tauri::AppHandle<R>, error: &error::UiError) {
-    use tauri::Emitter as _;
+fn notify_refusal<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    stopping: bool,
+    error: &error::UiError,
+) {
     use tauri_plugin_notification::NotificationExt as _;
 
-    if let Err(emit_error) = app.emit(recording::ERROR_EVENT, error) {
-        tracing::warn!(%emit_error, "could not tell the window about a refused recording");
-    }
     if let Err(notify_error) = app
         .notification()
         .builder()
-        .title("meet-ai did not start recording")
+        .title(refusal_title(stopping))
         .body(&error.message)
         .show()
     {
         tracing::warn!(%notify_error, "could not show the refusal notification either");
+    }
+}
+
+/// The notification title for a toggle that failed, by which way it was going.
+/// A failed stop still ends the recording — the recorder is back at `Idle`
+/// with the reason on its status — it just could not close the files cleanly,
+/// so "did not start recording" there was simply wrong.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn refusal_title(stopping: bool) -> &'static str {
+    if stopping {
+        "meet-ai had a problem stopping the recording"
+    } else {
+        "meet-ai did not start recording"
+    }
+}
+
+#[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
+mod tests {
+    use super::refusal_title;
+
+    #[test]
+    fn a_failed_stop_is_not_titled_as_a_failed_start() {
+        assert_eq!(refusal_title(false), "meet-ai did not start recording");
+        assert!(refusal_title(true).contains("stopping"));
+        assert!(!refusal_title(true).contains("start"));
     }
 }

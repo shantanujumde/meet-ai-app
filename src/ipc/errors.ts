@@ -135,6 +135,18 @@ const COPY: Record<string, ErrorCopy> = {
     actionLabel: null,
     remedy: { action: "none" },
   },
+  "app/folder-move-in-progress": {
+    headline: "Your meetings folder is moving",
+    body: "meet-ai is moving your meetings folder. Try again when it finishes.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
+  "app/folder-busy": {
+    headline: "Your meetings folder is in use",
+    body: "meet-ai is still writing to it, for example a recording starting or stopping, notes being saved, or a model downloading. Change the folder once that finishes.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
   "app/same-folder": {
     headline: "That's already the folder",
     body: "Pick a different folder to move your meetings somewhere else.",

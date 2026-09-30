@@ -145,6 +145,14 @@ export type RecordingStatus = {
   meetingId: string | null;
   /** Unix epoch ms, so the UI runs its own timer instead of being fed ticks. */
   startedAtMs: number | null;
+  /**
+   * Why the last recording ended badly — it stopped on its own (a checkpoint
+   * or a device change failed), or did not close cleanly — or why the last
+   * start was refused, including one from ⌘⇧R or the menu bar (TUR-127). Only
+   * set on an idle status; cleared by the next start. Rust always sends it,
+   * as `null` when nothing went wrong.
+   */
+  error: UiError | null;
 };
 
 /**

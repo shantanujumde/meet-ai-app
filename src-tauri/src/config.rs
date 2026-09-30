@@ -59,7 +59,7 @@ struct Config {
 fn path() -> Option<PathBuf> {
     crate::meetings::root()
         .ok()
-        .map(|root| root.join(".app").join(FILE))
+        .map(|root| meeting_format::layout::app_dir(&root).join(FILE))
 }
 
 /// Read `transcription.engine`/`transcription.model`, or the SPEC §3.5

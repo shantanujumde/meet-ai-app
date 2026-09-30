@@ -25,26 +25,23 @@ use std::io::{Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 
 use audio::Channel;
-use audio::segments::{Segments, duration_ms};
-use audio::wav_writer::read_header_frames;
+use audio::segments::{Segments, SegmentsDrift as _, duration_ms};
+// The canonical header `audio::wav_writer` writes, and the size of one mono
+// 16-bit frame: the audio check below compares a file's real length against
+// what its header declares, and [`read_header_frames`] refuses any file that
+// is not exactly this shape. Also where the RIFF and `data` size fields live.
+use audio::wav_writer::{
+    BYTES_PER_FRAME as WAV_BYTES_PER_FRAME, DATA_SIZE_OFFSET as WAV_DATA_SIZE_OFFSET,
+    HEADER_LEN as WAV_HEADER_LEN, RIFF_SIZE_OFFSET as WAV_RIFF_SIZE_OFFSET, read_header_frames,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::UiError;
 use crate::recording::{Phase, Status};
 
 /// Files inside a meeting folder (SPEC §3.1).
-const AUDIO: &str = "audio";
-const SEGMENTS: &str = "segments.json";
-
-/// The canonical header `audio::wav_writer` writes, and the size of one mono
-/// 16-bit frame. Private there; restated here because the audio check below
-/// compares a file's real length against what its header declares, and
-/// [`read_header_frames`] refuses any file that is not exactly this shape.
-const WAV_HEADER_LEN: u64 = 44;
-const WAV_BYTES_PER_FRAME: u64 = 2;
-/// Where the RIFF chunk size and the `data` chunk size live in that header.
-const WAV_RIFF_SIZE_OFFSET: u64 = 4;
-const WAV_DATA_SIZE_OFFSET: u64 = 40;
+const AUDIO: &str = meeting_format::layout::AUDIO_DIR;
+const SEGMENTS: &str = meeting_format::layout::SEGMENTS_FILE;
 
 /// Where meetings live.
 ///
@@ -54,9 +51,14 @@ const WAV_DATA_SIZE_OFFSET: u64 = 40;
 ///
 /// `MEET_AI_MEETINGS_ROOT` overrides both. That exists so this screen can be
 /// driven against a fixture folder without writing into the developer's real
-/// meetings.
+/// meetings. It is read under the same rule as `stt::model::default_model_dir`
+/// (one variable name, and empty means unset rather than "the current
+/// directory"), so the app and the CLI tools cannot resolve two different roots
+/// from one environment.
 pub fn root() -> Result<PathBuf, UiError> {
-    if let Some(custom) = std::env::var_os("MEET_AI_MEETINGS_ROOT") {
+    if let Some(custom) =
+        std::env::var_os(stt::model::MEETINGS_ROOT_ENV).filter(|value| !value.is_empty())
+    {
         return Ok(PathBuf::from(custom));
     }
     if let Some(configured) = configured_root() {
@@ -1224,6 +1226,7 @@ mod tests {
             phase,
             meeting_id: id.map(str::to_string),
             started_at_ms: None,
+            error: None,
         };
         let id = "2026-09-30-1300-meeting";
         assert_eq!(Live::from_status(&status(Phase::Idle, None)), Live::Nothing);
