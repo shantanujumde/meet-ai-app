@@ -29,15 +29,27 @@ use std::path::Path;
 
 use crate::segments::SAMPLE_RATE_HZ;
 
-const CHANNELS: u16 = 1;
-const BITS_PER_SAMPLE: u16 = 16;
-const BYTES_PER_SAMPLE: u32 = (BITS_PER_SAMPLE / 8) as u32;
-const HEADER_LEN: u64 = 44;
+// The canonical header's shape. Public because it is a promise, not a detail:
+// §13 lets a live reader tail at `HEADER_LEN + BYTES_PER_FRAME * frame`, and
+// the app's cut-short-recording repair (`src-tauri/src/meetings.rs`) compares a
+// file's real length against these and patches the two size fields in place.
+// One definition, so a reader cannot restate a number this writer changed.
+
+/// Mono: one sample per frame.
+pub const CHANNELS: u16 = 1;
+/// 16-bit signed PCM.
+pub const BITS_PER_SAMPLE: u16 = 16;
+/// Bytes in one sample.
+pub const BYTES_PER_SAMPLE: u32 = (BITS_PER_SAMPLE / 8) as u32;
+/// Bytes in one frame — one sample per channel. `2` for mono 16-bit.
+pub const BYTES_PER_FRAME: u64 = BYTES_PER_SAMPLE as u64 * CHANNELS as u64;
+/// The canonical header is exactly this long, and samples start right after.
+pub const HEADER_LEN: u64 = 44;
 
 /// Offset of the RIFF chunk's size field (bytes 4..8): `36 + data_len`.
-const RIFF_SIZE_OFFSET: u64 = 4;
+pub const RIFF_SIZE_OFFSET: u64 = 4;
 /// Offset of the `data` chunk's size field (bytes 40..44): `frames * 2`.
-const DATA_SIZE_OFFSET: u64 = 40;
+pub const DATA_SIZE_OFFSET: u64 = 40;
 
 /// An incrementally-written, crash-safe mono 16-bit PCM WAV file.
 ///

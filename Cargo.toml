@@ -16,6 +16,7 @@ version = "0.3.0"
 audio = { path = "crates/audio" }
 calendar = { path = "crates/calendar" }
 detect = { path = "crates/detect" }
+meeting-format = { path = "crates/meeting-format" }
 modelfetch = { path = "crates/modelfetch" }
 prompts = { path = "crates/prompts" }
 store = { path = "crates/store" }
