@@ -159,15 +159,10 @@ main() {
     return 0
   fi
 
-  set --
-  while IFS= read -r f; do
-    set -- "$@" "$f"
-  done <<EOF
-$files
-EOF
-
+  # Pass the transcript, not the file list: the gate then knows which files
+  # came from the branch rather than this session, and says so in its report.
   # Exit 3 = the gate ran out of time: neither a pass nor a failure.
-  QUALITY_GATE_INCONCLUSIVE_EXIT=3 "$gate" "$@" >&2
+  QUALITY_GATE_INCONCLUSIVE_EXIT=3 "$gate" --from-transcript "$t" >&2
   rc=$?
   case $rc in
     0)

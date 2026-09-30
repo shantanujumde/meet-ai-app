@@ -104,7 +104,9 @@ R2 and R3 print warnings until their phase lands. To make them fail, flip
 - It runs on `Stop` and `SubagentStop` (`.claude/settings.json`, 600 s timeout).
 - It takes the files from the run's own transcript: the ones edited with Edit,
   Write, MultiEdit or NotebookEdit. In its own linked worktree on a branch other than `main`, it also adds
-  the files the branch changed, so Bash-tool edits are caught too.
+  the files the branch changed, so Bash-tool edits are caught too. Failures in
+  those files are tagged `(from branch, not edited in this session)`. If you
+  did not change them, say so and stop; do not edit them to satisfy the gate.
 - A session with no edit and no Bash calls (read-only, such as a reviewer)
   passes at once. The primary checkout only ever uses the transcript list.
 - A sub-agent is checked against its own transcript only. A `SubagentStop`

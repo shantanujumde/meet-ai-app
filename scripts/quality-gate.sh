@@ -187,6 +187,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# The files named explicitly or in the transcript, before any branch files are
+# added. A failure report marks every other file as "from branch".
+cp "$raw" "$tmp/session_raw"
+from_branch=0
+
 if [ "$explicit" = 0 ] && [ "$transcript" = 0 ]; then
   branch_files >>"$raw"
 elif [ "$transcript" = 1 ]; then
@@ -201,6 +206,7 @@ elif [ "$transcript" = 1 ]; then
   if [ "$calls" -gt 0 ] && [ "${QUALITY_GATE_TRANSCRIPT_ONLY:-0}" != 1 ] &&
     in_linked_worktree && on_own_branch; then
     branch_files >>"$raw"
+    from_branch=1
   fi
 fi
 
@@ -226,7 +232,15 @@ normalize() {
   done
 }
 
-normalize <"$raw" | sort -u >"$tmp/files"
+normalize <"$raw" | LC_ALL=C sort -u >"$tmp/files"
+
+# Files that are only here because the branch changed them: this session did
+# not edit them (as far as its transcript shows).
+: >"$tmp/branch_only"
+if [ "$from_branch" = 1 ]; then
+  normalize <"$tmp/session_raw" | LC_ALL=C sort -u >"$tmp/session_files"
+  LC_ALL=C comm -23 "$tmp/files" "$tmp/session_files" >"$tmp/branch_only"
+fi
 
 if [ "$list_only" = 1 ]; then
   cat "$tmp/files"
@@ -315,6 +329,10 @@ fi
 # can kill a job together with everything it started (cargo, rustc, vitest
 # workers) and leave no orphan holding the cargo target lock.
 set -m
+# While jobs start, mute the shell's own stderr: bash may print a harmless
+# "child setpgid ... Operation not permitted" when a child has already set its
+# group itself. Every job writes to its own log, so nothing is lost.
+exec 3>&2 2>/dev/null
 
 names=()
 pids=()
@@ -323,7 +341,7 @@ pids=()
 run() {
   local name=$1
   shift
-  "$@" </dev/null >"$tmp/$name.log" 2>&1 &
+  "$@" </dev/null >"$tmp/$name.log" 2>&1 3>&- &
   names+=("$name")
   pids+=("$!")
 }
@@ -364,6 +382,7 @@ if [ -n "$rs_pkgs" ]; then
 fi
 
 run rules "$root/scripts/quality-rules.sh" "${all[@]}"
+exec 2>&3 3>&-
 
 # Wait for every job, or until the budget runs out.
 timed_out=0
@@ -433,14 +452,48 @@ excerpt() {
   esac
 }
 
+# Tag every output line that names a branch-only file, so the reader can tell
+# "you broke this" from "the branch already had this".
+BRANCH_TAG="(from branch, not edited in this session)"
+mark_branch_files() {
+  if [ -s "$tmp/branch_only" ]; then
+    awk -v list="$tmp/branch_only" -v tag="$BRANCH_TAG" '
+      BEGIN { while ((getline l < list) > 0) if (l != "") f[++n] = l }
+      {
+        line = $0
+        for (i = 1; i <= n; i++) if (index(line, f[i])) { line = line " " tag; break }
+        print line
+      }'
+  else
+    cat
+  fi
+}
+
+report="$tmp/report"
 {
   echo "Quality gate FAILED: ${#failed[@]} check(s) failed on ${#all[@]} changed file(s): ${failed[*]}"
   for name in "${failed[@]}"; do
     echo
     echo "--- $name ---"
-    excerpt "$name"
+    excerpt "$name" | mark_branch_files
   done
   echo
+} >"$report"
+# Only when a failure actually names a branch-only file.
+tagged=0
+grep -qF "$BRANCH_TAG" "$report" && tagged=1
+{
+  cat "$report"
+  if [ "$tagged" = 1 ]; then
+    echo "Files marked $BRANCH_TAG were checked because this branch changed them:"
+    while IFS= read -r f; do
+      [ -n "$f" ] && grep -qF -- "$f" "$report" && echo "  $f"
+    done <"$tmp/branch_only"
+    echo
+  fi
   echo "Fix these, then finish again."
+  if [ "$tagged" = 1 ]; then
+    echo "If you did not change these files in this session, say so and stop; do not edit them to satisfy the gate."
+  fi
 } >&2
 exit 2
