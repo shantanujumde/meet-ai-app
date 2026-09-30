@@ -86,9 +86,9 @@ is meant to be found.
 | `meet-ai-appicon-flat-fullcolor.svg` | App icon on one flat colour (print, no gradient) |
 | `meet-ai.icon/` | Icon Composer document — the macOS 26 app-icon source that compiles to `Assets.car` (see §8) |
 | `meet-ai-favicon.svg` | Web favicon — the small artwork on the Dusk tile |
-| `meet-ai-logomark-primary-ink.svg` | Symbol alone on light backgrounds, 40px and up |
-| `meet-ai-logomark-primary-chalk.svg` | Symbol alone on dark backgrounds, 40px and up |
-| `meet-ai-logomark-small-chalk.svg` | Symbol alone at 20–32px |
+| `meet-ai-logomark-primary-ink.svg` | Symbol alone on light backgrounds, 20px and up |
+| `meet-ai-logomark-primary-chalk.svg` | Symbol alone on dark backgrounds, 20px and up |
+| `meet-ai-logomark-small-chalk.svg` | Symbol alone at 20–32px (now the same drawing as `-primary-chalk`, kept under this name so links keep working) |
 | `meet-ai-logomark-mono-black.svg` / `-mono-white.svg` | One-colour symbol |
 | `meet-ai-wordmark-primary-ink.svg` / `-chalk.svg` | Wordmark alone |
 | `meet-ai-wordmark-mono-black.svg` / `-mono-white.svg` | One-colour wordmark |
@@ -186,15 +186,15 @@ the word; at one they read as a single word, "m.meet-ai".
 | Asset | Minimum | Below that |
 |---|---|---|
 | Lockup | 120px wide | Use the symbol alone |
-| Symbol alone, primary artwork | 40px | Switch to `-small-chalk` |
-| Symbol alone, small artwork | 20px | Use the app icon instead |
+| Symbol alone (primary or `-small-` artwork, now the same drawing) | 20px | Use the app icon instead |
 | App icon | 16px | Fixed; the 16px file is drawn for exactly this size |
 | Menu-bar template | 16px | Fixed; drawn for exactly this size |
 
 The app icon exists in **two drawings**, not one scaled:
 
 - **The master** (20px and up, and the `.icon`): the approved geometry. Its
-  84-unit gap leaves 1.6px of tile between the dot and the last leg at 20px.
+  84-unit gap leaves about 1.3px of tile between the dot and the last leg at
+  20px.
   The small artwork files (`-small-`, 20–64px, and the favicon) used to push
   the dot further out than the master's old 60-unit gap; they now carry the
   master's geometry, and keep their names so nothing that links them breaks.
@@ -405,7 +405,7 @@ is unchanged.
   before any public launch. Until then "m." is a working identity, not a
   registered one. The closest marks it found are monday.com's "m." (two bars
   and a dot, software classes, shown on a gradient tile) and Memletz's white
-  rounded "m." (US, class 42); the scan lists what keeps us clear of each.
+  rounded "m." (US, class 42); the scan lists what keeps us distinct from each.
 - **Resemblance to Xiaomi's "mi".** A white lower-case m on an orange tile,
   with a dot, sits near Xiaomi's logo — a white "MI" on orange, which its 2021
   redesign kept (it only rounded the tile), so it is the current mark, not a

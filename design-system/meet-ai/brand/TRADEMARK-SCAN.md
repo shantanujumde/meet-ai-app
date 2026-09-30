@@ -114,8 +114,12 @@ pink–purple).
 
 ## 3. Overall assessment
 
-**Overall risk: medium.** No identical mark turned up, and nothing looks like a
-clear block. Two things keep the rating above low.
+**Overall risk: medium.** No identical mark turned up. Two entries above are
+rated medium–high, but each is close on only part of the mark: monday.com on
+the idea and the classes, not the letterform; Memletz on the letterform, not
+the tile or the field. None combines our drawn m, baseline dot, tile and Dusk
+colours, which is why the overall rating stays at medium. Two things keep it
+above low.
 
 1. **"m." is a crowded idea on the US register.** At least six live records use
    the literal element `M.` or `m.`, four of them in class 9 or 42, and
@@ -134,16 +138,17 @@ clear block. Two things keep the rating above low.
    uses an M with a baseline dot. It looks different, but a buyer comparing Mac
    meeting recorders will see two "m-dot" icons.
 
-What is already working for us: the **dot on the baseline** (README §6) keeps
-clear of Xiaomi's "MI" and Mistral's dotted m. The **two-stop vertical Dusk**
+What is already working for us: the **dot on the baseline** (README §6)
+reduces resemblance to Xiaomi's "MI" and Mistral's dotted m. The **two-stop vertical Dusk**
 avoids Instagram's registered multi-stop sweep and monday's pink-to-blue
 diagonal. The **heavy arched m** is visibly not monday's pair of slashes.
 
-**One correction for README §9:** it calls Xiaomi's white "mi" on orange the
-company's *old* logo, from before 2021. Xiaomi's 2021 redesign kept the orange
-tile and the white "MI" and only rounded the corners, so it is the current mark
-and still enforced. That does not change the risk here, because our dot is a
-full stop, but README should not call the mark retired.
+**One correction for README §9 (made in the same change as this scan):** it
+called Xiaomi's white "mi" on orange the company's *old* logo, from before
+2021. Xiaomi's 2021 redesign kept the orange tile and the white "MI" and only
+rounded the corners, so it is the current mark and still enforced. That does
+not change the risk here, because our dot is a full stop, but README no longer
+calls the mark retired.
 
 ---
 
@@ -157,8 +162,8 @@ full stop, but README should not call the mark retired.
    6599789, Instagram reg. 6104619.
 2. **Run the searches this scan could not reach:** EUIPO eSearch, WIPO Global
    Brand Database and UKIPO by hand in a browser, and a reverse image search
-   (Google Lens, TinEye) of `proofs/proof-dock-real-mdot-zoom.png` and the
-   1024 master.
+   (Google Lens, TinEye) of the 1024 master. The real Dock captures in
+   `proofs/` predate the 84-unit gap, so search the master, not those.
 3. **If we file, file the composite**: the drawn m, the baseline dot, the
    rounded tile and a Dusk colour claim together, not "m." in plain letters or
    the glyph alone. Ask counsel whether to file the lockup, "m." with the
@@ -173,5 +178,5 @@ full stop, but README should not call the mark retired.
    and not next to monday.
 6. **Keep watching Memoth** and new App Store entries in "AI meeting notes"; if
    the field fills up with m-dot icons, look at this again.
-7. **Fix the Xiaomi wording in README §9** (above) the next time README is
-   edited.
+7. **Fix the Xiaomi wording in README §9** (above). Done in the same change
+   as this scan.
