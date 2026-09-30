@@ -11,11 +11,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   PALETTE as P,
-  BRACKETS,
-  BRACKETS_SMALL,
+  TILE_GRADIENT as TG,
+  MDOT,
+  MDOT_SMALL,
   MENUBAR,
   ICON16,
-  bracketPaths,
+  mdot,
+  mdotGrid,
+  pixelRuns,
   squirclePath,
   layoutWordmark,
   f,
@@ -25,12 +28,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const BRAND = resolve(HERE, "..");
 const REPO = resolve(HERE, "..", "..", "..", "..");
 const STAGE = join(HERE, ".render");
-// Prune only what this script owns. `.render/` is shared: proof.mjs and
-// proximity.mjs stage their HTML here too, so that relative <img> links to the
-// rasters resolve under file://. Wiping the directory wholesale used to delete
-// those pages out from under their render scripts — and because Chrome answers
-// a missing file:// URL with an error page rather than a non-zero exit, the
-// result was a screenshot of the failure, committed as a proof (TUR-12).
+// Prune only what this script owns. `.render/` is shared: proof.mjs stages its
+// HTML here too, so that relative <img> links to the rasters resolve under
+// file://. Wiping the directory wholesale used to delete those pages out from
+// under their render scripts — and because Chrome answers a missing file://
+// URL with an error page rather than a non-zero exit, the result was a
+// screenshot of the failure, committed as a proof (TUR-12).
 mkdirSync(STAGE, { recursive: true });
 for (const f of readdirSync(STAGE)) {
   if (
@@ -51,44 +54,51 @@ const write = (rel, body) => {
 const HEAD = '<svg xmlns="http://www.w3.org/2000/svg"';
 
 /* --------------------------------------------------------------------------
-   MARK
+   THE SYMBOL — "m."
+   One drawing (geometry.mjs mdot / mdotGrid) and one way to paint it. The m is
+   a single <path>: its two arches share the middle leg, and one stroked path
+   paints that overlap once rather than twice.
 -------------------------------------------------------------------------- */
-function mark(g, fg, accent) {
-  const { left, right } = bracketPaths(g);
-  const s = `fill="none" stroke="${fg}" stroke-width="${g.stroke}" stroke-linecap="round" stroke-linejoin="round"`;
+function glyph(parts, fg, accent) {
+  const { stroke, paths, dot } = parts;
   return (
-    `<path d="${left}" ${s}/><path d="${right}" ${s}/>` +
-    `<circle cx="${g.dot.cx}" cy="${g.dot.cy}" r="${g.dot.r}" fill="${accent}"/>`
+    `<path d="${paths.join(" ")}" fill="none" stroke="${fg}" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round"/>` +
+    `<circle cx="${dot.cx}" cy="${dot.cy}" r="${dot.r}" fill="${accent}"/>`
   );
 }
 
-const logomark = (g, fg, accent, title) =>
-  `${HEAD} viewBox="0 0 100 100" width="100" height="100" fill="none" role="img" aria-label="${title}">
-  <title>${title}</title>
-  ${mark(g, fg, accent)}
+/* The free-standing symbol, off the tile: the m in ink or chalk, the dot in
+   ember — the same accent the wordmark's `i` tittle carries, so symbol and
+   wordmark share one colour idea. The artboard is square (logomarks get used
+   as avatars) and centred on the symbol, with half a dot of air each side of
+   the ink; the full clear space (README §4) is the user's to add. */
+function logomark(spec, fg, accent) {
+  const parts = mdot(spec);
+  const { box } = parts;
+  const side = box.w + 2 * spec.dotR;
+  const x = box.x + box.w / 2 - side / 2;
+  const y = box.y + box.h / 2 - side / 2;
+  return `${HEAD} viewBox="${f(x)} ${f(y)} ${f(side)} ${f(side)}" width="100" height="100" fill="none" role="img" aria-label="meet-ai">
+  <title>meet-ai</title>
+  ${glyph(parts, fg, accent)}
 </svg>`;
+}
 
-write("meet-ai-logomark-primary-ink.svg", logomark(BRACKETS, P.ink, P.ember, "meet-ai"));
-write("meet-ai-logomark-primary-chalk.svg", logomark(BRACKETS, P.chalk, P.ember, "meet-ai"));
-write("meet-ai-logomark-mono-black.svg", logomark(BRACKETS, "#000000", "#000000", "meet-ai"));
-write("meet-ai-logomark-mono-white.svg", logomark(BRACKETS, "#FFFFFF", "#FFFFFF", "meet-ai"));
-write("meet-ai-logomark-small-chalk.svg", logomark(BRACKETS_SMALL, P.chalk, P.ember, "meet-ai"));
+write("meet-ai-logomark-primary-ink.svg", logomark(MDOT, P.ink, P.ember));
+write("meet-ai-logomark-primary-chalk.svg", logomark(MDOT, P.chalk, P.ember));
+write("meet-ai-logomark-mono-black.svg", logomark(MDOT, "#000000", "#000000"));
+write("meet-ai-logomark-mono-white.svg", logomark(MDOT, "#FFFFFF", "#FFFFFF"));
+write("meet-ai-logomark-small-chalk.svg", logomark(MDOT_SMALL, P.chalk, P.ember));
 
 /* Menu-bar template: pure black with alpha, drawn on the 16px pixel grid.
    macOS tints a template image itself, so it carries no brand colour. */
-{
-  const g = MENUBAR;
-  const { left, right } = bracketPaths(g);
-  const s = `fill="none" stroke="#000000" stroke-width="${g.stroke}" stroke-linecap="round" stroke-linejoin="round"`;
-  write(
-    "meet-ai-menubar-template-black.svg",
-    `${HEAD} viewBox="0 0 16 16" width="16" height="16" fill="none" role="img" aria-label="meet-ai">
+write(
+  "meet-ai-menubar-template-black.svg",
+  `${HEAD} viewBox="0 0 16 16" width="16" height="16" fill="none" role="img" aria-label="meet-ai">
   <title>meet-ai</title>
-  <path d="${left}" ${s}/><path d="${right}" ${s}/>
-  <circle cx="${g.dot.cx}" cy="${g.dot.cy}" r="${g.dot.r}" fill="#000000"/>
+  ${glyph(mdotGrid(MENUBAR), "#000000", "#000000")}
 </svg>`,
-  );
-}
+);
 
 /* --------------------------------------------------------------------------
    WORDMARK + LOCKUP
@@ -126,30 +136,29 @@ write("meet-ai-wordmark-primary-chalk.svg", wordmark(P.chalk, P.ember));
 write("meet-ai-wordmark-mono-black.svg", wordmark("#000000", "#000000"));
 write("meet-ai-wordmark-mono-white.svg", wordmark("#FFFFFF", "#FFFFFF"));
 
-/* Horizontal lockup. The mark is set to 1.24x the wordmark's tittle-to-baseline
-   height. Matching the boxes exactly makes the mark look short: the wordmark's
-   height is mostly one tall `t` and a floating tittle, while the mark is solid
-   from edge to edge, so equal boxes are not equal presence. 1.16 was still
-   visibly short against the word in the README render; 1.24 sits level. */
-const MARK_VIS = { x0: 16 - BRACKETS.stroke / 2, y0: 20 - BRACKETS.stroke / 2 };
-const markVisW = BRACKETS.stemR - BRACKETS.stemL + BRACKETS.stroke;
-const markVisH = BRACKETS.bottom - BRACKETS.top + BRACKETS.stroke;
-const lockScale = (WH * 1.24) / markVisH;
-const GAP = WH * 0.42; // clear space between mark and wordmark
-const lockH = markVisH * lockScale;
-const lockW = markVisW * lockScale + GAP + W.width + W.stroke;
+/* Horizontal lockup: "m." then the wordmark. The symbol's ink box is set to
+   exactly the wordmark's height (tittle top to baseline), which puts the two
+   baselines level — the dot is a full stop, so it has to sit on the line the
+   word sits on. That makes the symbol's x-height 1.3x the word's, which is
+   the step a symbol needs over the text beside it; any larger and the pair
+   read as two logos. The gap is two of the symbol's dot diameters: at one
+   (the clear-space minimum, README §4) the pair read as a single word,
+   "m.meet-ai". */
+const MARK = mdot(MDOT);
+const lockScale = WH / MARK.box.h;
+const markW = MARK.box.w * lockScale;
+const GAP = MDOT.dotR * 4 * lockScale;
+const lockH = WH;
+const lockW = markW + GAP + W.width + W.stroke;
 
 function lockup(fg, accent) {
-  const my = (lockH - markVisH * lockScale) / 2;
-  const wy = (lockH - WH) / 2 - WTOP;
-  const wx = markVisW * lockScale + GAP + WPAD;
+  const wy = -WTOP;
+  const wx = markW + GAP + WPAD;
   return `${HEAD} viewBox="0 0 ${f(lockW)} ${f(lockH)}" width="${f(lockW)}" height="${f(
     lockH,
   )}" fill="none" role="img" aria-label="meet-ai">
   <title>meet-ai</title>
-  <g transform="translate(0 ${f(my)}) scale(${f(lockScale)}) translate(${f(-MARK_VIS.x0)} ${f(
-    -MARK_VIS.y0,
-  )})">${mark(BRACKETS, fg, accent)}</g>
+  <g transform="scale(${f(lockScale)}) translate(${f(-MARK.box.x)} ${f(-MARK.box.y)})">${glyph(MARK, fg, accent)}</g>
   <g transform="translate(${f(wx)} ${f(wy)})">${wordBody(fg, accent)}</g>
 </svg>`;
 }
@@ -163,136 +172,139 @@ write("meet-ai-logo-horizontal-mono-white.svg", lockup("#FFFFFF", "#FFFFFF"));
    APP ICON
    1024 canvas, 824 body, superellipse corner (n=4.6). The 100px margin is the
    macOS grid's shadow room, not padding to fill.
+
+   The symbol is drawn on the 1024 Icon Composer canvas, where the canvas is
+   the tile. Here the tile is the 824 body, so the whole canvas drawing is
+   mapped onto the body — the "m." takes the same share of the tile in the
+   legacy files as in meet-ai.icon, by construction rather than by a second
+   set of numbers.
 -------------------------------------------------------------------------- */
 const BODY_HALF = 412;
 const SQ = squirclePath(512, 512, BODY_HALF);
+const ONTO_BODY = `translate(${512 - BODY_HALF} ${512 - BODY_HALF}) scale(${f((BODY_HALF * 2) / 1024)})`;
 
-function appIcon(g, markScaleFactor, opts = {}) {
-  const { flat = false } = opts;
-  const scale = (824 * markScaleFactor) / markVisW;
-  const vx = g.stemL - g.stroke / 2;
-  const vy = g.top - g.stroke / 2;
-  const vw = g.stemR - g.stemL + g.stroke;
-  const vh = g.bottom - g.top + g.stroke;
-  const tx = 512 - (vw * scale) / 2;
-  const ty = 512 - (vh * scale) / 2;
+// Dusk, in SVG's objectBoundingBox terms — the same numbers icon.json uses.
+const dusk = (id) =>
+  `<linearGradient id="${id}" x1="${TG.start.x}" y1="${TG.start.y}" x2="${TG.stop.x}" y2="${TG.stop.y}">
+     <stop offset="0" stop-color="${P.tileTop}"/><stop offset="1" stop-color="${P.tileBottom}"/>
+   </linearGradient>`;
 
-  const defs = flat
-    ? `<linearGradient id="b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${P.ink}"/><stop offset="1" stop-color="${P.ink}"/></linearGradient>`
-    : `<linearGradient id="b" x1="0" y1="0" x2="0" y2="1">
-         <stop offset="0" stop-color="${P.inkTop}"/><stop offset="1" stop-color="${P.inkBottom}"/>
-       </linearGradient>
-       <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
-         <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/>
+function appIcon(spec, opts = {}) {
+  const { flat = false, rim = !flat } = opts;
+  /* The rim is the only depth drawn: a specular edge clipped to the body,
+     light at the top and dark at the bottom. No drop shadow under the glyph,
+     no glass — the system adds its own edge and shadow to the .icon, and a
+     soft shadow under a glyph is the detail that dates first. */
+  const defs = [
+    flat ? "" : dusk("b"),
+    rim
+      ? `<linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+         <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
          <stop offset="0.42" stop-color="#FFFFFF" stop-opacity="0"/>
-         <stop offset="1" stop-color="#000000" stop-opacity="0.22"/>
+         <stop offset="1" stop-color="#000000" stop-opacity="0.18"/>
        </linearGradient>
-       <!-- Vertical, not radial. An offset radial highlight turned the dot into
-            a shaded 3D ball, which is the most dateable thing an icon can do.
-            A top-to-bottom ramp matches the body's own gradient, so the dot
-            reads as a lit surface in the same light rather than an orb. -->
-       <linearGradient id="dot" x1="0" y1="0" x2="0" y2="1">
-         <stop offset="0" stop-color="${P.emberCore}"/>
-         <stop offset="0.5" stop-color="${P.ember}"/>
-         <stop offset="1" stop-color="${P.emberRim}"/>
-       </linearGradient>
-       <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
-         <stop offset="0" stop-color="${P.ember}" stop-opacity="0.13"/>
-         <stop offset="1" stop-color="${P.ember}" stop-opacity="0"/>
-       </radialGradient>
-       <clipPath id="body"><path d="${SQ}"/></clipPath>`;
-
-  /* No drop-shadow filter on the mark. A feDropShadow inside the ~9x scaled
-     group rendered as opaque black boxes behind the stems, and the honest fix
-     is not a bigger filter region — the icon does not need it. Depth comes
-     from three real sources instead: the body gradient, the specular rim on
-     the squircle, and the dot's own radial. That also keeps the artwork
-     timeless; a soft shadow under a glyph is the detail that dates first. */
-  const dotFill = flat ? P.ember : "url(#dot)";
-  const { left, right } = bracketPaths(g);
-  const strokeAttrs = `fill="none" stroke="${P.chalk}" stroke-width="${g.stroke}" stroke-linecap="round" stroke-linejoin="round"`;
-  const halo = flat
-    ? ""
-    : `<circle cx="${g.dot.cx}" cy="${g.dot.cy}" r="${f(g.dot.r * 2.3)}" fill="url(#halo)"/>`;
+       <clipPath id="body"><path d="${SQ}"/></clipPath>`
+      : "",
+  ].join("");
 
   return `${HEAD} viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="meet-ai">
   <title>meet-ai</title>
-  <defs>${defs}</defs>
-  <path d="${SQ}" fill="url(#b)"/>
-  ${flat ? "" : `<g clip-path="url(#body)"><path d="${SQ}" fill="none" stroke="url(#rim)" stroke-width="5"/></g>`}
-  <g transform="translate(${f(tx)} ${f(ty)}) scale(${f(scale)}) translate(${f(-vx)} ${f(-vy)})">
-    ${halo}
-    <path d="${left}" ${strokeAttrs}/><path d="${right}" ${strokeAttrs}/>
-    <circle cx="${g.dot.cx}" cy="${g.dot.cy}" r="${g.dot.r}" fill="${dotFill}"/>
-  </g>
+  ${defs ? `<defs>${defs}</defs>` : ""}
+  <path d="${SQ}" fill="${flat ? P.tileFlat : "url(#b)"}"/>
+  ${rim ? `<g clip-path="url(#body)"><path d="${SQ}" fill="none" stroke="url(#rim)" stroke-width="5"/></g>` : ""}
+  <g transform="${ONTO_BODY}">${glyph(mdot(spec), P.glyph, P.glyph)}</g>
 </svg>`;
 }
 
-/* 0.66 of the body put the bracket stems almost on the squircle wall. 0.58
-   gives the mark a margin roughly equal to its own stroke, which is what makes
-   it sit calmly rather than press outward. The small variant stays larger
-   (0.68) because below 48px the margin costs more than it buys. */
-write("meet-ai-appicon-primary-fullcolor.svg", appIcon(BRACKETS, 0.58));
-write("meet-ai-appicon-small-fullcolor.svg", appIcon(BRACKETS_SMALL, 0.68));
-write("meet-ai-appicon-flat-fullcolor.svg", appIcon(BRACKETS, 0.58, { flat: true }));
+write("meet-ai-appicon-primary-fullcolor.svg", appIcon(MDOT));
+write("meet-ai-appicon-small-fullcolor.svg", appIcon(MDOT_SMALL));
+write("meet-ai-appicon-flat-fullcolor.svg", appIcon(MDOT, { flat: true }));
 
-/* 16px app icon, drawn on the pixel grid rather than scaled down. */
+/* 16px app icon, drawn pixel by pixel rather than scaled down (see ICON16). */
 {
   const g = ICON16;
-  const { left, right } = bracketPaths(g);
   const sq16 = squirclePath(8, 8, 8 - g.bodyInset, 4.6, 64);
-  const s = `fill="none" stroke="${P.chalk}" stroke-width="${g.stroke}" stroke-linecap="round" stroke-linejoin="round"`;
+  const px = pixelRuns(g.rows)
+    .map(
+      (r) =>
+        `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="1" fill="${P.glyph}"${r.a < 1 ? ` fill-opacity="${r.a}"` : ""}/>`,
+    )
+    .join("");
   write(
     "meet-ai-appicon-16-fullcolor.svg",
     `${HEAD} viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="meet-ai">
   <title>meet-ai</title>
-  <path d="${sq16}" fill="${P.ink}"/>
-  <path d="${left}" ${s}/><path d="${right}" ${s}/>
-  <circle cx="${g.dot.cx}" cy="${g.dot.cy}" r="${g.dot.r}" fill="${P.ember}"/>
+  <defs>${dusk("b")}</defs>
+  <path d="${sq16}" fill="url(#b)"/>
+  <g shape-rendering="crispEdges">${px}</g>
 </svg>`,
   );
 }
 
-/* Favicon: the small-grid mark on the icon body, no depth. A favicon is never
-   larger than 32px in practice and the gradient just muddies it. */
-write("meet-ai-favicon.svg", appIcon(BRACKETS_SMALL, 0.68, { flat: true }));
+/* Favicon: the small-grid symbol on the Dusk tile, no rim. The gradient stays:
+   it is the part of the identity that survives at tab size. */
+write("meet-ai-favicon.svg", appIcon(MDOT_SMALL, { rim: false }));
 
 /* --------------------------------------------------------------------------
    BRAND TOKENS
+   The contrast figures are computed here from the palette, not typed in, so
+   they cannot go stale when a colour moves.
 -------------------------------------------------------------------------- */
+const lin = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+const lum = (hex) => {
+  const [r, g, b] = [1, 3, 5].map((i) => lin(parseInt(hex.slice(i, i + 2), 16) / 255));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const ratio = (a, b) => {
+  const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m);
+  return `${((x + 0.05) / (y + 0.05)).toFixed(1)}:1`;
+};
+const row = (label, a, b, verdict) => `     ${`${label} `.padEnd(26, ".")} ${ratio(a, b).padEnd(8)} ${verdict}`;
+
 write(
   "brand-tokens.css",
   `/* =============================================================================
    meet-ai — brand tokens
-   These are IDENTITY tokens: the app icon, the mark, README and marketing
+   These are IDENTITY tokens: the app icon, the symbol, README and marketing
    surfaces. They are deliberately NOT wired into the product UI. The interface
    uses macOS system colours on purpose (design-system/meet-ai/tokens.css, the
-   "macOS system colors" block). Do not repoint --accent at --brand-ember.
+   "macOS system colors" block). Do not repoint --accent at a brand colour.
    ============================================================================= */
 :root {
-  /* Ink — the icon body. A dark, quiet object in the Dock. */
-  --brand-ink:        ${P.ink};        /* flat / one-colour ink       */
-  --brand-ink-top:    ${P.inkTop};     /* icon gradient, top          */
-  --brand-ink-bottom: ${P.inkBottom};  /* icon gradient, bottom       */
+  /* Dusk — the app-icon tile. Coral at the top, violet at the bottom. */
+  --brand-tile-top:    ${P.tileTop};
+  --brand-tile-bottom: ${P.tileBottom};
+  --brand-tile-flat:   ${P.tileFlat};   /* one-colour stand-in for the gradient */
+  --brand-glyph:       ${P.glyph};   /* "m." on the tile */
 
-  /* Chalk — the mark on ink. */
+  /* Ink — the tile in Dark appearance, and one-colour dark. */
+  --brand-ink:        ${P.ink};        /* flat / one-colour ink       */
+  --brand-ink-top:    ${P.inkTop};     /* dark tile gradient, top     */
+  --brand-ink-bottom: ${P.inkBottom};  /* dark tile gradient, bottom  */
+
+  /* Chalk — the symbol and wordmark on dark. */
   --brand-chalk:      ${P.chalk};
 
-  /* Ember — the record light. The one warm thing in the system. */
-  --brand-ember:       ${P.ember};      /* primary brand colour        */
-  --brand-ember-core:  ${P.emberCore};  /* highlight inside the dot    */
-  --brand-ember-rim:   ${P.emberRim};   /* shadow side of the dot      */
+  /* Ember — the accent off the tile: the free-standing symbol's dot and the
+     wordmark's i tittle. */
+  --brand-ember:       ${P.ember};
+  --brand-ember-core:  ${P.emberCore};
+  --brand-ember-rim:   ${P.emberRim};
   --brand-ember-ink:   ${P.emberInk};   /* ember as TEXT on white      */
 }
 
-/* Contrast, measured (WCAG 2.1 relative luminance):
-     chalk on ink ......... 16.2:1   AAA
-     ink on white ......... 17.7:1   AAA
-     ember on ink ..........7.6:1    AAA
-     ember on white ........2.1:1    FAILS — never set ember as text on white
-     ember-ink on white ....6.1:1    AAA large / AA normal
-   Nothing in the identity depends on hue alone: the record dot is also the
-   only filled shape in the mark, so it survives greyscale and colour blindness. */
+/* Contrast (WCAG 2.1 relative luminance), computed by build.mjs:
+${row("white on tile top", P.glyph, P.tileTop, "just clears 3:1 (graphics); rendered lower, README §3")}
+${row("white on tile bottom", P.glyph, P.tileBottom, "AA large")}
+${row("white on tile flat", P.glyph, P.tileFlat, "AA large")}
+${row("coral dot on ink (Dark)", P.tileTop, P.ink, "AA")}
+${row("chalk on ink", P.chalk, P.ink, "AAA")}
+${row("ink on white", P.ink, "#FFFFFF", "AAA")}
+${row("ember on ink", P.ember, P.ink, "AAA")}
+${row("ember on white", P.ember, "#FFFFFF", "FAILS — never set ember as text on white")}
+${row("ember-ink on white", P.emberInk, "#FFFFFF", "AA normal, AAA large")}
+   Nothing in the identity depends on hue alone: "m." is a letter and a full
+   stop, and reads the same in one colour. */
 `,
 );
 
@@ -316,13 +328,10 @@ function raster(name, svgRel, size) {
 
 /* App-icon rasters, three tiers:
      16px       -> the 16px-grid drawing (pixel aligned)
-     20..64px   -> the small-grid artwork
+     20..64px   -> the small artwork (dot set further out)
      128px+     -> the primary artwork
-   The crossover sits at 128, not 64: at 64 the primary mark's stroke was
-   visibly lighter than the 48px tile beside it, and a weight jump between
-   adjacent icon sizes is the kind of thing you only see once you line them up.
-   64 is also `icon_32x32@2x`, i.e. the 32pt design at 2x — small art is
-   correct there on Apple's own terms. */
+   The crossover sits at 128, not 64: 64 is `icon_32x32@2x`, i.e. the 32pt
+   design at 2x, so small art is correct there on Apple's own terms. */
 const ICON_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 180, 256, 512, 1024];
 for (const s of ICON_SIZES) {
   const art =
@@ -336,14 +345,14 @@ for (const s of ICON_SIZES) {
 
 /* Menu-bar tray icon, 1x and 2x.
    Both come from the same 16px-grid drawing rather than from two separate
-   masters: every coordinate in MENUBAR is a whole number, so doubling the
-   viewport lands the 2x raster on the pixel grid too. render.sh copies the
+   masters: every coordinate in MENUBAR is a whole or half number, so doubling
+   the viewport lands the 2x raster on the pixel grid too. render.sh copies the
    pair into src-tauri/icons/ under AppKit's `…Template` names — see the note
    there for why the suffix is load-bearing (TUR-23). */
 raster("tray-16", "meet-ai-menubar-template-black.svg", 16);
 raster("tray-32", "meet-ai-menubar-template-black.svg", 32);
 
-/* Proof renders for review: mark alone, on light and on dark. */
+/* Proof renders for review: the symbol alone. */
 for (const s of [16, 32, 128, 512]) {
   raster(`mark-${s}`, s <= 32 ? "meet-ai-logomark-small-chalk.svg" : "meet-ai-logomark-primary-chalk.svg", s);
 }
