@@ -6,17 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": [
-      "**",
-      "!dist",
-      "!target",
-      "!node_modules",
-      "!.claude",
-      "!design-system",
-      "!spikes",
-      "!crates/audio/fixtures/segments",
-      "!src-tauri/gen"
-    ]
+    "includes": ["**", "!.claude", "!design-system", "!spikes", "!crates/audio/fixtures/segments"]
   },
   "formatter": {
     "enabled": true,

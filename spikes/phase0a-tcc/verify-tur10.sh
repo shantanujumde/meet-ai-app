@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # TUR-10 — the two things that need a human at the keyboard.
 #
-# Everything else in TUR-10 was measured without one (FINDINGS.md §10). Two
+# Everything else in TUR-10 was measured without one (docs/findings.md §10). Two
 # facts could not be: TCC only writes a grant *record* when someone clicks
 # Allow, and an explicit "Don't Allow" is the one denial an automated run cannot
 # produce. This script wraps both so the human part is two clicks; it does the
