@@ -33,9 +33,30 @@ use crate::recording::{Recorder, Status};
 /// `Recorder::toggle`, through the gate. The one way every surface — the
 /// button, ⌘⇧R, the menu bar — starts or stops a recording, so none of them can
 /// slip a recording in underneath a folder move.
+///
+/// A refusal from the gate also goes onto the recorder's idle status
+/// (`Recorder::refuse_start`): the button gets it back as this `Err`, but ⌘⇧R
+/// and the menu bar have no caller that shows it, and the status is the only
+/// way the window hears about a recorder refusal.
 pub fn toggle_recording(app: &AppHandle) -> Result<Status, UiError> {
-    app.state::<FolderGate>()
-        .writing(|| app.state::<Recorder>().toggle(app))
+    let recorder = app.state::<Recorder>();
+    gated_toggle(
+        &app.state::<FolderGate>(),
+        || recorder.toggle(app),
+        |refused| recorder.refuse_start(app, refused),
+    )
+}
+
+/// [`toggle_recording`] without the `AppHandle`, so the refusal path is
+/// testable: `toggle` runs only if the gate lets it, and `refused` hears
+/// the gate's reason when it does not.
+fn gated_toggle<T>(
+    gate: &FolderGate,
+    toggle: impl FnOnce() -> Result<T, UiError>,
+    refused: impl FnOnce(&UiError),
+) -> Result<T, UiError> {
+    let _writing = gate.begin_write().inspect_err(refused)?;
+    toggle()
 }
 
 /// Managed state: who is using the meetings root right now.
@@ -159,6 +180,38 @@ mod tests {
             gate.begin_write().is_ok(),
             "once the move ends, recording works again"
         );
+    }
+
+    #[test]
+    fn a_toggle_refused_mid_move_is_reported_and_never_runs() {
+        let gate = FolderGate::default();
+        let moving = gate.begin_move().unwrap();
+
+        let mut toggled = false;
+        let mut reported = None;
+        let refused = gated_toggle(
+            &gate,
+            || {
+                toggled = true;
+                Ok(())
+            },
+            |error| reported = Some(error.kind),
+        );
+        assert_eq!(
+            refused.expect_err("refused").kind,
+            "folder-move-in-progress"
+        );
+        assert!(!toggled, "the recorder must not run during a move");
+        assert_eq!(
+            reported,
+            Some("folder-move-in-progress"),
+            "the refusal reaches the recorder's status, not just the caller"
+        );
+
+        drop(moving);
+        let mut reported = false;
+        assert!(gated_toggle(&gate, || Ok(()), |_| reported = true).is_ok());
+        assert!(!reported, "nothing to report once the move is over");
     }
 
     #[test]
