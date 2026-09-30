@@ -17,9 +17,9 @@
 # denied-then-re-granted gate cannot be certified against a moving identity
 # (TUR-2, TUR-10), so re-running this must be a no-op. --rotate to override.
 #
-#   ./make-identity.sh            # ensure it exists; no-op if it already does
-#   ./make-identity.sh --rotate   # mint a new cert (invalidates every TCC grant)
-#   ./make-identity.sh --print    # just report the current fingerprint
+#   scripts/signing/make-identity.sh            # ensure it exists; no-op if it already does
+#   scripts/signing/make-identity.sh --rotate   # mint a new cert (invalidates every TCC grant)
+#   scripts/signing/make-identity.sh --print    # just report the current fingerprint
 #
 # No admin password is needed — measured, TUR-10. The `-d` (admin domain) trust
 # flag in this ticket's original recipe was the only thing that required one.
@@ -77,11 +77,11 @@ report() {
   echo "Every TCC grant is keyed to that SHA-1. Assert the baseline before a gate run:"
   echo "  codesign -d -r- build/meet-ai.app 2>&1 | grep -qi '${fp:-????}' && echo baseline-ok"
   echo
-  echo "use:  SIGN_IDENTITY=\"$NAME\" SIGN_KEYCHAIN=\"$KEYCHAIN\" ./build.sh"
+  echo "use:  SIGN_IDENTITY=\"$NAME\" SIGN_KEYCHAIN=\"$KEYCHAIN\" spikes/phase0a-tcc/build.sh"
 }
 
 if [[ "$MODE" == "print" ]]; then
-  have_identity || { echo "no identity '$NAME' in $KEYCHAIN — run ./make-identity.sh" >&2; exit 1; }
+  have_identity || { echo "no identity '$NAME' in $KEYCHAIN — run scripts/signing/make-identity.sh" >&2; exit 1; }
   report
   exit 0
 fi

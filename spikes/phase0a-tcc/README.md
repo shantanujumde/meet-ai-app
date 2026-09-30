@@ -20,9 +20,9 @@ run it again.
 | `Info-helper.plist` | Embedded in the helper via `-sectcreate __TEXT __info_plist`, as SPEC §5 specifies |
 | `entitlements.plist` | `com.apple.security.device.audio-input` |
 | `build.sh` | Compile → assemble bundle → sign with hardened runtime → verify |
-| `make-identity.sh` | Ensures the local self-signed code-signing identity exists. **Idempotent** — re-running reuses it. **No `sudo`, no admin password** (TUR-10) |
+| `../../scripts/signing/make-identity.sh` (moved) | Ensures the local self-signed code-signing identity exists. **Idempotent** — re-running reuses it. **No `sudo`, no admin password** (TUR-10) |
 | `run.sh` | Reset TCC, launch, then **re-measure the WAV with ffmpeg**, independently of what the probe claimed |
-| `verify-tur10.sh` | Grant creation, survival across a rebuild, and an explicit **Don't Allow**. Runs unattended with `AUTO_CLICK=1`; writes `/tmp/meet-ai-tur10/report.md` itself |
+| `../../scripts/signing/verify-tur10.sh` (moved) | Grant creation, survival across a rebuild, and an explicit **Don't Allow**. Runs unattended with `AUTO_CLICK=1`; writes `/tmp/meet-ai-tur10/report.md` itself |
 | `auto-click.sh` | Answers the TCC consent dialog via Accessibility. Refuses to click any window that is not our own prompt — see the safety notes in its header |
 
 ### Answering the consent prompt without a human
@@ -31,7 +31,7 @@ The dialog is drawn by `UserNotificationCenter` and is an ordinary Accessibility
 window, so `verify-tur10.sh` can answer it itself (FINDINGS §10.7):
 
 ```sh
-AUTO_CLICK=1 ./verify-tur10.sh     # ~2 min, no keyboard needed, plays a tone
+AUTO_CLICK=1 ../../scripts/signing/verify-tur10.sh     # ~2 min, no keyboard needed, plays a tone
 ```
 
 This needs Accessibility for whatever runs it. Check with:
@@ -48,7 +48,7 @@ asking you to click, rather than silently recording an unanswered prompt.
 One-time, about seven seconds, asks for nothing:
 
 ```sh
-./make-identity.sh                 # idempotent; re-running reuses the cert
+../../scripts/signing/make-identity.sh                 # idempotent; re-running reuses the cert
 ```
 
 Then:
@@ -69,7 +69,7 @@ executable's absolute path, and path-keyed records are permanent: `tccutil
 reset` can't reach them and deleting the directory doesn't clear them
 (FINDINGS §10.6). `ALLOW_ADHOC=1 ./build.sh` if you really mean it.
 
-Likewise, don't re-mint the identity. The leaf SHA-1 that `./make-identity.sh
+Likewise, don't re-mint the identity. The leaf SHA-1 that `../../scripts/signing/make-identity.sh
 --print` reports is what every grant is keyed to; replacing it voids them all.
 `--rotate` exists for when that is genuinely what you want.
 

@@ -394,7 +394,7 @@ defaults to the identity and refuses to ad-hoc sign unless `ALLOW_ADHOC=1`.
 - ~~Observing the `identifier_type=Bundle ID` grant-*creation* event, and a
   user's explicit **Don't Allow**.~~ **Answered in §10.7** — both measured, with
   no human at the keyboard: the consent dialog turned out to be an ordinary
-  Accessibility window. `AUTO_CLICK=1 spikes/phase0a-tcc/verify-tur10.sh`
+  Accessibility window. `AUTO_CLICK=1 scripts/signing/verify-tur10.sh`
   reproduces the whole thing unattended.
 - macOS 14.4–26. Everything here is macOS 27.0 only.
 
@@ -1011,7 +1011,7 @@ somewhere that doesn't exist.
    against the current identity — before touching TCC:**
    ```bash
    mdfind "kMDItemCFBundleIdentifier == 'pro.saleschat.meetai'"
-   spikes/phase0a-tcc/make-identity.sh --print   # prints the current leaf
+   scripts/signing/make-identity.sh --print   # prints the current leaf
 
    for app in $(mdfind "kMDItemCFBundleIdentifier == 'pro.saleschat.meetai'"); do
      echo "$app"; codesign -d -r- "$app" 2>&1 | tail -1

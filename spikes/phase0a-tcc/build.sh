@@ -5,7 +5,7 @@
 # environment. This script is the minimal stand-in for `just bundle-signed`:
 # no Tauri, no React, same signing shape.
 #
-#   ./build.sh                     # signs with the local identity (see make-identity.sh)
+#   ./build.sh                     # signs with the local identity (see scripts/signing/make-identity.sh)
 #   ALLOW_ADHOC=1 ./build.sh       # ad-hoc — only when you mean it, see below
 set -euo pipefail
 
@@ -47,7 +47,7 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 # to test the real configuration, not a relaxed one.
 # ---------------------------------------------------------------------------
 # Default to the local identity and find its keychain ourselves, so nobody has
-# to remember two env vars. make-identity.sh is idempotent — running it twice
+# to remember two env vars. scripts/signing/make-identity.sh is idempotent — running it twice
 # does not rotate the cert.
 IDENTITY="${SIGN_IDENTITY:-meet-ai Local Signing}"
 if [[ -z "${SIGN_KEYCHAIN:-}" && "$IDENTITY" != "-" ]]; then
@@ -74,7 +74,7 @@ if [[ "$IDENTITY" == "-" || -z "${SIGN_KEYCHAIN:-}" ]]; then
    path-keyed records cannot be removed by `tccutil reset`, only by hand in
    System Settings. That poisons the permission baseline for everyone.
 
-   Fix it once:   ./make-identity.sh
+   Fix it once:   scripts/signing/make-identity.sh
    Or override:   ALLOW_ADHOC=1 ./build.sh
 EOF
     exit 1
