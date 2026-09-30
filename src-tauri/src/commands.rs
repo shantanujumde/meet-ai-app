@@ -22,6 +22,7 @@ use crate::meetings::{self, Live, MeetingDetail, MeetingList};
 use crate::onboarding;
 use crate::permission;
 use crate::recording::{Phase, Recorder, Status};
+use crate::tickets::{self, TicketSummary};
 use crate::watch;
 
 // --- off the main thread -------------------------------------------------
@@ -301,4 +302,24 @@ pub async fn stop_recording(app: AppHandle) -> Result<Status, UiError> {
 #[tauri::command]
 pub fn live_transcript(live: State<'_, LiveTranscript>) -> Snapshot {
     live.snapshot()
+}
+
+/// Every ticket in the meetings folder, newest first (TUR-102).
+#[tauri::command]
+pub async fn list_tickets() -> Result<Vec<TicketSummary>, UiError> {
+    on_blocking_pool(tickets::list).await?
+}
+
+/// Add a ticket by hand. Through the [`FolderGate`], like [`save_notes`].
+#[tauri::command]
+pub async fn create_ticket(
+    app: AppHandle,
+    title: String,
+    body: String,
+) -> Result<TicketSummary, UiError> {
+    on_blocking_pool(move || {
+        app.state::<FolderGate>()
+            .writing(|| tickets::create(&title, &body))
+    })
+    .await?
 }

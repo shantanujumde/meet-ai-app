@@ -6,7 +6,7 @@
  * history-based route survives navigation but not a reload. A hash route works
  * identically in `tauri dev` and in the shipped bundle.
  *
- * Four routes, which is what SPEC §2.1 budgeted for.
+ * Five routes, which is what SPEC §2.1 budgeted for.
  */
 
 import { useEffect, useRef } from "react";
@@ -15,11 +15,19 @@ import { onMeetingsChanged } from "@/ipc/client";
 import type { RecordingPhase } from "@/ipc/types";
 import { isRevisit } from "@/lib/permissionRoute";
 import { changesMeetingList } from "@/lib/recordingPhase";
-import { isOnboardingPath, MEETINGS, meetingPath, ONBOARDING, SETTINGS } from "@/lib/routes";
+import {
+  isOnboardingPath,
+  MEETINGS,
+  meetingPath,
+  ONBOARDING,
+  SETTINGS,
+  TICKETS,
+} from "@/lib/routes";
 import { Meetings } from "@/routes/Meetings";
 import { Onboarding } from "@/routes/Onboarding";
 import { Review } from "@/routes/Review";
 import { Settings } from "@/routes/Settings";
+import { Tickets } from "@/routes/Tickets";
 import { useAppStore, watchPermissionStatus } from "@/state/app";
 import { useRecordingStore, watchRecordingState } from "@/state/recording";
 import { watchLiveTranscript } from "@/state/transcript";
@@ -35,10 +43,11 @@ export function App() {
           <Route path={MEETINGS} element={<Meetings />} />
           <Route path={`${MEETINGS}/:id`} element={<Review />} />
           <Route path={SETTINGS} element={<Settings />} />
+          <Route path={TICKETS} element={<Tickets />} />
           <Route path={ONBOARDING} element={<Onboarding />} />
           <Route path={`${ONBOARDING}/:step`} element={<Onboarding />} />
           {/* A hash that matches nothing is not worth an error page in a
-              four-route app. */}
+              five-route app. */}
           <Route path="*" element={<Navigate to={MEETINGS} replace />} />
         </Route>
       </Routes>

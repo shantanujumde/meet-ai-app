@@ -12,7 +12,7 @@
 import { NavLink, useNavigate } from "react-router";
 import type { MeetingList, MeetingSummary, RecordingStatus } from "@/ipc/types";
 import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "@/lib/format";
-import { meetingPath, SETTINGS } from "@/lib/routes";
+import { meetingPath, SETTINGS, TICKETS } from "@/lib/routes";
 import { buttonVariants } from "./primitives";
 import { Checking } from "./states";
 
@@ -65,6 +65,12 @@ export function Sidebar({
       )}
 
       <div className="sidebar__footer">
+        <NavLink
+          to={TICKETS}
+          className={buttonVariants({ tone: "quiet", size: "small", block: true })}
+        >
+          Tickets
+        </NavLink>
         <NavLink
           to={SETTINGS}
           className={buttonVariants({ tone: "quiet", size: "small", block: true })}
