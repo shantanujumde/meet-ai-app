@@ -1,14 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
-import type {
-  MeetingDetail,
-  MeetingList,
-  MeetingSummary,
-  PermissionStatus,
-  RecordingStatus,
-  UiError,
-} from "@/ipc/types";
+import { PERMISSION_STATUS_EVENT, RECORDING_STATE_EVENT } from "@/ipc/client";
+import type { PermissionStatus, RecordingStatus, UiError } from "@/ipc/types";
 import { useRecordingStore } from "@/state/recording";
+import { meetingDetail, meetingSummary, transcriptLine } from "@/test/fixtures";
+import { emit, ipc, listening } from "@/test/ipcMock";
 import { App } from "./App";
 
 /**
@@ -16,98 +12,18 @@ import { App } from "./App";
  *
  * jsdom is not Tauri, so `src/ipc/client.ts` is mocked rather than left to its
  * own no-backend fallbacks — that way each test states the backend answer it is
- * testing against instead of quietly inheriting a default.
+ * testing against instead of quietly inheriting a default. The shared mock's
+ * defaults are an empty, not-yet-onboarded Mac; see `src/test/ipcMock.ts`.
  */
 
-const listMeetings = vi.fn<() => Promise<MeetingList>>();
-const permissionStatus = vi.fn<() => Promise<PermissionStatus>>();
-const permissionQuick = vi.fn<() => Promise<PermissionStatus>>();
-const onboardingState = vi.fn();
-const readMeeting = vi.fn<(id: string) => Promise<MeetingDetail>>();
-// The window's handler for recorder errors Rust pushes (a refused ⌘⇧R, a
-// recording that stopped itself), captured so a test can fire one.
-let recordingErrorHandler: ((error: UiError) => void) | null = null;
-// The window's handler for a permission check Rust ran at Record time.
-let permissionStatusHandler: ((status: PermissionStatus) => void) | null = null;
+vi.mock("@/ipc/client", async (importOriginal) =>
+  (await import("@/test/ipcMock")).mockClient(await importOriginal()),
+);
 
-vi.mock("@/ipc/client", () => ({
-  hasBackend: () => true,
-  listMeetings: () => listMeetings(),
-  permissionStatus: () => permissionStatus(),
-  permissionQuick: () => permissionQuick(),
-  onboardingState: () => onboardingState(),
-  completeOnboarding: vi.fn(),
-  resetOnboarding: vi.fn(),
-  recordingStatus: vi.fn().mockResolvedValue({
-    phase: "idle",
-    meetingId: null,
-    startedAtMs: null,
-  }),
-  toggleRecording: vi.fn(),
-  openPrivacySettings: vi.fn(),
-  revealMeeting: vi.fn(),
-  readMeeting: (id: string) => readMeeting(id),
-  saveNotes: vi.fn(),
-  changeMeetingsFolder: vi.fn(),
-  engineEnvironment: vi.fn().mockResolvedValue({
-    sidecar: null,
-    whisperModel: null,
-    locale: "en-US",
-    modelId: "large-v3-turbo-q5_0",
-    modelsDir: null,
-  }),
-  engineSelection: vi.fn().mockResolvedValue({ engine: "apple-speech", reason: "built in" }),
-  modelCatalogue: vi.fn().mockResolvedValue([]),
-  downloadModel: vi.fn(),
-  liveTranscript: vi.fn().mockResolvedValue({
-    status: { state: "idle", engine: null, detail: null },
-    finals: [],
-    volatile: [],
-  }),
-  onRecordingState: () => () => {},
-  onPermissionStatus: (handler: (status: PermissionStatus) => void) => {
-    permissionStatusHandler = handler;
-    return () => {
-      permissionStatusHandler = null;
-    };
-  },
-  onRecordingError: (handler: (error: UiError) => void) => {
-    recordingErrorHandler = handler;
-    return () => {
-      recordingErrorHandler = null;
-    };
-  },
-  onModelProgress: () => () => {},
-  onTranscriptUpdate: () => () => {},
-  onTranscriptStatus: () => () => {},
-}));
-
-const EMPTY_LIST: MeetingList = { root: "/Users/test/Meetings", rootExists: false, meetings: [] };
+const { listMeetings, permissionStatus, permissionQuick, onboardingState, readMeeting } = ipc;
 
 beforeEach(() => {
   window.location.hash = "";
-  // The store is module state, so one test's recording must not leak into the next.
-  useRecordingStore.setState({
-    status: { phase: "idle", meetingId: null, startedAtMs: null },
-    error: null,
-    busy: false,
-  });
-  listMeetings.mockResolvedValue(EMPTY_LIST);
-  permissionStatus.mockReset();
-  permissionQuick.mockReset();
-  permissionStatus.mockResolvedValue({
-    state: "unknown",
-    measured: false,
-    detail: "not checked yet",
-    denied: [],
-  });
-  permissionQuick.mockResolvedValue({
-    state: "unknown",
-    measured: false,
-    detail: "not checked yet",
-    denied: [],
-  });
-  onboardingState.mockResolvedValue({ completedAt: null });
 });
 
 test("opening the app does not play the permission tone", async () => {
@@ -253,15 +169,15 @@ test("a refusal at Record time disables recording and names the switch that is o
   onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
   render(<App />);
   await screen.findByRole("heading", { name: /no meetings yet/i });
-  await waitFor(() => expect(permissionStatusHandler).not.toBeNull());
+  await waitFor(() => expect(listening(PERMISSION_STATUS_EVENT)).toBe(true));
 
   act(() => {
-    permissionStatusHandler?.({
+    emit(PERMISSION_STATUS_EVENT, {
       state: "denied",
       measured: true,
       detail: "system audio: the check tone did not come back",
       denied: ["audio-capture"],
-    });
+    } satisfies PermissionStatus);
   });
 
   expect(
@@ -272,12 +188,12 @@ test("a refusal at Record time disables recording and names the switch that is o
 
   // Switched back on in Settings: the next check's grant clears it.
   act(() => {
-    permissionStatusHandler?.({
+    emit(PERMISSION_STATUS_EVENT, {
       state: "granted",
       measured: true,
       detail: "both heard",
       denied: [],
-    });
+    } satisfies PermissionStatus);
   });
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: /fix this/i })).not.toBeInTheDocument(),
@@ -291,14 +207,21 @@ test("a ⌘⇧R press that is refused says why in the window", async () => {
   onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
   render(<App />);
   await screen.findByRole("heading", { name: /no meetings yet/i });
-  await waitFor(() => expect(recordingErrorHandler).not.toBeNull());
+  await waitFor(() => expect(listening(RECORDING_STATE_EVENT)).toBe(true));
 
+  // Rust says it on the idle status the refused start falls back to.
+  const refused: UiError = {
+    domain: "app",
+    kind: "permission-denied",
+    message: "meet-ai is not allowed to record this Mac's audio",
+  };
   act(() => {
-    recordingErrorHandler?.({
-      domain: "app",
-      kind: "permission-denied",
-      message: "meet-ai is not allowed to record this Mac's audio",
-    });
+    emit(RECORDING_STATE_EVENT, {
+      phase: "idle",
+      meetingId: null,
+      startedAtMs: null,
+      error: refused,
+    } satisfies RecordingStatus);
   });
 
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -331,6 +254,7 @@ function pushRecording(phase: RecordingStatus["phase"], meetingId: string | null
     phase,
     meetingId,
     startedAtMs: meetingId === null ? null : 1_790_000_000_000,
+    error: null,
   };
   act(() => {
     useRecordingStore.getState().applyFromBackend(status);
@@ -357,6 +281,23 @@ test("starting a recording opens that meeting, so the live transcript is on scre
 
   pushRecording("recording", FIRST);
   await waitFor(() => expect(window.location.hash).toBe(hashFor(FIRST)));
+});
+
+test("the meeting list is re-read when a recording begins and when it ends, not in between", async () => {
+  // Each read walks every WAV header in the root, so the in-between phases
+  // (`starting`, `stopping`) must not trigger one.
+  await renderFinishedApp();
+  await waitFor(() => expect(listMeetings).toHaveBeenCalled());
+  listMeetings.mockClear();
+
+  pushRecording("starting", null);
+  expect(listMeetings).not.toHaveBeenCalled();
+  pushRecording("recording", FIRST);
+  expect(listMeetings).toHaveBeenCalledTimes(1);
+  pushRecording("stopping", FIRST);
+  expect(listMeetings).toHaveBeenCalledTimes(1);
+  pushRecording("idle", null);
+  expect(listMeetings).toHaveBeenCalledTimes(2);
 });
 
 test("a user who leaves the meeting mid-recording is not pulled back to it", async () => {
@@ -408,26 +349,21 @@ test("a recording started by the shortcut during onboarding does not pull the us
 
 // --- TUR-97: a recording killed mid-meeting --------------------------------
 
-const INTERRUPTED: MeetingSummary = {
+const INTERRUPTED = meetingSummary({
   id: "2026-09-30-1140-meeting",
-  title: "Meeting",
-  date: "2026-09-30",
   time: "11:40",
-  lineCount: 1,
   lastTimestamp: "00:00:04",
-  hasNotes: false,
-  hasAnalysis: false,
   recordingState: "interrupted",
   audioMs: 16_253,
-};
+});
 
-const FINISHED: MeetingSummary = {
+const FINISHED = meetingSummary({
   ...INTERRUPTED,
   id: "2026-09-30-1129-meeting",
   time: "11:29",
   recordingState: "finished",
   audioMs: 55_615,
-};
+});
 
 test("an interrupted meeting is labelled in the list, and a finished one is not", async () => {
   onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
@@ -456,14 +392,12 @@ test("an interrupted meeting opens like any other and says how much audio was ke
     rootExists: true,
     meetings: [INTERRUPTED],
   });
-  readMeeting.mockResolvedValue({
-    summary: INTERRUPTED,
-    path: "/Users/test/Meetings/2026-09-30-1140-meeting",
-    lines: [{ seq: 0, time: "00:00:04", speaker: "You", text: "Can everyone hear me?" }],
-    transcriptMissing: false,
-    unparsedLineCount: 0,
-    notes: "",
-  });
+  readMeeting.mockResolvedValue(
+    meetingDetail({
+      summary: INTERRUPTED,
+      lines: [transcriptLine({ text: "Can everyone hear me?" })],
+    }),
+  );
   window.location.hash = "#/meetings/2026-09-30-1140-meeting";
 
   render(<App />);

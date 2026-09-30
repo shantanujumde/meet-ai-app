@@ -15,6 +15,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { type Event, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
+import { NO_BACKEND } from "./errors";
 import type {
   EnvironmentView,
   LiveTranscriptSnapshot,
@@ -29,18 +31,18 @@ import type {
   SelectionView,
   TranscriptStatus,
   TranscriptUpdate,
-  UiError,
 } from "./types";
 import { toUiError } from "./types";
 
-/** Tauri event names. These are string literals shared with Rust. */
-export const RECORDING_STATE_EVENT = "recording://state";
 /**
- * Rust ended a recording on its own because a checkpoint failed (TUR-97), or
- * refused a ⌘⇧R or menu-bar press (TUR-127). The state event has already moved
- * to idle; this one says why.
+ * Tauri event names. These are string literals shared with Rust.
+ *
+ * `RECORDING_STATE_EVENT` carries every recorder transition. A recording Rust
+ * ended on its own (TUR-97), or a ⌘⇧R or menu-bar press it refused (TUR-127),
+ * arrives on it too, as an idle status with `error` set — there is no separate
+ * error event.
  */
-export const RECORDING_ERROR_EVENT = "recording://error";
+export const RECORDING_STATE_EVENT = "recording://state";
 export const MODEL_PROGRESS_EVENT = "model://progress";
 export const PERMISSION_STATUS_EVENT = "permission://status";
 export const TRANSCRIPT_UPDATE_EVENT = "transcript://update";
@@ -56,14 +58,6 @@ export const TRANSCRIPT_STATUS_EVENT = "transcript://status";
 export function hasBackend(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
-
-const NO_BACKEND: UiError = {
-  domain: "app",
-  kind: "no-backend",
-  message:
-    "This is the meet-ai window running without its Mac app behind it, so it cannot read or " +
-    "change anything on disk. Run `pnpm tauri dev` instead of `pnpm dev`.",
-};
 
 /** Call a Rust command, normalising whatever it throws into a `UiError`. */
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -81,7 +75,7 @@ export async function listMeetings(): Promise<MeetingList> {
   if (!hasBackend()) {
     // The honest empty answer: no backend means no meetings are readable, and
     // the empty state is a designed screen rather than a failure.
-    return { root: "~/Meetings", rootExists: false, meetings: [] };
+    return { root: DEFAULT_ROOT_LABEL, rootExists: false, meetings: [] };
   }
   return call<MeetingList>("list_meetings");
 }
@@ -194,7 +188,7 @@ export function downloadModel(id: string): Promise<string> {
 
 export async function recordingStatus(): Promise<RecordingStatus> {
   if (!hasBackend()) {
-    return { phase: "idle", meetingId: null, startedAtMs: null };
+    return { phase: "idle", meetingId: null, startedAtMs: null, error: null };
   }
   return call<RecordingStatus>("recording_status");
 }
@@ -254,10 +248,6 @@ function subscribe<T>(event: string, onEvent: (payload: T) => void): () => void 
 
 export function onRecordingState(handler: (status: RecordingStatus) => void): () => void {
   return subscribe<RecordingStatus>(RECORDING_STATE_EVENT, handler);
-}
-
-export function onRecordingError(handler: (error: UiError) => void): () => void {
-  return subscribe<UiError>(RECORDING_ERROR_EVENT, handler);
 }
 
 export function onModelProgress(handler: (progress: ModelProgress) => void): () => void {

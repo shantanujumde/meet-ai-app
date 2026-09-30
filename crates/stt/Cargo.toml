@@ -16,6 +16,10 @@ version.workspace = true
 dirs.workspace = true
 earshot.workspace = true
 hound.workspace = true
+# `Channel`, `Speaker`, the transcript line, the `segments.json` schema and the
+# folder layout — shared with `audio` (the writer) without depending on it,
+# which SPEC §8.2 forbids. Platform-free, so it stays inside `check-windows`.
+meeting-format.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true

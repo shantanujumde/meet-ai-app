@@ -11,17 +11,20 @@
  * shows next is the finished `transcript.md`.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { readMeeting, revealMeeting } from "@/ipc/client";
 import type { MeetingDetail, TranscriptLine, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
+import { describeInterruption, formatRelativeDate, INTERRUPTED_LABEL } from "@/lib/format";
+import { MEETINGS } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
 import { useTranscriptStore } from "@/state/transcript";
-import { describeInterruption, formatRelativeDate, INTERRUPTED_LABEL } from "@/ui/format";
 import { LiveTranscript } from "@/ui/LiveTranscript";
 import { NotesPane } from "@/ui/NotesPane";
+import { Button, ButtonRow, rowDetailVariants } from "@/ui/primitives";
+import { SpeakerLabel } from "@/ui/SpeakerLabel";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
 export function Review() {
@@ -32,6 +35,19 @@ export function Review() {
   const [detail, setDetail] = useState<MeetingDetail | null>(null);
   const [error, setError] = useState<UiError | null>(null);
   const [loading, setLoading] = useState(true);
+  // Finder failing to open the folder is its own, smaller problem: the
+  // meeting is still readable, so it gets a message under the button rather
+  // than replacing the screen.
+  const [revealError, setRevealError] = useState<UiError | null>(null);
+
+  const reveal = useCallback(async (meetingId: string) => {
+    setRevealError(null);
+    try {
+      await revealMeeting(meetingId);
+    } catch (thrown) {
+      setRevealError(toUiError(thrown));
+    }
+  }, []);
 
   const load = useCallback(async (meetingId: string) => {
     setLoading(true);
@@ -90,7 +106,7 @@ export function Review() {
           error={error}
           onRemedy={() => {
             void reloadMeetings();
-            navigate("/meetings");
+            navigate(MEETINGS);
           }}
         />
       </div>
@@ -119,16 +135,13 @@ export function Review() {
         {interrupted ? (
           <p className="page__notice">{describeInterruption(summary.audioMs)}</p>
         ) : null}
-        <div className="btn-row">
-          <button
-            type="button"
-            className="btn btn--small"
-            onClick={() => void revealMeeting(summary.id)}
-          >
+        <ButtonRow>
+          <Button size="small" onClick={() => void reveal(summary.id)}>
             Show in Finder
-          </button>
-          <span className="row__detail">{path}</span>
-        </div>
+          </Button>
+          <span className={rowDetailVariants()}>{path}</span>
+        </ButtonRow>
+        {revealError ? <ErrorState error={revealError} /> : null}
       </header>
 
       {isLive ? (
@@ -182,20 +195,21 @@ export function Review() {
   );
 }
 
-function TranscriptRow({ line }: { line: TranscriptLine }) {
+/**
+ * One line of the finished transcript. Memoised: a two-hour meeting is
+ * thousands of rows, and this screen re-renders on every live-transcript
+ * event — including while a *different* meeting records — so without it each
+ * event re-rendered every line of this one.
+ */
+const TranscriptRow = memo(function TranscriptRow({ line }: { line: TranscriptLine }) {
   return (
     <li className="transcript__line">
       <time className="transcript__time">{line.time}</time>
-      {/* Colour paired with an initial, so the speakers stay distinguishable
-          in greyscale and to a colourblind reader. The full label is on the
-          element for VoiceOver. */}
-      <span className="transcript__speaker" data-speaker={line.speaker} aria-hidden="true">
-        {line.speaker === "You" ? "Y" : "O"}
-      </span>
+      <SpeakerLabel speaker={line.speaker} />
       <span className="transcript__text">
         <span className="sr-only">{line.speaker}: </span>
         {line.text}
       </span>
     </li>
   );
-}
+});

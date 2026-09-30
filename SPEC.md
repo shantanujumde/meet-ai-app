@@ -54,13 +54,13 @@ This spec is the reconciled version. Every change is traceable to evidence in `F
 | Bundler | Vite | 6 | Tauri default |
 | Styling | Tailwind CSS | 4 | |
 | Components | shadcn/ui | latest | Copy-in, no runtime dep, LLM knows it well |
-| Icons | lucide-react | latest | |
+| Icons | lucide-react | latest | Not installed yet — added when first used |
 | Client state | Zustand | 5 | Small; no server so no query layer needed |
 | Routing | React Router | 7 (declarative) | 4 routes only |
-| Long-list perf | `@tanstack/react-virtual` | 3 | Transcripts hit 1000+ lines |
-| Markdown render | `react-markdown` + `remark-gfm` | latest | Renders `meeting.md`, tickets |
+| Long-list perf | `@tanstack/react-virtual` | 3 | Transcripts hit 1000+ lines. Not installed yet — added when a transcript is first virtualised |
+| Markdown render | `react-markdown` + `remark-gfm` | latest | Renders `meeting.md`, tickets. Not installed yet — added when first used |
 | Notes editor | plain `<textarea>` + preview toggle | — | Deliberately not CodeMirror. Notes are typed mid-meeting; nothing fancy is wanted |
-| Toasts | `sonner` | latest | Permission + warning surfaces |
+| Toasts | `sonner` | latest | Permission + warning surfaces. Not installed yet — added when first used |
 | TS lint/format | Biome | 2 | One tool replaces eslint+prettier |
 | Frontend tests | Vitest + Testing Library | latest | Component + store tests only |
 
@@ -76,6 +76,8 @@ This spec is the reconciled version. Every change is traceable to evidence in `F
 | `tauri-plugin-fs` | Scoped reads for the UI |
 | `tauri-plugin-log` | Frontend logs into the same file as Rust |
 | `tauri-plugin-single-instance` | Two recorders would fight over the tap |
+
+Every plugin above is installed on the Rust side. Its `@tauri-apps/plugin-*` JS package is added only when the frontend first calls it; today that is clipboard-manager, dialog and log. The notification, global-shortcut, opener and fs plugins are driven from Rust alone, so they have no JS package yet.
 
 ### 2.3 Rust core — crate by crate
 

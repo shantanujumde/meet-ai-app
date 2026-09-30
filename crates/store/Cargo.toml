@@ -10,6 +10,9 @@ version.workspace = true
 chrono.workspace = true
 dirs.workspace = true
 jsonc-parser.workspace = true
+# The §3.1 file names, `Speaker`, the transcript line and the atomic write,
+# shared with `stt` (the transcript's writer) without depending on it.
+meeting-format.workspace = true
 notify.workspace = true
 notify-debouncer-full.workspace = true
 serde = { workspace = true, features = ["derive"] }
