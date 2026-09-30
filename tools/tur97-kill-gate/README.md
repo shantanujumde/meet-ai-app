@@ -161,3 +161,22 @@ the app didn't notice the sleep.
 44-byte header. Each subcommand prints one line of JSON and can be run on
 its own:
 `python3 tools/tur97-kill-gate/check.py wav <file.wav> --expect-seconds 60`.
+
+## Results (2026-09-30)
+
+| Build | Ending | Result | Header lag | `segments.json` | drift-check |
+| --- | --- | --- | --- | --- | --- |
+| v0.3.0 | `kill -9` at 20 s (`--verify-only`) | **3/8** | 16.3 s (header declares 0 s) | missing | not measurable |
+| TUR-97, before the quit fix | `kill -9` at 60 s | **8/8** | 3.5 s | 11 anchors | PASS, 82.8 ms |
+| TUR-97, before the quit fix | Quit at 30 s | **9/9** | 5.0 s | 5 anchors | PASS, 82.7 ms |
+| TUR-97 (2f70024) | Quit at 30 s | **9/9** | 0.0 s (clean stop) | 6 anchors | PASS, 18.7 ms |
+| TUR-97 (2f70024) | `kill -9` at 60 s | checks 1–6 pass | 3.8 s | 11 anchors | PASS, 40.0 ms |
+
+The last row's check 7 failed twice because other audio was playing on the Mac
+during the run, so the sentence came back mixed with other speech; the files
+themselves passed every other check. Launch-time repair of a v0.3.0 kill was
+checked separately on a copy: headers declaring 0 s became 16.25 s
+(`afinfo` agrees), and a second launch changed nothing.
+
+Not run yet: the one-hour variant, and the manual lid close / sleep / logout
+endings.
