@@ -15,9 +15,10 @@ import { Meetings } from "@/routes/Meetings";
 import { Onboarding } from "@/routes/Onboarding";
 import { Review } from "@/routes/Review";
 import { Settings } from "@/routes/Settings";
-import { useAppStore } from "@/state/app";
+import { useAppStore, watchPermissionStatus } from "@/state/app";
 import { useRecordingStore, watchRecordingState } from "@/state/recording";
 import { watchLiveTranscript } from "@/state/transcript";
+import { isRevisit } from "@/ui/permissionRoute";
 import { Shell } from "@/ui/Shell";
 
 export function App() {
@@ -70,9 +71,13 @@ function Bootstrap() {
     // Watched here rather than from the live pane, so lines keep landing while
     // the user is on another screen, and the pane has them when they come back.
     const stopTranscript = watchLiveTranscript();
+    // The full check every recording start runs, which is the only one that
+    // hears system audio after launch.
+    const stopPermission = watchPermissionStatus();
     return () => {
       stopRecording();
       stopTranscript();
+      stopPermission();
     };
   }, [loadMeetings, loadPermission, loadOnboarding]);
 
@@ -133,8 +138,7 @@ function Bootstrap() {
     // session (the single-instance window was simply refocused, never
     // re-loaded) must not trap an otherwise-done user on setup forever. A trip
     // the user asked for — the shell's "Fix this" banner — is let through.
-    const revisit = (location.state as { revisit?: boolean } | null)?.revisit === true;
-    if (onOnboardingRoute && !revisit) navigate("/meetings", { replace: true });
+    if (onOnboardingRoute && !isRevisit(location.state)) navigate("/meetings", { replace: true });
   }, [onboarding, onboardingLoading, location.pathname, location.state, navigate]);
 
   return null;

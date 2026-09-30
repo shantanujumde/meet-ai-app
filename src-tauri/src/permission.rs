@@ -46,6 +46,37 @@ pub struct Status {
     /// One sentence naming how the answer was reached. Shown in small print
     /// under the status row, never in place of the status itself.
     pub detail: String,
+    /// Which grants are off, as the System Settings pane each one lives in, so
+    /// the screen can name the switch to flip rather than "audio" in general.
+    /// Empty unless `state` is `Denied`.
+    pub denied: Vec<Pane>,
+}
+
+/// The Tauri event carrying a [`Status`] measured outside a command call —
+/// the check that runs when a recording starts, however it was started. The
+/// window's permission state follows it, so a refusal disables Record and a
+/// grant restored in System Settings re-enables it without a relaunch.
+pub const STATUS_EVENT: &str = "permission://status";
+
+impl Status {
+    /// Why a recording was refused, naming the switch that is off.
+    pub fn refusal_message(&self) -> String {
+        let names: Vec<&str> = self.denied.iter().map(|pane| pane.label()).collect();
+        match names.as_slice() {
+            [] => "meet-ai is not allowed to record this Mac's audio, so starting a recording \
+                   would capture nothing but silence."
+                .to_string(),
+            [one] => format!(
+                "meet-ai did not start recording: {one} is switched off for meet-ai in System \
+                 Settings, so the recording would capture nothing but silence."
+            ),
+            _ => format!(
+                "meet-ai did not start recording: {} are switched off for meet-ai in System \
+                 Settings, so the recording would capture nothing but silence.",
+                names.join(" and ")
+            ),
+        }
+    }
 }
 
 /// The fast, always-safe default: never measured, never `Granted`.
@@ -66,6 +97,7 @@ pub fn status() -> Status {
         state: State::Unknown,
         measured: false,
         detail: "meet-ai has not checked audio permission yet.".into(),
+        denied: Vec::new(),
     }
 }
 
@@ -110,12 +142,14 @@ pub fn quick() -> Status {
                 "microphone: {}. system audio: checked when you next record.",
                 mic.detail
             ),
+            denied: vec![Pane::Microphone],
         };
     }
     Status {
         state: State::Unknown,
         measured: false,
         detail: "meet-ai checks audio permission when you start a recording.".into(),
+        denied: Vec::new(),
     }
 }
 
@@ -151,10 +185,19 @@ fn combine(mic: ChannelResult, system: ChannelResult) -> Status {
         ),
     };
 
+    let mut denied = Vec::new();
+    if mic.state == ChannelState::Denied {
+        denied.push(Pane::Microphone);
+    }
+    if system.state == ChannelState::Denied {
+        denied.push(Pane::AudioCapture);
+    }
+
     Status {
         state,
         measured: true,
         detail,
+        denied,
     }
 }
 
@@ -173,6 +216,11 @@ fn forced_status() -> Option<Status> {
             "Simulated by MEET_AI_FAKE_PERMISSION={forced}. This override only exists in \
              development builds."
         ),
+        denied: if state == State::Denied {
+            vec![Pane::Microphone, Pane::AudioCapture]
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -200,6 +248,14 @@ pub enum Pane {
 }
 
 impl Pane {
+    /// The switch's name as System Settings shows it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Pane::AudioCapture => "System Audio Recording",
+            Pane::Microphone => "Microphone",
+        }
+    }
+
     /// The `x-apple.systempreferences:` URL for this pane.
     pub fn url(self) -> &'static str {
         match self {
@@ -259,6 +315,34 @@ mod tests {
             reading(ChannelState::Denied),
         );
         assert_eq!(status.state, State::Denied);
+    }
+
+    #[test]
+    fn a_denial_names_the_switch_that_is_off() {
+        // "not allowed to record" alone does not say where to go: the two
+        // grants live in different Settings panes (TUR-127 review).
+        let status = combine(
+            reading(ChannelState::Granted),
+            reading(ChannelState::Denied),
+        );
+        assert_eq!(status.denied, vec![Pane::AudioCapture]);
+        let refusal = status.refusal_message();
+        assert!(refusal.contains("System Audio Recording"), "{refusal}");
+        assert!(!refusal.contains("Microphone"), "{refusal}");
+
+        let status = combine(reading(ChannelState::Denied), reading(ChannelState::Denied));
+        assert_eq!(status.denied, vec![Pane::Microphone, Pane::AudioCapture]);
+        let refusal = status.refusal_message();
+        assert!(
+            refusal.contains("Microphone and System Audio Recording are"),
+            "{refusal}"
+        );
+
+        let status = combine(
+            reading(ChannelState::Granted),
+            reading(ChannelState::Granted),
+        );
+        assert!(status.denied.is_empty());
     }
 
     #[test]
