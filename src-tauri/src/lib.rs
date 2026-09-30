@@ -75,6 +75,19 @@ pub fn run() {
         .manage(recording::Recorder::default())
         .manage(engine::Downloads::default())
         .setup(|_app| {
+            // TUR-97: before the record shortcut exists, so nothing can be
+            // mid-recording while this rewrites a header. Fast — two 44-byte
+            // reads per meeting — and a no-op on every launch after the first
+            // that finds something.
+            {
+                use tauri::Manager as _;
+                let status = _app.state::<recording::Recorder>().status();
+                let rewritten =
+                    meetings::recover_interrupted_audio(meetings::Live::from_status(&status));
+                if rewritten > 0 {
+                    tracing::info!(rewritten, "made interrupted recordings' audio playable");
+                }
+            }
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 register_record_shortcut(_app.handle());
