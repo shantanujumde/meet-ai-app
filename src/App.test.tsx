@@ -43,6 +43,7 @@ vi.mock("@/ipc/client", () => ({
     phase: "idle",
     meetingId: null,
     startedAtMs: null,
+    error: null,
   }),
   toggleRecording: vi.fn(),
   openPrivacySettings: vi.fn(),
@@ -88,7 +89,7 @@ beforeEach(() => {
   window.location.hash = "";
   // The store is module state, so one test's recording must not leak into the next.
   useRecordingStore.setState({
-    status: { phase: "idle", meetingId: null, startedAtMs: null },
+    status: { phase: "idle", meetingId: null, startedAtMs: null, error: null },
     error: null,
     busy: false,
   });
@@ -333,6 +334,7 @@ function pushRecording(phase: RecordingStatus["phase"], meetingId: string | null
     phase,
     meetingId,
     startedAtMs: meetingId === null ? null : 1_790_000_000_000,
+    error: null,
   };
   act(() => {
     useRecordingStore.getState().applyFromBackend(status);

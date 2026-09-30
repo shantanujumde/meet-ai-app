@@ -33,11 +33,13 @@ import type {
 } from "./types";
 import { toUiError } from "./types";
 
-/** Tauri event names. These are string literals shared with Rust. */
 /**
- * Every recorder transition. A recording Rust ended on its own (TUR-97), or a
- * ⌘⇧R or menu-bar press it refused (TUR-127), arrives here too, as an idle
- * status with `error` set — there is no separate error event.
+ * Tauri event names. These are string literals shared with Rust.
+ *
+ * `RECORDING_STATE_EVENT` carries every recorder transition. A recording Rust
+ * ended on its own (TUR-97), or a ⌘⇧R or menu-bar press it refused (TUR-127),
+ * arrives on it too, as an idle status with `error` set — there is no separate
+ * error event.
  */
 export const RECORDING_STATE_EVENT = "recording://state";
 export const MODEL_PROGRESS_EVENT = "model://progress";
@@ -193,7 +195,7 @@ export function downloadModel(id: string): Promise<string> {
 
 export async function recordingStatus(): Promise<RecordingStatus> {
   if (!hasBackend()) {
-    return { phase: "idle", meetingId: null, startedAtMs: null };
+    return { phase: "idle", meetingId: null, startedAtMs: null, error: null };
   }
   return call<RecordingStatus>("recording_status");
 }
