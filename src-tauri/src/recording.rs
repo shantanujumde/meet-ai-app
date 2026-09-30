@@ -31,6 +31,14 @@
 //! device change. The `Mutex` holds that ticker instead of the bare session, so
 //! the phase and the thing it owns still change together under one lock, and
 //! the lock is never held across a tick.
+//!
+//! Whatever ends a recording or refuses a start without a clean answer — a
+//! tick that failed, a stop that could not close the files, a start that was
+//! refused — is said once, on the idle status [`STATE_EVENT`] carries
+//! ([`Status::error`]). There is no second error event: the window reads the
+//! reason off the same status that moves it to `Idle`, so the two can never
+//! arrive apart or out of order, and the interrupted-recording notification
+//! is built from that status too.
 
 mod ticker;
 
@@ -52,14 +60,6 @@ use crate::permission;
 /// the UI never has to poll and the menu bar, the titlebar and the sidebar all
 /// see the same change at the same time.
 pub const STATE_EVENT: &str = "recording://state";
-
-/// Emitted with a [`UiError`] for the recorder failures with no command call
-/// waiting to return them: a recording that ends on its own because a tick
-/// failed (TUR-97), and a start or stop from ⌘⇧R or the menu bar that was
-/// refused (TUR-127). `STATE_EVENT` still carries the move back to `Idle`; this
-/// says why. A system notification goes out as well, because the window may be
-/// hidden, which is the normal case for a recording started with ⌘⇧R.
-pub const ERROR_EVENT: &str = "recording://error";
 
 /// The ticker thread's name, so it is identifiable in a sample or a crash
 /// report next to `meet-ai-record-shortcut`.
@@ -90,6 +90,16 @@ pub struct Status {
     /// Unix epoch milliseconds the recording started, so the UI can run its own
     /// timer instead of being fed a tick per second over IPC.
     pub started_at_ms: Option<i64>,
+    /// Why the last recording ended badly, or the last start was refused: it
+    /// stopped on its own because a tick failed (TUR-97), it did not close
+    /// cleanly, or a start from ⌘⇧R, the menu bar or the button was turned
+    /// down (TUR-127). Only ever set on an `Idle` status, and cleared by the
+    /// next start. It rides on the state event because most of these have no
+    /// command call waiting to return an error to — a recording that ends on
+    /// its own, or a shortcut pressed with the window hidden — and one event
+    /// for the move to `Idle` and its reason means the window can never show
+    /// one without the other. Serialised as `null` when nothing went wrong.
+    pub error: Option<UiError>,
 }
 
 impl Status {
@@ -98,6 +108,7 @@ impl Status {
             phase: Phase::Idle,
             meeting_id: None,
             started_at_ms: None,
+            error: None,
         }
     }
 }
@@ -126,6 +137,26 @@ impl Inner {
             ticker: None,
             transcription: None,
         }
+    }
+
+    /// Back to idle, saying why when the recording (or the start) did not end
+    /// cleanly. `Some` only for an ending the user should hear about; a clean
+    /// stop passes `None`.
+    fn end(&mut self, error: Option<UiError>) {
+        *self = Inner::idle();
+        self.status.error = error;
+    }
+
+    /// `Idle -> Starting`, or the phase that beat us to it. A new start is
+    /// what clears the last recording's error: from here on the status
+    /// describes this attempt, and a refusal puts its own reason back.
+    fn claim_starting(&mut self) -> Result<Status, Status> {
+        if self.status.phase != Phase::Idle {
+            return Err(self.status.clone());
+        }
+        self.status.phase = Phase::Starting;
+        self.status.error = None;
+        Ok(self.status.clone())
     }
 }
 
@@ -190,13 +221,7 @@ impl Recorder {
 
     /// Claim `Idle -> Starting`, or report the phase that beat us to it.
     fn claim_starting(&self, app: &AppHandle) -> Result<(), Status> {
-        let mut inner = self.lock();
-        if inner.status.phase != Phase::Idle {
-            return Err(inner.status.clone());
-        }
-        inner.status.phase = Phase::Starting;
-        let status = inner.status.clone();
-        drop(inner);
+        let status = self.lock().claim_starting()?;
         if let Err(error) = app.emit(STATE_EVENT, &status) {
             tracing::warn!(%error, "could not tell the window about a recording state change");
         }
@@ -358,8 +383,12 @@ impl Recorder {
     /// folder with no audio in it behind — sitting in `Recording` with nothing
     /// written is the exact shape of the TUR-90 report; a folder from a start
     /// that never got that far is the same failure one step earlier.
+    ///
+    /// The idle status carries the refusal too (TUR-127): a start from ⌘⇧R or
+    /// the menu bar has no command call to return it to, and the window still
+    /// has to say why nothing happened.
     fn fail_start(&self, app: &AppHandle, id: Option<&str>, error: UiError) -> UiError {
-        self.transition(app, |inner| *inner = Inner::idle());
+        self.transition(app, |inner| inner.end(Some(error.clone())));
         if let Some(id) = id {
             match crate::meetings::root() {
                 Ok(root) => {
@@ -399,7 +428,7 @@ impl Recorder {
         let Some(ticker) = ticker else {
             tracing::error!("phase was Recording with no session attached; recovering to idle");
             finish_transcription();
-            return Ok(self.transition(app, |inner| *inner = Inner::idle()));
+            return Ok(self.transition(app, |inner| inner.end(None)));
         };
 
         // TUR-97: end the ticker and join it *before* the session's own stop.
@@ -416,13 +445,14 @@ impl Recorder {
                 // rather than stick in `Stopping`.
                 tracing::error!("the recording ticker kept the session; recovering to idle");
                 finish_transcription();
-                return Ok(self.transition(app, |inner| *inner = Inner::idle()));
+                return Ok(self.transition(app, |inner| inner.end(None)));
             }
             Err(message) => {
                 tracing::error!(%message, "the recording ticker died; the session went with it");
                 finish_transcription();
-                self.transition(app, |inner| *inner = Inner::idle());
-                return Err(UiError::app("recorder-failed", message));
+                let error = UiError::app("recorder-failed", message);
+                self.transition(app, |inner| inner.end(Some(error.clone())));
+                return Err(error);
             }
         };
 
@@ -430,11 +460,14 @@ impl Recorder {
         finish_transcription();
 
         match stopped {
-            Ok(_report) => Ok(self.transition(app, |inner| *inner = Inner::idle())),
+            Ok(_report) => Ok(self.transition(app, |inner| inner.end(None))),
             Err(message) => {
                 tracing::warn!(message = %message, "recording did not stop cleanly");
-                self.transition(app, |inner| *inner = Inner::idle());
-                Err(UiError::app("recorder-failed", message))
+                // On the status as well as the return value: a stop from ⌘⇧R
+                // or the menu bar has no caller that shows the error.
+                let error = UiError::app("recorder-failed", message);
+                self.transition(app, |inner| inner.end(Some(error.clone())));
+                Err(error)
             }
         }
     }
@@ -531,28 +564,38 @@ impl Recorder {
         if let Some(transcription) = transcription {
             transcription.finish(live_transcript::STOP_TIMEOUT);
         }
-        let body = match &stopped {
-            Ok(_report) => format!(
-                "The recording stopped because of an error ({message}). The audio recorded up to \
-                 that point was saved."
-            ),
-            Err(stop_message) => {
-                tracing::warn!(message = %stop_message, "the failed recording did not stop cleanly");
-                format!(
-                    "The recording stopped because of an error ({message}), and finishing its \
-                     files also failed ({stop_message})."
-                )
-            }
-        };
-        self.transition(app, |inner| *inner = Inner::idle());
-
-        let error = UiError::app("recording-interrupted", body);
-        if let Err(emit_error) = app.emit(ERROR_EVENT, &error) {
-            tracing::warn!(%emit_error, "could not tell the window a recording failed");
+        let stop_error = stopped.as_ref().err();
+        if let Some(stop_message) = stop_error {
+            tracing::warn!(message = %stop_message, "the failed recording did not stop cleanly");
         }
-        notify_interrupted(app, &error.message);
+        let error = interrupted(&message, stop_error.map(String::as_str));
+        let status = self.transition(app, |inner| inner.end(Some(error)));
+        // The notification says what the status says, read back off the
+        // status, so the window and the notification cannot tell two
+        // different stories. It goes out because the window may be hidden,
+        // which is the normal case for a recording started with ⌘⇧R.
+        if let Some(error) = &status.error {
+            notify_interrupted(app, &error.message);
+        }
         None
     }
+}
+
+/// The error a recording that ended on its own leaves on the idle status:
+/// the tick failure that ended it, and whether closing its files worked after
+/// that (`stop_error`).
+fn interrupted(message: &str, stop_error: Option<&str>) -> UiError {
+    let body = match stop_error {
+        None => format!(
+            "The recording stopped because of an error ({message}). The audio recorded up to \
+             that point was saved."
+        ),
+        Some(stop_message) => format!(
+            "The recording stopped because of an error ({message}), and finishing its files also \
+             failed ({stop_message})."
+        ),
+    };
+    UiError::app("recording-interrupted", body)
 }
 
 /// One tick of the live session, with a panic turned into an ordinary tick
@@ -720,5 +763,125 @@ mod tests {
         assert_eq!(status.phase, Phase::Idle);
         assert!(status.meeting_id.is_none());
         assert!(status.started_at_ms.is_none());
+        assert!(status.error.is_none());
+    }
+
+    /// The window reads `error` off every state event: `null` when nothing
+    /// went wrong, a `UiError` in the same camelCase shape a rejected command
+    /// gives otherwise, so one banner shows both.
+    #[test]
+    fn the_status_error_crosses_the_wire_as_null_or_a_ui_error() {
+        let mut status = Status::idle();
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["error"], serde_json::Value::Null);
+        assert_eq!(json["startedAtMs"], serde_json::Value::Null);
+
+        status.error = Some(UiError::app("recording-interrupted", "disk full"));
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["error"]["domain"], "app");
+        assert_eq!(json["error"]["kind"], "recording-interrupted");
+        assert_eq!(json["error"]["message"], "disk full");
+    }
+
+    /// TUR-97 end to end, minus Core Audio: a tick that fails on the ticker
+    /// thread leaves the recorder `Idle` with the reason on its status — the
+    /// status `recording://state` carries, and the only place it is said —
+    /// and the next start clears it.
+    #[test]
+    fn a_failing_tick_leaves_an_idle_status_that_says_why_until_the_next_start() {
+        let recorder = Arc::new(Recorder::default());
+        {
+            let mut inner = recorder.lock();
+            inner.claim_starting().expect("a fresh recorder is idle");
+            inner.status.phase = Phase::Recording;
+            inner.status.meeting_id = Some("2026-09-30-1300-meeting".into());
+        }
+
+        // The same two steps `fail_mid_recording` takes once the session is
+        // stopped: build the reason, then end on it.
+        let on_fail = {
+            let recorder = Arc::clone(&recorder);
+            move |_state: u32, message: String| {
+                recorder.lock().end(Some(interrupted(&message, None)));
+                None
+            }
+        };
+        let ticker = Ticker::spawn(
+            "recording-test-fail",
+            std::time::Duration::from_millis(1),
+            0u32,
+            |_state: &mut u32| Err("mic fsync: disk full".to_string()),
+            on_fail,
+        )
+        .expect("spawns");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while recorder.status().phase != Phase::Idle {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the failed tick never ended the recording"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(ticker.stop().expect("joins cleanly"), None);
+
+        let status = recorder.status();
+        assert!(status.meeting_id.is_none());
+        assert!(status.started_at_ms.is_none());
+        let error = status.error.expect("the idle status says why");
+        assert_eq!(error.kind, "recording-interrupted");
+        assert!(
+            error.message.contains("mic fsync: disk full"),
+            "{}",
+            error.message
+        );
+
+        let starting = recorder
+            .lock()
+            .claim_starting()
+            .expect("idle again, so a new start is allowed");
+        assert_eq!(starting.phase, Phase::Starting);
+        assert!(
+            starting.error.is_none(),
+            "a new start clears the old reason"
+        );
+    }
+
+    /// A clean stop leaves no error behind, and a start that is refused puts
+    /// its own reason on the idle status (TUR-127: ⌘⇧R has nowhere else to
+    /// say it).
+    #[test]
+    fn only_an_unclean_ending_leaves_an_error_on_the_idle_status() {
+        let mut inner = Inner::idle();
+        inner.claim_starting().unwrap();
+        inner.status.phase = Phase::Recording;
+        inner.end(None);
+        assert_eq!(inner.status.phase, Phase::Idle);
+        assert!(inner.status.error.is_none());
+
+        inner.claim_starting().unwrap();
+        inner.end(Some(UiError::app("permission-denied", "not allowed")));
+        assert_eq!(inner.status.phase, Phase::Idle);
+        assert_eq!(
+            inner.status.error.as_ref().unwrap().kind,
+            "permission-denied"
+        );
+
+        // Mid-transition, a second start is turned away without touching it.
+        inner.status.phase = Phase::Stopping;
+        assert!(inner.claim_starting().is_err());
+        assert!(inner.status.error.is_some());
+    }
+
+    #[test]
+    fn an_interrupted_recording_says_whether_its_files_were_saved() {
+        let saved = interrupted("mic fsync: disk full", None);
+        assert_eq!(saved.kind, "recording-interrupted");
+        assert!(saved.message.contains("(mic fsync: disk full)"));
+        assert!(saved.message.contains("was saved"), "{}", saved.message);
+
+        let lost = interrupted("tick", Some("stop"));
+        assert!(lost.message.contains("(tick)") && lost.message.contains("(stop)"));
+        assert!(!lost.message.contains("was saved"), "{}", lost.message);
     }
 }
