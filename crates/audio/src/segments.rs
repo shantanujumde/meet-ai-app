@@ -22,7 +22,7 @@
 //!
 //! 2. **The frame-count invariant is an inequality.** `segments.json` and the
 //!    two WAV headers are three separate writes; `kill -9` lands between them.
-//!    See [`Segments::check_wav_header`] for which direction is the safe one
+//!    See [`SegmentsExt::check_wav_header`] for which direction is the safe one
 //!    and why the checkpoint writes in the order it does.
 //!
 //! 3. **Sleep is a segment boundary, and host time alone cannot describe it.**
@@ -38,55 +38,32 @@
 //!    (wall clock). The difference between the first two is the sleep
 //!    duration, exactly — see [`BoundaryGap::asleep_ms`].
 
-use std::fs::File;
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
-
-use serde::{Deserialize, Serialize};
 
 use crate::Channel;
 
-/// The `reason` strings a segment can carry.
-///
-/// `reason` stays a `String` on the wire so a future writer can add one without
-/// breaking a reader that has not heard of it (`crates/stt` never branches on
-/// it). These are the values `meet-rec` actually emits.
-pub mod reason {
-    /// The first segment of a recording.
-    pub const START: &str = "start";
-    /// `kAudioHardwarePropertyDefaultOutputDevice` changed — AirPods in or out.
-    pub const DEFAULT_OUTPUT_DEVICE_CHANGED: &str = "default_output_device_changed";
-    /// `kAudioHardwarePropertyDefaultInputDevice` changed.
-    pub const DEFAULT_INPUT_DEVICE_CHANGED: &str = "default_input_device_changed";
-    /// The device kept its identity but changed sample rate or channel count.
-    pub const FORMAT_CHANGED: &str = "format_changed";
-    /// The machine woke from sleep. See amendment 3 in the module docs: host
-    /// time did not advance while it slept, so this boundary is the only place
-    /// the lost wall clock is recoverable.
-    pub const SYSTEM_WAKE: &str = "system_wake";
-    /// An IO proc stopped without a device change — restarted in place.
-    pub const STREAM_RESTART: &str = "stream_restart";
-}
+/// The schema itself — [`Segments`], [`Segment`], [`Anchor`], [`reason`] and
+/// [`SCHEMA_VERSION`] — lives in `meeting-format`, shared with `stt`'s reader,
+/// and is re-exported here at its old paths. What stays in this module is what
+/// only the writer and `drift-check` need: the drift maths
+/// ([`SegmentsExt`]), the gate constants, and [`SegmentsWriter`].
+pub use meeting_format::segments::{Anchor, SCHEMA_VERSION, Segment, Segments, reason};
 
 /// Milliseconds of audio a WAV header declares.
 ///
 /// This is the **only** correct source of a recording's duration. It is not
 /// `sum(*_frames)`: after `kill -9` the segments legitimately describe up to one
-/// checkpoint more than the headers expose (see [`Segments::check_wav_header`]),
+/// checkpoint more than the headers expose (see [`SegmentsExt::check_wav_header`]),
 /// so summing overstates by up to [`CHECKPOINT_INTERVAL_S`] seconds and lets a
 /// player or a scrubber place a position past the end of the audio that exists.
 pub fn duration_ms(wav_header_frames: u64) -> f64 {
     wav_header_frames as f64 * 1000.0 / SAMPLE_RATE_HZ as f64
 }
 
-/// Schema version written into every `segments.json`.
-///
-/// Version 1 is the first shape that ever reaches disk — anchors included — so
-/// there is no v0 to migrate.
-pub const SCHEMA_VERSION: u32 = 1;
-
 /// The rate of every WAV this crate writes (SPEC §2.3 does the resampling).
-pub const SAMPLE_RATE_HZ: u32 = 16_000;
+/// The same number as [`meeting_format::SAMPLE_RATE`], by definition.
+pub const SAMPLE_RATE_HZ: u32 = meeting_format::SAMPLE_RATE;
 
 /// SPEC §5 Phase 0 exit gate.
 pub const DRIFT_GATE_MS: f64 = 200.0;
@@ -96,13 +73,13 @@ pub const DRIFT_GATE_MS: f64 = 200.0;
 pub const CHECKPOINT_INTERVAL_S: u64 = 5;
 
 /// How much audio a **deliberately closed** segment may carry past its last
-/// anchor before [`Segments::drift`] refuses the recording.
+/// anchor before [`SegmentsExt::drift`] refuses the recording.
 ///
 /// A segment that is not the last one was closed on purpose — a device change,
 /// a format change, a wake — and the writer got to run code on the way out. So
 /// it must latch a close anchor there, and the only thing allowed to sit past
 /// it is the final ring-buffer drain: the anchor is latched *before* the drain
-/// (see [`Segments::check_anchors`]), so the frames the drain flushes land in
+/// (see [`check_anchors`]), so the frames the drain flushes land in
 /// the segment total without ever reaching an anchor. That is tens of
 /// milliseconds of buffer, not seconds.
 ///
@@ -122,112 +99,13 @@ pub const CLOSE_ANCHOR_SLACK_MS: f64 = 250.0;
 /// whose anchors stopped while the audio kept going.
 pub const FINAL_TAIL_SLACK_MS: f64 = CHECKPOINT_INTERVAL_S as f64 * 1000.0 + CLOSE_ANCHOR_SLACK_MS;
 
-/// `segments.json` in full.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Segments {
-    /// [`SCHEMA_VERSION`]. Defaulted when absent so a hand-written §3.4 fixture
-    /// still parses.
-    #[serde(default = "default_version")]
-    pub version: u32,
-    pub segments: Vec<Segment>,
+/// Drift arithmetic on one anchor. Private: the trait exists only so the maths
+/// below reads as `anchor.drift_ms(..)` over a type this crate does not own.
+trait AnchorMaths {
+    fn drift_ms(&self, channel: Channel, start_host_ns: u64) -> f64;
 }
 
-fn default_version() -> u32 {
-    SCHEMA_VERSION
-}
-
-/// One continuous capture run. A new segment starts whenever a stream had to be
-/// torn down and restarted — a default-device change, a format change.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Segment {
-    pub idx: u32,
-    /// `mach_absolute_time()` scaled to nanoseconds, taken from the IO
-    /// callback's `AudioTimeStamp.mHostTime`. Frame 0 of *both* channels
-    /// corresponds to this instant: whichever stream came up later is
-    /// head-padded with silence, and **those padded frames are counted in
-    /// `mic_frames`/`sys_frames` and in every anchor**. They have to be — the
-    /// pad stands for real elapsed time, so excluding it would move frame 0 off
-    /// `start_host_ns` and put every measurement below out by the pad.
-    pub start_host_ns: u64,
-    /// Always [`SAMPLE_RATE_HZ`] in a real recording; a WAV header carries one
-    /// rate and we write one file per channel. `0` means the channel is absent.
-    pub mic_rate: u32,
-    /// As `mic_rate`. `0` means the process tap never started.
-    pub sys_rate: u32,
-    /// Frames of `mic.wav` belonging to this segment, head pad included.
-    pub mic_frames: u64,
-    /// Frames of `system.wav` belonging to this segment, head pad included.
-    pub sys_frames: u64,
-    /// Why this segment started. One of [`reason`].
-    pub reason: String,
-    /// `mach_continuous_time()` scaled to nanoseconds, sampled at the same
-    /// instant as `start_host_ns`.
-    ///
-    /// Continuous time is host time plus the time the machine spent asleep, so
-    /// `Δcontinuous − Δhost` across a boundary **is** the sleep duration. This
-    /// is the field to difference when you want elapsed wall clock; use
-    /// `start_host_ns` only against an [`Anchor`], which is in the same host
-    /// domain by construction.
-    ///
-    /// Optional because a §3.4-shaped fixture predates it, and because a
-    /// non-macOS writer may not have the clock.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_continuous_ns: Option<u64>,
-    /// `CLOCK_REALTIME` at the same instant, for rendering a segment against a
-    /// human calendar.
-    ///
-    /// Never difference this for timing: it is the one clock here that can jump
-    /// backwards, because NTP steps it — which is precisely why the recorder
-    /// does not use it for anything and only writes it down.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_unix_ns: Option<u64>,
-    /// The hardware rate behind the resampler. Informational; a consumer that
-    /// does not care can ignore it, which is what `crates/stt` does.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mic_device_rate: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sys_device_rate: Option<u32>,
-    /// One entry per checkpoint. Empty in a §3.4-shaped fixture, and empty in
-    /// any segment shorter than one checkpoint interval.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub anchors: Vec<Anchor>,
-}
-
-/// A host-clock reference point, latched in the IO callback.
-///
-/// Per channel rather than one shared `host_ns`, because the two callbacks fire
-/// independently: a shared timestamp would carry up to a buffer period (~10 ms
-/// at 48 kHz / 512 frames) of ambiguity on whichever channel did not fire last,
-/// for no saving.
-///
-/// `*_host_ns` is the `mHostTime` of that channel's most recent buffer, and
-/// `*_frames` is the WAV-domain frame index *that buffer ends at* — converted
-/// through the same exact ratio the resampler uses, not "frames flushed so
-/// far". Anchoring on flush position would measure our own writer latency
-/// instead of the device clock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Anchor {
-    pub mic_host_ns: u64,
-    pub mic_frames: u64,
-    pub sys_host_ns: u64,
-    pub sys_frames: u64,
-}
-
-impl Anchor {
-    fn host_ns(&self, channel: Channel) -> u64 {
-        match channel {
-            Channel::Mic => self.mic_host_ns,
-            Channel::System => self.sys_host_ns,
-        }
-    }
-
-    fn frames(&self, channel: Channel) -> u64 {
-        match channel {
-            Channel::Mic => self.mic_frames,
-            Channel::System => self.sys_frames,
-        }
-    }
-
+impl AnchorMaths for Anchor {
     /// How far this channel's captured audio has slid from the host clock, in
     /// milliseconds. Positive = the device clock is running fast (more frames
     /// than wall time accounts for).
@@ -238,24 +116,13 @@ impl Anchor {
     }
 }
 
-impl Segment {
-    /// Frames recorded for one channel, head pad included.
-    pub fn frames(&self, channel: Channel) -> u64 {
-        match channel {
-            Channel::Mic => self.mic_frames,
-            Channel::System => self.sys_frames,
-        }
-    }
+/// Coverage arithmetic on one segment. Private, like [`AnchorMaths`].
+trait SegmentMaths {
+    fn audio_ms(&self, channel: Channel) -> f64;
+    fn uncovered_ms(&self, channel: Channel) -> f64;
+}
 
-    /// `0` when the channel never started (SPEC §3.4: a failed tap still writes
-    /// `segments.json`).
-    pub fn rate(&self, channel: Channel) -> u32 {
-        match channel {
-            Channel::Mic => self.mic_rate,
-            Channel::System => self.sys_rate,
-        }
-    }
-
+impl SegmentMaths for Segment {
     /// Audio in this segment, in milliseconds.
     fn audio_ms(&self, channel: Channel) -> f64 {
         self.frames(channel) as f64 * 1000.0 / SAMPLE_RATE_HZ as f64
@@ -436,28 +303,16 @@ impl DriftReport {
     }
 }
 
-impl Segments {
+/// The drift maths, and the invariant check, over the shared schema.
+///
+/// A trait because [`Segments`] is defined in `meeting-format` (so `stt` reads
+/// the same type this crate writes) and Rust only allows inherent methods in
+/// the defining crate. Bring it into scope — `use audio::segments::SegmentsExt`
+/// — and `Segments::from_json(..)`, `segments.drift()` and friends read exactly
+/// as they did when these were inherent methods.
+pub trait SegmentsExt: Sized {
     /// Parse `segments.json`.
-    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(json)
-    }
-
-    /// Total frames declared for a channel across all segments.
-    ///
-    /// ⛔ **This is not the recording's duration.** The crash-window invariant
-    /// is an inequality — after `kill -9` this sum can exceed what the WAV
-    /// header exposes by up to one checkpoint. Use [`duration_ms`] on the
-    /// header's frame count instead. This function exists to be compared
-    /// *against* a header, in [`Segments::check_wav_header`].
-    pub fn total_frames(&self, channel: Channel) -> u64 {
-        self.segments.iter().map(|s| s.frames(channel)).sum()
-    }
-
-    /// True when the channel never produced audio — a failed tap, or a denied
-    /// microphone.
-    pub fn channel_absent(&self, channel: Channel) -> bool {
-        self.segments.is_empty() || self.segments.iter().all(|s| s.rate(channel) == 0)
-    }
+    fn from_json(json: &str) -> Result<Self, serde_json::Error>;
 
     /// The crash-window invariant, checked against what a WAV header actually
     /// declares.
@@ -480,7 +335,32 @@ impl Segments {
     ///
     /// Strict equality is not achievable across three non-atomic writes and
     /// should not be asserted.
-    pub fn check_wav_header(
+    fn check_wav_header(
+        &self,
+        channel: Channel,
+        wav_header_frames: u64,
+    ) -> Result<u64, InvariantViolation>;
+
+    /// Measure drift against the host clock.
+    fn drift(&self) -> Result<DriftReport, DriftError>;
+
+    /// What every segment boundary cost, in milliseconds of unrecorded wall
+    /// clock, in `idx` order.
+    ///
+    /// Public and separate from [`SegmentsExt::drift`] because a boundary gap is
+    /// arithmetic on segment *totals* — it does not depend on anchors at all,
+    /// and stays answerable for a recording whose drift `drift()` refuses to
+    /// certify. "What did the AirPods swap cost?" is still a fair question
+    /// about a file with a coverage hole somewhere else in it.
+    fn boundary_gaps(&self) -> Vec<BoundaryGap>;
+}
+
+impl SegmentsExt for Segments {
+    fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    fn check_wav_header(
         &self,
         channel: Channel,
         wav_header_frames: u64,
@@ -496,8 +376,7 @@ impl Segments {
         Ok(declared - wav_header_frames)
     }
 
-    /// Measure drift against the host clock.
-    pub fn drift(&self) -> Result<DriftReport, DriftError> {
+    fn drift(&self) -> Result<DriftReport, DriftError> {
         if self.segments.is_empty() {
             return Err(DriftError::NoSegments);
         }
@@ -506,18 +385,18 @@ impl Segments {
                 return Err(DriftError::ChannelAbsent(channel));
             }
         }
-        self.check_anchors()?;
+        check_anchors(self)?;
         if self.segments.iter().all(|s| s.anchors.is_empty()) {
             return Err(DriftError::NoAnchors);
         }
         // Order matters: `NoAnchors` above is the better message for a whole
         // file that predates A5, and coverage would otherwise claim it as a
         // partly-anchored recording.
-        self.check_anchor_coverage()?;
+        check_anchor_coverage(self)?;
 
         let origin = self.segments[0].start_host_ns;
-        let mic = self.channel_drift(Channel::Mic, origin);
-        let system = self.channel_drift(Channel::System, origin);
+        let mic = channel_drift(self, Channel::Mic, origin);
+        let system = channel_drift(self, Channel::System, origin);
 
         let max_track_skew_ms = self
             .segments
@@ -539,151 +418,142 @@ impl Segments {
         })
     }
 
-    /// What every segment boundary cost, in milliseconds of unrecorded wall
-    /// clock, in `idx` order.
-    ///
-    /// Public and separate from [`Segments::drift`] because a boundary gap is
-    /// arithmetic on segment *totals* — it does not depend on anchors at all,
-    /// and stays answerable for a recording whose drift `drift()` refuses to
-    /// certify. "What did the AirPods swap cost?" is still a fair question
-    /// about a file with a coverage hole somewhere else in it.
-    pub fn boundary_gaps(&self) -> Vec<BoundaryGap> {
+    fn boundary_gaps(&self) -> Vec<BoundaryGap> {
         self.segments.windows(2).map(boundary_gap).collect()
     }
+}
 
-    /// Drift is measured *within* a segment, against that segment's own
-    /// `start_host_ns`. A boundary gap is lost wall clock, not clock error, and
-    /// folding it into the drift figure would report a device switch as drift.
-    fn channel_drift(&self, channel: Channel, origin_host_ns: u64) -> ChannelDrift {
-        let mut max_abs_ms = 0.0_f64;
-        let mut final_ms = 0.0_f64;
-        let mut first_breach = None;
-        let mut anchors = 0usize;
-        let mut tail_unanchored_ms = 0.0_f64;
+/// Drift is measured *within* a segment, against that segment's own
+/// `start_host_ns`. A boundary gap is lost wall clock, not clock error, and
+/// folding it into the drift figure would report a device switch as drift.
+fn channel_drift(segments: &Segments, channel: Channel, origin_host_ns: u64) -> ChannelDrift {
+    let mut max_abs_ms = 0.0_f64;
+    let mut final_ms = 0.0_f64;
+    let mut first_breach = None;
+    let mut anchors = 0usize;
+    let mut tail_unanchored_ms = 0.0_f64;
 
-        for segment in &self.segments {
-            for anchor in &segment.anchors {
-                anchors += 1;
-                let drift_ms = anchor.drift_ms(channel, segment.start_host_ns);
-                final_ms = drift_ms;
-                if drift_ms.abs() > max_abs_ms {
-                    max_abs_ms = drift_ms.abs();
-                }
-                if first_breach.is_none() && drift_ms.abs() >= DRIFT_GATE_MS {
-                    first_breach = Some(Breach {
-                        elapsed_s: anchor.host_ns(channel).saturating_sub(origin_host_ns) as f64
-                            / 1e9,
-                        drift_ms,
-                    });
-                }
+    for segment in &segments.segments {
+        for anchor in &segment.anchors {
+            anchors += 1;
+            let drift_ms = anchor.drift_ms(channel, segment.start_host_ns);
+            final_ms = drift_ms;
+            if drift_ms.abs() > max_abs_ms {
+                max_abs_ms = drift_ms.abs();
             }
-            if !segment.anchors.is_empty() {
-                // ⚠ F4 (TUR-4): this assigns rather than accumulates, so an
-                // earlier segment's tail is overwritten by a later one. Left
-                // alone deliberately — it is TUR-4's fix, not this one's — but
-                // `check_anchor_coverage` now bounds every non-final tail at
-                // `CLOSE_ANCHOR_SLACK_MS`, so what this can lose is a quarter
-                // of a second rather than the four seconds it used to.
-                tail_unanchored_ms = segment.uncovered_ms(channel);
+            if first_breach.is_none() && drift_ms.abs() >= DRIFT_GATE_MS {
+                first_breach = Some(Breach {
+                    elapsed_s: anchor.host_ns(channel).saturating_sub(origin_host_ns) as f64 / 1e9,
+                    drift_ms,
+                });
             }
         }
-
-        ChannelDrift {
-            channel,
-            max_abs_ms,
-            final_ms,
-            first_breach,
-            tail_unanchored_ms,
-            anchors,
+        if !segment.anchors.is_empty() {
+            // ⚠ F4 (TUR-4): this assigns rather than accumulates, so an
+            // earlier segment's tail is overwritten by a later one. Left
+            // alone deliberately — it is TUR-4's fix, not this one's — but
+            // `check_anchor_coverage` now bounds every non-final tail at
+            // `CLOSE_ANCHOR_SLACK_MS`, so what this can lose is a quarter
+            // of a second rather than the four seconds it used to.
+            tail_unanchored_ms = segment.uncovered_ms(channel);
         }
     }
 
-    /// Anchors must not go backwards, the host clock must actually *advance*,
-    /// and no anchor may claim frames the segment itself does not. The writer
-    /// latches an anchor *before* draining the ring buffer, so the drain can
-    /// only ever push the segment's count further ahead — an anchor past the
-    /// segment total means the file is corrupt, not that the recording was cut
-    /// short.
-    fn check_anchors(&self) -> Result<(), DriftError> {
-        for (segment_idx, segment) in self.segments.iter().enumerate() {
-            let mut prev: Option<&Anchor> = None;
-            for (anchor_idx, anchor) in segment.anchors.iter().enumerate() {
-                if let Some(prev) = prev {
-                    for (field, now, before, is_host_clock) in [
-                        ("mic_host_ns", anchor.mic_host_ns, prev.mic_host_ns, true),
-                        ("sys_host_ns", anchor.sys_host_ns, prev.sys_host_ns, true),
-                        ("mic_frames", anchor.mic_frames, prev.mic_frames, false),
-                        ("sys_frames", anchor.sys_frames, prev.sys_frames, false),
-                    ] {
-                        if now < before {
-                            return Err(DriftError::NonMonotonic {
-                                segment: segment_idx,
-                                anchor: anchor_idx,
-                                field,
-                            });
-                        }
-                        // Frames are allowed to repeat — a stalled device
-                        // delivering nothing is caught by the drift number
-                        // going hugely negative. A repeated *host time* is not:
-                        // checkpoints are CHECKPOINT_INTERVAL_S apart, so two
-                        // anchors in one segment cannot share one.
-                        if is_host_clock && now == before {
-                            return Err(DriftError::FrozenClock {
-                                segment: segment_idx,
-                                anchor: anchor_idx,
-                                field,
-                            });
-                        }
-                    }
-                }
-                for channel in [Channel::Mic, Channel::System] {
-                    if anchor.frames(channel) > segment.frames(channel) {
-                        return Err(DriftError::AnchorAheadOfSegment {
+    ChannelDrift {
+        channel,
+        max_abs_ms,
+        final_ms,
+        first_breach,
+        tail_unanchored_ms,
+        anchors,
+    }
+}
+
+/// Anchors must not go backwards, the host clock must actually *advance*,
+/// and no anchor may claim frames the segment itself does not. The writer
+/// latches an anchor *before* draining the ring buffer, so the drain can
+/// only ever push the segment's count further ahead — an anchor past the
+/// segment total means the file is corrupt, not that the recording was cut
+/// short.
+fn check_anchors(segments: &Segments) -> Result<(), DriftError> {
+    for (segment_idx, segment) in segments.segments.iter().enumerate() {
+        let mut prev: Option<&Anchor> = None;
+        for (anchor_idx, anchor) in segment.anchors.iter().enumerate() {
+            if let Some(prev) = prev {
+                for (field, now, before, is_host_clock) in [
+                    ("mic_host_ns", anchor.mic_host_ns, prev.mic_host_ns, true),
+                    ("sys_host_ns", anchor.sys_host_ns, prev.sys_host_ns, true),
+                    ("mic_frames", anchor.mic_frames, prev.mic_frames, false),
+                    ("sys_frames", anchor.sys_frames, prev.sys_frames, false),
+                ] {
+                    if now < before {
+                        return Err(DriftError::NonMonotonic {
                             segment: segment_idx,
                             anchor: anchor_idx,
-                            channel,
-                            anchor_frames: anchor.frames(channel),
-                            segment_frames: segment.frames(channel),
+                            field,
+                        });
+                    }
+                    // Frames are allowed to repeat — a stalled device
+                    // delivering nothing is caught by the drift number
+                    // going hugely negative. A repeated *host time* is not:
+                    // checkpoints are CHECKPOINT_INTERVAL_S apart, so two
+                    // anchors in one segment cannot share one.
+                    if is_host_clock && now == before {
+                        return Err(DriftError::FrozenClock {
+                            segment: segment_idx,
+                            anchor: anchor_idx,
+                            field,
                         });
                     }
                 }
-                prev = Some(anchor);
             }
-        }
-        Ok(())
-    }
-
-    /// Every millisecond of audio must sit under an anchor, or close enough
-    /// behind the last one that no clock error could hide in the gap.
-    ///
-    /// Checked per channel and per segment rather than once over the
-    /// recording, because a hole in the middle is exactly as unmeasured as a
-    /// hole at the end, and a per-recording figure would let one well-anchored
-    /// segment cover for a neighbour that has no anchors at all.
-    fn check_anchor_coverage(&self) -> Result<(), DriftError> {
-        let last_idx = self.segments.len() - 1;
-        for (segment_idx, segment) in self.segments.iter().enumerate() {
-            let closed_deliberately = segment_idx != last_idx;
-            let slack_ms = if closed_deliberately {
-                CLOSE_ANCHOR_SLACK_MS
-            } else {
-                FINAL_TAIL_SLACK_MS
-            };
             for channel in [Channel::Mic, Channel::System] {
-                let uncovered_ms = segment.uncovered_ms(channel);
-                if uncovered_ms > slack_ms {
-                    return Err(DriftError::AnchorCoverage {
+                if anchor.frames(channel) > segment.frames(channel) {
+                    return Err(DriftError::AnchorAheadOfSegment {
                         segment: segment_idx,
+                        anchor: anchor_idx,
                         channel,
-                        uncovered_ms,
-                        slack_ms,
-                        closed_deliberately,
+                        anchor_frames: anchor.frames(channel),
+                        segment_frames: segment.frames(channel),
                     });
                 }
             }
+            prev = Some(anchor);
         }
-        Ok(())
     }
+    Ok(())
+}
+
+/// Every millisecond of audio must sit under an anchor, or close enough
+/// behind the last one that no clock error could hide in the gap.
+///
+/// Checked per channel and per segment rather than once over the
+/// recording, because a hole in the middle is exactly as unmeasured as a
+/// hole at the end, and a per-recording figure would let one well-anchored
+/// segment cover for a neighbour that has no anchors at all.
+fn check_anchor_coverage(segments: &Segments) -> Result<(), DriftError> {
+    let last_idx = segments.segments.len() - 1;
+    for (segment_idx, segment) in segments.segments.iter().enumerate() {
+        let closed_deliberately = segment_idx != last_idx;
+        let slack_ms = if closed_deliberately {
+            CLOSE_ANCHOR_SLACK_MS
+        } else {
+            FINAL_TAIL_SLACK_MS
+        };
+        for channel in [Channel::Mic, Channel::System] {
+            let uncovered_ms = segment.uncovered_ms(channel);
+            if uncovered_ms > slack_ms {
+                return Err(DriftError::AnchorCoverage {
+                    segment: segment_idx,
+                    channel,
+                    uncovered_ms,
+                    slack_ms,
+                    closed_deliberately,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// One boundary, from the pair of segments either side of it.
@@ -742,11 +612,12 @@ pub struct SegmentOpen {
 /// only reads. `meet-rec` is the only thing that constructs one.
 ///
 /// Nothing touches disk until [`SegmentsWriter::write_atomic`], which is the
-/// §11/§7 checkpoint write: temp file, `fsync`, `rename(2)`. The caller
+/// §11/§7 checkpoint write: temp file, `fsync`, `rename(2)`, directory
+/// `fsync`. The caller
 /// sequences that as the *second* of the checkpoint's three writes — after
 /// `WavWriter::fsync_data` on both channels, before `WavWriter::patch_header`
 /// on either (see the `wav_writer` module docs and
-/// [`Segments::check_wav_header`] for why that order is the safe direction).
+/// [`SegmentsExt::check_wav_header`] for why that order is the safe direction).
 pub struct SegmentsWriter {
     segments: Vec<Segment>,
 }
@@ -805,7 +676,7 @@ impl SegmentsWriter {
     /// `close_anchor` must be latched *after* the outgoing stream's ring
     /// buffer has been drained — [`CLOSE_ANCHOR_SLACK_MS`] is sized for
     /// exactly that drain. Latch it before draining (or skip it) and
-    /// [`Segments::drift`] will correctly refuse the segment later: from the
+    /// [`SegmentsExt::drift`] will correctly refuse the segment later: from the
     /// reader's side, a missing close anchor is indistinguishable from a
     /// writer that never got the chance to run this method, which is exactly
     /// the failure F1 exists to catch.
@@ -816,7 +687,7 @@ impl SegmentsWriter {
     }
 
     /// A read-only snapshot of everything written so far — e.g. to run
-    /// [`Segments::check_wav_header`] mid-recording without a round trip
+    /// [`SegmentsExt::check_wav_header`] mid-recording without a round trip
     /// through disk.
     pub fn as_segments(&self) -> Segments {
         Segments {
@@ -830,28 +701,17 @@ impl SegmentsWriter {
         serde_json::to_string_pretty(&self.as_segments())
     }
 
-    /// §7/§11's checkpoint write: a temp file in the same directory, `fsync`,
-    /// then `rename(2)` over `path`. The rename is atomic on APFS/HFS+, so a
-    /// concurrent reader observes either the old file or the new one, never a
-    /// torn one — that is what makes this safe to call on a live recording
-    /// [`crates::stt`] might be tailing.
+    /// §7/§11's checkpoint write, through [`meeting_format::write_atomic`]: a
+    /// temp file in the same directory, `fsync`, `rename(2)` over `path`, then
+    /// `fsync` of the directory so the rename itself survives a power cut. The
+    /// rename is atomic on APFS/HFS+, so a concurrent reader observes either
+    /// the old file or the new one, never a torn one — that is what makes this
+    /// safe to call on a live recording `crates/stt` might be tailing.
     pub fn write_atomic(&self, path: &Path) -> io::Result<()> {
         let json = self
             .to_json()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        let dir = path.parent().unwrap_or_else(|| Path::new("."));
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("segments.json");
-        let tmp_path = dir.join(format!(".{file_name}.tmp.{}", std::process::id()));
-
-        let mut tmp = File::create(&tmp_path)?;
-        tmp.write_all(json.as_bytes())?;
-        tmp.sync_all()?;
-        drop(tmp);
-        std::fs::rename(&tmp_path, path)?;
-        Ok(())
+        meeting_format::write_atomic(path, json.as_bytes())
     }
 }
 

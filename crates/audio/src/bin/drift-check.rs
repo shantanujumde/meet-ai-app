@@ -20,7 +20,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use audio::Channel;
-use audio::segments::{DRIFT_GATE_MS, Segments};
+use audio::segments::{DRIFT_GATE_MS, Segments, SegmentsExt as _};
 use audio::wav_writer::read_header_frames;
 
 const USAGE: &str = "\
@@ -55,7 +55,7 @@ fn main() -> ExitCode {
 }
 
 fn run(dir: &Path) -> ExitCode {
-    let segments_path = dir.join("segments.json");
+    let segments_path = dir.join(meeting_format::layout::SEGMENTS_FILE);
     let json = match std::fs::read_to_string(&segments_path) {
         Ok(json) => json,
         Err(e) => {

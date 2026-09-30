@@ -46,10 +46,12 @@ pub mod notes;
 pub mod ticket;
 pub mod transcript;
 
-/// File names inside a meeting folder (SPEC §3.1).
-pub const MEETING_FILE: &str = "meeting.md";
-pub const TRANSCRIPT_FILE: &str = "transcript.md";
-pub const NOTES_FILE: &str = "notes.md";
+/// File names inside a meeting folder (SPEC §3.1). The three every crate
+/// touches are defined once in `meeting_format::layout` and re-exported here
+/// at their old paths; the whole layout is at [`layout`].
+pub use meeting_format::layout;
+pub use meeting_format::layout::{MEETING_FILE, NOTES_FILE, TRANSCRIPT_FILE};
+/// Tickets are store's alone (§3.3), so their folder name stays here.
 pub const TICKETS_DIR: &str = "tickets";
 
 /// How long a path this process wrote stays ignored by the watcher.
@@ -142,23 +144,15 @@ pub(crate) fn refusal(problems: &[Problem], path: &str) -> Option<Error> {
 /// Write `contents` to `path` through a sibling temp file and `rename(2)`, so a
 /// crash mid-write can never leave a half-written file behind.
 ///
-/// The temp file is a dotfile in the same folder — same filesystem, so the
-/// rename is atomic, and the folder scan already skips dotfiles.
+/// Creates the folder first, then defers to [`meeting_format::write_atomic`]:
+/// the temp file is a dotfile in the same folder — same filesystem, so the
+/// rename is atomic, and the folder scan already skips dotfiles — and both the
+/// file and the folder are `fsync`'d, so a saved note survives a power cut and
+/// not just a crash. A failed write removes its temp file.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<(), Error> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir)?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let temp = dir.join(format!(".{name}.tmp"));
-    let written = std::fs::write(&temp, contents).and_then(|()| std::fs::rename(&temp, path));
-    if written.is_err() {
-        // Best-effort: the scan skips dotfiles, so a leftover is harmless, but
-        // a failed save should not leave litter the user may find later.
-        std::fs::remove_file(&temp).ok();
-    }
-    Ok(written?)
+    Ok(meeting_format::write_atomic(path, contents.as_bytes())?)
 }
 
 /// Is `id` a single plain path component — no separators, no `..`, no leading

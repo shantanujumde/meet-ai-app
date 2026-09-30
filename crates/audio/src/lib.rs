@@ -91,36 +91,12 @@ pub mod session;
 /// Platform-agnostic: it is a bounded queue and a gap counter, nothing more.
 pub mod tee;
 
-/// Which side of the conversation a stream came from.
+/// Which side of the conversation a stream came from (L5).
 ///
-/// L5 locks speaker labelling to the two channels we capture: the microphone is
-/// the person using this Mac, the process tap is everyone else.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Channel {
-    /// The local microphone. Rendered as `You` in `transcript.md`.
-    Mic,
-    /// The system audio process tap. Rendered as `Others`.
-    System,
-}
-
-impl Channel {
-    /// The file this channel is recorded to, relative to the meeting folder.
-    pub fn wav_filename(self) -> &'static str {
-        match self {
-            Channel::Mic => "mic.wav",
-            Channel::System => "system.wav",
-        }
-    }
-
-    /// The speaker label this channel produces in `transcript.md` (SPEC §3.4).
-    pub fn speaker_label(self) -> &'static str {
-        match self {
-            Channel::Mic => "You",
-            Channel::System => "Others",
-        }
-    }
-}
+/// Defined once in `meeting-format` and re-exported here, so the channel this
+/// crate records and the channel `stt` transcribes are the same type — not two
+/// enums kept in step by hand.
+pub use meeting_format::Channel;
 
 /// A platform's implementation of one capture channel.
 ///

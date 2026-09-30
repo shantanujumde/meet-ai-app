@@ -31,7 +31,7 @@ pub struct State {
 }
 
 fn path() -> Result<PathBuf, UiError> {
-    Ok(crate::meetings::root()?.join(".app").join(FILE))
+    Ok(meeting_format::layout::app_dir(&crate::meetings::root()?).join(FILE))
 }
 
 /// Read the flag. An unreadable or corrupt file means "not onboarded" rather

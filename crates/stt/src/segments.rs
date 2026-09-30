@@ -1,9 +1,10 @@
 //! The `segments.json` clock-truth record (SPEC §3.4).
 //!
 //! `meet-rec` writes this alongside the two WAVs; the STT side reads it. It is
-//! the shared contract between Phase 0 and Phase 1, so this module is a
-//! deliberately literal transcription of the shape in SPEC §3.4 rather than a
-//! convenient-for-us redesign:
+//! the shared contract between Phase 0 and Phase 1, so the type is not ours:
+//! it is `meeting_format::segments`, the one definition the writer uses too, a
+//! literal transcription of the shape in SPEC §3.4 rather than a
+//! convenient-for-us redesign. This module is the reading of it:
 //!
 //! ```json
 //! {"segments":[{"idx":0,"start_host_ns":123456789,"mic_rate":16000,"sys_rate":16000,
@@ -44,7 +45,7 @@
 //!   and the header lengths only grow. So the surviving crash state is segments
 //!   describing frames the header has not declared yet — frames no reader ever
 //!   asks about. The opposite direction, audio the segments do not cover, is the
-//!   one that ordering exists to eliminate. That is why [`Segments::frame_to_sec`]
+//!   one that ordering exists to eliminate. That is why [`SegmentsExt::frame_to_sec`]
 //!   treats a past-the-end frame as a broken invariant worth logging, not as a
 //!   routine short read.
 //!
@@ -60,107 +61,34 @@ use std::path::Path;
 
 use crate::{Channel, Error};
 
-/// The whole file.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Segments {
-    /// Contract revision `meet-rec` wrote. Absent on files predating it.
-    #[serde(default)]
-    pub version: Option<u32>,
-    pub segments: Vec<Segment>,
-}
-
-/// The `version` this parser was written against (contract §0).
-const KNOWN_VERSION: u32 = 1;
-
-/// One continuous stretch of recording with a single clock reference.
+/// The file, one segment of it, and one checkpoint anchor.
 ///
-/// A new segment starts whenever the device changes mid-call — the AirPods
-/// swap case — which is why `reason` exists.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Segment {
-    pub idx: u32,
-    /// Host clock at the first frame of this segment, in nanoseconds
-    /// (`mach_absolute_time` scaled by `mach_timebase_info`).
-    pub start_host_ns: u64,
-    /// Rate of the frames actually in `mic.wav`. Always 16000 in practice.
-    pub mic_rate: u32,
-    /// Rate of the frames actually in `system.wav`. `0` means the tap never
-    /// started, so there is no system track to place timestamps in.
-    pub sys_rate: u32,
-    /// The microphone's hardware rate during this segment, before resampling.
-    /// Diagnostics only — never use it for timing.
-    #[serde(default)]
-    pub mic_device_rate: Option<u32>,
-    /// The output device's hardware rate during this segment, before
-    /// downmix/resampling. Diagnostics only.
-    #[serde(default)]
-    pub sys_device_rate: Option<u32>,
-    /// Frames written to `mic.wav` during this segment.
-    #[serde(default)]
-    pub mic_frames: u64,
-    /// Frames written to `system.wav` during this segment.
-    #[serde(default)]
-    pub sys_frames: u64,
-    /// Why the segment started: `start`, `default_output_device_changed`, …
-    #[serde(default)]
-    pub reason: String,
-}
+/// The shared schema from `meeting-format` — the same type `meet-rec` writes,
+/// re-exported at the path this module used to define its own at. That older
+/// struct was a narrower copy (no `anchors`, `version` as `Option`), and the
+/// point of sharing is that the two can no longer disagree. The reader's
+/// tolerance survived the move: a file without `version`, anchors or the A5
+/// clocks still parses, as v1.
+pub use meeting_format::segments::{Anchor, Segment, Segments};
 
-impl Segment {
-    pub fn rate_for(&self, channel: Channel) -> u32 {
-        match channel {
-            Channel::Mic => self.mic_rate,
-            Channel::System => self.sys_rate,
-        }
-    }
+/// The `version` this parser was written against (contract §0) — by
+/// definition the schema version of the shared type it parses into.
+const KNOWN_VERSION: u32 = meeting_format::segments::SCHEMA_VERSION;
 
-    pub fn frames_for(&self, channel: Channel) -> u64 {
-        match channel {
-            Channel::Mic => self.mic_frames,
-            Channel::System => self.sys_frames,
-        }
-    }
-
-    /// Seconds since `origin_ns` for a frame `within` frames into this segment.
-    ///
-    /// The segment's own clock offset is added rather than the frame time of
-    /// everything before it, so an unpadded device-switch gap stays accounted
-    /// for instead of silently pulling every later timestamp earlier.
-    fn sec_at(&self, origin_ns: u64, rate: u32, within: u64) -> f64 {
-        let segment_offset_sec = self.start_host_ns.saturating_sub(origin_ns) as f64 / 1e9;
-        segment_offset_sec + within as f64 / rate as f64
-    }
-}
-
-impl Segments {
+/// What transcription reads off `segments.json`: the file itself, and a
+/// timestamp for a frame.
+///
+/// A trait because [`Segments`] lives in `meeting-format`, and Rust only
+/// allows inherent methods in the defining crate. Bring it into scope — `use
+/// stt::segments::SegmentsExt` — and `Segments::read(..)` and
+/// `segments.frame_to_sec(..)` read as they did.
+pub trait SegmentsExt: Sized {
     /// Read `segments.json` from a meeting's `audio/` directory.
     ///
     /// A newer `version` than this parser knows is a warning, not an error: the
     /// contract's additive-only rule means an unknown revision still transcribes
     /// correctly, and refusing would strand a recording we can in fact read.
-    pub fn read(path: &Path) -> Result<Self, Error> {
-        let body = std::fs::read_to_string(path)?;
-        let segments: Self = serde_json::from_str(&body)
-            .map_err(|e| Error::Segments(format!("{}: {e}", path.display())))?;
-
-        if let Some(version) = segments.version
-            && version > KNOWN_VERSION
-        {
-            tracing::warn!(
-                path = %path.display(),
-                version,
-                known = KNOWN_VERSION,
-                "segments.json is newer than this build; reading it with the fields we know"
-            );
-        }
-
-        Ok(segments)
-    }
-
-    /// The recording's own start time — segment 0's host clock.
-    pub fn start_host_ns(&self) -> Option<u64> {
-        self.segments.first().map(|segment| segment.start_host_ns)
-    }
+    fn read(path: &Path) -> Result<Self, Error>;
 
     /// Turn a frame offset within one channel's WAV into seconds since the
     /// start of the recording.
@@ -180,7 +108,29 @@ impl Segments {
     /// path is unreachable unless that invariant broke upstream — the clamp is
     /// there to keep a transcript line rather than drop it, not to make the bug
     /// invisible.
-    pub fn frame_to_sec(&self, channel: Channel, frame: u64) -> Option<f64> {
+    fn frame_to_sec(&self, channel: Channel, frame: u64) -> Option<f64>;
+}
+
+impl SegmentsExt for Segments {
+    fn read(path: &Path) -> Result<Self, Error> {
+        let body = std::fs::read_to_string(path)?;
+        let segments: Self = serde_json::from_str(&body)
+            .map_err(|e| Error::Segments(format!("{}: {e}", path.display())))?;
+
+        let version = segments.version;
+        if version > KNOWN_VERSION {
+            tracing::warn!(
+                path = %path.display(),
+                version,
+                known = KNOWN_VERSION,
+                "segments.json is newer than this build; reading it with the fields we know"
+            );
+        }
+
+        Ok(segments)
+    }
+
+    fn frame_to_sec(&self, channel: Channel, frame: u64) -> Option<f64> {
         let origin_ns = self.start_host_ns()?;
 
         let mut consumed = 0u64;
@@ -189,11 +139,11 @@ impl Segments {
         let mut tail: Option<(&Segment, u32, u64)> = None;
 
         for (i, segment) in self.segments.iter().enumerate() {
-            let rate = segment.rate_for(channel);
+            let rate = segment.rate(channel);
             if rate == 0 {
                 continue; // this channel was never captured
             }
-            let frames = segment.frames_for(channel);
+            let frames = segment.frames(channel);
 
             // The final segment's frame count may be unknown if the process was
             // killed before it could be updated; treat it as open-ended rather
@@ -201,7 +151,7 @@ impl Segments {
             let is_last = i + 1 == self.segments.len();
             let within = frame.saturating_sub(consumed);
             if within < frames || (is_last && frames == 0) {
-                return Some(segment.sec_at(origin_ns, rate, within));
+                return Some(sec_at(segment, origin_ns, rate, within));
             }
             tail = Some((segment, rate, consumed));
             consumed += frames;
@@ -219,7 +169,7 @@ impl Segments {
         let declared = self
             .segments
             .iter()
-            .map(|segment| segment.frames_for(channel))
+            .map(|segment| segment.frames(channel))
             .sum::<u64>();
         tracing::warn!(
             ?channel,
@@ -229,8 +179,23 @@ impl Segments {
              frame-count invariant (contract §7) broke; extrapolating the timestamp \
              from the final segment"
         );
-        Some(segment.sec_at(origin_ns, rate, frame.saturating_sub(before)))
+        Some(sec_at(
+            segment,
+            origin_ns,
+            rate,
+            frame.saturating_sub(before),
+        ))
     }
+}
+
+/// Seconds since `origin_ns` for a frame `within` frames into `segment`.
+///
+/// The segment's own clock offset is added rather than the frame time of
+/// everything before it, so an unpadded device-switch gap stays accounted for
+/// instead of silently pulling every later timestamp earlier.
+fn sec_at(segment: &Segment, origin_ns: u64, rate: u32, within: u64) -> f64 {
+    let segment_offset_sec = segment.start_host_ns.saturating_sub(origin_ns) as f64 / 1e9;
+    segment_offset_sec + within as f64 / rate as f64
 }
 
 #[cfg(test)]
@@ -407,7 +372,7 @@ mod tests {
              ]}]}"#;
 
         let segments: Segments = serde_json::from_str(body).unwrap();
-        assert_eq!(segments.version, Some(1));
+        assert_eq!(segments.version, 1);
         assert_eq!(segments.segments[0].mic_device_rate, Some(48_000));
         assert_eq!(segments.frame_to_sec(Channel::Mic, 16_000), Some(1.0));
         assert_eq!(segments.frame_to_sec(Channel::System, 16_000), Some(1.0));
@@ -471,7 +436,7 @@ mod tests {
              "something_rune_added_later":{"nested":true}}]}"#;
 
         let segments: Segments = serde_json::from_str(body).unwrap();
-        assert_eq!(segments.version, Some(99));
+        assert_eq!(segments.version, 99);
         assert_eq!(segments.frame_to_sec(Channel::Mic, 16_000), Some(1.0));
     }
 }
