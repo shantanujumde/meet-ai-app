@@ -12,6 +12,7 @@ mod commands;
 mod config;
 mod engine;
 mod error;
+mod folder_move;
 mod live_transcript;
 mod meetings;
 mod onboarding;
@@ -75,6 +76,7 @@ pub fn run() {
         .manage(recording::Recorder::default())
         .manage(live_transcript::LiveTranscript::default())
         .manage(engine::Downloads::default())
+        .manage(folder_move::FolderGate::default())
         .setup(|_app| {
             // TUR-97: before the record shortcut exists, so nothing can be
             // mid-recording while this rewrites a header. Fast — two 44-byte
@@ -183,8 +185,9 @@ pub(crate) fn spawn_toggle(app: &tauri::AppHandle, source: &'static str) {
     if let Err(error) = std::thread::Builder::new()
         .name("meet-ai-record-toggle".to_string())
         .spawn(move || {
-            let recorder = app.state::<recording::Recorder>();
-            match recorder.toggle(&app) {
+            // Through the gate, so a toggle cannot start a recording under the
+            // old root while the meetings folder is moving.
+            match folder_move::toggle_recording(&app) {
                 Ok(status) => tracing::info!(source, phase = ?status.phase, "recording toggled"),
                 Err(error) => {
                     // The window may be closed or unfocused — that is the whole

@@ -63,6 +63,11 @@ pub fn find(id: &str) -> Option<&'static ModelSpec> {
     MODELS.iter().find(|model| model.id == id)
 }
 
+/// The variable both this crate and the app read to point meet-ai at a
+/// different meetings root — a fixture folder in development, most often. An
+/// empty value means unset, in both places.
+pub const MEETINGS_ROOT_ENV: &str = "MEET_AI_MEETINGS_ROOT";
+
 /// Where models live: `<meetings root>/.app/models/` (SPEC §3.1).
 ///
 /// The root is an argument because it is not always `~/Meetings`: the user can
@@ -93,10 +98,6 @@ pub fn default_model_dir() -> Result<PathBuf, Error> {
     let root = fallback_meetings_root(std::env::var_os(MEETINGS_ROOT_ENV), dirs::home_dir())?;
     Ok(model_dir(&root))
 }
-
-/// The variable both this crate and the app read to point meet-ai at a
-/// different meetings root — a fixture folder in development, most often.
-pub const MEETINGS_ROOT_ENV: &str = "MEET_AI_MEETINGS_ROOT";
 
 /// The fallback root, with its two inputs passed in so the precedence can be
 /// tested without mutating the process environment under parallel tests.
@@ -153,7 +154,7 @@ mod tests {
     #[test]
     fn the_model_directory_is_under_whatever_root_it_is_given() {
         // A root the user picked in Settings, nowhere near `~/Meetings`. The
-        // models must follow it, or `change_root` strands them (Phase 1 bug 3).
+        // models must follow it, or `change_root` strands them (SPEC §3.1).
         let root = Path::new("/Volumes/Archive/Work meetings");
         assert_eq!(
             model_dir(root),
