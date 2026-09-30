@@ -70,6 +70,18 @@ pub const STATUS_EVENT: &str = "transcript://status";
 /// and short enough that a wedged engine costs the user a pause, not a hang.
 pub const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long a guess may sit on screen, in the track's own audio, with the
+/// engine neither updating, settling nor withdrawing it.
+///
+/// Apple's model guesses at room tone (one "I", measured on
+/// `room-tone-30s.wav`) and then says nothing until the stream ends, which
+/// would leave a phantom "still speaking" line up for a whole quiet stretch —
+/// the live form of the hallucination TUR-67 guards against. Longer than the
+/// ~4 s Apple takes to settle a real utterance after it ends (TUR-31), so a
+/// genuine guess is replaced by its final line, not withdrawn first; and if
+/// one ever is, the final still lands, because a final always appends.
+const STALE_GUESS: Duration = Duration::from_secs(6);
+
 /// How often a feeding thread looks up from an empty queue to see whether the
 /// recording has stopped.
 const FEED_POLL: Duration = Duration::from_millis(100);
@@ -426,6 +438,55 @@ impl Scope {
         }
     }
 
+    /// Withdraw a guess its engine has left unchanged for [`STALE_GUESS`] of
+    /// this track's audio.
+    ///
+    /// `guess` is this track's memory of which guess it has been watching
+    /// and how far into the audio it first saw it. The check and the
+    /// withdrawal happen under one lock, so a guess the engine replaces in
+    /// the meantime is never the one taken down.
+    fn expire_stale_guess(
+        &self,
+        speaker: Speaker,
+        fed: u64,
+        guess: &mut Option<(u64, u64)>,
+        seq: &SeqCounter,
+    ) {
+        let stale_after = STALE_GUESS.as_secs() * u64::from(stt::vad::SAMPLE_RATE);
+        let dropped = self.with_board(|board| {
+            let showing = board.lines.tail(speaker).as_ref().map(|line| line.seq);
+            match (showing, *guess) {
+                (None, _) => {
+                    *guess = None;
+                    None
+                }
+                (Some(now), Some((watched, since))) if now == watched => {
+                    if fed.saturating_sub(since) < stale_after {
+                        return None;
+                    }
+                    let update = LiveUpdate::Dropped {
+                        speaker,
+                        seq: seq.next(),
+                    };
+                    board.lines.apply(&update);
+                    *guess = None;
+                    Some(update)
+                }
+                (Some(now), _) => {
+                    *guess = Some((now, fed));
+                    None
+                }
+            }
+        });
+        if let Some(Some(update)) = dropped {
+            tracing::debug!(
+                speaker = speaker.label(),
+                "withdrew a guess the engine never settled"
+            );
+            self.notify.update(&update);
+        }
+    }
+
     fn is_settled(&self) -> bool {
         self.with_board(|board| matches!(board.status.state, State::Stopped | State::Failed))
             .unwrap_or(true)
@@ -545,9 +606,20 @@ fn supervise(
             let spawned = std::thread::Builder::new()
                 .name(format!("meet-ai-live-{}", speaker.label().to_lowercase()))
                 .spawn({
-                    let (scope, stopping, abort) =
-                        (scope.clone(), Arc::clone(stopping), Arc::clone(&abort));
-                    move || feed_track(speaker, session, &feed, &stopping, &abort, &scope)
+                    let (scope, stopping, abort, seq) = (
+                        scope.clone(),
+                        Arc::clone(stopping),
+                        Arc::clone(&abort),
+                        seq.clone(),
+                    );
+                    move || {
+                        let track = Track {
+                            speaker,
+                            feed: &feed,
+                            seq: &seq,
+                        };
+                        feed_track(track, session, &stopping, &abort, &scope)
+                    }
                 });
             match spawned {
                 Ok(handle) => Some(handle),
@@ -574,6 +646,30 @@ fn supervise(
     scope.settle();
 }
 
+/// One captured track, as its feeding thread sees it.
+struct Track<'a> {
+    speaker: Speaker,
+    feed: &'a TeeFeed,
+    /// The meeting's counter, for the `Dropped` a stale guess is cleared with.
+    seq: &'a SeqCounter,
+}
+
+/// Run engine code, turning a panic into an error. A bug in an engine is
+/// still only a transcription failure, and it has to be reported while the
+/// meeting is on — not discovered when Stop joins a dead thread.
+fn guarded<T>(work: impl FnOnce() -> Result<T, stt::Error>) -> Result<T, stt::Error> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|payload| {
+        let what = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown error".to_string());
+        Err(stt::Error::Engine(format!(
+            "the speech engine crashed ({what})"
+        )))
+    })
+}
+
 /// Feed one track's audio into its session until the recording stops or the
 /// meeting's transcription is aborted, then finish the session.
 ///
@@ -581,24 +677,28 @@ fn supervise(
 /// needs — whisper's inference, or the Apple sidecar's pipe filling up — and
 /// that wait must never reach capture. The tee queue absorbs it instead.
 fn feed_track(
-    speaker: Speaker,
+    track: Track<'_>,
     mut session: Box<dyn SttSession>,
-    feed: &TeeFeed,
     stopping: &AtomicBool,
     abort: &AtomicBool,
     scope: &Scope,
 ) {
+    let Track { speaker, feed, seq } = track;
     let mut failure = None;
+    let mut fed: u64 = 0;
+    let mut guess: Option<(u64, u64)> = None;
     loop {
         if abort.load(Ordering::Acquire) {
             break;
         }
         match feed.recv_timeout(FEED_POLL) {
             Ok(samples) => {
-                if let Err(error) = session.feed(&samples) {
+                fed += samples.len() as u64;
+                if let Err(error) = guarded(|| session.feed(&samples)) {
                     failure = Some(error);
                     break;
                 }
+                scope.expire_stale_guess(speaker, fed, &mut guess, seq);
             }
             // `stopping` is only set once the recording has fully stopped, so
             // an empty queue now means there is nothing left to come.
@@ -626,7 +726,7 @@ fn feed_track(
         ));
     }
 
-    match session.finish() {
+    match guarded(|| session.finish()) {
         Ok(outcome) => tracing::info!(
             speaker = speaker.label(),
             engine = outcome.engine,
@@ -795,7 +895,7 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone)]
     enum Mode {
         /// A guess, then a settled line, for every chunk fed.
         Echo,
@@ -803,6 +903,35 @@ mod tests {
         FailOnFeed(usize),
         /// As `Echo`, but `finish` never comes back in any useful time.
         WedgeOnFinish,
+        /// As `Echo`, but the given feed call (1-based) panics — a bug in an
+        /// engine, which is still only a transcription failure.
+        PanicOnFeed(usize),
+        /// As `Echo`, but opening this speaker's session fails.
+        FailSessionFor(Speaker),
+        /// As `Echo`, but the first feed blocks until the gate opens, and
+        /// then settles a line — an engine that comes back far too late.
+        WedgeOnFeed(Gate),
+        /// One guess on the first feed, then nothing ever again: Apple's
+        /// model guessing at room tone and never taking it back.
+        GuessOnce,
+    }
+
+    /// A latch a test opens to let a wedged fake engine carry on.
+    #[derive(Clone, Default)]
+    struct Gate(Arc<(Mutex<bool>, std::sync::Condvar)>);
+
+    impl Gate {
+        fn open(&self) {
+            *self.0.0.lock().unwrap() = true;
+            self.0.1.notify_all();
+        }
+
+        fn wait(&self) {
+            let mut open = self.0.0.lock().unwrap();
+            while !*open {
+                open = self.0.1.wait(open).unwrap();
+            }
+        }
     }
 
     /// A deterministic engine: no model, no sidecar, no audio analysis. The
@@ -834,6 +963,11 @@ mod tests {
             sink: Box<dyn TranscriptSink + Send>,
             listener: Box<dyn stt::LiveListener>,
         ) -> Result<Box<dyn SttSession>, stt::Error> {
+            if let Mode::FailSessionFor(speaker) = self.0
+                && speaker == options.speaker
+            {
+                return Err(stt::Error::Engine("no session for this track".into()));
+            }
             // Uncapped, so the test never depends on how fast it ran.
             let options = options.with_volatile_per_sec(f64::INFINITY);
             Ok(Box::new(FakeSession {
@@ -841,7 +975,7 @@ mod tests {
                 emitter: LiveEmitter::new(&options, listener),
                 sink,
                 fed: 0,
-                mode: self.0,
+                mode: self.0.clone(),
             }))
         }
     }
@@ -861,10 +995,19 @@ mod tests {
 
         fn feed(&mut self, _samples: &[i16]) -> Result<(), stt::Error> {
             self.fed += 1;
-            if let Mode::FailOnFeed(n) = self.mode
-                && n == self.fed
-            {
-                return Err(stt::Error::Engine("the fake engine fell over".into()));
+            match &self.mode {
+                Mode::FailOnFeed(n) if *n == self.fed => {
+                    return Err(stt::Error::Engine("the fake engine fell over".into()));
+                }
+                Mode::PanicOnFeed(n) if *n == self.fed => panic!("the fake engine has a bug"),
+                Mode::WedgeOnFeed(gate) if self.fed == 1 => gate.wait(),
+                Mode::GuessOnce => {
+                    if self.fed == 1 {
+                        self.emitter.volatile(0.0, "I");
+                    }
+                    return Ok(());
+                }
+                _ => {}
             }
             let at = self.fed as f64;
             self.emitter.volatile(at, "hearing something");
@@ -879,7 +1022,7 @@ mod tests {
         }
 
         fn finish(mut self: Box<Self>) -> Result<SessionOutcome, stt::Error> {
-            if let Mode::WedgeOnFinish = self.mode {
+            if let Mode::WedgeOnFinish = &self.mode {
                 std::thread::sleep(Duration::from_secs(30));
             }
             let discarded_volatile = self.emitter.withdraw();
@@ -1170,4 +1313,421 @@ mod tests {
         );
         assert_eq!(notify.last_status().detail.as_deref(), Some("first"));
     }
+
+    // --- adversarial ------------------------------------------------------
+
+    /// One chunk of audio. The fake engine settles one line per chunk, so
+    /// the content never matters, only the count.
+    fn chunk() -> Vec<i16> {
+        vec![1; 160]
+    }
+
+    fn final_texts(live: &LiveTranscript) -> Vec<String> {
+        live.snapshot()
+            .finals
+            .into_iter()
+            .map(|line| line.text)
+            .collect()
+    }
+
+    fn finals_of(updates: &[LiveUpdate]) -> impl Iterator<Item = u64> + '_ {
+        updates.iter().filter_map(|update| match update {
+            LiveUpdate::Final(line) => Some(line.seq),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn an_engine_that_panics_mid_meeting_is_reported_while_the_meeting_is_still_on() {
+        let path = temp_transcript("panic");
+        let live = LiveTranscript::default();
+        let notify = Arc::new(CollectingNotify::default());
+        let (mic_tee, mic_feed) = audio::tee::tee();
+        let (sys_tee, sys_feed) = audio::tee::tee();
+
+        let transcription = live.start(
+            notify.clone(),
+            path.clone(),
+            vec![(Speaker::You, mic_feed), (Speaker::Others, sys_feed)],
+            fake(Mode::PanicOnFeed(2)),
+        );
+        mic_tee.offer(&chunk());
+        wait_for("the first line", || !live.snapshot().finals.is_empty());
+        mic_tee.offer(&chunk()); // the one that panics
+
+        // The window has to hear about it now, not at Stop: the user is
+        // still in the meeting, looking at a pane that has gone quiet.
+        wait_for("the panic to be reported", || {
+            live.snapshot().status.state == State::Failed
+        });
+        let detail = live.snapshot().status.detail.unwrap();
+        assert!(detail.contains("your microphone"), "{detail}");
+        assert!(detail.contains("crashed"), "{detail}");
+        assert!(detail.contains("Recording continues"), "{detail}");
+
+        sys_tee.offer(&chunk());
+        drop((mic_tee, sys_tee));
+        assert_eq!(transcription.finish(STOP_TIMEOUT).state, State::Failed);
+        assert!(read(&path).contains("You: You line 1."));
+        assert!(
+            live.snapshot().volatile.is_empty(),
+            "the crashed track's guess was still withdrawn"
+        );
+    }
+
+    #[test]
+    fn a_track_whose_session_will_not_open_fails_without_leaving_the_other_running() {
+        let path = temp_transcript("no-session");
+        let live = LiveTranscript::default();
+        let notify = Arc::new(CollectingNotify::default());
+        let (mic_tee, mic_feed) = audio::tee::tee();
+        let (sys_tee, sys_feed) = audio::tee::tee();
+
+        let transcription = live.start(
+            notify.clone(),
+            path.clone(),
+            vec![(Speaker::You, mic_feed), (Speaker::Others, sys_feed)],
+            fake(Mode::FailSessionFor(Speaker::Others)),
+        );
+        wait_for("the failure", || {
+            live.snapshot().status.state == State::Failed
+        });
+        let status = live.snapshot().status;
+        assert!(
+            status
+                .detail
+                .as_deref()
+                .unwrap()
+                .contains("the other people on the call"),
+            "{status:?}"
+        );
+        assert_eq!(status.engine.as_deref(), Some("fake"));
+
+        // Capture carries on into tees nobody reads.
+        for _ in 0..(audio::tee::DEFAULT_CAPACITY_CHUNKS + 10) {
+            mic_tee.offer(&chunk());
+            sys_tee.offer(&chunk());
+        }
+        drop((mic_tee, sys_tee));
+        assert_eq!(transcription.finish(STOP_TIMEOUT).state, State::Failed);
+        assert_eq!(read(&path), "");
+        assert!(
+            !notify.states().contains(&State::Running),
+            "never claimed to be transcribing"
+        );
+    }
+
+    #[test]
+    fn a_microphone_only_meeting_transcribes_the_microphone() {
+        let path = temp_transcript("mic-only");
+        let live = LiveTranscript::default();
+        let notify = Arc::new(CollectingNotify::default());
+        let (mic_tee, mic_feed) = audio::tee::tee();
+
+        let transcription = live.start(
+            notify.clone(),
+            path.clone(),
+            vec![(Speaker::You, mic_feed)],
+            fake(Mode::Echo),
+        );
+        mic_tee.offer(&chunk());
+        mic_tee.offer(&chunk());
+        drop(mic_tee);
+        assert_eq!(transcription.finish(STOP_TIMEOUT).state, State::Stopped);
+        assert_eq!(
+            read(&path),
+            "[00:00:01] You: You line 1.\n[00:00:02] You: You line 2.\n"
+        );
+    }
+
+    #[test]
+    fn stop_before_the_engine_has_loaded_still_transcribes_what_was_recorded() {
+        let path = temp_transcript("slow-load");
+        let live = LiveTranscript::default();
+        let notify = Arc::new(CollectingNotify::default());
+        let (mic_tee, mic_feed) = audio::tee::tee();
+
+        // A model that takes a while to load; the whole meeting is over
+        // before it has.
+        let transcription = live.start(
+            notify.clone(),
+            path.clone(),
+            vec![(Speaker::You, mic_feed)],
+            Box::new(|| {
+                std::thread::sleep(Duration::from_millis(300));
+                Ok(Box::new(FakeEngine(Mode::Echo)) as Box<dyn SttEngine>)
+            }),
+        );
+        for _ in 0..3 {
+            mic_tee.offer(&chunk());
+        }
+        drop(mic_tee);
+        assert_eq!(live.snapshot().status.state, State::Idle, "still loading");
+
+        let status = transcription.finish(STOP_TIMEOUT);
+        assert_eq!(status.state, State::Stopped);
+        assert_eq!(
+            read(&path).lines().count(),
+            3,
+            "the tee held the audio until the engine was ready"
+        );
+        assert_eq!(
+            notify.states(),
+            [State::Idle, State::Running, State::Stopped]
+        );
+    }
+
+    #[test]
+    fn an_engine_that_comes_back_after_stop_gave_up_cannot_reach_the_next_meeting() {
+        let first_path = temp_transcript("late-first");
+        let live = LiveTranscript::default();
+        let notify = Arc::new(CollectingNotify::default());
+        let gate = Gate::default();
+        let (mic_tee, mic_feed) = audio::tee::tee();
+
+        let first = live.start(
+            notify.clone(),
+            first_path.clone(),
+            vec![(Speaker::You, mic_feed)],
+            fake(Mode::WedgeOnFeed(gate.clone())),
+        );
+        mic_tee.offer(&chunk());
+        drop(mic_tee);
+        assert_eq!(
+            first.finish(Duration::from_millis(200)).state,
+            State::Failed
+        );
+
+        // The next meeting is running when the first one's engine wakes up.
+        let second_path = temp_transcript("late-second");
+        let (mic_tee, mic_feed) = audio::tee::tee();
+        let second = live.start(
+            notify.clone(),
+            second_path.clone(),
+            vec![(Speaker::You, mic_feed)],
+            fake(Mode::Echo),
+        );
+        mic_tee.offer(&chunk());
+        wait_for("the second meeting's line", || {
+            live.snapshot().finals.len() == 1
+        });
+        let updates_before = notify.updates.lock().unwrap().len();
+
+        gate.open();
+        // Give the woken engine every chance to misbehave.
+        std::thread::sleep(Duration::from_millis(300));
+
+        assert_eq!(final_texts(&live), ["You line 1."]);
+        assert_eq!(
+            notify.updates.lock().unwrap().len(),
+            updates_before,
+            "the first meeting's late line was never sent to the window"
+        );
+        assert_eq!(live.snapshot().status.state, State::Running);
+        assert_eq!(read(&second_path), "[00:00:01] You: You line 1.\n");
+
+        drop(mic_tee);
+        assert_eq!(second.finish(STOP_TIMEOUT).state, State::Stopped);
+    }
+
+    #[test]
+    fn rapid_start_stop_cycles_keep_every_meeting_to_itself() {
+        let live = LiveTranscript::default();
+        for round in 0..25 {
+            let path = temp_transcript(&format!("rapid-{round}"));
+            let notify = Arc::new(CollectingNotify::default());
+            let (mic_tee, mic_feed) = audio::tee::tee();
+            let (sys_tee, sys_feed) = audio::tee::tee();
+            let transcription = live.start(
+                notify.clone(),
+                path.clone(),
+                vec![(Speaker::You, mic_feed), (Speaker::Others, sys_feed)],
+                fake(Mode::Echo),
+            );
+            assert!(
+                live.snapshot().finals.is_empty(),
+                "round {round} starts clean"
+            );
+            // Some rounds stop before any audio, some with a little.
+            for _ in 0..(round % 3) {
+                mic_tee.offer(&chunk());
+                sys_tee.offer(&chunk());
+            }
+            drop((mic_tee, sys_tee));
+            let status = transcription.finish(STOP_TIMEOUT);
+            assert_eq!(status.state, State::Stopped, "round {round}");
+            let expected = 2 * (round % 3);
+            assert_eq!(live.snapshot().finals.len(), expected, "round {round}");
+            assert_eq!(read(&path).lines().count(), expected, "round {round}");
+            let seqs: Vec<u64> = live.snapshot().finals.iter().map(|l| l.seq).collect();
+            assert!(
+                seqs.iter().all(|&seq| seq < 20),
+                "seq restarts with each meeting: {seqs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_snapshot_taken_mid_stream_plus_the_events_after_it_is_every_line_once() {
+        let path = temp_transcript("snapshot-race");
+        let live = LiveTranscript::default();
+        let notify = Arc::new(CollectingNotify::default());
+        let (mic_tee, mic_feed) = audio::tee::tee();
+        let (sys_tee, sys_feed) = audio::tee::tee();
+        let transcription = live.start(
+            notify.clone(),
+            path.clone(),
+            vec![(Speaker::You, mic_feed), (Speaker::Others, sys_feed)],
+            fake(Mode::Echo),
+        );
+
+        let producer = std::thread::spawn(move || {
+            for _ in 0..400 {
+                mic_tee.offer(&chunk());
+                sys_tee.offer(&chunk());
+                std::thread::yield_now();
+            }
+        });
+        // A window opening at an arbitrary moment: it subscribes (so every
+        // event from `from` on reaches it), then asks for the snapshot.
+        let mut windows = Vec::new();
+        while !producer.is_finished() {
+            let from = notify.updates.lock().unwrap().len();
+            windows.push((from, live.snapshot()));
+        }
+        producer.join().unwrap();
+        assert_eq!(transcription.finish(STOP_TIMEOUT).state, State::Stopped);
+
+        let updates = notify.updates.lock().unwrap().clone();
+        let every: std::collections::BTreeSet<u64> = finals_of(&updates).collect();
+        assert_eq!(every.len(), 800);
+        assert!(windows.len() > 1, "the race was actually exercised");
+        for (from, snapshot) in windows {
+            let mut seen: std::collections::BTreeSet<u64> =
+                snapshot.finals.iter().map(|line| line.seq).collect();
+            seen.extend(finals_of(&updates[from..]));
+            assert_eq!(
+                seen, every,
+                "a window that opened at event {from} missed lines"
+            );
+        }
+        assert_eq!(read(&path).lines().count(), 800);
+    }
+
+    #[test]
+    fn a_long_meeting_keeps_every_line_and_nothing_else() {
+        // A few hours' worth of lines. The board grows by lines, never by
+        // audio, and the pane and the file end up agreeing on all of them.
+        let path = temp_transcript("long");
+        let live = LiveTranscript::default();
+        let notify = Arc::new(CollectingNotify::default());
+        let (mic_tee, mic_feed) = audio::tee::tee();
+        let transcription = live.start(
+            notify.clone(),
+            path.clone(),
+            vec![(Speaker::You, mic_feed)],
+            fake(Mode::Echo),
+        );
+        for offered in 0..3000 {
+            // Paced to the consumer so the tee never has to drop (that path
+            // has its own tests); three updates per chunk from `Echo`.
+            while offered > notify.updates.lock().unwrap().len() / 3 + 500 {
+                std::thread::yield_now();
+            }
+            mic_tee.offer(&chunk());
+        }
+        drop(mic_tee);
+        assert_eq!(transcription.finish(STOP_TIMEOUT).state, State::Stopped);
+        let snapshot = live.snapshot();
+        assert!(snapshot.volatile.is_empty());
+        assert_eq!(snapshot.finals.len(), 3000);
+        assert_eq!(read(&path).lines().count(), 3000);
+    }
+
+    #[test]
+    fn a_guess_that_is_never_settled_or_withdrawn_does_not_stay_on_screen() {
+        // Apple's model does this over room tone: one "I", then nothing. It
+        // must not sit in the pane as someone "still speaking" for the rest
+        // of a quiet stretch — the live form of the hallucination bug.
+        let path = temp_transcript("stale-guess");
+        let live = LiveTranscript::default();
+        let notify = Arc::new(CollectingNotify::default());
+        let (mic_tee, mic_feed) = audio::tee::tee();
+        let transcription = live.start(
+            notify.clone(),
+            path.clone(),
+            vec![(Speaker::You, mic_feed)],
+            fake(Mode::GuessOnce),
+        );
+        let second = vec![0; 16_000];
+        mic_tee.offer(&second);
+        wait_for("the guess", || !live.snapshot().volatile.is_empty());
+
+        // Still up a few seconds of audio later: a guess may be a guess.
+        for _ in 0..3 {
+            mic_tee.offer(&second);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            !live.snapshot().volatile.is_empty(),
+            "withdrawn too eagerly"
+        );
+
+        for _ in 0..STALE_GUESS.as_secs() {
+            mic_tee.offer(&second);
+        }
+        wait_for("the stale guess to be withdrawn", || {
+            live.snapshot().volatile.is_empty()
+        });
+        let updates = notify.updates.lock().unwrap().clone();
+        assert!(
+            matches!(
+                updates.last(),
+                Some(LiveUpdate::Dropped {
+                    speaker: Speaker::You,
+                    ..
+                })
+            ),
+            "the window was told to clear it: {updates:?}"
+        );
+        let seqs: Vec<u64> = updates.iter().map(LiveUpdate::seq).collect();
+        assert!(seqs.windows(2).all(|w| w[0] < w[1]), "{seqs:?}");
+
+        drop(mic_tee);
+        assert_eq!(transcription.finish(STOP_TIMEOUT).state, State::Stopped);
+        assert_eq!(read(&path), "", "a guess never reaches the file");
+    }
+
+    #[test]
+    fn a_guess_the_engine_keeps_updating_is_never_withdrawn() {
+        // A long monologue: the guess changes with every chunk, so however
+        // long it runs it is live, not stale.
+        let path = temp_transcript("fresh-guess");
+        let live = LiveTranscript::default();
+        let notify = Arc::new(CollectingNotify::default());
+        let (mic_tee, mic_feed) = audio::tee::tee();
+        let transcription = live.start(
+            notify.clone(),
+            path.clone(),
+            vec![(Speaker::You, mic_feed)],
+            fake(Mode::Echo),
+        );
+        for _ in 0..(STALE_GUESS.as_secs() * 3) {
+            mic_tee.offer(&vec![0; 16_000]);
+        }
+        drop(mic_tee);
+        assert_eq!(transcription.finish(STOP_TIMEOUT).state, State::Stopped);
+        let dropped = notify
+            .updates
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|u| matches!(u, LiveUpdate::Dropped { .. }))
+            .count();
+        assert_eq!(dropped, 1, "only the one `finish` sends");
+    }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "live_transcript_e2e.rs"]
+mod e2e;

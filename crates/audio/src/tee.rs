@@ -237,6 +237,93 @@ mod tests {
         tee.offer_silence(100);
     }
 
+    /// Overflow, as a property. A source numbers every sample it writes
+    /// (never zero), offers chunks of varying size into a small queue, and
+    /// the reader drains at random moments. However the two interleave:
+    ///
+    /// * every sample the reader sees is either the WAV's sample at that
+    ///   exact index, or a zero standing in for one that was dropped — the
+    ///   timeline never slides;
+    /// * the reader's count plus what is still owed is exactly the WAV's
+    ///   count;
+    /// * `dropped_frames` counts each dropped sample once.
+    #[test]
+    fn under_any_overflow_the_tee_timeline_matches_the_wav_sample_for_sample() {
+        // xorshift: deterministic, and no dev-dependency for one test.
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = move |below: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % below
+        };
+
+        for round in 0..200 {
+            let (tee, feed) = tee_with_capacity(1 + next(4) as usize);
+            let mut wav: Vec<i16> = Vec::new();
+            let mut heard: Vec<i16> = Vec::new();
+
+            for _ in 0..(20 + next(80)) {
+                if next(5) == 0 {
+                    let pad = next(50);
+                    tee.offer_silence(pad);
+                    wav.extend(std::iter::repeat_n(0, pad as usize));
+                } else {
+                    let len = 1 + next(40) as usize;
+                    let chunk: Vec<i16> = (0..len)
+                        .map(|i| ((wav.len() + i) % 30_000 + 1) as i16)
+                        .collect();
+                    tee.offer(&chunk);
+                    wav.extend_from_slice(&chunk);
+                }
+                // The reader falls behind and catches up in bursts.
+                if next(3) == 0 {
+                    for _ in 0..next(4) {
+                        match feed.try_recv() {
+                            Ok(chunk) => heard.extend(chunk),
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+            let owed = tee.owed.load(Ordering::Acquire);
+            drop(tee);
+            while let Ok(chunk) = feed.try_recv() {
+                heard.extend(chunk);
+            }
+
+            assert_eq!(
+                heard.len() as u64 + owed,
+                wav.len() as u64,
+                "round {round}: the tee and the WAV disagree on length"
+            );
+            let mut real_in_place = 0u64;
+            for (index, (&got, &want)) in heard.iter().zip(&wav).enumerate() {
+                if got == want {
+                    real_in_place += u64::from(want != 0);
+                } else {
+                    assert_eq!(
+                        got, 0,
+                        "round {round}: sample {index} slid (got {got}, WAV has {want})"
+                    );
+                }
+            }
+            // Every real sample that did not arrive in place was dropped, and
+            // nothing that did arrive in place was. (A dropped pad is zeros
+            // either way, which is why these are bounds, not one count.)
+            let wav_real = wav.iter().filter(|&&s| s != 0).count() as u64;
+            let dropped = feed.dropped_frames();
+            assert!(
+                dropped >= wav_real - real_in_place,
+                "round {round}: a dropped sample went uncounted ({dropped})"
+            );
+            assert!(
+                dropped <= wav.len() as u64 - real_in_place,
+                "round {round}: a sample was counted as dropped twice ({dropped})"
+            );
+        }
+    }
+
     #[test]
     fn the_feed_disconnects_once_every_tee_is_dropped() {
         let (tee, feed) = tee();

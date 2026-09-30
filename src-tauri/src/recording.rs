@@ -197,10 +197,14 @@ impl Recorder {
         }
 
         let started = chrono::Local::now();
-        let id = meeting_id(started);
-        if let Err(error) = create_meeting_folder(&id) {
-            return Err(self.fail_start(app, Some(&id), error));
-        }
+        // `None` on failure: the folder that failed may be an earlier
+        // meeting's, and cleaning up must never delete that.
+        let id = match crate::meetings::root()
+            .and_then(|root| create_meeting_folder(&root, &meeting_id(started)))
+        {
+            Ok(id) => id,
+            Err(error) => return Err(self.fail_start(app, None, error)),
+        };
 
         let meeting_dir = match crate::meetings::root() {
             Ok(root) => root.join(&id),
@@ -346,8 +350,29 @@ fn meeting_id(at: chrono::DateTime<chrono::Local>) -> String {
 /// here, ahead of `RecordingSession::start`'s own (idempotent)
 /// `create_dir_all`, so folder creation stays one step even though the audio
 /// inside it is now the session's to write.
-fn create_meeting_folder(id: &str) -> Result<(), UiError> {
-    let dir = crate::meetings::root()?.join(id);
+///
+/// Returns the id actually used. Ids only resolve to the minute, so a second
+/// recording started in the same minute as the last one would land in that
+/// meeting's folder — appending to its WAVs and `transcript.md` and replacing
+/// its `segments.json`. It gets `<id>-2` (then `-3`, …) instead: still a §3.1
+/// `YYYY-MM-DD-HHMM-slug` name, just with a longer slug. `create_dir` rather
+/// than an existence check, so claiming the name is atomic.
+fn create_meeting_folder(root: &std::path::Path, base: &str) -> Result<String, UiError> {
+    std::fs::create_dir_all(root)?;
+    let mut n = 1;
+    let (id, dir) = loop {
+        let id = if n == 1 {
+            base.to_string()
+        } else {
+            format!("{base}-{n}")
+        };
+        let dir = root.join(&id);
+        match std::fs::create_dir(&dir) {
+            Ok(()) => break (id, dir),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(error) => return Err(error.into()),
+        }
+    };
     std::fs::create_dir_all(dir.join("audio"))?;
     for file in ["transcript.md", "notes.md"] {
         let path = dir.join(file);
@@ -355,7 +380,7 @@ fn create_meeting_folder(id: &str) -> Result<(), UiError> {
             std::fs::write(&path, "")?;
         }
     }
-    Ok(())
+    Ok(id)
 }
 
 #[cfg(test)]
@@ -379,6 +404,47 @@ mod tests {
         assert_eq!(date.as_deref(), Some("2026-09-01"));
         assert_eq!(time.as_deref(), Some("14:30"));
         assert_eq!(slug.as_deref(), Some("meeting"));
+    }
+
+    #[test]
+    fn a_second_recording_in_the_same_minute_gets_its_own_folder() {
+        let root = std::env::temp_dir().join(format!("meet-ai-same-minute-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let base = "2026-09-01-1430-meeting";
+
+        let first = create_meeting_folder(&root, base).unwrap();
+        assert_eq!(first, base);
+        // The first meeting has content by the time the second starts.
+        std::fs::write(
+            root.join(&first).join("transcript.md"),
+            "[00:00:04] You: Hi.\n",
+        )
+        .unwrap();
+
+        let second = create_meeting_folder(&root, base).unwrap();
+        let third = create_meeting_folder(&root, base).unwrap();
+        assert_eq!(second, "2026-09-01-1430-meeting-2");
+        assert_eq!(third, "2026-09-01-1430-meeting-3");
+
+        assert_eq!(
+            std::fs::read_to_string(root.join(&first).join("transcript.md")).unwrap(),
+            "[00:00:04] You: Hi.\n",
+            "the first meeting's transcript is untouched"
+        );
+        for id in [&second, &third] {
+            let dir = root.join(id);
+            assert!(dir.join("audio").is_dir());
+            assert_eq!(
+                std::fs::read_to_string(dir.join("transcript.md")).unwrap(),
+                ""
+            );
+            // Still a name the meeting list and TUR-99's store can read.
+            let (date, time, slug) = crate::meetings::split_folder_name(id);
+            assert_eq!(date.as_deref(), Some("2026-09-01"));
+            assert_eq!(time.as_deref(), Some("14:30"));
+            assert!(slug.unwrap().starts_with("meeting-"));
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

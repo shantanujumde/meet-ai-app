@@ -173,6 +173,31 @@ describe("LiveTranscript", () => {
     expect(screen.queryByRole("button", { name: /new lines/i })).not.toBeInTheDocument();
   });
 
+  test("scrolling back down by hand clears the button and resumes following", () => {
+    const geometry = { scrollHeight: 1000, clientHeight: 400 };
+    const one = [line(1, "you", "a")];
+    const two = [...one, line(2, "others", "b")];
+    const three = [...two, line(3, "you", "c")];
+    const { rerender } = render(<LiveTranscript live={stateWith({ finals: one })} />);
+    const scroller = screen.getByRole("log").parentElement as HTMLElement;
+    fakeGeometry(scroller, geometry);
+    scroller.scrollTop = 100;
+    fireEvent.scroll(scroller);
+
+    geometry.scrollHeight = 1100;
+    rerender(<LiveTranscript live={stateWith({ finals: two })} />);
+    expect(screen.getByRole("button", { name: /new lines below/i })).toBeInTheDocument();
+
+    scroller.scrollTop = 700; // the reader scrolls to the bottom themselves
+    fireEvent.scroll(scroller);
+    expect(screen.queryByRole("button", { name: /new lines/i })).not.toBeInTheDocument();
+
+    geometry.scrollHeight = 1200;
+    rerender(<LiveTranscript live={stateWith({ finals: three })} />);
+    expect(scroller.scrollTop).toBe(800);
+    expect(screen.queryByRole("button", { name: /new lines/i })).not.toBeInTheDocument();
+  });
+
   test("scrolled up, a guess changing is not a new line and raises no button", () => {
     const geometry = { scrollHeight: 1000, clientHeight: 400 };
     const finals = [line(1, "you", "a")];
