@@ -73,9 +73,18 @@ fmt:
 
 # The Swift speech helper (SPEC §2.6). swiftc ships with Command Line Tools;
 # full Xcode is not required.
+#
+# The second copy is for the bundle. tauri.conf.json's `externalBin` names
+# `../target/meet-stt`, and Tauri looks for that path with the target triple
+# appended, then ships it as `Contents/MacOS/meet-stt`, which is where
+# `AppleEngine::discover` looks. Without it the app has no Apple engine (TUR-5)
+# and says "the meet-stt sidecar was not found in the app bundle". tauri-build
+# checks the file exists at compile time, so a bare `cargo build -p meet-ai`
+# needs `just sidecar` first; every recipe here that builds the app runs it.
 sidecar:
     mkdir -p target
     swiftc -O sidecar/meet-stt/main.swift -o target/meet-stt
+    cp target/meet-stt "target/meet-stt-$(rustc -vV | sed -n 's/^host: //p')"
 
 dev: sidecar
     pnpm tauri dev
