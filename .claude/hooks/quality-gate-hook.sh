@@ -9,6 +9,8 @@
 #   agent_id               SubagentStop only; gives each sub-agent its own counter
 #   transcript_path        the session's JSONL transcript
 #   agent_transcript_path  SubagentStop only; the sub-agent's own transcript
+#                          (without it a SubagentStop is skipped, never checked
+#                          against the parent's transcript)
 #   stop_hook_active       true when this stop comes right after a hook blocked
 #   cwd                    where the session runs; used to find the repo root
 #
@@ -22,7 +24,10 @@
 # lives in ${TMPDIR:-/tmp}/meet-ai-quality-gate/ and resets on a pass.
 #
 # A bug in this hook must never wedge a session: every internal problem ends
-# in exit 0 with a warning. Only a real gate failure (exit 2) blocks.
+# in exit 0 with a warning. Only a real gate failure (exit 2) blocks. The gate
+# has its own time budget (QUALITY_GATE_BUDGET_SECS, default 480 s) under the
+# 600 s hook timeout; when it runs out (a cold build in a fresh worktree) the
+# run is let through and no pass is recorded.
 #
 # Env knobs: QUALITY_GATE_DISABLE=1 turns the hook off.
 # QUALITY_GATE_SKIP_TESTS=1 is passed through to the gate.
@@ -84,10 +89,16 @@ main() {
   gate="$root/scripts/quality-gate.sh"
   [ -x "$gate" ] || return 0
 
-  # Which transcript lists this run's edits.
+  # Which transcript lists this run's edits. A sub-agent is only ever checked
+  # against its own transcript: the parent's would hold the parent's files.
   t=""
-  if [ "$event" = SubagentStop ] && [ -n "$agent_transcript" ] && [ -f "$agent_transcript" ]; then
-    t=$agent_transcript
+  if [ "$event" = SubagentStop ]; then
+    if [ -n "$agent_transcript" ] && [ -f "$agent_transcript" ]; then
+      t=$agent_transcript
+    else
+      note "SubagentStop without agent_transcript_path; skipping (the parent's own Stop checks its files)"
+      return 0
+    fi
   elif [ -n "$transcript" ] && [ -f "$transcript" ]; then
     t=$transcript
   fi
@@ -99,6 +110,8 @@ main() {
   # Retry counter, one per session (and per sub-agent).
   state_dir="${TMPDIR:-/tmp}/meet-ai-quality-gate"
   mkdir -p "$state_dir" 2>/dev/null || return 0
+  # Forget counters and pass records from sessions older than a day.
+  find "$state_dir" -type f -mtime +1 -exec rm -f {} + 2>/dev/null
   key=${session:-unknown}
   if [ "$event" = SubagentStop ] && [ -n "$agent" ]; then
     key="$key.$agent"
@@ -127,10 +140,15 @@ main() {
     return 0
   fi
 
-  # Skip the run when nothing changed since the last pass (same files, same
-  # contents, same HEAD). Later turns of a long session stay fast.
+  # Skip the run when nothing changed since the last pass: same files and
+  # contents, same HEAD and diff base, same gate scripts, same knobs, same
+  # sidecar state. Later turns of a long session stay fast.
   sig=$({
     git rev-parse HEAD 2>/dev/null
+    "$root/scripts/quality-rules.sh" --print-base 2>/dev/null
+    echo "skip_tests=${QUALITY_GATE_SKIP_TESTS:-0} base=${QUALITY_BASE:-}"
+    if [ -x "${CARGO_TARGET_DIR:-target}/meet-stt" ]; then echo sidecar=1; else echo sidecar=0; fi
+    cat "$gate" "$root/scripts/quality-rules.sh" 2>/dev/null | shasum
     printf '%s\n' "$files" | while IFS= read -r f; do
       printf '%s ' "$f"
       shasum <"$f" 2>/dev/null
@@ -148,12 +166,16 @@ main() {
 $files
 EOF
 
-  "$gate" "$@" >&2
+  # Exit 3 = the gate ran out of time: neither a pass nor a failure.
+  QUALITY_GATE_INCONCLUSIVE_EXIT=3 "$gate" "$@" >&2
   rc=$?
   case $rc in
     0)
       rm -f "$counter"
       [ -n "$sig" ] && printf '%s\n' "$sig" >"$counter.pass"
+      return 0
+      ;;
+    3)
       return 0
       ;;
     2)

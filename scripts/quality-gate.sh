@@ -3,25 +3,39 @@
 # the repo rules in scripts/quality-rules.sh.
 #
 # Usage:
-#   scripts/quality-gate.sh <file>...                 check these files
+#   scripts/quality-gate.sh <file>...                 check exactly these files
 #   scripts/quality-gate.sh --from-transcript <jsonl> check the files a Claude
-#                                                     session edited
-#   scripts/quality-gate.sh                           check git's changed and
-#                                                     untracked files
+#                                                     session changed
+#   scripts/quality-gate.sh                           check everything this
+#                                                     branch changed
 #   scripts/quality-gate.sh --list [...]              print the file list, run
 #                                                     nothing
 #
-# Several agent runs share one working tree (see .claude/hooks/tree-snapshot.sh),
-# so a plain `git diff` would also pick up files other runs are editing. The
-# transcript mode reads the session's Edit / Write / MultiEdit / NotebookEdit
-# tool calls instead, so a run is only held to account for its own files.
+# Which files: a run is held to account for the files IT changed, not the
+# whole repo. The transcript mode reads the session's Edit / Write / MultiEdit
+# / NotebookEdit tool calls. Edits made through the Bash tool (sed -i, a
+# heredoc) are not in there, so when the run sits on its own branch (the
+# normal case: each run gets its own worktree, see CONTRIBUTING.md "Agent runs
+# and the working tree") the gate adds every file the branch changed since it
+# left main. On main itself only the transcript list is used, because other
+# work may be sitting in that checkout.
 #
-# Exit codes: 0 pass, 2 fail (short report on stderr), 1 bad usage.
+# Exit codes: 0 pass (or timed out, see QUALITY_GATE_BUDGET_SECS), 2 fail
+# (short report on stderr), 1 bad usage.
 #
 # Env knobs:
-#   QUALITY_GATE_DISABLE=1     skip everything, exit 0
-#   QUALITY_GATE_SKIP_TESTS=1  run lint/format/types/rules, skip vitest and
-#                              cargo test
+#   QUALITY_GATE_DISABLE=1          skip everything, exit 0
+#   QUALITY_GATE_SKIP_TESTS=1       run lint/format/types/rules, skip vitest and
+#                                   cargo test
+#   QUALITY_GATE_BUDGET_SECS=480    time limit for all checks together; past it
+#                                   the checks are killed and the gate does not
+#                                   block (a cold worktree build can be slow)
+#   QUALITY_GATE_TRANSCRIPT_ONLY=1  do not add the branch's changed files in
+#                                   transcript mode
+#   QUALITY_GATE_INCONCLUSIVE_EXIT  exit code for "timed out" (default 0; the
+#                                   hook sets 3 so it knows not to cache a pass)
+#   QUALITY_BASE=<rev>              diff base for the rules (default: where the
+#                                   branch left main)
 #
 # Compatible with macOS /bin/bash 3.2 (no associative arrays, no mapfile).
 
@@ -39,12 +53,21 @@ cd "$root" || exit 1
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/quality-gate.XXXXXX") || exit 1
 trap 'rm -rf "$tmp"' EXIT
 
+budget=${QUALITY_GATE_BUDGET_SECS:-480}
+case $budget in '' | *[!0-9]*) budget=480 ;; esac
+inconclusive_exit=${QUALITY_GATE_INCONCLUSIVE_EXIT:-0}
+
+# One diff base for the gate and the rules.
+QUALITY_BASE=$("$root/scripts/quality-rules.sh" --print-base 2>/dev/null)
+export QUALITY_BASE
+
 # --- collect the file list -------------------------------------------------
 
 raw="$tmp/raw"
 : >"$raw"
 list_only=0
-have_source=0
+explicit=0
+transcript=0
 
 # Print the file_path of every file-editing tool call in a transcript JSONL.
 from_transcript() {
@@ -86,24 +109,42 @@ PY
   fi
 }
 
+# Files this branch changed since the diff base, plus untracked files.
+branch_files() {
+  [ -n "$QUALITY_BASE" ] && git diff --name-only "$QUALITY_BASE" -- 2>/dev/null
+  git ls-files --others --exclude-standard 2>/dev/null
+}
+
+# True when HEAD is a branch other than main/master (a run's own worktree).
+on_own_branch() {
+  local b
+  b=$(git symbolic-ref --short -q HEAD 2>/dev/null) || return 1
+  case $b in
+    '' | main | master) return 1 ;;
+  esac
+  return 0
+}
+
 while [ $# -gt 0 ]; do
   case $1 in
     --from-transcript)
       [ $# -ge 2 ] || { echo "quality-gate: --from-transcript needs a path" >&2; exit 1; }
       from_transcript "$2" >>"$raw"
-      have_source=1
+      transcript=1
       shift 2
       ;;
     --list) list_only=1; shift ;;
-    -h | --help) sed -n '2,26p' "$0"; exit 0 ;;
-    --) shift; for a in "$@"; do echo "$a" >>"$raw"; done; have_source=1; break ;;
+    -h | --help) sed -n '2,41p' "$0"; exit 0 ;;
+    --) shift; for a in "$@"; do echo "$a" >>"$raw"; done; explicit=1; break ;;
     -*) echo "quality-gate: unknown option $1" >&2; exit 1 ;;
-    *) echo "$1" >>"$raw"; have_source=1; shift ;;
+    *) echo "$1" >>"$raw"; explicit=1; shift ;;
   esac
 done
 
-if [ "$have_source" = 0 ]; then
-  { git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null; } >>"$raw"
+if [ "$explicit" = 0 ] && [ "$transcript" = 0 ]; then
+  branch_files >>"$raw"
+elif [ "$transcript" = 1 ] && [ "${QUALITY_GATE_TRANSCRIPT_ONLY:-0}" != 1 ] && on_own_branch; then
+  branch_files >>"$raw"
 fi
 
 # Keep files that still exist, sit inside this repo and are not git-ignored.
@@ -183,7 +224,40 @@ warnings="$tmp/warnings"
 : >"$warnings"
 warn() { echo "quality-gate WARN: $*" >>"$warnings"; }
 
+# --- setup that the checks depend on ---------------------------------------
+
+if [ "${#web[@]}" -gt 0 ] && [ ! -d node_modules ]; then
+  if ! pnpm install --frozen-lockfile >"$tmp/pnpm-install.log" 2>&1; then
+    warn "node_modules is missing and 'pnpm install' failed; JS checks will fail"
+  fi
+fi
+
+sidecar_ok=1
+if [ -n "$rs_pkgs" ]; then
+  needs_sidecar=0
+  for p in $rs_pkgs; do
+    case $p in stt | meet-ai) needs_sidecar=1 ;; esac
+  done
+  # crates/stt's tests drive target/meet-stt, and tauri-build refuses to build
+  # meet-ai without target/meet-stt-<triple> (both made by `just sidecar`).
+  target_dir=${CARGO_TARGET_DIR:-target}
+  if [ "$needs_sidecar" = 1 ] && [ ! -x "$target_dir/meet-stt" ]; then
+    if command -v just >/dev/null 2>&1 && command -v swiftc >/dev/null 2>&1 &&
+      just sidecar >"$tmp/sidecar.log" 2>&1; then
+      :
+    else
+      sidecar_ok=0
+      warn "target/meet-stt is missing and 'just sidecar' could not build it; skipping cargo checks that need it (stt tests, meet-ai)"
+    fi
+  fi
+fi
+
 # --- run the checks in parallel --------------------------------------------
+
+# Job control: every background job gets its own process group, so a timeout
+# can kill a job together with everything it started (cargo, rustc, vitest
+# workers) and leave no orphan holding the cargo target lock.
+set -m
 
 names=()
 pids=()
@@ -192,18 +266,10 @@ pids=()
 run() {
   local name=$1
   shift
-  ("$@") >"$tmp/$name.log" 2>&1 &
+  "$@" </dev/null >"$tmp/$name.log" 2>&1 &
   names+=("$name")
   pids+=("$!")
 }
-
-if [ "${#web[@]}" -gt 0 ] || [ "${#ts[@]}" -gt 0 ]; then
-  if [ ! -d node_modules ]; then
-    if ! pnpm install --frozen-lockfile >"$tmp/pnpm-install.log" 2>&1; then
-      warn "node_modules is missing and 'pnpm install' failed; JS checks will fail"
-    fi
-  fi
-fi
 
 if [ "${#web[@]}" -gt 0 ]; then
   run biome pnpm exec biome check --no-errors-on-unmatched --files-ignore-unknown=true "${web[@]}"
@@ -217,29 +283,10 @@ fi
 
 if [ -n "$rs_pkgs" ]; then
   pkg_args=()
-  needs_sidecar=0
-  for p in $rs_pkgs; do
-    pkg_args+=(-p "$p")
-    case $p in stt | meet-ai) needs_sidecar=1 ;; esac
-  done
-
-  # crates/stt's tests drive target/meet-stt, and tauri-build refuses to build
-  # meet-ai without target/meet-stt-<triple> (both made by `just sidecar`).
-  sidecar_ok=1
-  target_dir=${CARGO_TARGET_DIR:-target}
-  if [ "$needs_sidecar" = 1 ] && [ ! -x "$target_dir/meet-stt" ]; then
-    if command -v just >/dev/null 2>&1 && command -v swiftc >/dev/null 2>&1 &&
-      just sidecar >"$tmp/sidecar.log" 2>&1; then
-      :
-    else
-      sidecar_ok=0
-      warn "target/meet-stt is missing and 'just sidecar' could not build it; skipping cargo checks that need it (stt tests, meet-ai)"
-    fi
-  fi
-
   lint_pkgs=()
   test_args=()
   for p in $rs_pkgs; do
+    pkg_args+=(-p "$p")
     # Without the sidecar meet-ai does not build at all; stt builds but its
     # tests fail.
     [ "$sidecar_ok" = 0 ] && [ "$p" = meet-ai ] && continue
@@ -249,6 +296,8 @@ if [ -n "$rs_pkgs" ]; then
   done
 
   run cargo-fmt cargo fmt --check "${pkg_args[@]}"
+  # clippy and test share the target lock, so they queue behind each other
+  # anyway; the time budget below bounds the total.
   if [ "${#lint_pkgs[@]}" -gt 0 ]; then
     run cargo-clippy cargo clippy "${lint_pkgs[@]}" --all-targets -- -D warnings
   fi
@@ -258,6 +307,40 @@ if [ -n "$rs_pkgs" ]; then
 fi
 
 run rules "$root/scripts/quality-rules.sh" "${all[@]}"
+
+# Wait for every job, or until the budget runs out.
+timed_out=0
+while [ -n "$(jobs -rp)" ]; do
+  if [ "$SECONDS" -ge "$budget" ]; then
+    timed_out=1
+    break
+  fi
+  sleep 1
+done
+
+if [ "$timed_out" = 1 ]; then
+  still=""
+  i=0
+  # stderr is muted here so bash's "Terminated" job notices stay out of the
+  # report.
+  {
+    while [ "$i" -lt "${#pids[@]}" ]; do
+      if kill -0 "${pids[$i]}" 2>/dev/null; then
+        still="$still ${names[$i]}"
+        kill -TERM -- "-${pids[$i]}"
+      fi
+      i=$((i + 1))
+    done
+    sleep 2
+    for pid in "${pids[@]}"; do
+      kill -KILL -- "-$pid"
+    done
+    wait
+  } 2>/dev/null
+  cat "$warnings" >&2
+  echo "quality-gate WARN: gate timed out after ${budget}s (still running:$still); not blocking. Run 'just check' (or scripts/quality-gate.sh) by hand." >&2
+  exit "$inconclusive_exit"
+fi
 
 failed=()
 i=0
@@ -276,12 +359,29 @@ if [ "${#failed[@]}" -eq 0 ]; then
   exit 0
 fi
 
+# The useful part of a cargo log is the error and panic lines, which a plain
+# tail often cuts off. Show those first.
+excerpt() {
+  local log="$tmp/$1.log" key
+  case $1 in
+    cargo-*)
+      key=$(grep -E '^(error|warning)(\[|:)|panicked at|^test .* FAILED|^failures:|^---- ' "$log" | head -n 30)
+      if [ -n "$key" ]; then
+        printf '%s\n' "$key"
+        echo "... last lines:"
+      fi
+      if [ "$1" = cargo-test ]; then tail -n 80 "$log"; else tail -n 40 "$log"; fi
+      ;;
+    *) tail -n 40 "$log" ;;
+  esac
+}
+
 {
   echo "Quality gate FAILED: ${#failed[@]} check(s) failed on ${#all[@]} changed file(s): ${failed[*]}"
   for name in "${failed[@]}"; do
     echo
     echo "--- $name ---"
-    tail -n 40 "$tmp/$name.log"
+    excerpt "$name"
   done
   echo
   echo "Fix these, then finish again."
