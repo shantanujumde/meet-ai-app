@@ -13,6 +13,7 @@ import { useState } from "react";
 import { hasBackend } from "@/ipc/client";
 import { copyFor, detailsFor } from "@/ipc/errors";
 import type { UiError } from "@/ipc/types";
+import { COPIED_RESET_MS } from "@/lib/constants";
 
 /**
  * A designed empty state: what is not here, and what to do about it.
@@ -86,7 +87,7 @@ export function ErrorState({
         await navigator.clipboard.writeText(details);
       }
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
+      window.setTimeout(() => setCopied(false), COPIED_RESET_MS);
     } catch {
       // Clipboard access can be refused. The message is on screen and
       // selectable either way, so this is not worth a second error on top of

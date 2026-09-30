@@ -16,10 +16,11 @@
  *   So a failure is a notice that says exactly that, not an error screen.
  */
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import type { LiveLine, TranscriptStatus } from "@/ipc/types";
+import { formatElapsed } from "@/lib/format";
 import type { LiveTranscript as LiveState } from "@/state/transcript";
-import { formatElapsed } from "./format";
+import { SpeakerLabel } from "./SpeakerLabel";
 
 /**
  * How close to the bottom still counts as "at the bottom", in pixels. Enough
@@ -130,16 +131,19 @@ export function LiveTranscript({ live }: { live: LiveState }) {
   );
 }
 
-function LiveRow({ line, volatile }: { line: LiveLine; volatile: boolean }) {
+/**
+ * One live line. Memoised because the pane re-renders on every event — a
+ * guess is rewritten several times a second while someone talks — and each
+ * settled line keeps its object identity across those, so only the row that
+ * changed renders again.
+ */
+const LiveRow = memo(function LiveRow({ line, volatile }: { line: LiveLine; volatile: boolean }) {
   const label = line.speaker === "you" ? "You" : "Others";
   return (
     <li className="transcript__line" data-volatile={volatile || undefined}>
       <time className="transcript__time">{formatElapsed(line.start_sec * 1000)}</time>
-      {/* Same pairing as the review screen: colour plus an initial, and the
-          full label for VoiceOver. */}
-      <span className="transcript__speaker" data-speaker={label} aria-hidden="true">
-        {label === "You" ? "Y" : "O"}
-      </span>
+      {/* Same chip as the review screen, and the full label for VoiceOver. */}
+      <SpeakerLabel speaker={label} />
       <span className="transcript__text">
         <span className="sr-only">
           {label}
@@ -149,7 +153,7 @@ function LiveRow({ line, volatile }: { line: LiveLine; volatile: boolean }) {
       </span>
     </li>
   );
-}
+});
 
 function FailedNotice({ detail }: { detail: string | null }) {
   return (

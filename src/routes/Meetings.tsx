@@ -8,10 +8,12 @@
  */
 
 import { useNavigate } from "react-router";
+import { DEFAULT_ROOT_LABEL, SHORTCUT_LABEL } from "@/lib/constants";
+import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "@/lib/format";
+import { openPermissionScreen } from "@/lib/permissionRoute";
+import { meetingPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
-import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "@/ui/format";
-import { openPermissionScreen } from "@/ui/permissionRoute";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
 export function Meetings() {
@@ -50,8 +52,8 @@ export function Meetings() {
           title="No meetings yet"
           body={
             list?.rootExists
-              ? `Press ⌘⇧R — from anywhere, even with this window behind Zoom — and meet-ai starts recording. Everything it captures is written as plain markdown into ${list.root}, and nothing leaves this Mac.`
-              : `Press ⌘⇧R — from anywhere, even with this window behind Zoom — and meet-ai starts recording. It will create ${list?.root ?? "~/Meetings"} for the first one. Everything is plain markdown, and nothing leaves this Mac.`
+              ? `Press ${SHORTCUT_LABEL} — from anywhere, even with this window behind Zoom — and meet-ai starts recording. Everything it captures is written as plain markdown into ${list.root}, and nothing leaves this Mac.`
+              : `Press ${SHORTCUT_LABEL} — from anywhere, even with this window behind Zoom — and meet-ai starts recording. It will create ${list?.root ?? DEFAULT_ROOT_LABEL} for the first one. Everything is plain markdown, and nothing leaves this Mac.`
           }
           action={
             <div className="btn-row">
@@ -102,7 +104,7 @@ export function Meetings() {
               font: "inherit",
               cursor: "default",
             }}
-            onClick={() => navigate(`/meetings/${encodeURIComponent(meeting.id)}`)}
+            onClick={() => navigate(meetingPath(meeting.id))}
           >
             <span className="row__label">
               <span className="row__name">{meeting.title}</span>

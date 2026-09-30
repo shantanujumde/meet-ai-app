@@ -11,7 +11,8 @@
 
 import { NavLink, useNavigate } from "react-router";
 import type { MeetingList, MeetingSummary, RecordingStatus } from "@/ipc/types";
-import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "./format";
+import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "@/lib/format";
+import { meetingPath, SETTINGS } from "@/lib/routes";
 import { Checking } from "./states";
 
 export function Sidebar({
@@ -63,7 +64,7 @@ export function Sidebar({
                 meeting={meeting}
                 selected={meeting.id === selectedId}
                 isRecording={recording.meetingId === meeting.id}
-                onOpen={() => navigate(`/meetings/${encodeURIComponent(meeting.id)}`)}
+                onOpen={() => navigate(meetingPath(meeting.id))}
               />
             </li>
           ))}
@@ -71,7 +72,7 @@ export function Sidebar({
       )}
 
       <div className="sidebar__footer">
-        <NavLink to="/settings" className="btn btn--quiet btn--small btn--block">
+        <NavLink to={SETTINGS} className="btn btn--quiet btn--small btn--block">
           Settings
         </NavLink>
       </div>
