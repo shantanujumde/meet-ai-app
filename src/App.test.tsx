@@ -1,6 +1,13 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
-import type { MeetingDetail, MeetingList, MeetingSummary, PermissionStatus } from "@/ipc/types";
+import type {
+  MeetingDetail,
+  MeetingList,
+  MeetingSummary,
+  PermissionStatus,
+  RecordingStatus,
+} from "@/ipc/types";
+import { useRecordingStore } from "@/state/recording";
 import { App } from "./App";
 
 /**
@@ -44,15 +51,28 @@ vi.mock("@/ipc/client", () => ({
   engineSelection: vi.fn().mockResolvedValue({ engine: "apple-speech", reason: "built in" }),
   modelCatalogue: vi.fn().mockResolvedValue([]),
   downloadModel: vi.fn(),
+  liveTranscript: vi.fn().mockResolvedValue({
+    status: { state: "idle", engine: null, detail: null },
+    finals: [],
+    volatile: [],
+  }),
   onRecordingState: () => () => {},
   onRecordingError: () => () => {},
   onModelProgress: () => () => {},
+  onTranscriptUpdate: () => () => {},
+  onTranscriptStatus: () => () => {},
 }));
 
 const EMPTY_LIST: MeetingList = { root: "/Users/test/Meetings", rootExists: false, meetings: [] };
 
 beforeEach(() => {
   window.location.hash = "";
+  // The store is module state, so one test's recording must not leak into the next.
+  useRecordingStore.setState({
+    status: { phase: "idle", meetingId: null, startedAtMs: null },
+    error: null,
+    busy: false,
+  });
   listMeetings.mockResolvedValue(EMPTY_LIST);
   permissionStatus.mockResolvedValue({
     state: "unknown",
@@ -136,6 +156,89 @@ test("a meeting list that fails to load says so, verbatim, and offers a way on",
   expect(await screen.findByRole("alert")).toBeInTheDocument();
   expect(screen.getByText(/Permission denied \(os error 13\)/)).toBeInTheDocument();
   expect(screen.getByText(/does not have specific advice/i)).toBeInTheDocument();
+});
+
+// --- a recording opens its own meeting ------------------------------------
+
+/** What Rust pushes on `recording://state`, applied as the listener would. */
+function pushRecording(phase: RecordingStatus["phase"], meetingId: string | null) {
+  const status: RecordingStatus = {
+    phase,
+    meetingId,
+    startedAtMs: meetingId === null ? null : 1_790_000_000_000,
+  };
+  act(() => {
+    useRecordingStore.getState().applyFromBackend(status);
+  });
+}
+
+/** Render the app for a user who is past onboarding, and wait for it to settle. */
+async function renderFinishedApp() {
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  render(<App />);
+  await screen.findByRole("heading", { name: /no meetings yet/i });
+}
+
+const FIRST = "2026-09-30 10-00-00";
+const SECOND = "2026-09-30 11-30-00";
+const hashFor = (id: string) => `#/meetings/${encodeURIComponent(id)}`;
+
+test("starting a recording opens that meeting, so the live transcript is on screen", async () => {
+  await renderFinishedApp();
+
+  // `starting` carries no id yet, so there is nothing to open.
+  pushRecording("starting", null);
+  expect(window.location.hash).toBe("#/meetings");
+
+  pushRecording("recording", FIRST);
+  await waitFor(() => expect(window.location.hash).toBe(hashFor(FIRST)));
+});
+
+test("a user who leaves the meeting mid-recording is not pulled back to it", async () => {
+  await renderFinishedApp();
+  pushRecording("starting", null);
+  pushRecording("recording", FIRST);
+  await waitFor(() => expect(window.location.hash).toBe(hashFor(FIRST)));
+
+  act(() => {
+    window.location.hash = "#/settings";
+  });
+  await screen.findByRole("heading", { level: 1, name: "Settings" });
+
+  // Further events for the same meeting — a repeat, then the stop — leave the
+  // user where they went.
+  pushRecording("recording", FIRST);
+  pushRecording("stopping", FIRST);
+  pushRecording("idle", null);
+  expect(window.location.hash).toBe("#/settings");
+});
+
+test("a second recording opens the new meeting", async () => {
+  await renderFinishedApp();
+  pushRecording("starting", null);
+  pushRecording("recording", FIRST);
+  await waitFor(() => expect(window.location.hash).toBe(hashFor(FIRST)));
+  pushRecording("stopping", FIRST);
+  pushRecording("idle", null);
+
+  act(() => {
+    window.location.hash = "#/meetings";
+  });
+  pushRecording("starting", null);
+  pushRecording("recording", SECOND);
+  await waitFor(() => expect(window.location.hash).toBe(hashFor(SECOND)));
+});
+
+test("a recording started by the shortcut during onboarding does not pull the user out", async () => {
+  // Rust does not gate ⌘⇧R on onboarding, so this can really happen.
+  render(<App />);
+  await screen.findByRole("heading", { name: /meet-ai records your meetings/i });
+  const before = window.location.hash;
+  expect(before.startsWith("#/onboarding")).toBe(true);
+
+  pushRecording("starting", null);
+  pushRecording("recording", FIRST);
+  expect(window.location.hash).toBe(before);
 });
 
 // --- TUR-97: a recording killed mid-meeting --------------------------------

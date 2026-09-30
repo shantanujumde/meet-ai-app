@@ -9,7 +9,7 @@
  * Four routes, which is what SPEC §2.1 budgeted for.
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import { Meetings } from "@/routes/Meetings";
 import { Onboarding } from "@/routes/Onboarding";
@@ -17,6 +17,7 @@ import { Review } from "@/routes/Review";
 import { Settings } from "@/routes/Settings";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore, watchRecordingState } from "@/state/recording";
+import { watchLiveTranscript } from "@/state/transcript";
 import { Shell } from "@/ui/Shell";
 
 export function App() {
@@ -63,7 +64,14 @@ function Bootstrap() {
     // Mirrors Rust's recording state, including changes this window did not
     // cause — ⌘⇧R firing while the app is in the background, or the menu-bar
     // item being used.
-    return watchRecordingState();
+    const stopRecording = watchRecordingState();
+    // Watched here rather than from the live pane, so lines keep landing while
+    // the user is on another screen, and the pane has them when they come back.
+    const stopTranscript = watchLiveTranscript();
+    return () => {
+      stopRecording();
+      stopTranscript();
+    };
   }, [loadMeetings, loadPermission, loadOnboarding]);
 
   // Starting a recording creates the meeting folder and stopping finishes it,
@@ -77,6 +85,39 @@ function Bootstrap() {
       if (state.status.phase !== previous.status.phase) void loadMeetings();
     });
   }, [loadMeetings]);
+
+  // Refs, not effect state: `navigate` changes identity with every location
+  // change, so the effect below re-subscribes often, and the meeting already
+  // opened must survive that or leaving it would be undone on the next event.
+  const pathnameRef = useRef(location.pathname);
+  pathnameRef.current = location.pathname;
+  const openedMeetingId = useRef<string | null>(null);
+
+  // A recording that starts — from the button, the menu bar, or ⌘⇧R with the
+  // window hidden — opens its meeting, so the live transcript is on screen
+  // without the user hunting for the "● Recording" row. Once per meeting id,
+  // not per state event: a user who walks away mid-meeting stays where they
+  // went, and only the next recording's id moves them again.
+  //
+  // The id only appears once Rust reaches `recording` (it is null through
+  // `starting`), so a new id is the transition. A window opened mid-meeting
+  // sees the id for the first time too, and opening onto the running meeting
+  // is the useful answer there, so that is deliberately not special-cased.
+  //
+  // Rust does not gate ⌘⇧R on onboarding, so a recording can start during
+  // the wizard; it still counts as seen, but must not pull the user out.
+  useEffect(() => {
+    return useRecordingStore.subscribe(({ status }) => {
+      const id = status.meetingId;
+      if (status.phase === "idle" || id === null || id === openedMeetingId.current) return;
+      openedMeetingId.current = id;
+      const inOnboarding =
+        pathnameRef.current.startsWith("/onboarding") ||
+        useAppStore.getState().onboarding?.completedAt === null;
+      if (inOnboarding) return;
+      navigate(`/meetings/${encodeURIComponent(id)}`);
+    });
+  }, [navigate]);
 
   useEffect(() => {
     if (onboardingLoading || onboarding === null) return;

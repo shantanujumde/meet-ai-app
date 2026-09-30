@@ -5,8 +5,10 @@
  * source of truth and §3.4 makes it append-only, so this screen renders it and
  * never offers to edit it. The notes pane beside it is the writable half.
  *
- * The live transcript pane is not this screen. That is Phase 2b and needs the
- * streaming session API; what is here reads a finished file off disk.
+ * While this meeting is the one recording, the file-backed transcript gives way
+ * to the live pane (TUR-96): the file only has settled lines and would sit
+ * there looking stale. Once the recording ends the meeting is re-read, so what
+ * shows next is the finished `transcript.md`.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -15,7 +17,10 @@ import { readMeeting, revealMeeting } from "@/ipc/client";
 import type { MeetingDetail, TranscriptLine, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { useAppStore } from "@/state/app";
+import { useRecordingStore } from "@/state/recording";
+import { useTranscriptStore } from "@/state/transcript";
 import { describeInterruption, formatRelativeDate, INTERRUPTED_LABEL } from "@/ui/format";
+import { LiveTranscript } from "@/ui/LiveTranscript";
 import { NotesPane } from "@/ui/NotesPane";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
@@ -44,6 +49,22 @@ export function Review() {
   useEffect(() => {
     if (!id) return;
     void load(id);
+  }, [id, load]);
+
+  const recording = useRecordingStore((state) => state.status);
+  const live = useTranscriptStore((state) => state.live);
+  const isLive = id !== undefined && recording.meetingId === id && recording.phase !== "idle";
+
+  // When this meeting's recording ends, the file on disk is now the finished
+  // record — re-read it, or the screen shows whatever was there at the start.
+  // A store subscription for the same reason as in App's Bootstrap: the phase
+  // is a trigger here, not something this effect displays.
+  useEffect(() => {
+    if (!id) return;
+    return useRecordingStore.subscribe((state, previous) => {
+      const ended = previous.status.phase !== "idle" && state.status.phase === "idle";
+      if (ended && previous.status.meetingId === id) void load(id);
+    });
   }, [id, load]);
 
   if (!id) {
@@ -110,42 +131,46 @@ export function Review() {
         </div>
       </header>
 
-      <section className="section" aria-labelledby="transcript-heading">
-        <div className="section__header">
-          <h2 className="section__title" id="transcript-heading">
-            Transcript
-          </h2>
-          <p className="section__hint">Read-only — transcript.md is the record</p>
-        </div>
+      {isLive ? (
+        <LiveTranscript live={live} />
+      ) : (
+        <section className="section" aria-labelledby="transcript-heading">
+          <div className="section__header">
+            <h2 className="section__title" id="transcript-heading">
+              Transcript
+            </h2>
+            <p className="section__hint">Read-only — transcript.md is the record</p>
+          </div>
 
-        {/* SPEC §7: the UI flags a file it could only partly read rather than
-            failing, and rather than pretending it read all of it. */}
-        {unparsedLineCount > 0 ? (
-          <p className="state__detail">
-            {unparsedLineCount === 1
-              ? "1 line in this file is not in meet-ai's transcript format and is not shown below. Nothing has been changed — open the file in Finder to see it."
-              : `${unparsedLineCount} lines in this file are not in meet-ai's transcript format and are not shown below. Nothing has been changed — open the file in Finder to see them.`}
-          </p>
-        ) : null}
+          {/* SPEC §7: the UI flags a file it could only partly read rather than
+              failing, and rather than pretending it read all of it. */}
+          {unparsedLineCount > 0 ? (
+            <p className="state__detail">
+              {unparsedLineCount === 1
+                ? "1 line in this file is not in meet-ai's transcript format and is not shown below. Nothing has been changed — open the file in Finder to see it."
+                : `${unparsedLineCount} lines in this file are not in meet-ai's transcript format and are not shown below. Nothing has been changed — open the file in Finder to see them.`}
+            </p>
+          ) : null}
 
-        {transcriptMissing ? (
-          <EmptyState
-            title="There is no transcript file for this meeting"
-            body="The folder exists but transcript.md is not in it. That happens if the file was moved or deleted outside meet-ai — your notes below are unaffected."
-          />
-        ) : lines.length === 0 ? (
-          <EmptyState
-            title="Nothing was transcribed"
-            body="transcript.md is empty. Either nobody spoke, or this meeting was recorded before transcription was switched on. The audio, if it was kept, is still in the meeting folder."
-          />
-        ) : (
-          <ol className="transcript">
-            {lines.map((line) => (
-              <TranscriptRow key={line.seq} line={line} />
-            ))}
-          </ol>
-        )}
-      </section>
+          {transcriptMissing ? (
+            <EmptyState
+              title="There is no transcript file for this meeting"
+              body="The folder exists but transcript.md is not in it. That happens if the file was moved or deleted outside meet-ai — your notes below are unaffected."
+            />
+          ) : lines.length === 0 ? (
+            <EmptyState
+              title="Nothing was transcribed"
+              body="transcript.md is empty. Either nobody spoke, or this meeting was recorded before transcription was switched on. The audio, if it was kept, is still in the meeting folder."
+            />
+          ) : (
+            <ol className="transcript">
+              {lines.map((line) => (
+                <TranscriptRow key={line.seq} line={line} />
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
 
       <NotesPane
         meetingId={summary.id}

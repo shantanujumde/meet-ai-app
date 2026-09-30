@@ -17,6 +17,13 @@
 //! lock lands first wins a race and the other sees `Starting`/`Stopping` and
 //! no-ops, rather than racing a second tap open.
 //!
+//! Live transcription (TUR-96) rides alongside, never in front: the session is
+//! started with a tee per channel, and [`crate::live_transcript`] turns those
+//! into lines. It starts only once the audio is already flowing, it cannot fail
+//! a start or a stop, and on stop it is finished *after* the audio is safely
+//! closed — so the worst an engine can do is leave `transcript.md` short, which
+//! the WAVs can always put right.
+//!
 //! While a recording is live, a ticker thread ([`ticker`], TUR-97) owns the
 //! `RecordingSession` and calls its `tick()` every
 //! [`audio::session::TICK_INTERVAL`], which is what checkpoints the WAV headers
@@ -27,16 +34,18 @@
 
 mod ticker;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use audio::AudioSource;
-use audio::session::RecordingSession;
+use audio::session::{RecordingSession, Tees};
 use serde::Serialize;
+use stt::Speaker;
 use tauri::{AppHandle, Emitter as _, Manager as _};
 
 use self::ticker::Ticker;
 
 use crate::error::UiError;
+use crate::live_transcript::{self, LiveTranscript, Transcription};
 use crate::permission;
 
 /// The Tauri event the frontend subscribes to. Every transition emits one, so
@@ -104,6 +113,9 @@ impl Status {
 struct Inner {
     status: Status,
     ticker: Option<Ticker<RecordingSession>>,
+    /// The live transcript riding on the session's tees (TUR-96). Taken
+    /// together with the ticker on stop, so the two always end as a pair.
+    transcription: Option<Transcription>,
 }
 
 impl Inner {
@@ -111,6 +123,7 @@ impl Inner {
         Self {
             status: Status::idle(),
             ticker: None,
+            transcription: None,
         }
     }
 }
@@ -213,28 +226,57 @@ impl Recorder {
         }
 
         let started = chrono::Local::now();
-        let id = meeting_id(started);
-        // TUR-97: publish the id before the folder exists, so a meetings list
-        // taken mid-start (`meetings::Live`) always knows which folder is live
-        // and never mistakes it for an interrupted one. `fail_start` clears it
-        // with the rest of `Inner`.
-        self.lock().status.meeting_id = Some(id.clone());
-        if let Err(error) = create_meeting_folder(&id) {
-            return Err(self.fail_start(app, Some(&id), error));
-        }
+        // TUR-97: each candidate id is published before its folder exists, so
+        // a meetings list taken mid-start (`meetings::Live`) always knows which
+        // folder is live and never mistakes it for an interrupted one.
+        // `fail_start` clears it with the rest of `Inner`. `None` on failure:
+        // the folder that failed may be an earlier meeting's, and cleaning up
+        // must never delete that.
+        let id = match crate::meetings::root().and_then(|root| {
+            create_meeting_folder(&root, &meeting_id(started), |candidate| {
+                self.lock().status.meeting_id = Some(candidate.to_string());
+            })
+        }) {
+            Ok(id) => id,
+            Err(error) => return Err(self.fail_start(app, None, error)),
+        };
 
-        let audio_dir = match crate::meetings::root() {
-            Ok(root) => root.join(&id).join("audio"),
+        let meeting_dir = match crate::meetings::root() {
+            Ok(root) => root.join(&id),
             Err(error) => return Err(self.fail_start(app, Some(&id), error)),
         };
 
         let mic: Box<dyn AudioSource> = Box::new(audio::mic::MicSource::new());
         let sys = audio::session::default_system_source();
 
-        match RecordingSession::start(audio_dir, mic, sys) {
-            Ok(session) => self
-                .enter_recording(app, &id, started, session)
-                .map_err(|error| self.fail_start(app, Some(&id), error)),
+        // One tee per channel (TUR-31). A tee costs capture nothing if nobody
+        // ends up reading it, so they are handed out before knowing whether
+        // the speech engine will start.
+        let (mic_tee, mic_feed) = audio::tee::tee();
+        let (sys_tee, sys_feed) = audio::tee::tee();
+        let tees = Tees {
+            mic: Some(mic_tee),
+            sys: Some(sys_tee),
+        };
+
+        match RecordingSession::start_with_tees(meeting_dir.join("audio"), mic, sys, tees) {
+            Ok(session) => {
+                // Mic is `You`, system audio is `Others` (L5). A system track
+                // that never came up gets no session, rather than a sidecar
+                // idling on a feed that will never carry audio.
+                let mut tracks = vec![(Speaker::You, mic_feed)];
+                if session.status().has_system_audio {
+                    tracks.push((Speaker::Others, sys_feed));
+                }
+                let transcription = app.state::<LiveTranscript>().start(
+                    Arc::new(app.clone()),
+                    meeting_dir.join("transcript.md"),
+                    tracks,
+                    Box::new(live_transcript::open_configured_engine),
+                );
+                self.enter_recording(app, &id, started, session, transcription)
+                    .map_err(|error| self.fail_start(app, Some(&id), error))
+            }
             Err(message) => {
                 Err(self.fail_start(app, Some(&id), UiError::app("recorder-failed", message)))
             }
@@ -258,6 +300,7 @@ impl Recorder {
         id: &str,
         started: chrono::DateTime<chrono::Local>,
         session: RecordingSession,
+        transcription: Transcription,
     ) -> Result<Status, UiError> {
         let on_fail = {
             let app = app.clone();
@@ -280,6 +323,7 @@ impl Recorder {
                 inner.status.meeting_id = Some(id.to_string());
                 inner.status.started_at_ms = Some(started.timestamp_millis());
                 inner.ticker = Some(ticker);
+                inner.transcription = Some(transcription);
                 let status = inner.status.clone();
                 drop(inner);
                 if let Err(error) = app.emit(STATE_EVENT, &status) {
@@ -293,6 +337,7 @@ impl Recorder {
                 if let Err(message) = session.stop() {
                     tracing::warn!(%message, "the session behind a failed start did not stop cleanly");
                 }
+                transcription.finish(live_transcript::STOP_TIMEOUT);
                 Err(UiError::app(
                     "recorder-failed",
                     format!("could not start the recorder's checkpoint thread: {error}"),
@@ -328,13 +373,24 @@ impl Recorder {
     }
 
     pub fn stop(&self, app: &AppHandle) -> Result<Status, UiError> {
-        let ticker = match self.claim_stopping(app) {
+        let (ticker, transcription) = match self.claim_stopping(app) {
             Err(status) => return Ok(status),
-            Ok(ticker) => ticker,
+            Ok(taken) => taken,
+        };
+        // Audio first: it is the part that cannot be redone. Only once the
+        // WAVs are closed — which also means every frame is in the tees — is
+        // the transcript given its (bounded) chance to catch up. Its outcome
+        // reaches the window as a `transcript://status` event, never as an
+        // error from Stop: a short transcript is not a failed recording.
+        let finish_transcription = move || {
+            if let Some(transcription) = transcription {
+                transcription.finish(live_transcript::STOP_TIMEOUT);
+            }
         };
 
         let Some(ticker) = ticker else {
             tracing::error!("phase was Recording with no session attached; recovering to idle");
+            finish_transcription();
             return Ok(self.transition(app, |inner| *inner = Inner::idle()));
         };
 
@@ -351,16 +407,21 @@ impl Recorder {
                 // made our claim above lose. Unreachable in practice; recover
                 // rather than stick in `Stopping`.
                 tracing::error!("the recording ticker kept the session; recovering to idle");
+                finish_transcription();
                 return Ok(self.transition(app, |inner| *inner = Inner::idle()));
             }
             Err(message) => {
                 tracing::error!(%message, "the recording ticker died; the session went with it");
+                finish_transcription();
                 self.transition(app, |inner| *inner = Inner::idle());
                 return Err(UiError::app("recorder-failed", message));
             }
         };
 
-        match session.stop() {
+        let stopped = session.stop();
+        finish_transcription();
+
+        match stopped {
             Ok(_report) => Ok(self.transition(app, |inner| *inner = Inner::idle())),
             Err(message) => {
                 tracing::warn!(message = %message, "recording did not stop cleanly");
@@ -371,20 +432,25 @@ impl Recorder {
     }
 
     /// Claim `Recording -> Stopping` and take the session (inside its ticker)
-    /// with it, or report the phase that beat us to it.
-    fn claim_stopping(&self, app: &AppHandle) -> Result<Option<Ticker<RecordingSession>>, Status> {
+    /// and its transcript with it, or report the phase that beat us to it.
+    #[allow(clippy::type_complexity)]
+    fn claim_stopping(
+        &self,
+        app: &AppHandle,
+    ) -> Result<(Option<Ticker<RecordingSession>>, Option<Transcription>), Status> {
         let mut inner = self.lock();
         if inner.status.phase != Phase::Recording {
             return Err(inner.status.clone());
         }
         inner.status.phase = Phase::Stopping;
         let ticker = inner.ticker.take();
+        let transcription = inner.transcription.take();
         let status = inner.status.clone();
         drop(inner);
         if let Err(error) = app.emit(STATE_EVENT, &status) {
             tracing::warn!(%error, "could not tell the window about a recording state change");
         }
-        Ok(ticker)
+        Ok((ticker, transcription))
     }
 
     /// What a failed `tick()` means (TUR-97): the recording is over. Stop the
@@ -419,6 +485,7 @@ impl Recorder {
         session: RecordingSession,
         message: String,
     ) -> Option<RecordingSession> {
+        let transcription;
         {
             let mut inner = self.lock();
             if inner.status.phase != Phase::Recording {
@@ -433,6 +500,7 @@ impl Recorder {
             if let Some(own) = inner.ticker.take() {
                 own.detach();
             }
+            transcription = inner.transcription.take();
             let status = inner.status.clone();
             drop(inner);
             if let Err(error) = app.emit(STATE_EVENT, &status) {
@@ -451,6 +519,10 @@ impl Recorder {
                         ticker::panic_message(&*payload)
                     ))
                 });
+        // Audio first, then the transcript, as in `stop`.
+        if let Some(transcription) = transcription {
+            transcription.finish(live_transcript::STOP_TIMEOUT);
+        }
         let body = match &stopped {
             Ok(_report) => format!(
                 "The recording stopped because of an error ({message}). The audio recorded up to \
@@ -527,8 +599,38 @@ fn meeting_id(at: chrono::DateTime<chrono::Local>) -> String {
 /// here, ahead of `RecordingSession::start`'s own (idempotent)
 /// `create_dir_all`, so folder creation stays one step even though the audio
 /// inside it is now the session's to write.
-fn create_meeting_folder(id: &str) -> Result<(), UiError> {
-    let dir = crate::meetings::root()?.join(id);
+///
+/// Returns the id actually used. Ids only resolve to the minute, so a second
+/// recording started in the same minute as the last one would land in that
+/// meeting's folder — appending to its WAVs and `transcript.md` and replacing
+/// its `segments.json`. It gets `<id>-2` (then `-3`, …) instead: still a §3.1
+/// `YYYY-MM-DD-HHMM-slug` name, just with a longer slug. `create_dir` rather
+/// than an existence check, so claiming the name is atomic.
+///
+/// `announce` hears each candidate id just before its folder is created, so
+/// the recorder can publish it first (TUR-97: a folder whose id is not known
+/// yet would read as an interrupted meeting).
+fn create_meeting_folder(
+    root: &std::path::Path,
+    base: &str,
+    mut announce: impl FnMut(&str),
+) -> Result<String, UiError> {
+    std::fs::create_dir_all(root)?;
+    let mut n = 1;
+    let (id, dir) = loop {
+        let id = if n == 1 {
+            base.to_string()
+        } else {
+            format!("{base}-{n}")
+        };
+        let dir = root.join(&id);
+        announce(&id);
+        match std::fs::create_dir(&dir) {
+            Ok(()) => break (id, dir),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(error) => return Err(error.into()),
+        }
+    };
     std::fs::create_dir_all(dir.join("audio"))?;
     for file in ["transcript.md", "notes.md"] {
         let path = dir.join(file);
@@ -536,7 +638,7 @@ fn create_meeting_folder(id: &str) -> Result<(), UiError> {
             std::fs::write(&path, "")?;
         }
     }
-    Ok(())
+    Ok(id)
 }
 
 #[cfg(test)]
@@ -560,6 +662,47 @@ mod tests {
         assert_eq!(date.as_deref(), Some("2026-09-01"));
         assert_eq!(time.as_deref(), Some("14:30"));
         assert_eq!(slug.as_deref(), Some("meeting"));
+    }
+
+    #[test]
+    fn a_second_recording_in_the_same_minute_gets_its_own_folder() {
+        let root = std::env::temp_dir().join(format!("meet-ai-same-minute-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let base = "2026-09-01-1430-meeting";
+
+        let first = create_meeting_folder(&root, base, |_| {}).unwrap();
+        assert_eq!(first, base);
+        // The first meeting has content by the time the second starts.
+        std::fs::write(
+            root.join(&first).join("transcript.md"),
+            "[00:00:04] You: Hi.\n",
+        )
+        .unwrap();
+
+        let second = create_meeting_folder(&root, base, |_| {}).unwrap();
+        let third = create_meeting_folder(&root, base, |_| {}).unwrap();
+        assert_eq!(second, "2026-09-01-1430-meeting-2");
+        assert_eq!(third, "2026-09-01-1430-meeting-3");
+
+        assert_eq!(
+            std::fs::read_to_string(root.join(&first).join("transcript.md")).unwrap(),
+            "[00:00:04] You: Hi.\n",
+            "the first meeting's transcript is untouched"
+        );
+        for id in [&second, &third] {
+            let dir = root.join(id);
+            assert!(dir.join("audio").is_dir());
+            assert_eq!(
+                std::fs::read_to_string(dir.join("transcript.md")).unwrap(),
+                ""
+            );
+            // Still a name the meeting list and TUR-99's store can read.
+            let (date, time, slug) = crate::meetings::split_folder_name(id);
+            assert_eq!(date.as_deref(), Some("2026-09-01"));
+            assert_eq!(time.as_deref(), Some("14:30"));
+            assert!(slug.unwrap().starts_with("meeting-"));
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
