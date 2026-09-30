@@ -22,7 +22,7 @@ use crate::Error;
 pub struct ModelSpec {
     /// The id used in `config.jsonc` (`transcription.model`).
     pub id: &'static str,
-    /// Filename on disk, inside `~/Meetings/.app/models/`.
+    /// Filename on disk, inside [`model_dir`].
     pub filename: &'static str,
     /// Pinned download URL.
     pub url: &'static str,
@@ -63,14 +63,53 @@ pub fn find(id: &str) -> Option<&'static ModelSpec> {
     MODELS.iter().find(|model| model.id == id)
 }
 
-/// Where models live: `~/Meetings/.app/models/` (SPEC §3.1).
+/// Where models live: `<meetings root>/.app/models/` (SPEC §3.1).
+///
+/// The root is an argument because it is not always `~/Meetings`: the user can
+/// move it from Settings, and `change_root` carries `.app/` — models included —
+/// along with every meeting. A directory derived here from `~` would keep
+/// pointing at the old place after that move, so a model the user had already
+/// downloaded would read as missing and be fetched a second time into a folder
+/// the app no longer owns. The app passes its own resolved root
+/// (`meetings::root()`); only tools with no app to ask use
+/// [`default_model_dir`].
+pub fn model_dir(meetings_root: &Path) -> PathBuf {
+    meetings_root.join(".app").join("models")
+}
+
+/// [`model_dir`] under the fallback root, for callers that have no app to ask.
+///
+/// That is the `meet-stt-model` CLI, the `offline_meeting` example and the
+/// tests — nothing that runs inside the app. The fallback root is
+/// `MEET_AI_MEETINGS_ROOT` when set (the same override the app's
+/// `meetings::root()` honours first), otherwise `~/Meetings`. It cannot see a
+/// folder the user picked in Settings: that choice is recorded by the app, and
+/// reading it from here would put a second copy of the app's root rules in a
+/// crate that should not know them. Pass `--dir` to the CLI in that case.
 ///
 /// Built with `dirs` + `PathBuf::join` and no literal `~`, per the Windows seam
 /// in SPEC §8.2.
 pub fn default_model_dir() -> Result<PathBuf, Error> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| Error::Engine("could not determine the home directory".into()))?;
-    Ok(home.join("Meetings").join(".app").join("models"))
+    let root = fallback_meetings_root(std::env::var_os(MEETINGS_ROOT_ENV), dirs::home_dir())?;
+    Ok(model_dir(&root))
+}
+
+/// The variable both this crate and the app read to point meet-ai at a
+/// different meetings root — a fixture folder in development, most often.
+pub const MEETINGS_ROOT_ENV: &str = "MEET_AI_MEETINGS_ROOT";
+
+/// The fallback root, with its two inputs passed in so the precedence can be
+/// tested without mutating the process environment under parallel tests.
+fn fallback_meetings_root(
+    env_override: Option<std::ffi::OsString>,
+    home: Option<PathBuf>,
+) -> Result<PathBuf, Error> {
+    if let Some(custom) = env_override.filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(custom));
+    }
+    let home =
+        home.ok_or_else(|| Error::Engine("could not determine the home directory".into()))?;
+    Ok(home.join("Meetings"))
 }
 
 /// Is this model already present and verified?
@@ -112,8 +151,38 @@ mod tests {
     }
 
     #[test]
-    fn the_model_directory_is_under_the_meetings_root() {
+    fn the_model_directory_is_under_whatever_root_it_is_given() {
+        // A root the user picked in Settings, nowhere near `~/Meetings`. The
+        // models must follow it, or `change_root` strands them (Phase 1 bug 3).
+        let root = Path::new("/Volumes/Archive/Work meetings");
+        assert_eq!(
+            model_dir(root),
+            Path::new("/Volumes/Archive/Work meetings/.app/models")
+        );
+    }
+
+    #[test]
+    fn the_fallback_root_prefers_the_env_override_over_home() {
+        let home = Some(PathBuf::from("/Users/someone"));
+        assert_eq!(
+            fallback_meetings_root(Some("/tmp/fixture-root".into()), home.clone()).unwrap(),
+            Path::new("/tmp/fixture-root")
+        );
+        assert_eq!(
+            fallback_meetings_root(None, home.clone()).unwrap(),
+            Path::new("/Users/someone/Meetings")
+        );
+        // An empty variable is "unset", not "the current directory".
+        assert_eq!(
+            fallback_meetings_root(Some("".into()), home).unwrap(),
+            Path::new("/Users/someone/Meetings")
+        );
+        assert!(fallback_meetings_root(None, None).is_err());
+    }
+
+    #[test]
+    fn the_fallback_model_directory_is_under_a_meetings_root() {
         let dir = default_model_dir().unwrap();
-        assert!(dir.ends_with("Meetings/.app/models"), "{}", dir.display());
+        assert!(dir.ends_with(".app/models"), "{}", dir.display());
     }
 }

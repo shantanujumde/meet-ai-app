@@ -14,6 +14,7 @@
 //! whole screen, which is the mistake this split exists to prevent.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -21,6 +22,7 @@ use stt::registry::{self, Environment, Preference};
 use tauri::{AppHandle, Emitter as _};
 
 use crate::error::UiError;
+use crate::meetings;
 
 /// SPEC §3.5's defaults.
 ///
@@ -46,7 +48,8 @@ pub struct EnvironmentView {
     pub whisper_model: Option<String>,
     pub locale: String,
     pub model_id: String,
-    /// `~/Meetings/.app/models/`, so the screen can name where downloads land.
+    /// `<meetings root>/.app/models/`, so the screen can name where downloads
+    /// land.
     pub models_dir: Option<String>,
 }
 
@@ -97,12 +100,21 @@ pub struct Downloads {
 }
 
 impl Downloads {
-    /// Claim a model, or find out someone else already has it.
-    pub fn claim(&self, id: &str) -> bool {
-        self.lock().insert(id.to_string())
+    /// Claim a model, or find out someone else already has it (`None`).
+    ///
+    /// The claim is released when the returned [`Claim`] drops, not by a call
+    /// the caller has to remember. A `release` written after the `.await` never
+    /// ran if the download panicked or its future was dropped part-way, and
+    /// the model then read as "already downloading" until the app restarted —
+    /// a retry button that could never work again.
+    pub fn claim(&self, id: &str) -> Option<Claim<'_>> {
+        self.lock().insert(id.to_string()).then(|| Claim {
+            downloads: self,
+            id: id.to_string(),
+        })
     }
 
-    pub fn release(&self, id: &str) {
+    fn release(&self, id: &str) {
         self.lock().remove(id);
     }
 
@@ -113,9 +125,37 @@ impl Downloads {
     }
 }
 
+/// One model's download slot, held for as long as the download runs.
+///
+/// Dropping it frees the slot however the holder ends: success, an error, a
+/// panic unwinding through it, or the command future being dropped.
+#[must_use = "the claim is released as soon as it is dropped"]
+pub struct Claim<'a> {
+    downloads: &'a Downloads,
+    id: String,
+}
+
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        self.downloads.release(&self.id);
+    }
+}
+
+/// Where this app keeps whisper models: `.app/models` under the meetings root
+/// the user actually chose.
+///
+/// Not `stt::model::default_model_dir`, which only knows `~/Meetings`. After a
+/// move from Settings that would send the screen, the catalogue and every
+/// download back to the old folder, and a model `change_root` had carried
+/// across would read as missing.
+fn models_dir() -> Result<PathBuf, UiError> {
+    meetings::root().map(|root| stt::model::model_dir(&root))
+}
+
 /// The cheap half. Filesystem only; safe to block a route on.
 pub fn environment(locale: &str, model_id: &str) -> EnvironmentView {
-    let discovered = Environment::discover(locale, model_id);
+    let models_dir = models_dir().ok();
+    let discovered = Environment::discover_in(models_dir.as_deref(), locale, model_id);
     EnvironmentView {
         sidecar: discovered
             .sidecar
@@ -127,9 +167,7 @@ pub fn environment(locale: &str, model_id: &str) -> EnvironmentView {
             .map(|path| path.display().to_string()),
         locale: discovered.locale,
         model_id: model_id.to_string(),
-        models_dir: stt::model::default_model_dir()
-            .ok()
-            .map(|dir| dir.display().to_string()),
+        models_dir: models_dir.map(|dir| dir.display().to_string()),
     }
 }
 
@@ -139,7 +177,8 @@ pub fn resolve(
     locale: &str,
     model_id: &str,
 ) -> Result<SelectionView, UiError> {
-    let environment = Environment::discover(locale, model_id);
+    let models_dir = models_dir().ok();
+    let environment = Environment::discover_in(models_dir.as_deref(), locale, model_id);
     let selection = registry::resolve(preference, &environment)?;
     Ok(SelectionView {
         engine: selection.engine.name(),
@@ -149,7 +188,7 @@ pub fn resolve(
 
 /// The pinned model catalogue plus whether each one is already on disk.
 pub fn catalogue() -> Vec<ModelView> {
-    let dir = stt::model::default_model_dir().ok();
+    let dir = models_dir().ok();
     stt::model::MODELS
         .iter()
         .map(|spec| ModelView {
@@ -177,7 +216,7 @@ pub async fn download(app: AppHandle, model_id: String) -> Result<String, UiErro
             format!("meet-ai does not have a model called {model_id:?} in its list."),
         )
     })?;
-    let dir = stt::model::default_model_dir().map_err(UiError::from)?;
+    let dir = models_dir()?;
 
     // `modelfetch::ensure` takes `&mut dyn FnMut(Progress)`, which is not
     // `Send`, so the future it returns is not `Send` and cannot be awaited
@@ -236,19 +275,38 @@ mod tests {
     #[test]
     fn only_one_download_per_model_can_be_in_flight() {
         let downloads = Downloads::default();
-        assert!(downloads.claim("small.en-q5_1"));
+        let small = downloads.claim("small.en-q5_1");
+        assert!(small.is_some());
         assert!(
-            !downloads.claim("small.en-q5_1"),
+            downloads.claim("small.en-q5_1").is_none(),
             "a second claim must fail, or two writers race the same .part file"
         );
         // A different model is unaffected.
-        assert!(downloads.claim("large-v3-turbo-q5_0"));
+        let turbo = downloads.claim("large-v3-turbo-q5_0");
+        assert!(turbo.is_some());
 
-        downloads.release("small.en-q5_1");
+        drop(small);
         assert!(!downloads.lock().contains("small.en-q5_1"));
         assert!(
             downloads.lock().contains("large-v3-turbo-q5_0"),
             "releasing one model must not release the other"
+        );
+        drop(turbo);
+    }
+
+    #[test]
+    fn a_download_that_panics_still_gives_its_claim_back() {
+        // The release used to be a line after the `.await`, so a panic skipped
+        // it and the model stayed "already downloading" until a restart.
+        let downloads = Downloads::default();
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _claim = downloads.claim("small.en-q5_1").expect("free to claim");
+            panic!("the download blew up");
+        }));
+        assert!(unwound.is_err());
+        assert!(
+            downloads.claim("small.en-q5_1").is_some(),
+            "the claim must be free again after the panic"
         );
     }
 
