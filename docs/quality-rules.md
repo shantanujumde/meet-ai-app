@@ -2,14 +2,14 @@
 
 Every Claude run in this repo ends with the quality gate. When a run (or a
 sub-agent) tries to stop, `.claude/hooks/quality-gate-hook.sh` checks the files
-that run edited. If a check fails, the run is sent back to fix it, at most twice
-in a row. After that, the run is allowed to stop, and a note says the gate is
-still red.
+that run changed. If a check fails, the run is sent back to fix it, at most
+twice in a row. After that, the run is allowed to stop, and a note says the
+gate is still red.
 
 You can run the same checks by hand:
 
 ```sh
-scripts/quality-gate.sh                    # files git sees as changed or new
+scripts/quality-gate.sh                    # everything this branch changed
 scripts/quality-gate.sh src/App.tsx crates/store/src/lib.rs
 scripts/quality-gate.sh --from-transcript <session.jsonl>
 scripts/quality-rules.sh <files>           # only the repo rules below
@@ -30,12 +30,33 @@ Only on the changed files, all at the same time:
 `target/meet-stt`. If it is missing, the gate builds it with `just sidecar`. If
 that fails, the gate prints a `WARN` line and skips those checks.
 
-**Why only the changed files?** Several agent runs share one working tree
-(see `.claude/hooks/tree-snapshot.sh`). A plain `git diff` would also pick up
-files other runs are halfway through. So the hook reads the run's own
-transcript and only checks files the run edited with the Edit, Write,
-MultiEdit or NotebookEdit tools. Files changed through shell commands such as
-`sed -i` are not seen. Run the gate by hand for those.
+### Which files count as "changed"
+
+The rule is that a run is checked on the files **it** changed, not the whole
+repo.
+
+- The hook reads the run's own transcript and takes every file edited with
+  the Edit, Write, MultiEdit or NotebookEdit tools. A sub-agent is checked
+  against its own transcript only. If Claude Code does not pass one, that stop
+  is skipped.
+- Edits made through the Bash tool (`sed -i`, a heredoc) are not in that list.
+  So when the run is on its own branch, the gate also adds every file the
+  branch changed since it left `main`, plus untracked files. That is the normal
+  case: each run gets its own worktree (see CONTRIBUTING.md, "Agent runs and the
+  working tree").
+- On `main` itself, only the transcript list is used, because other work may
+  be sitting in that checkout. Bash-tool edits are not caught there. Run the
+  gate by hand with the file names.
+
+### Time limit
+
+A fresh worktree has no `target/` or `node_modules/`, so the first Rust check
+can mean a full cold build. The checks together get `QUALITY_GATE_BUDGET_SECS`
+(480 s by default), which is under the hook's 600 s timeout. Past that, the gate
+kills the running checks and everything they started, so no stray cargo keeps
+the build lock. It prints a `WARN` line saying the gate timed out and to run
+`just check`, and it does **not** block. A timeout is never recorded as a pass, so the next stop tries again,
+now with a warm build.
 
 ## Levels
 
@@ -43,9 +64,16 @@ MultiEdit or NotebookEdit tools. Files changed through shell commands such as
 - **WARN** is printed but does not fail. It points at old code that should be
   fixed when someone next works there.
 
-Most rules only look at lines **added** compared to `HEAD` (the last commit).
-Old code does not fail the gate, but new code does. A file git has never seen
-counts as fully added.
+Most rules only look at lines **added** compared to the *diff base*. The base is
+where this branch left main: `git merge-base HEAD origin/main`, falling back to
+`main`, then `HEAD`. So a line the run already committed still counts as new.
+Agents usually commit before they stop, and diffing against `HEAD` alone would
+let those lines through. On `main` itself the base is `HEAD`, so only
+uncommitted lines count there. `QUALITY_BASE=<rev>` overrides the base.
+
+A file the base does not have counts as fully added. This takes the place of
+the allow-list file (`scripts/quality-baseline.txt`) the plan first proposed:
+the base commit is the baseline, so there is no list to keep up to date.
 
 ## The rules
 
@@ -55,8 +83,9 @@ A source file has more than 600 lines of non-test code. For Rust, that means
 the lines before the first `#[cfg(test)]`. For TypeScript, it is the whole
 file, and `*.test.*` files are skipped.
 
-- ERROR: a new file is over 600 lines, or a file got longer and is now over 600.
-- WARN: a file was already over 600 before this change and did not grow.
+- ERROR: a new file is over 600 lines, or a file got longer than it was at the
+  base and is now over 600.
+- WARN: a file was already over 600 at the base and did not grow.
 
 **Why:** big files are hard to review, and agents edit them badly. They lose
 track of what is where and keep adding to the pile. Keeping each file to one job
@@ -66,9 +95,9 @@ keeps diffs small.
 
 ### R2: Tauri event name spelled out (WARN for now)
 
-A string like `"recording://state"` appears outside
-`src-tauri/src/events.rs`, `src/ipc/bindings.ts` or `src/ipc/client.ts`.
-Real URLs (`http://`, `https://`, `file://` and so on) are ignored.
+A string like `"recording://state"` appears outside `src-tauri/src/events.rs`
+or `src/ipc/bindings.ts`. Real URLs (`http://`, `https://`, `file://` and so
+on) are ignored.
 
 **Why:** the Rust side sends events and the TS side listens for them by name.
 If one side renames an event, the other side goes quiet and nothing reports an
@@ -79,10 +108,11 @@ error. With a single list of names, a rename becomes a compile error.
 **Flip to ERROR** once `src-tauri/src/events.rs` exists: set
 `R2_LEVEL=error` at the top of `scripts/quality-rules.sh`.
 
-### R3: meeting folder file name spelled out (WARN for now)
+### R3: meeting folder name spelled out (WARN for now)
 
-`"transcript.md"`, `"notes.md"`, `"segments.json"` or `"meeting.md"` appears in
-Rust code outside `crates/meeting-format/`. Test code does not count.
+The exact string literal `"transcript.md"`, `"notes.md"`, `"segments.json"`,
+`"meeting.md"` or `".app"` appears in Rust code outside
+`crates/meeting-format/`. Test code does not count.
 
 **Why:** the layout of a meeting folder is a file format that users keep for
 years. If three crates each spell the names out, one of them will drift. A
@@ -95,9 +125,13 @@ single owner means one place to change it.
 ### R4: new `.unwrap()` or `.expect(` in app code (ERROR)
 
 A new `.unwrap()` or `.expect(` in non-test Rust under `crates/*/src/` or
-`src-tauri/src/`. Test code (after the first `#[cfg(test)]`, `tests/`
-folders), `src/bin/` tools and comment lines are skipped. Only added lines
-count.
+`src-tauri/src/`. These are skipped:
+
+- test code: everything after the first `#[cfg(test)]`, and `tests/` folders
+- `src/bin/` tools
+- text inside string literals and `//` comments
+
+Only added lines count.
 
 **Why:** an `unwrap` that fails crashes the whole app, often in the middle of a
 recording. A returned error can be shown to the user and the recording saved.
@@ -110,13 +144,16 @@ cannot fail, say why on the same line or the line above:
 let re = Regex::new(r"^\d+$").unwrap();
 ```
 
-### R5: sync Tauri command that touches disk (ERROR for new commands)
+### R5: sync Tauri command that touches disk (WARN)
 
 A `#[tauri::command]` that is not `async` (and not `#[tauri::command(async)]`)
-whose body calls into `meetings::`, `fs::`, `store::` or `std::fs`.
+whose body calls `meetings::something(`, `store::something(`,
+`fs::something(` or anything in `std::fs::`. Only calls count. A type name
+like `meetings::MeetingList` or a comment does not.
 
-- ERROR: the `#[tauri::command]` line or the `fn` line was added in this change.
-- WARN: an existing command in a changed file.
+This rule is only a guess: it cannot see through helper functions. So it warns
+and never fails. The message says "new" when the command or its `fn` line was
+added.
 
 **Why:** Tauri runs sync commands on the main thread. A slow disk (an external
 drive, iCloud, a big folder) then freezes the whole window.
@@ -133,30 +170,35 @@ the design tokens, do not support dark mode or hover states, and are hard to
 find later.
 
 **Fix:** use `className` with Tailwind utilities (and `cn()` for conditional
-classes).
+classes). For a value only known at runtime, such as a measured width, opt out
+on the same line or the line above:
+`{/* quality: allow-style <reason> */}` or `// quality: allow-style <reason>`.
 
-### R7: generated bindings out of date (ERROR, once it applies)
+### R7: generated bindings out of date (not active yet)
 
-Runs only when `src/ipc/bindings.ts` and a `just bindings` recipe both exist,
-and a Rust file or `bindings.ts` changed. The gate regenerates the file and
-compares it with the current one. Then it puts the original back, so it never
-edits your files behind your back.
+This rule is turned off until a `just bindings` recipe exists (Phase 2). It
+would regenerate `src/ipc/bindings.ts` into a temp copy and compare. It is off
+so the gate never rewrites a file in the working tree. A commented stub in
+`scripts/quality-rules.sh` shows where it goes.
 
 **Why:** `bindings.ts` is the TypeScript view of the Rust commands. If it is
 stale, the frontend calls commands with the wrong shape, and that only shows up
 at runtime.
 
-**Fix:** run `just bindings` and keep the result.
-
 ### R8: new CSS rule in `src/app.css` (ERROR)
 
-An added line containing `{` in `src/app.css`.
+An added selector line (a line with `{` that does not start with `@`) in
+`src/app.css`. At-rules like `@media`, `@keyframes`, `@supports`, `@layer` and
+`@theme` are wrappers, so they are not flagged themselves. A new selector
+inside them is still flagged.
 
 **Why:** `app.css` is being emptied into Tailwind one component at a time.
 Every new rule there is one more to migrate later. Once the file is empty, it
 is deleted.
 
-**Fix:** style the component with Tailwind utilities instead.
+**Fix:** style the component with Tailwind utilities instead. When a rule
+really has to be global CSS (a third-party override), opt out on the same line
+or the line above with `/* quality: allow-css <reason> */`.
 
 ## Knobs
 
@@ -164,7 +206,27 @@ is deleted.
 | --- | --- |
 | `QUALITY_GATE_DISABLE=1` | skip the gate and the hook entirely |
 | `QUALITY_GATE_SKIP_TESTS=1` | run lint, format, types and rules, and skip `vitest` and `cargo test` |
+| `QUALITY_GATE_BUDGET_SECS=480` | time limit for all checks together |
+| `QUALITY_GATE_TRANSCRIPT_ONLY=1` | do not add the branch's changed files to the transcript list |
+| `QUALITY_BASE=<rev>` | diff base for the rules |
 | `R1_MAX_LINES=800` | change the R1 limit for one run |
+
+## How the hook remembers things
+
+It keeps small files in `${TMPDIR:-/tmp}/meet-ai-quality-gate/`:
+
+- a retry counter per session (per sub-agent for `SubagentStop`)
+- a "last pass" record, so a stop with nothing new is instant
+
+The pass record covers:
+
+- the file list and file contents
+- `HEAD` and the diff base
+- both gate scripts
+- `QUALITY_GATE_SKIP_TESTS`
+- whether the sidecar is built
+
+Changing any of those runs the gate again. Files older than a day are deleted.
 
 ## Adding a rule
 
