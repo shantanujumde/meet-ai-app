@@ -21,6 +21,7 @@ import { openPermissionScreen } from "@/lib/permissionRoute";
 import { isOnboardingPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
+import { Button } from "./primitives";
 import { RecordControl } from "./RecordControl";
 import { Sidebar } from "./Sidebar";
 
@@ -74,26 +75,18 @@ export function Shell() {
         {error ? (
           <div className="banner banner--danger" role="alert">
             <p className="banner__text">{error.message}</p>
-            <button
-              type="button"
-              className="btn btn--small"
-              onClick={() => useRecordingStore.getState().clearError()}
-            >
+            <Button size="small" onClick={() => useRecordingStore.getState().clearError()}>
               Dismiss
-            </button>
+            </Button>
           </div>
         ) : null}
 
         {!focused && permission?.state === "denied" ? (
           <div className="banner" role="status">
             <p className="banner__text">{deniedBannerText(permission.denied)}</p>
-            <button
-              type="button"
-              className="btn btn--small"
-              onClick={() => openPermissionScreen(navigate)}
-            >
+            <Button size="small" onClick={() => openPermissionScreen(navigate)}>
               Fix this
-            </button>
+            </Button>
           </div>
         ) : null}
 

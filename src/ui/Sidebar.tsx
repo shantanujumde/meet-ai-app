@@ -13,6 +13,7 @@ import { NavLink, useNavigate } from "react-router";
 import type { MeetingList, MeetingSummary, RecordingStatus } from "@/ipc/types";
 import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "@/lib/format";
 import { meetingPath, SETTINGS } from "@/lib/routes";
+import { buttonVariants } from "./primitives";
 import { Checking } from "./states";
 
 export function Sidebar({
@@ -39,21 +40,13 @@ export function Sidebar({
       </div>
 
       {loading ? (
-        <div style={{ padding: "var(--space-4) var(--space-3)" }}>
+        <div className="px-3 py-4">
           <Checking label="Reading your meetings folder…" />
         </div>
       ) : meetings.length === 0 ? (
         // The sidebar's empty state is one quiet line. The full explanation
         // belongs on the content pane beside it, not shouted twice.
-        <p
-          style={{
-            margin: 0,
-            padding: "var(--space-4) var(--space-3)",
-            fontSize: "var(--text-caption1)",
-            color: "var(--text-tertiary)",
-            lineHeight: "var(--leading-normal)",
-          }}
-        >
+        <p className="px-3 py-4 text-caption1 leading-normal text-fg-tertiary">
           Nothing recorded yet.
         </p>
       ) : (
@@ -72,7 +65,10 @@ export function Sidebar({
       )}
 
       <div className="sidebar__footer">
-        <NavLink to={SETTINGS} className="btn btn--quiet btn--small btn--block">
+        <NavLink
+          to={SETTINGS}
+          className={buttonVariants({ tone: "quiet", size: "small", block: true })}
+        >
           Settings
         </NavLink>
       </div>
@@ -100,9 +96,7 @@ function MeetingRow({
         {/* A recording meeting shows the dot, not a red title — colour alone
             is not a state signal. */}
         {isRecording ? (
-          <span className="meeting-row__badge" style={{ color: "var(--status-recording)" }}>
-            ● Recording
-          </span>
+          <span className="text-recording">● Recording</span>
         ) : meeting.recordingState === "interrupted" ? (
           // Takes the line count's place: the sidebar is too narrow for both,
           // and the meeting itself says how much was kept.

@@ -26,6 +26,7 @@ import { useEffect } from "react";
 import { useNavigate, useParams } from "react-router";
 import { MEETINGS, onboardingStepPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
+import { Button, ButtonRow } from "@/ui/primitives";
 import { FolderStep } from "./onboarding/FolderStep";
 import { PermissionStep } from "./onboarding/PermissionStep";
 import { SpeechStep } from "./onboarding/SpeechStep";
@@ -74,9 +75,13 @@ export function Onboarding() {
       <p className="sr-only">
         Step {index + 1} of {STEPS.length}
       </p>
-      <div className="progress-dots" aria-hidden="true">
+      <div className="flex items-center gap-3" aria-hidden="true">
         {STEPS.map((name, position) => (
-          <span key={name} data-active={position <= index} />
+          <span
+            key={name}
+            data-active={position <= index}
+            className="size-[6px] rounded-capsule bg-separator-strong data-[active=true]:bg-accent"
+          />
         ))}
       </div>
 
@@ -92,20 +97,16 @@ export function Onboarding() {
       {current === "speech" ? <SpeechStep onNext={goNext} /> : null}
       {current === "folder" ? <FolderStep onFinish={() => void complete()} /> : null}
 
-      <div className="btn-row">
+      <ButtonRow>
         {previous ? (
-          <button
-            type="button"
-            className="btn btn--quiet btn--small"
-            onClick={() => navigate(onboardingStepPath(previous))}
-          >
+          <Button tone="quiet" size="small" onClick={() => navigate(onboardingStepPath(previous))}>
             Back
-          </button>
+          </Button>
         ) : null}
-        <button type="button" className="btn btn--quiet btn--small" onClick={() => void complete()}>
+        <Button tone="quiet" size="small" onClick={() => void complete()}>
           Skip setup
-        </button>
-      </div>
+        </Button>
+      </ButtonRow>
     </div>
   );
 }
