@@ -11,6 +11,10 @@
 
 import { useEffect, useRef } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
+import type { RecordingPhase } from "@/ipc/types";
+import { isRevisit } from "@/lib/permissionRoute";
+import { changesMeetingList } from "@/lib/recordingPhase";
+import { isOnboardingPath, MEETINGS, meetingPath, ONBOARDING, SETTINGS } from "@/lib/routes";
 import { Meetings } from "@/routes/Meetings";
 import { Onboarding } from "@/routes/Onboarding";
 import { Review } from "@/routes/Review";
@@ -18,7 +22,6 @@ import { Settings } from "@/routes/Settings";
 import { useAppStore, watchPermissionStatus } from "@/state/app";
 import { useRecordingStore, watchRecordingState } from "@/state/recording";
 import { watchLiveTranscript } from "@/state/transcript";
-import { isRevisit } from "@/ui/permissionRoute";
 import { Shell } from "@/ui/Shell";
 
 export function App() {
@@ -27,15 +30,15 @@ export function App() {
       <Bootstrap />
       <Routes>
         <Route element={<Shell />}>
-          <Route index element={<Navigate to="/meetings" replace />} />
-          <Route path="/meetings" element={<Meetings />} />
-          <Route path="/meetings/:id" element={<Review />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/onboarding" element={<Onboarding />} />
-          <Route path="/onboarding/:step" element={<Onboarding />} />
+          <Route index element={<Navigate to={MEETINGS} replace />} />
+          <Route path={MEETINGS} element={<Meetings />} />
+          <Route path={`${MEETINGS}/:id`} element={<Review />} />
+          <Route path={SETTINGS} element={<Settings />} />
+          <Route path={ONBOARDING} element={<Onboarding />} />
+          <Route path={`${ONBOARDING}/:step`} element={<Onboarding />} />
           {/* A hash that matches nothing is not worth an error page in a
               four-route app. */}
-          <Route path="*" element={<Navigate to="/meetings" replace />} />
+          <Route path="*" element={<Navigate to={MEETINGS} replace />} />
         </Route>
       </Routes>
     </HashRouter>
@@ -82,14 +85,24 @@ function Bootstrap() {
   }, [loadMeetings, loadPermission, loadOnboarding]);
 
   // Starting a recording creates the meeting folder and stopping finishes it,
-  // so either end of one changes the list.
+  // so either end of one changes the list — and only those two ends. The
+  // phase also passes through `starting` and `stopping`, and re-reading the
+  // list there re-read every WAV header for a folder that had not changed.
+  //
+  // The last phase is a ref rather than the store's `previous` argument, so a
+  // store write that leaves the phase alone (the error field, `busy`) is not
+  // mistaken for a transition, and the comparison is always against what this
+  // subscriber last acted on.
   //
   // Subscribing to the store rather than depending on the phase in a render:
   // the phase is a *trigger* here, not a value this component displays, and
   // writing it as an effect dependency makes it look like the latter.
+  const lastPhase = useRef<RecordingPhase>(useRecordingStore.getState().status.phase);
   useEffect(() => {
-    return useRecordingStore.subscribe((state, previous) => {
-      if (state.status.phase !== previous.status.phase) void loadMeetings();
+    return useRecordingStore.subscribe(({ status }) => {
+      const from = lastPhase.current;
+      lastPhase.current = status.phase;
+      if (changesMeetingList(from, status.phase)) void loadMeetings();
     });
   }, [loadMeetings]);
 
@@ -119,26 +132,26 @@ function Bootstrap() {
       if (status.phase === "idle" || id === null || id === openedMeetingId.current) return;
       openedMeetingId.current = id;
       const inOnboarding =
-        pathnameRef.current.startsWith("/onboarding") ||
+        isOnboardingPath(pathnameRef.current) ||
         useAppStore.getState().onboarding?.completedAt === null;
       if (inOnboarding) return;
-      navigate(`/meetings/${encodeURIComponent(id)}`);
+      navigate(meetingPath(id));
     });
   }, [navigate]);
 
   useEffect(() => {
     if (onboardingLoading || onboarding === null) return;
-    const onOnboardingRoute = location.pathname.startsWith("/onboarding");
+    const onOnboardingRoute = isOnboardingPath(location.pathname);
     if (onboarding.completedAt === null) {
       // Not finished yet: keep the user inside the wizard.
-      if (!onOnboardingRoute) navigate("/onboarding", { replace: true });
+      if (!onOnboardingRoute) navigate(ONBOARDING, { replace: true });
       return;
     }
     // Already finished: a wizard URL left over from a previous, unfinished
     // session (the single-instance window was simply refocused, never
     // re-loaded) must not trap an otherwise-done user on setup forever. A trip
     // the user asked for — the shell's "Fix this" banner — is let through.
-    if (onOnboardingRoute && !isRevisit(location.state)) navigate("/meetings", { replace: true });
+    if (onOnboardingRoute && !isRevisit(location.state)) navigate(MEETINGS, { replace: true });
   }, [onboarding, onboardingLoading, location.pathname, location.state, navigate]);
 
   return null;

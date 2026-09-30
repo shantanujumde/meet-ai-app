@@ -8,10 +8,22 @@
  */
 
 import { useNavigate } from "react-router";
+import { cn } from "@/lib/cn";
+import { DEFAULT_ROOT_LABEL, SHORTCUT_LABEL } from "@/lib/constants";
+import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "@/lib/format";
+import { openPermissionScreen } from "@/lib/permissionRoute";
+import { meetingPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
-import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "@/ui/format";
-import { openPermissionScreen } from "@/ui/permissionRoute";
+import {
+  Button,
+  ButtonRow,
+  cardVariants,
+  Pill,
+  RowLabel,
+  RowValue,
+  rowVariants,
+} from "@/ui/primitives";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
 export function Meetings() {
@@ -50,29 +62,24 @@ export function Meetings() {
           title="No meetings yet"
           body={
             list?.rootExists
-              ? `Press ⌘⇧R — from anywhere, even with this window behind Zoom — and meet-ai starts recording. Everything it captures is written as plain markdown into ${list.root}, and nothing leaves this Mac.`
-              : `Press ⌘⇧R — from anywhere, even with this window behind Zoom — and meet-ai starts recording. It will create ${list?.root ?? "~/Meetings"} for the first one. Everything is plain markdown, and nothing leaves this Mac.`
+              ? `Press ${SHORTCUT_LABEL} — from anywhere, even with this window behind Zoom — and meet-ai starts recording. Everything it captures is written as plain markdown into ${list.root}, and nothing leaves this Mac.`
+              : `Press ${SHORTCUT_LABEL} — from anywhere, even with this window behind Zoom — and meet-ai starts recording. It will create ${list?.root ?? DEFAULT_ROOT_LABEL} for the first one. Everything is plain markdown, and nothing leaves this Mac.`
           }
           action={
-            <div className="btn-row">
-              <button
-                type="button"
-                className="btn btn--primary"
+            <ButtonRow>
+              <Button
+                tone="primary"
                 disabled={permission?.state === "denied" || recordingBusy}
                 onClick={() => void toggle()}
               >
                 Start recording
-              </button>
+              </Button>
               {permission?.state === "denied" ? (
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => openPermissionScreen(navigate)}
-                >
+                <Button onClick={() => openPermissionScreen(navigate)}>
                   Fix audio permission first
-                </button>
+                </Button>
               ) : null}
-            </div>
+            </ButtonRow>
           }
         />
       </div>
@@ -89,37 +96,30 @@ export function Meetings() {
         </p>
       </header>
 
-      <section className="card card--flush">
+      <section className={cardVariants({ flush: true })}>
         {meetings.map((meeting) => (
+          // The whole row is the button. It draws no hairline between rows —
+          // the list reads as one block, and each row is its own hit target.
           <button
             key={meeting.id}
             type="button"
-            className="row"
-            style={{
-              width: "100%",
-              border: 0,
-              background: "transparent",
-              font: "inherit",
-              cursor: "default",
-            }}
-            onClick={() => navigate(`/meetings/${encodeURIComponent(meeting.id)}`)}
+            className={cn(rowVariants({ divided: false }), "w-full")}
+            onClick={() => navigate(meetingPath(meeting.id))}
           >
-            <span className="row__label">
-              <span className="row__name">{meeting.title}</span>
-              <span className="row__detail" style={{ fontFamily: "var(--font-ui)" }}>
-                {formatRelativeDate(meeting.date)}
-                {meeting.time ? ` at ${meeting.time}` : ""}
-              </span>
-            </span>
-            <span className="row__value">
+            <RowLabel
+              name={meeting.title}
+              detail={`${formatRelativeDate(meeting.date)}${meeting.time ? ` at ${meeting.time}` : ""}`}
+              mono={false}
+            />
+            <RowValue>
               {meeting.recordingState === "interrupted" ? (
-                <span className="badge badge--warn" style={{ marginInlineEnd: "var(--space-4)" }}>
+                <Pill tone="warn" className="me-4">
                   {INTERRUPTED_LABEL}
-                </span>
+                </Pill>
               ) : null}
               {formatLineCount(meeting.lineCount)}
               {meeting.hasAnalysis ? " · wrapped up" : ""}
-            </span>
+            </RowValue>
           </button>
         ))}
       </section>

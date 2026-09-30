@@ -17,6 +17,22 @@
 
 import type { UiError } from "./types";
 
+/**
+ * The error for anything that needs Rust when there is no Rust behind the
+ * window — `pnpm dev` in a plain browser, or a component test.
+ *
+ * One value, so every screen that hits it says the same thing: the folder
+ * picker used to word its own copy, which read like a different problem.
+ * `client.ts` throws this same value from its `call` guard.
+ */
+export const NO_BACKEND: UiError = {
+  domain: "app",
+  kind: "no-backend",
+  message:
+    "This is the meet-ai window running without its Mac app behind it, so it cannot read or " +
+    "change anything on disk. Run `pnpm tauri dev` instead of `pnpm dev`.",
+};
+
 /** What the button does. The screen decides how; this decides which. */
 export type Remedy =
   | { action: "download-model" }
