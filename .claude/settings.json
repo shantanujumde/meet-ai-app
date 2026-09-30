@@ -45,6 +45,22 @@
           {
             "type": "command",
             "command": "sh -c 'r=$(git rev-parse --show-toplevel 2>/dev/null) && [ -x \"$r/.claude/hooks/tree-snapshot.sh\" ] && \"$r/.claude/hooks/tree-snapshot.sh\"; exit 0'"
+          },
+          {
+            "type": "command",
+            "timeout": 600,
+            "command": "sh -c 'r=$(git rev-parse --show-toplevel 2>/dev/null) && [ -x \"$r/.claude/hooks/quality-gate-hook.sh\" ] || exit 0; exec \"$r/.claude/hooks/quality-gate-hook.sh\"'"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 600,
+            "command": "sh -c 'r=$(git rev-parse --show-toplevel 2>/dev/null) && [ -x \"$r/.claude/hooks/quality-gate-hook.sh\" ] || exit 0; exec \"$r/.claude/hooks/quality-gate-hook.sh\"'"
           }
         ]
       }
