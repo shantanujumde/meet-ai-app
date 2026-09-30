@@ -404,7 +404,8 @@ export function mdotGrid(g) {
    dot's diagonal clearance against the arm tips.
 
    Arms went 36/64 -> 31/69 after the viewfinder proximity probe
-   (proximity.mjs, ../proofs/proof-proximity.png). The gutter — the gap in the
+   (proximity.mjs and ../proofs/proof-proximity.png, both deleted with the
+   bracket mark; recover them from the repository history). The gutter — the gap in the
    top and bottom edges — is the single knob that decides whether this reads as
    a bracket pair or as a camera focus target. Counter-intuitively, *widening*
    it moves away from the viewfinder: a viewfinder's signature is a closed
