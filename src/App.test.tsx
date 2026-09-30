@@ -24,9 +24,10 @@ const permissionStatus = vi.fn<() => Promise<PermissionStatus>>();
 const permissionQuick = vi.fn<() => Promise<PermissionStatus>>();
 const onboardingState = vi.fn();
 const readMeeting = vi.fn<(id: string) => Promise<MeetingDetail>>();
-// The window's handler for recorder errors Rust pushes (a refused ⌘⇧R, a
-// recording that stopped itself), captured so a test can fire one.
-let recordingErrorHandler: ((error: UiError) => void) | null = null;
+// The window's handler for recorder states Rust pushes, captured so a test can
+// fire one — including the idle status that says why a ⌘⇧R press was refused
+// or a recording stopped itself.
+let recordingStateHandler: ((status: RecordingStatus) => void) | null = null;
 // The window's handler for a permission check Rust ran at Record time.
 let permissionStatusHandler: ((status: PermissionStatus) => void) | null = null;
 
@@ -64,17 +65,16 @@ vi.mock("@/ipc/client", () => ({
     finals: [],
     volatile: [],
   }),
-  onRecordingState: () => () => {},
+  onRecordingState: (handler: (status: RecordingStatus) => void) => {
+    recordingStateHandler = handler;
+    return () => {
+      recordingStateHandler = null;
+    };
+  },
   onPermissionStatus: (handler: (status: PermissionStatus) => void) => {
     permissionStatusHandler = handler;
     return () => {
       permissionStatusHandler = null;
-    };
-  },
-  onRecordingError: (handler: (error: UiError) => void) => {
-    recordingErrorHandler = handler;
-    return () => {
-      recordingErrorHandler = null;
     };
   },
   onModelProgress: () => () => {},
@@ -291,14 +291,16 @@ test("a ⌘⇧R press that is refused says why in the window", async () => {
   onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
   render(<App />);
   await screen.findByRole("heading", { name: /no meetings yet/i });
-  await waitFor(() => expect(recordingErrorHandler).not.toBeNull());
+  await waitFor(() => expect(recordingStateHandler).not.toBeNull());
 
+  // Rust says it on the idle status the refused start falls back to.
+  const refused: UiError = {
+    domain: "app",
+    kind: "permission-denied",
+    message: "meet-ai is not allowed to record this Mac's audio",
+  };
   act(() => {
-    recordingErrorHandler?.({
-      domain: "app",
-      kind: "permission-denied",
-      message: "meet-ai is not allowed to record this Mac's audio",
-    });
+    recordingStateHandler?.({ phase: "idle", meetingId: null, startedAtMs: null, error: refused });
   });
 
   expect(await screen.findByRole("alert")).toHaveTextContent(

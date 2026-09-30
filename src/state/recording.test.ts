@@ -1,45 +1,87 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RecordingStatus, UiError } from "@/ipc/types";
 
-const handlers: {
-  state?: (status: RecordingStatus) => void;
-  error?: (error: UiError) => void;
-} = {};
-const teardown = { state: vi.fn(), error: vi.fn() };
+/**
+ * The recording store mirrors Rust. The one thing it adds is keeping the
+ * reason a recording ended on its own (TUR-97), or a ⌘⇧R press was refused
+ * (TUR-127), which arrives on the state event rather than from a button press.
+ */
+
+const handlers: { state?: (status: RecordingStatus) => void } = {};
+const teardown = vi.fn();
+const recordingStatus = vi.fn<() => Promise<RecordingStatus>>();
 
 vi.mock("@/ipc/client", () => ({
-  recordingStatus: vi.fn().mockResolvedValue({ phase: "idle", meetingId: null, startedAtMs: null }),
+  recordingStatus: () => recordingStatus(),
   toggleRecording: vi.fn(),
   onRecordingState: (handler: (status: RecordingStatus) => void) => {
     handlers.state = handler;
-    return teardown.state;
-  },
-  onRecordingError: (handler: (error: UiError) => void) => {
-    handlers.error = handler;
-    return teardown.error;
+    return teardown;
   },
 }));
 
 const { useRecordingStore, watchRecordingState } = await import("./recording");
 
-beforeEach(() => {
-  useRecordingStore.setState({ error: null });
-  teardown.state.mockClear();
-  teardown.error.mockClear();
-});
+const IDLE: RecordingStatus = { phase: "idle", meetingId: null, startedAtMs: null };
+const STARTING: RecordingStatus = { phase: "starting", meetingId: null, startedAtMs: null };
+const RECORDING: RecordingStatus = {
+  phase: "recording",
+  meetingId: "2026-09-30-1000-meeting",
+  startedAtMs: 0,
+};
+const INTERRUPTED: UiError = {
+  domain: "app",
+  kind: "recording-interrupted",
+  message: "The recording stopped because of an error (mic fsync: disk full).",
+};
 
-it("shows a recording Rust stopped by itself in the same error banner (TUR-97)", () => {
-  const stop = watchRecordingState();
-  const interrupted: UiError = {
-    domain: "app",
-    kind: "recording-interrupted",
-    message: "The recording stopped because of an error (mic fsync: disk full).",
-  };
+function push(status: RecordingStatus) {
+  handlers.state?.(status);
+}
 
-  handlers.error?.(interrupted);
-  expect(useRecordingStore.getState().error).toEqual(interrupted);
+describe("the recording store", () => {
+  beforeEach(() => {
+    useRecordingStore.setState({ status: IDLE, error: null, busy: false });
+    recordingStatus.mockResolvedValue(IDLE);
+    teardown.mockClear();
+  });
 
-  stop();
-  expect(teardown.state).toHaveBeenCalledOnce();
-  expect(teardown.error).toHaveBeenCalledOnce();
+  it("shows a recording Rust stopped by itself in the same error banner (TUR-97)", () => {
+    const stop = watchRecordingState();
+    push(RECORDING);
+    push({ ...IDLE, error: INTERRUPTED });
+    expect(useRecordingStore.getState().status.phase).toBe("idle");
+    expect(useRecordingStore.getState().error).toEqual(INTERRUPTED);
+
+    stop();
+    expect(teardown).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the shown error through a status that carries none", () => {
+    const stop = watchRecordingState();
+    useRecordingStore.setState({ error: INTERRUPTED });
+    push(IDLE);
+    push({ ...IDLE, error: null });
+    expect(useRecordingStore.getState().error).toEqual(INTERRUPTED);
+    stop();
+  });
+
+  it("clears the old reason when a new start begins, from any surface", () => {
+    const stop = watchRecordingState();
+    push({ ...IDLE, error: INTERRUPTED });
+    // ⌘⇧R pressed with the window in the background: no button press here to
+    // clear it, but the recording that follows must not sit under a banner
+    // about the last one.
+    push(STARTING);
+    expect(useRecordingStore.getState().error).toBeNull();
+    push(RECORDING);
+    expect(useRecordingStore.getState().error).toBeNull();
+    stop();
+  });
+
+  it("tells a window opened after the recording ended why it ended", async () => {
+    recordingStatus.mockResolvedValue({ ...IDLE, error: INTERRUPTED });
+    await useRecordingStore.getState().refresh();
+    expect(useRecordingStore.getState().error).toEqual(INTERRUPTED);
+  });
 });

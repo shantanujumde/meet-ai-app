@@ -207,17 +207,14 @@ fn register_record_shortcut<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 }
 
 /// Tell the user why a shortcut press did nothing, on a surface that does not
-/// need the window to be open — and in the window too, when it is. The
-/// notification alone is silent whenever meet-ai may not post them, which made
-/// a refused ⌘⇧R look like it had done nothing at all.
+/// need the window to be open. The window hears it too, from the idle status
+/// on `recording://state` that carries the refusal (`recording::Status::error`)
+/// — the notification alone is silent whenever meet-ai may not post them,
+/// which made a refused ⌘⇧R look like it had done nothing at all.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn notify_refusal<R: tauri::Runtime>(app: &tauri::AppHandle<R>, error: &error::UiError) {
-    use tauri::Emitter as _;
     use tauri_plugin_notification::NotificationExt as _;
 
-    if let Err(emit_error) = app.emit(recording::ERROR_EVENT, error) {
-        tracing::warn!(%emit_error, "could not tell the window about a refused recording");
-    }
     if let Err(notify_error) = app
         .notification()
         .builder()
