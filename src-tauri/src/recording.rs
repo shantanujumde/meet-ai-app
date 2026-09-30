@@ -158,6 +158,20 @@ impl Inner {
         self.status.error = None;
         Ok(self.status.clone())
     }
+
+    /// A start turned away before it reached [`Recorder::start`] — the
+    /// meetings folder is moving, so `folder_move::FolderGate` never let the
+    /// toggle run. Only an idle recorder takes the reason: a move can only
+    /// begin while idle, so that is the one phase such a refusal can meet,
+    /// and a status mid-recording must never carry an error. `None` when
+    /// nothing changed.
+    fn refuse_start(&mut self, error: UiError) -> Option<Status> {
+        if self.status.phase != Phase::Idle {
+            return None;
+        }
+        self.status.error = Some(error);
+        Some(self.status.clone())
+    }
 }
 
 /// Managed Tauri state. One recorder per app, because two would fight over the
@@ -177,6 +191,17 @@ impl Default for Recorder {
 impl Recorder {
     pub fn status(&self) -> Status {
         self.lock().status.clone()
+    }
+
+    /// Put a refusal from outside the recorder on the idle status, the same
+    /// place [`Recorder::fail_start`] puts one from inside it, so the window
+    /// hears about a refused ⌘⇧R or menu-bar press whichever layer said no —
+    /// there is no separate error event to carry it any more.
+    pub fn refuse_start(&self, app: &AppHandle, error: &UiError) {
+        let refused = self.lock().refuse_start(error.clone());
+        if let Some(status) = refused {
+            announce(app, &status);
+        }
     }
 
     /// A poisoned lock here means a previous call panicked while holding it.
@@ -894,6 +919,27 @@ mod tests {
         let status = recorder.status();
         assert_eq!(status.phase, Phase::Stopping);
         assert!(status.error.is_none());
+    }
+
+    /// A start the folder gate turned away lands on the idle status like one
+    /// the recorder refused itself, and never on a live recording's status.
+    #[test]
+    fn a_start_refused_before_the_recorder_still_leaves_its_reason() {
+        let mut inner = Inner::idle();
+        let refused = UiError::app("folder-move-in-progress", "moving");
+        let status = inner.refuse_start(refused).expect("idle takes it");
+        assert_eq!(status.phase, Phase::Idle);
+        assert_eq!(status.error.unwrap().kind, "folder-move-in-progress");
+        // The next start clears it, as for any other reason.
+        assert!(inner.enter_starting().unwrap().error.is_none());
+
+        inner.status.phase = Phase::Recording;
+        assert!(
+            inner
+                .refuse_start(UiError::app("folder-move-in-progress", "moving"))
+                .is_none()
+        );
+        assert!(inner.status.error.is_none());
     }
 
     /// A clean stop leaves no error behind, and a start that is refused puts
