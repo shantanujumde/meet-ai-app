@@ -17,6 +17,7 @@ import {
   completeOnboarding,
   listMeetings,
   onboardingState,
+  permissionQuick,
   permissionStatus,
   resetOnboarding,
 } from "@/ipc/client";
@@ -31,7 +32,11 @@ type AppStore = {
 
   permission: PermissionStatus | null;
   permissionLoading: boolean;
-  loadPermission: () => Promise<void>;
+  /**
+   * `silent` skips the audible positive-control check (TUR-24's chime) for the
+   * microphone's stored decision alone — what the app runs on launch.
+   */
+  loadPermission: (options?: { silent?: boolean }) => Promise<void>;
 
   onboarding: OnboardingState | null;
   onboardingLoading: boolean;
@@ -40,7 +45,7 @@ type AppStore = {
   restartOnboarding: () => Promise<void>;
 };
 
-export const useAppStore = create<AppStore>((set) => ({
+export const useAppStore = create<AppStore>((set, get) => ({
   meetings: null,
   meetingsError: null,
   // Starts true: the very first render is a load, not an empty list. Showing
@@ -62,7 +67,21 @@ export const useAppStore = create<AppStore>((set) => ({
   permission: null,
   permissionLoading: true,
 
-  async loadPermission() {
+  async loadPermission(options) {
+    if (options?.silent) {
+      // `permissionLoading` is left alone: it drives onboarding's "Checking…"
+      // spinner, which only the full check should switch off.
+      try {
+        const status = await permissionQuick();
+        // Knows less than a measured answer, so never replaces one — a
+        // first launch runs onboarding's full check alongside this.
+        if (!get().permission?.measured) set({ permission: status });
+      } catch {
+        // Nothing learned. Record still runs the full check before starting.
+      }
+      return;
+    }
+
     set({ permissionLoading: true });
     try {
       set({ permission: await permissionStatus() });

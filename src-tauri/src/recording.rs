@@ -32,6 +32,11 @@ use crate::permission;
 /// see the same change at the same time.
 pub const STATE_EVENT: &str = "recording://state";
 
+/// Why a start or stop from outside the window (⌘⇧R, the menu bar) was
+/// refused. The window's own button gets its refusal back from the call; this
+/// is how the other two reach the same banner.
+pub const REFUSED_EVENT: &str = "recording://refused";
+
 /// Where the recorder is right now.
 ///
 /// `Starting` and `Stopping` are not decoration: opening the tap (and, on
@@ -171,7 +176,13 @@ impl Recorder {
         // the controls disabled while permission is absent; this measurement
         // is the backstop for the one path that has no button to disable, the
         // global shortcut firing with the window unfocused or hidden.
-        if permission::measure().state == permission::State::Denied {
+        let permission = permission::measure();
+        tracing::info!(
+            state = ?permission.state,
+            detail = %permission.detail,
+            "permission check before recording"
+        );
+        if permission.state == permission::State::Denied {
             return Err(self.fail_start(
                 app,
                 None,

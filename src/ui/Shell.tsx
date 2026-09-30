@@ -89,7 +89,9 @@ export function Shell() {
             <button
               type="button"
               className="btn btn--small"
-              onClick={() => navigate("/onboarding/permission")}
+              // `revisit` tells Bootstrap this is a deliberate trip, not a
+              // leftover setup URL it should bounce back to the list.
+              onClick={() => navigate("/onboarding/permission", { state: { revisit: true } })}
             >
               Fix this
             </button>

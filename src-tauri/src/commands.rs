@@ -82,6 +82,12 @@ pub async fn permission_status() -> permission::Status {
         .unwrap_or_else(|_| permission::status())
 }
 
+/// The silent launch-time check — no chime (see `permission::quick`).
+#[tauri::command]
+pub fn permission_quick() -> permission::Status {
+    permission::quick()
+}
+
 /// Open System Settings at the pane the user needs.
 ///
 /// Falls back to the Privacy & Security root if the anchored URL is refused,

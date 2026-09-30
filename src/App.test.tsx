@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
-import type { MeetingList, PermissionStatus } from "@/ipc/types";
+import type { MeetingList, PermissionStatus, UiError } from "@/ipc/types";
 import { App } from "./App";
 
 /**
@@ -13,12 +13,16 @@ import { App } from "./App";
 
 const listMeetings = vi.fn<() => Promise<MeetingList>>();
 const permissionStatus = vi.fn<() => Promise<PermissionStatus>>();
+const permissionQuick = vi.fn<() => Promise<PermissionStatus>>();
 const onboardingState = vi.fn();
+// The window's handler for a ⌘⇧R refusal, captured so a test can fire one.
+let refusedHandler: ((error: UiError) => void) | null = null;
 
 vi.mock("@/ipc/client", () => ({
   hasBackend: () => true,
   listMeetings: () => listMeetings(),
   permissionStatus: () => permissionStatus(),
+  permissionQuick: () => permissionQuick(),
   onboardingState: () => onboardingState(),
   completeOnboarding: vi.fn(),
   resetOnboarding: vi.fn(),
@@ -44,6 +48,12 @@ vi.mock("@/ipc/client", () => ({
   modelCatalogue: vi.fn().mockResolvedValue([]),
   downloadModel: vi.fn(),
   onRecordingState: () => () => {},
+  onRecordingRefused: (handler: (error: UiError) => void) => {
+    refusedHandler = handler;
+    return () => {
+      refusedHandler = null;
+    };
+  },
   onModelProgress: () => () => {},
 }));
 
@@ -52,12 +62,30 @@ const EMPTY_LIST: MeetingList = { root: "/Users/test/Meetings", rootExists: fals
 beforeEach(() => {
   window.location.hash = "";
   listMeetings.mockResolvedValue(EMPTY_LIST);
+  permissionStatus.mockReset();
+  permissionQuick.mockReset();
   permissionStatus.mockResolvedValue({
     state: "unknown",
     measured: false,
     detail: "not checked yet",
   });
+  permissionQuick.mockResolvedValue({
+    state: "unknown",
+    measured: false,
+    detail: "not checked yet",
+  });
   onboardingState.mockResolvedValue({ completedAt: null });
+});
+
+test("opening the app does not play the permission tone", async () => {
+  // The full check plays an audible chime (TUR-24). SPEC A7 keeps that to
+  // setup and the start of a recording, so launch must use the silent check.
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  render(<App />);
+
+  await screen.findByRole("heading", { name: /no meetings yet/i });
+  await waitFor(() => expect(permissionQuick).toHaveBeenCalled());
+  expect(permissionStatus).not.toHaveBeenCalled();
 });
 
 test("a first-time user lands on onboarding rather than on an empty list", async () => {
@@ -99,11 +127,9 @@ test("someone who has finished onboarding is not trapped on a leftover setup URL
 
 test("a denied permission disables recording instead of letting it fail at click time", async () => {
   onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
-  permissionStatus.mockResolvedValue({
-    state: "denied",
-    measured: true,
-    detail: "the user said no",
-  });
+  const denied: PermissionStatus = { state: "denied", measured: true, detail: "the user said no" };
+  permissionQuick.mockResolvedValue(denied);
+  permissionStatus.mockResolvedValue(denied);
 
   render(<App />);
 
@@ -117,6 +143,63 @@ test("a denied permission disables recording instead of letting it fail at click
     expect(screen.getByText(/cannot record this Mac's audio yet/i)).toBeInTheDocument();
   });
   expect(screen.getByRole("button", { name: /fix this/i })).toBeInTheDocument();
+});
+
+test("Fix this opens the permission screen even after onboarding is finished", async () => {
+  // The leftover-URL redirect above must not swallow a deliberate trip there:
+  // it did, and the button silently bounced straight back to the list.
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  const denied: PermissionStatus = { state: "denied", measured: true, detail: "the user said no" };
+  permissionQuick.mockResolvedValue(denied);
+  permissionStatus.mockResolvedValue(denied);
+
+  render(<App />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /fix this/i }));
+
+  expect(
+    await screen.findByRole("heading", { name: /let meet-ai hear your mac/i }),
+  ).toBeInTheDocument();
+  // Give the redirect effect its chance to run, then check it did not.
+  await waitFor(() => expect(onboardingState).toHaveBeenCalled());
+  expect(screen.getByRole("heading", { name: /let meet-ai hear your mac/i })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /open microphone/i })).toBeInTheDocument();
+});
+
+test("the permission screen links to both Settings panes, not only system audio", async () => {
+  // Before any denial there was one button, and it opened System Audio
+  // Recording — someone looking for the Microphone switch landed on the wrong
+  // pane. Both grants are needed (L5), so both get a way there.
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: /get started/i }));
+
+  expect(
+    await screen.findByRole("heading", { name: /let meet-ai hear your mac/i }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /open microphone/i })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /open system audio recording/i })).toBeInTheDocument();
+});
+
+test("a ⌘⇧R press that is refused says why in the window", async () => {
+  // The shortcut runs in Rust with no button to put an error next to. Its only
+  // report used to be a system notification, which is silent when meet-ai may
+  // not post them — so the press looked like it did nothing at all.
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  render(<App />);
+  await screen.findByRole("heading", { name: /no meetings yet/i });
+  await waitFor(() => expect(refusedHandler).not.toBeNull());
+
+  act(() => {
+    refusedHandler?.({
+      domain: "app",
+      kind: "permission-denied",
+      message: "meet-ai is not allowed to record this Mac's audio",
+    });
+  });
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    /not allowed to record this Mac's audio/i,
+  );
 });
 
 test("a meeting list that fails to load says so, verbatim, and offers a way on", async () => {
