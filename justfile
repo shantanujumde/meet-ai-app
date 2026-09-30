@@ -165,6 +165,24 @@ sign:
     APP="target/release/bundle/macos/meet-ai.app"
     [[ -d "$APP" ]] || { echo "no bundle at $APP — run \`just build\` first" >&2; exit 1; }
 
+    # `security` (and the plain $HOME-based default above) resolves against the
+    # *account's* home, not against $HOME — TUR-10, and it bit again on TUR-128:
+    # under any redirected-$HOME session (a Paperclip agent run, sandbox-exec,
+    # some CI runners) {{SIGN_KEYCHAIN}} points at a path that was never
+    # created, `-f` is false, and this fell through to a bare `-s` with no
+    # `--keychain` — which the default search list cannot resolve either, so
+    # `codesign` fails outright ("no identity found"). make-identity.sh and
+    # spikes/phase0a-tcc/build.sh already dodge this with a dscl lookup; do the
+    # same here so `just sign` finds the one persistent identity regardless of
+    # what $HOME happens to be this run.
+    REAL_HOME="$(/usr/bin/dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+    [[ -n "$REAL_HOME" && -d "$REAL_HOME" ]] || REAL_HOME="$HOME"
+    EFFECTIVE_KEYCHAIN="{{SIGN_KEYCHAIN}}"
+    if [[ ! -f "$EFFECTIVE_KEYCHAIN" ]]; then
+      CANDIDATE="$REAL_HOME/Library/Keychains/meet-ai-signing.keychain-db"
+      [[ -f "$CANDIDATE" ]] && EFFECTIVE_KEYCHAIN="$CANDIDATE"
+    fi
+
     # Written as functions rather than an args array on purpose: under `set -u`
     # an empty array expansion aborts the script *between* the nested and outer
     # codesign calls, which silently leaves the app unsigned while the helpers
@@ -175,9 +193,9 @@ sign:
     # $1 = path to sign, $2.. = extra flags.
     _codesign() {
       local path="$1"; shift
-      if [[ -n "{{SIGN_KEYCHAIN}}" && -f "{{SIGN_KEYCHAIN}}" ]]; then
+      if [[ -n "$EFFECTIVE_KEYCHAIN" && -f "$EFFECTIVE_KEYCHAIN" ]]; then
         codesign --force --options runtime --timestamp=none \
-          --keychain "{{SIGN_KEYCHAIN}}" -s "{{SIGN_IDENTITY}}" "$@" "$path"
+          --keychain "$EFFECTIVE_KEYCHAIN" -s "{{SIGN_IDENTITY}}" "$@" "$path"
       else
         codesign --force --options runtime --timestamp=none \
           -s "{{SIGN_IDENTITY}}" "$@" "$path"

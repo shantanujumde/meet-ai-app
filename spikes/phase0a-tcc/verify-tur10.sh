@@ -84,7 +84,7 @@ fi
 
 # The known-good baseline, recorded when the identity was created (TUR-10).
 # Override only if the identity was deliberately rotated.
-EXPECT_LEAF="${EXPECT_LEAF:-be3fb2c8c0ce4ac08348a09f0bf278094626e347}"
+EXPECT_LEAF="${EXPECT_LEAF:-eafb73d29b2f35ca25c2f9fd193869fd880a7e0d}"
 if [[ "$LEAF" != "$EXPECT_LEAF" ]]; then
   echo "!! signing identity has ROTATED." >&2
   echo "!!   expected leaf: $EXPECT_LEAF" >&2

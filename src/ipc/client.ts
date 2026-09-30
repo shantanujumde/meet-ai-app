@@ -82,6 +82,14 @@ export function saveNotes(id: string, body: string): Promise<void> {
   return call<void>("save_notes", { id, body });
 }
 
+/**
+ * Move the meetings folder somewhere else. Every existing meeting moves with
+ * it — nothing is left behind at the old location.
+ */
+export function changeMeetingsFolder(newRoot: string): Promise<MeetingList> {
+  return call<MeetingList>("change_meetings_folder", { newRoot });
+}
+
 export function revealMeeting(id: string): Promise<void> {
   return call<void>("reveal_meeting", { id });
 }
@@ -155,7 +163,7 @@ export function downloadModel(id: string): Promise<string> {
 
 export async function recordingStatus(): Promise<RecordingStatus> {
   if (!hasBackend()) {
-    return { phase: "idle", meetingId: null, startedAtMs: null, stub: true };
+    return { phase: "idle", meetingId: null, startedAtMs: null };
   }
   return call<RecordingStatus>("recording_status");
 }

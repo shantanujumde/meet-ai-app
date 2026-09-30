@@ -32,10 +32,12 @@ import { toUiError } from "@/ipc/types";
 import { useAppStore } from "@/state/app";
 import { formatBytes } from "@/ui/format";
 import { Checking, ErrorState } from "@/ui/states";
+import { useChangeFolder } from "@/ui/useChangeFolder";
 
 export function Settings() {
   const restartOnboarding = useAppStore((state) => state.restartOnboarding);
   const meetings = useAppStore((state) => state.meetings);
+  const { busy, error, pick } = useChangeFolder();
 
   return (
     <div className="page">
@@ -50,14 +52,30 @@ export function Settings() {
           Files
         </h2>
         <div className="card card--flush">
-          <div className="row">
-            <span className="row__label">
-              <span className="row__name">Meetings folder</span>
-              <span className="row__detail">{meetings?.root ?? "~/Meetings"}</span>
-            </span>
-            <span className="row__value">
-              {meetings?.rootExists ? "Exists" : "Created on first recording"}
-            </span>
+          <div className="row" style={{ flexDirection: "column", alignItems: "stretch" }}>
+            <div
+              style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-5)" }}
+            >
+              <span className="row__label">
+                <span className="row__name">Meetings folder</span>
+                <span className="row__detail">{meetings?.root ?? "~/Meetings"}</span>
+              </span>
+              <span
+                className="row__value"
+                style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}
+              >
+                {meetings?.rootExists ? "Exists" : "Created on first recording"}
+                <button
+                  type="button"
+                  className="btn btn--small"
+                  disabled={busy}
+                  onClick={() => void pick()}
+                >
+                  {busy ? "Moving…" : "Change…"}
+                </button>
+              </span>
+            </div>
+            {error ? <ErrorState error={error} busy={busy} /> : null}
           </div>
           <div className="row">
             <span className="row__label">
