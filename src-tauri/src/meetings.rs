@@ -1,10 +1,10 @@
 //! Reading the meetings folder for the app shell.
 //!
-//! Phase 2a only, and deliberately thin. `crates/store` owns markdown
-//! read/write, frontmatter and the FTS index from Phase 3 (SPEC §5); this
-//! module exists so the meeting list and review view have something real to
-//! render before that lands, and it should shrink to a call into `store` when
-//! it does.
+//! A thin adapter over `crates/store`, which owns markdown read/write,
+//! frontmatter and (from Phase 3c) the FTS index (SPEC §5). This module turns
+//! a loaded [`store::folder::MeetingFolder`] into the shapes the webview
+//! renders, and keeps the one thing `store` deliberately does not know about:
+//! *where* the meetings root is, and moving it.
 //!
 //! Two rules carried over from the spec, because getting them wrong here is
 //! invisible until a recording is lost:
@@ -12,9 +12,9 @@
 //! * **`transcript.md` is read-only to the app shell.** L7 makes markdown the
 //!   source of truth and §3.4 makes it append-only. Nothing in this file opens
 //!   it for writing.
-//! * **The §3.4 line format is parsed, not guessed.** A line that does not match
-//!   is counted and skipped, never half-parsed — SPEC §7 says the UI shows a
-//!   "needs attention" signal rather than failing, so the count is returned.
+//! * **A malformed file is a badge, not an error (SPEC §7).** `store` loads
+//!   every file it can and reports the rest as problems; the unparsed-line
+//!   count below is one of them.
 //!
 //! It also tells a finished meeting from one whose recording was cut short
 //! (TUR-97) — see [`RecordingState`] for the name and [`classify_audio`] for
@@ -33,9 +33,6 @@ use crate::error::UiError;
 use crate::recording::{Phase, Status};
 
 /// Files inside a meeting folder (SPEC §3.1).
-const TRANSCRIPT: &str = "transcript.md";
-const NOTES: &str = "notes.md";
-const MEETING: &str = "meeting.md";
 const AUDIO: &str = "audio";
 const SEGMENTS: &str = "segments.json";
 
@@ -385,13 +382,14 @@ fn list_in(root: &Path, live: Live<'_>) -> Result<MeetingList, UiError> {
         });
     }
 
-    let folders = meeting_folders(root)?;
+    // `scan` skips `.app` and every other dot-folder, sorts newest first, and
+    // never lets one unreadable folder hide the rest.
     let live_id = live_id(live);
-    let meetings = folders
-        .into_iter()
-        .map(|(path, name)| {
-            let is_live = live_id.as_deref() == Some(name.as_str());
-            summarize(&path, name, is_live)
+    let meetings = store::folder::scan(root)?
+        .iter()
+        .map(|folder| {
+            let is_live = live_id.as_deref() == Some(folder.id.as_str());
+            summarize(folder, is_live)
         })
         .collect();
 
@@ -452,90 +450,46 @@ fn live_id(live: Live<'_>) -> Option<String> {
 
 /// Open one meeting: its transcript and its notes.
 pub fn detail(id: &str, live: Live<'_>) -> Result<MeetingDetail, UiError> {
-    let dir = meeting_dir(id)?;
-    if !dir.is_dir() {
-        return Err(UiError::app(
-            "meeting-not-found",
-            format!("There is no meeting folder at {}.", dir.display()),
-        ));
-    }
+    let dir = existing_meeting_dir(id)?;
+    let folder = store::folder::load(&dir)?;
 
-    let transcript_path = dir.join(TRANSCRIPT);
-    let transcript_missing = !transcript_path.is_file();
-    let raw = if transcript_missing {
-        String::new()
-    } else {
-        fs::read_to_string(&transcript_path)?
+    let (lines, unparsed_line_count) = match &folder.transcript {
+        Some(transcript) => (
+            transcript
+                .lines
+                .iter()
+                .map(|line| TranscriptLine {
+                    seq: line.seq,
+                    time: line.time.clone(),
+                    speaker: line.speaker.label().to_string(),
+                    text: line.text.clone(),
+                })
+                .collect(),
+            unparsed_lines(transcript),
+        ),
+        None => (Vec::new(), 0),
     };
 
-    let mut lines = Vec::new();
-    let mut unparsed_line_count = 0;
-    for (seq, raw_line) in raw.lines().enumerate() {
-        // A trailing newline produces one empty final entry. That is file
-        // structure, not a malformed line, so it must not raise the count.
-        if raw_line.trim().is_empty() {
-            continue;
-        }
-        match parse_line(raw_line) {
-            Some((time, speaker, text)) => lines.push(TranscriptLine {
-                seq,
-                time,
-                speaker: speaker.to_string(),
-                text,
-            }),
-            None => unparsed_line_count += 1,
-        }
-    }
-
-    let notes = read_notes(&dir)?;
-    let name = dir
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| id.to_string());
-
-    let is_live = match live {
-        Live::Nothing => false,
-        Live::Meeting(live) => live == name,
-    };
+    let is_live = live_id(live).as_deref() == Some(folder.id.as_str());
 
     Ok(MeetingDetail {
-        summary: summarize(&dir, name, is_live),
+        summary: summarize(&folder, is_live),
         path: dir.display().to_string(),
         lines,
-        transcript_missing,
+        transcript_missing: folder.transcript.is_none(),
         unparsed_line_count,
-        notes,
+        notes: folder.notes,
     })
-}
-
-/// Read `notes.md`, treating "not there yet" as an empty page rather than an
-/// error — a meeting nobody has written notes on is the normal case.
-fn read_notes(dir: &Path) -> Result<String, UiError> {
-    match fs::read_to_string(dir.join(NOTES)) {
-        Ok(body) => Ok(body),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(error) => Err(error.into()),
-    }
 }
 
 /// Save the user's notes for one meeting.
 ///
-/// Writes through a temp file and `rename(2)` so a crash mid-save cannot leave
-/// a half-written `notes.md`. The notes pane autosaves while the user types, so
-/// this runs often enough for that to matter.
+/// `store` writes through a temp file and `rename(2)`, so a crash mid-save
+/// cannot leave a half-written `notes.md`. The notes pane autosaves while the
+/// user types, so that matters.
 pub fn write_notes(id: &str, body: &str) -> Result<(), UiError> {
-    let dir = meeting_dir(id)?;
-    if !dir.is_dir() {
-        return Err(UiError::app(
-            "meeting-not-found",
-            format!("There is no meeting folder at {}.", dir.display()),
-        ));
-    }
-
-    let final_path = dir.join(NOTES);
-    let temp_path = dir.join(".notes.md.tmp");
-    fs::write(&temp_path, body)?;
-    fs::rename(&temp_path, &final_path)?;
+    let dir = existing_meeting_dir(id)?;
+    store::notes::write(&dir, body)?;
     Ok(())
 }
 
@@ -545,35 +499,45 @@ pub fn write_notes(id: &str, body: &str) -> Result<(), UiError> {
 /// The id arrives from the webview, so `..` or an absolute path would otherwise
 /// let a compromised page read and write anywhere the app can reach.
 fn meeting_dir(id: &str) -> Result<PathBuf, UiError> {
-    let looks_like_a_folder_name = !id.is_empty()
-        && !id.starts_with('.')
-        && !id.contains('/')
-        && !id.contains('\\')
-        && Path::new(id).components().count() == 1;
-
-    if !looks_like_a_folder_name {
-        return Err(UiError::app(
-            "bad-meeting-id",
-            format!("{id:?} is not a meeting folder name."),
-        ));
-    }
-    Ok(root()?.join(id))
+    Ok(store::folder::meeting_dir(&root()?, id)?)
 }
 
-/// Build a summary from a folder without reading the whole transcript into the
-/// list. Line counting still streams the file, which is cheap next to the
-/// hundreds of megabytes of audio beside it — and that audio is never read,
+/// [`meeting_dir`], plus a clear "not found" when the folder is not there.
+fn existing_meeting_dir(id: &str) -> Result<PathBuf, UiError> {
+    let dir = meeting_dir(id)?;
+    if !dir.is_dir() {
+        return Err(UiError::app(
+            "meeting-not-found",
+            format!("There is no meeting folder at {}.", dir.display()),
+        ));
+    }
+    Ok(dir)
+}
+
+/// Build a list row from a loaded folder. The audio beside it is never read,
 /// only its two 44-byte headers and `segments.json` ([`classify_audio`]).
-fn summarize(dir: &Path, id: String, is_live: bool) -> MeetingSummary {
-    let (date, time, slug) = split_folder_name(&id);
+fn summarize(folder: &store::folder::MeetingFolder, is_live: bool) -> MeetingSummary {
+    let (date, time, slug) = split_folder_name(&folder.id);
 
-    let (line_count, last_timestamp) = count_lines(&dir.join(TRANSCRIPT));
+    let (line_count, last_timestamp) = match &folder.transcript {
+        Some(transcript) => (
+            transcript.lines.len(),
+            transcript.lines.last().map(|line| line.time.clone()),
+        ),
+        None => (0, None),
+    };
 
-    let title = frontmatter_title(&dir.join(MEETING))
+    // The agent-written title wins. A meeting.md with broken frontmatter has
+    // none and falls back to the folder slug, which is never wrong, only less
+    // specific.
+    let title = folder
+        .meeting
+        .as_ref()
+        .and_then(|meeting| meeting.title())
         .or_else(|| slug.map(prettify_slug))
-        .unwrap_or_else(|| id.clone());
+        .unwrap_or_else(|| folder.id.clone());
 
-    let audio = classify_audio(&dir.join(AUDIO));
+    let audio = classify_audio(&folder.path.join(AUDIO));
     let recording_state = if is_live {
         RecordingState::Recording
     } else if audio.ended_cleanly {
@@ -585,18 +549,14 @@ fn summarize(dir: &Path, id: String, is_live: bool) -> MeetingSummary {
     MeetingSummary {
         recording_state,
         audio_ms: audio.header_frames.map(|frames| duration_ms(frames) as u64),
-        id,
+        id: folder.id.clone(),
         title,
         date,
         time,
         line_count,
         last_timestamp,
-        has_notes: dir
-            .join(NOTES)
-            .metadata()
-            .map(|m| m.len() > 0)
-            .unwrap_or(false),
-        has_analysis: dir.join(MEETING).is_file(),
+        has_notes: !folder.notes.is_empty(),
+        has_analysis: folder.meeting.is_some(),
     }
 }
 
@@ -796,68 +756,16 @@ fn expose_unheadered_samples(path: &Path) -> std::io::Result<bool> {
     Ok(true)
 }
 
-/// Count parseable lines and remember the last timestamp seen.
-///
-/// The last timestamp is the meeting's readable length. SPEC A5 says a
-/// recording's true duration is `wav_header_frames / 16000`, never a sum of
-/// segment frames — but the WAV may already be deleted by the 7-day retention
-/// job (L16) while the transcript stays forever, so the list uses the last
-/// transcript timestamp and calls it "last line at", not "duration".
-fn count_lines(transcript: &Path) -> (usize, Option<String>) {
-    let Ok(raw) = fs::read_to_string(transcript) else {
-        return (0, None);
-    };
-    let mut count = 0;
-    let mut last = None;
-    for line in raw.lines() {
-        if let Some((time, _, _)) = parse_line(line) {
-            count += 1;
-            last = Some(time);
-        }
-    }
-    (count, last)
-}
-
-/// Parse one `transcript.md` line.
-///
-/// This is SPEC §3.4's `^\[(\d{2}:\d{2}:\d{2})\] (You|Others): (.*)$`, written
-/// out rather than compiled, because the prefix is fixed-width and anchored:
-/// the regex crate is not in the workspace and this is the whole of it.
-///
-/// `(.*)$` takes the rest of the line verbatim, so a `]` or a `:` inside speech
-/// is safe — which is exactly why §3.4 says no escaping is needed.
-fn parse_line(raw: &str) -> Option<(String, &'static str, String)> {
-    let rest = raw.strip_prefix('[')?;
-    let (timestamp, rest) = rest.split_once("] ")?;
-    if !is_hms(timestamp) {
-        return None;
-    }
-
-    // Anchored on the literal speaker labels rather than "everything up to the
-    // first colon", so a line whose speaker was mangled is reported as
-    // unparsed instead of inventing a third speaker.
-    let (speaker, text) = if let Some(text) = rest.strip_prefix("You:") {
-        ("You", text)
-    } else {
-        ("Others", rest.strip_prefix("Others:")?)
-    };
-
-    Some((
-        timestamp.to_string(),
-        speaker,
-        text.strip_prefix(' ').unwrap_or(text).to_string(),
-    ))
-}
-
-/// `\d{2}:\d{2}:\d{2}`, and nothing longer.
-fn is_hms(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 8
-        && bytes[2] == b':'
-        && bytes[5] == b':'
-        && [0, 1, 3, 4, 6, 7]
-            .iter()
-            .all(|&i| bytes[i].is_ascii_digit())
+/// The §3.4 lines `store` skipped, as the single count the review view shows.
+fn unparsed_lines(transcript: &store::transcript::Transcript) -> usize {
+    transcript
+        .problems
+        .iter()
+        .map(|problem| match problem {
+            store::Problem::UnparsedLines { count } => *count,
+            _ => 0,
+        })
+        .sum()
 }
 
 /// Split `2026-09-01-1430-standup` into date, time and slug.
@@ -898,93 +806,9 @@ fn prettify_slug(slug: String) -> String {
     }
 }
 
-/// Pull `title:` out of `meeting.md`'s frontmatter (SPEC §3.2).
-///
-/// A deliberately minimal scan rather than a YAML parse: the app shell only
-/// needs one scalar, and `crates/store` owns real frontmatter handling with
-/// `yaml-rust2` from Phase 3. Anything this misses falls back to the folder
-/// slug, which is never wrong, only less specific.
-fn frontmatter_title(meeting_md: &Path) -> Option<String> {
-    let raw = fs::read_to_string(meeting_md).ok()?;
-    let body = raw.strip_prefix("---\n")?;
-    let (frontmatter, _) = body.split_once("\n---")?;
-    for line in frontmatter.lines() {
-        if let Some(value) = line.strip_prefix("title:") {
-            let value = value.trim().trim_matches(['"', '\'']).trim();
-            if !value.is_empty() {
-                return Some(value.to_string());
-            }
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_the_spec_3_4_example_lines() {
-        let (time, speaker, text) =
-            parse_line("[00:00:04] Others: Morning everyone, let's start with the API work.")
-                .expect("the spec's own example must parse");
-        assert_eq!(time, "00:00:04");
-        assert_eq!(speaker, "Others");
-        assert_eq!(text, "Morning everyone, let's start with the API work.");
-
-        let (_, speaker, text) =
-            parse_line("[00:00:11] You: Sessions are still in memory, that's the blocker.")
-                .expect("the spec's own example must parse");
-        assert_eq!(speaker, "You");
-        assert_eq!(text, "Sessions are still in memory, that's the blocker.");
-    }
-
-    #[test]
-    fn brackets_and_colons_inside_speech_need_no_escaping() {
-        // §3.4: the prefix is fixed-width and anchored, so `(.*)$` is safe.
-        let (_, _, text) = parse_line("[01:02:03] You: see issue [TUR-17]: it is the shell")
-            .expect("punctuation in speech is not a parse failure");
-        assert_eq!(text, "see issue [TUR-17]: it is the shell");
-    }
-
-    #[test]
-    fn rejects_lines_that_are_not_the_contract() {
-        assert!(parse_line("").is_none());
-        assert!(parse_line("just some prose").is_none());
-        assert!(parse_line("## A heading").is_none());
-        // Wrong speaker label — reported as unparsed, not read as a speaker.
-        assert!(parse_line("[00:00:04] Priya: hello").is_none());
-        // Timestamp not HH:MM:SS.
-        assert!(parse_line("[0:00:04] You: hello").is_none());
-        assert!(parse_line("[00:00:04.5] You: hello").is_none());
-    }
-
-    #[test]
-    fn empty_text_still_parses_even_though_it_is_never_written() {
-        // §3.4 forbids writing one, but a hand-edited file can contain one and
-        // the reader must not fall over.
-        let (_, speaker, text) = parse_line("[00:00:04] You:").expect("must not fail");
-        assert_eq!(speaker, "You");
-        assert_eq!(text, "");
-    }
-
-    #[test]
-    fn seq_is_the_zero_based_line_number_including_skipped_lines() {
-        let raw = "not a transcript line\n[00:00:04] You: first real line\n";
-        let mut seqs = Vec::new();
-        let mut unparsed = 0;
-        for (seq, line) in raw.lines().enumerate() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            match parse_line(line) {
-                Some(_) => seqs.push(seq),
-                None => unparsed += 1,
-            }
-        }
-        assert_eq!(seqs, vec![1]);
-        assert_eq!(unparsed, 1);
-    }
 
     #[test]
     fn splits_a_spec_3_1_folder_name() {
@@ -1017,21 +841,84 @@ mod tests {
         }
     }
 
-    #[test]
-    fn reads_the_agent_written_title_out_of_meeting_md() {
-        let dir = std::env::temp_dir().join(format!("meet-ai-fm-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("meeting.md");
-        fs::write(
-            &path,
-            "---\nid: 2026-09-01-1430-standup\ntitle: Platform Standup\n---\n\n## Summary\n",
-        )
-        .unwrap();
-        assert_eq!(
-            frontmatter_title(&path).as_deref(),
-            Some("Platform Standup")
-        );
+    /// A meeting folder under a scratch root, loaded the way `list` and
+    /// `detail` load one.
+    fn load_fixture(name: &str, files: &[(&str, &[u8])]) -> store::folder::MeetingFolder {
+        let dir = scratch(name).join("2026-09-01-1430-platform-standup");
         fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).unwrap();
+        for (file, body) in files {
+            fs::write(dir.join(file), body).unwrap();
+        }
+        let folder = store::folder::load(&dir).expect("the folder itself is readable");
+        fs::remove_dir_all(dir.parent().unwrap()).ok();
+        folder
+    }
+
+    #[test]
+    fn the_agent_written_title_wins_over_the_folder_slug() {
+        let folder = load_fixture(
+            "title",
+            &[(
+                "meeting.md",
+                b"---\nid: 2026-09-01-1430-standup\ntitle: Platform Standup\n---\n\n## Summary\n",
+            )],
+        );
+        let summary = summarize(&folder, false);
+        assert_eq!(summary.title, "Platform Standup");
+        assert!(summary.has_analysis);
+    }
+
+    #[test]
+    fn broken_frontmatter_falls_back_to_the_slug_instead_of_failing_the_list() {
+        // SPEC §7: an agent writing sloppy YAML is expected. The row still
+        // shows, under the name the folder already gives it.
+        let folder = load_fixture(
+            "broken-title",
+            &[("meeting.md", b"---\ntitle: \"unclosed\n---\n")],
+        );
+        let summary = summarize(&folder, false);
+        assert_eq!(summary.title, "Platform standup");
+        assert!(folder.needs_attention());
+    }
+
+    #[test]
+    fn line_counts_and_the_unparsed_count_come_from_the_store_parser() {
+        let folder = load_fixture(
+            "counts",
+            &[
+                (
+                    "transcript.md",
+                    b"[00:00:04] Others: Morning.\nnot a transcript line\n[00:01:10] You: Hi.\n",
+                ),
+                ("notes.md", b"remember the Redis ticket"),
+            ],
+        );
+        let summary = summarize(&folder, false);
+        assert_eq!(summary.line_count, 2);
+        assert_eq!(summary.last_timestamp.as_deref(), Some("00:01:10"));
+        assert!(summary.has_notes);
+        assert!(!summary.has_analysis);
+        assert_eq!(unparsed_lines(folder.transcript.as_ref().unwrap()), 1);
+    }
+
+    #[test]
+    fn an_empty_folder_is_a_meeting_with_nothing_in_it_yet() {
+        let folder = load_fixture("empty", &[]);
+        let summary = summarize(&folder, false);
+        assert_eq!(summary.line_count, 0);
+        assert_eq!(summary.last_timestamp, None);
+        assert!(!summary.has_notes);
+        assert!(folder.transcript.is_none(), "missing, not empty");
+    }
+
+    #[test]
+    fn store_errors_keep_the_kinds_the_ui_already_branches_on() {
+        let bad_id: UiError = store::Error::BadId("..".into()).into();
+        assert_eq!((bad_id.domain, bad_id.kind), ("app", "bad-meeting-id"));
+        let io: UiError = store::Error::Io(std::io::Error::other("disk gone")).into();
+        assert_eq!((io.domain, io.kind), ("app", "io"));
+        assert!(io.message.contains("disk gone"), "{}", io.message);
     }
 
     /// A scratch folder unique to this test run, cleaned up by the caller.
@@ -1165,8 +1052,8 @@ mod tests {
     fn meeting(root: &Path, id: &str) -> PathBuf {
         let dir = root.join(id);
         fs::create_dir_all(dir.join(AUDIO)).unwrap();
-        fs::write(dir.join(TRANSCRIPT), "[00:00:04] You: hello\n").unwrap();
-        fs::write(dir.join(NOTES), "").unwrap();
+        fs::write(dir.join("transcript.md"), "[00:00:04] You: hello\n").unwrap();
+        fs::write(dir.join("notes.md"), "").unwrap();
         dir.join(AUDIO)
     }
 
