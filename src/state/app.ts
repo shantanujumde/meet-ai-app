@@ -29,7 +29,7 @@ type AppStore = {
   meetings: MeetingList | null;
   meetingsError: UiError | null;
   meetingsLoading: boolean;
-  loadMeetings: () => Promise<void>;
+  loadMeetings: (options?: { silent?: boolean }) => Promise<void>;
 
   permission: PermissionStatus | null;
   permissionLoading: boolean;
@@ -60,7 +60,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // that reads as data loss.
   meetingsLoading: true,
 
-  async loadMeetings() {
+  async loadMeetings(options) {
+    if (options?.silent) {
+      // A background refresh: no loading flicker, and a failure keeps the
+      // list already on screen rather than replacing it with an error.
+      try {
+        set({ meetings: await listMeetings(), meetingsError: null });
+      } catch {
+        // Keep the old list.
+      }
+      return;
+    }
+
     set({ meetingsLoading: true });
     try {
       set({ meetings: await listMeetings(), meetingsError: null });

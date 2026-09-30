@@ -18,6 +18,7 @@ mod meetings;
 mod onboarding;
 mod permission;
 mod recording;
+mod watch;
 // The menu bar is a desktop surface; the mobile targets have nothing to put an
 // item in.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -77,6 +78,7 @@ pub fn run() {
         .manage(live_transcript::LiveTranscript::default())
         .manage(engine::Downloads::default())
         .manage(folder_move::FolderGate::default())
+        .manage(watch::MeetingsWatch::default())
         .setup(|_app| {
             // TUR-97: before the record shortcut exists, so nothing can be
             // mid-recording while this rewrites a header. Fast — two 44-byte
@@ -91,6 +93,8 @@ pub fn run() {
                     tracing::info!(rewritten, "made interrupted recordings' audio playable");
                 }
             }
+            // TUR-100: notice edits made to the meetings folder outside the app.
+            watch::state(_app.handle()).restart(_app.handle());
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 register_record_shortcut(_app.handle());

@@ -144,6 +144,7 @@ export function mockClient(actual: typeof Client): typeof Client {
     onPermissionStatus: subscriber(actual.PERMISSION_STATUS_EVENT),
     onTranscriptUpdate: subscriber(actual.TRANSCRIPT_UPDATE_EVENT),
     onTranscriptStatus: subscriber(actual.TRANSCRIPT_STATUS_EVENT),
+    onMeetingsChanged: subscriber(actual.MEETINGS_CHANGED_EVENT),
   };
 }
 
