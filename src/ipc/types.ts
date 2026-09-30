@@ -128,6 +128,59 @@ export type RecordingStatus = {
   startedAtMs: number | null;
 };
 
+/**
+ * Who a live line belongs to: `you` is the mic track, `others` the system
+ * track. Lower-case on the wire; the pane renders them as §3.4's `You`/`Others`.
+ */
+export type LiveSpeaker = "you" | "others";
+
+/**
+ * One line in the live pane, volatile or settled.
+ *
+ * The one snake_case field in this file: `start_sec` is the TUR-96 event
+ * contract as agreed with `src-tauri`, not a slip from the camelCase rule above.
+ */
+export type LiveLine = {
+  /** Meeting-global and monotonic. Stable enough to be the React key. */
+  seq: number;
+  speaker: LiveSpeaker;
+  /** Utterance start, in seconds from the start of the recording (§3.4). */
+  start_sec: number;
+  text: string;
+};
+
+/**
+ * One `transcript://update` event.
+ *
+ * `volatile` replaces that speaker's in-progress guess, `final` settles it into
+ * a line, and `dropped` means the guess came to nothing — the recognizer threw
+ * it away, or the silence guard (TUR-67) did — so it clears without a line.
+ */
+export type TranscriptUpdate =
+  | ({ kind: "volatile" | "final" } & LiveLine)
+  | { kind: "dropped"; speaker: LiveSpeaker; seq: number };
+
+export type TranscriptState = "idle" | "running" | "stopped" | "failed";
+
+/** One `transcript://status` event. */
+export type TranscriptStatus = {
+  state: TranscriptState;
+  /** Which engine is transcribing, e.g. `apple-speech` or `whisper`. */
+  engine: string | null;
+  /** A sentence for the user when `state` is `failed`. */
+  detail: string | null;
+};
+
+/**
+ * What `live_transcript` returns: everything so far, so a window opened
+ * mid-meeting catches up before the events carry on from there.
+ */
+export type LiveTranscriptSnapshot = {
+  status: TranscriptStatus;
+  finals: LiveLine[];
+  volatile: LiveLine[];
+};
+
 /** Narrow an unknown thrown value to a {@link UiError}. */
 export function isUiError(value: unknown): value is UiError {
   if (typeof value !== "object" || value === null) return false;

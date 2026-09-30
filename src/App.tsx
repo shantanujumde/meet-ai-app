@@ -17,6 +17,7 @@ import { Review } from "@/routes/Review";
 import { Settings } from "@/routes/Settings";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore, watchRecordingState } from "@/state/recording";
+import { watchLiveTranscript } from "@/state/transcript";
 import { Shell } from "@/ui/Shell";
 
 export function App() {
@@ -63,7 +64,14 @@ function Bootstrap() {
     // Mirrors Rust's recording state, including changes this window did not
     // cause — ⌘⇧R firing while the app is in the background, or the menu-bar
     // item being used.
-    return watchRecordingState();
+    const stopRecording = watchRecordingState();
+    // Watched here rather than from the live pane, so lines keep landing while
+    // the user is on another screen, and the pane has them when they come back.
+    const stopTranscript = watchLiveTranscript();
+    return () => {
+      stopRecording();
+      stopTranscript();
+    };
   }, [loadMeetings, loadPermission, loadOnboarding]);
 
   // Starting a recording creates the meeting folder and stopping finishes it,
