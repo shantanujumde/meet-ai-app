@@ -285,7 +285,7 @@ ICTOOL="/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents
 
 **Compiling it into `src-tauri/icons/Assets.car` needs Xcode 26 or later**
 (`actool`), which is why the compiled catalog is committed: routine builds stay
-on Command Line Tools. Re-run the compile step only when this document changes.
+on Command Line Tools. Re-run `just icon-car` only when this document changes.
 `actool` names the icon after the folder, so its `--app-icon` value, and
 `CFBundleIconName` in the app's `Info.plist`, are both **`meet-ai`**.
 
@@ -303,8 +303,9 @@ Finder, macOS reads `Assets.car` (named by `CFBundleIconName`) and falls back
 to the `.icns` (named by `CFBundleIconFile`); Tauri copies both into the bundle.
 `.ico` is Windows-only on a
 macOS-26-and-up product. Recorded so nobody later reads "the config already
-points at these paths" as "all seven are wired". If you regenerate the set,
-regenerate all seven anyway: the build pipeline and the `.ico` depend on them.
+points at these paths" as "all eight are wired". If you regenerate the set,
+regenerate all seven `render.sh` outputs anyway: the build pipeline and the
+`.ico` depend on them. `Assets.car` is the eighth, and comes from `just icon-car`.
 
 ### Reduced transparency and reduced motion
 

@@ -148,7 +148,9 @@ node build-icon.mjs "$BRAND/meet-ai.icon"
 # it accepts the document: a malformed icon.json fails it with a non-zero exit.
 # It lives inside Xcode, so on a Command-Line-Tools-only machine this is
 # skipped, not failed — the document above is still written either way.
-ICTOOL="/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"
+# Same Xcode as `just icon-car` (XCODE_DEVELOPER_DIR, justfile).
+XCODE_DEVELOPER_DIR="${XCODE_DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+ICTOOL="${XCODE_DEVELOPER_DIR%/Developer}/Applications/Icon Composer.app/Contents/Executables/ictool"
 if [[ -x "$ICTOOL" ]]; then
   "$ICTOOL" "$BRAND/meet-ai.icon" --export-image \
     --output-file "$STAGE/meet-ai-icon-preview.png" --platform macOS \

@@ -258,9 +258,12 @@ sw_vers -productVersion                # 26.6.2 — at or above the 26.0 floor
 # 0.4 ONLY if you regenerate the app icon (SPEC A10). Needs Xcode 26+ installed.
 #     Full paths because xcode-select stays on CLT — do not `xcode-select -s`.
 #     `just icon-car` points at Xcode by itself through DEVELOPER_DIR.
+#     Opening Xcode.app once and accepting its prompts does the same two steps.
 sudo /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -license accept
 sudo /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -runFirstLaunch
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun --find actool   # should resolve
+# --find alone is not enough: it resolves before -runFirstLaunch, and actool
+# then fails with "A required plugin failed to load".
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun actool --version   # prints a plist
 ```
 
 ### Step 1 — ⛔ irreversibles, before any feature code

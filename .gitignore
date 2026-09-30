@@ -56,7 +56,7 @@ spikes/*/build/
 # src-tauri/icons/Assets.car is committed too, for a different reason: it is
 # compiled from design-system/meet-ai/brand/meet-ai.icon by `just icon-car`, and
 # that needs Xcode 26+ (actool). Committing the compiled catalog is what keeps
-# routine builds on Command Line Tools only (SPEC A2). actool's other outputs
+# routine builds on Command Line Tools only (SPEC A10). actool's other outputs
 # (partial Info.plist, its own .icns) go to a temp dir and never land here.
 design-system/meet-ai/brand/tools/.render/
 

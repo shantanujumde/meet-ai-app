@@ -33,13 +33,8 @@ brew install just cmake
   and `codesign` both ship with CLT.
 - **Full Xcode 26+** only if you change the app icon art. `src-tauri/icons/Assets.car`
   is committed, so builds never compile it; `just icon-car` does, pointing at
-  Xcode itself through `DEVELOPER_DIR`. Leave `xcode-select` on CLT. One-time
-  setup on that machine (full paths, since plain `xcodebuild` refuses under CLT):
-
-  ```bash
-  sudo /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -license accept
-  sudo /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -runFirstLaunch
-  ```
+  Xcode itself through `DEVELOPER_DIR`. Leave `xcode-select` on CLT. The
+  one-time setup for that machine is `SETUP.md` step 0.4.
 - **cmake** is not in `SETUP.md`, but `whisper-rs` needs it to build whisper.cpp.
   Without it `cargo build` fails inside `crates/stt` on macOS.
 - **Node** ≥ 20.19. **pnpm** installs itself: `package.json` pins

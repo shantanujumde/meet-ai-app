@@ -57,11 +57,15 @@ trial's lab copy. It checks, in order:
    fallback, compared against the baseline.
 6. Rung by rung against `runs/baseline` (or `--against DIR`), with contact
    sheets pairing the two. Differences are marked REVIEW, not failed —
-   better or worse is for a person looking at the sheets.
+   better or worse is for a person looking at the sheets. A rung that cannot
+   be compared at all (a missing baseline render, a size mismatch) is REVIEW
+   too, with the reason, rather than ending the run.
 
-Exit status is non-zero if any hard check fails. On today's `.icns`-only
-bundle the three `Assets.car` checks and "draws Assets.car" fail — that is the
-expected, clean result for a bundle without the catalog.
+Exit status is non-zero if any hard check fails. On an `.icns`-only bundle
+(such as the pre-TUR-85 build recorded as `runs/baseline`) the three
+`Assets.car` checks and "draws Assets.car" fail — that is the expected, clean
+result for a bundle without the catalog. The current bundle ships
+`Assets.car`, and passes them.
 
 ## The pieces
 
