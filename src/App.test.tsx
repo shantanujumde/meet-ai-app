@@ -45,6 +45,7 @@ vi.mock("@/ipc/client", () => ({
   modelCatalogue: vi.fn().mockResolvedValue([]),
   downloadModel: vi.fn(),
   onRecordingState: () => () => {},
+  onRecordingError: () => () => {},
   onModelProgress: () => () => {},
 }));
 

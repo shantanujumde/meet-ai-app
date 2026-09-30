@@ -32,6 +32,11 @@ import { toUiError } from "./types";
 
 /** Tauri event names. These are string literals shared with Rust. */
 export const RECORDING_STATE_EVENT = "recording://state";
+/**
+ * Rust ended a recording on its own because a checkpoint failed (TUR-97). The
+ * state event has already moved to idle; this one says why.
+ */
+export const RECORDING_ERROR_EVENT = "recording://error";
 export const MODEL_PROGRESS_EVENT = "model://progress";
 
 /**
@@ -209,6 +214,10 @@ function subscribe<T>(event: string, onEvent: (payload: T) => void): () => void 
 
 export function onRecordingState(handler: (status: RecordingStatus) => void): () => void {
   return subscribe<RecordingStatus>(RECORDING_STATE_EVENT, handler);
+}
+
+export function onRecordingError(handler: (error: UiError) => void): () => void {
+  return subscribe<UiError>(RECORDING_ERROR_EVENT, handler);
 }
 
 export function onModelProgress(handler: (progress: ModelProgress) => void): () => void {

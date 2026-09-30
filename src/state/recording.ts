@@ -15,7 +15,7 @@
  */
 
 import { create } from "zustand";
-import { onRecordingState, recordingStatus, toggleRecording } from "@/ipc/client";
+import { onRecordingError, onRecordingState, recordingStatus, toggleRecording } from "@/ipc/client";
 import type { RecordingStatus, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 
@@ -81,7 +81,16 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
  */
 export function watchRecordingState(): () => void {
   void useRecordingStore.getState().refresh();
-  return onRecordingState((status) => {
+  const stopState = onRecordingState((status) => {
     useRecordingStore.getState().applyFromBackend(status);
   });
+  // A recording Rust stopped by itself (TUR-97) has no button press to hang
+  // an error on, so it arrives as its own event and uses the same banner.
+  const stopError = onRecordingError((error) => {
+    useRecordingStore.setState({ error });
+  });
+  return () => {
+    stopState();
+    stopError();
+  };
 }
