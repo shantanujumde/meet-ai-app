@@ -22,6 +22,7 @@ use crate::meetings::{self, Live, MeetingDetail, MeetingList};
 use crate::onboarding;
 use crate::permission;
 use crate::recording::{Phase, Recorder, Status};
+use crate::watch;
 
 // --- off the main thread -------------------------------------------------
 
@@ -77,7 +78,13 @@ pub async fn read_meeting(app: AppHandle, id: String) -> Result<MeetingDetail, U
 pub async fn save_notes(app: AppHandle, id: String, body: String) -> Result<(), UiError> {
     on_blocking_pool(move || {
         app.state::<FolderGate>()
-            .writing(|| meetings::write_notes(&id, &body))
+            .writing(|| meetings::write_notes(&id, &body))?;
+        // The folder watcher would report this write and the window would
+        // reload under the cursor, so tell it the write was ours (TUR-100).
+        if let Ok(root) = meetings::root() {
+            watch::state(&app).note_own_write(&root.join(&id).join(store::NOTES_FILE));
+        }
+        Ok(())
     })
     .await?
 }
@@ -111,7 +118,10 @@ pub async fn change_meetings_folder(
                 "Stop the current recording before changing the meetings folder.",
             ));
         }
-        meetings::change_root(PathBuf::from(new_root))
+        let moved = meetings::change_root(PathBuf::from(new_root))?;
+        // Watch the new folder instead of the old one (TUR-100).
+        watch::state(&app).restart(&app);
+        Ok(moved)
     })
     .await?
 }
