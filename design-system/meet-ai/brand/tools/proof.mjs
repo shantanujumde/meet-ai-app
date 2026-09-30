@@ -11,7 +11,7 @@
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PALETTE as P } from "./geometry.mjs";
+import { PALETTE as P, MDOT, mdot } from "./geometry.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRAND = join(HERE, "..");
@@ -219,7 +219,12 @@ writeFileSync(
     `<div style="width:120px;height:120px;border-radius:27px;background:linear-gradient(${P.tileTop},${P.tileBottom});display:grid;place-items:center;overflow:hidden;${style}">${inner}</div>`;
   const white = (w) => sized("meet-ai-logomark-mono-white.svg", w, w);
   // "m" with its dot lifted to where an i's tittle would be: Xiaomi's old "mi".
-  const tittle = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="108 108 808 808" width="92" height="92"><path d="M220,668V460A104,104 0 0 1 428,460V668 M428,460A104,104 0 0 1 636,460V668" fill="none" stroke="#fff" stroke-width="100" stroke-linecap="round"/><path d="M792,480V668" stroke="#fff" stroke-width="100" stroke-linecap="round"/><circle cx="792" cy="330" r="62" fill="#fff"/></svg>`;
+  // Drawn from the real construction, so it tracks MDOT: the dot's column
+  // becomes an i stem from just under the x-height to the baseline, and the
+  // dot sits above the x-height.
+  const g = mdot(MDOT);
+  const iStem = `M${g.dot.cx},${MDOT.xtop + 124}V${MDOT.baseline}`;
+  const tittle = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="108 108 808 808" width="92" height="92"><path d="${g.paths.join(" ")} ${iStem}" fill="none" stroke="#fff" stroke-width="${g.stroke}" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${g.dot.cx}" cy="${MDOT.xtop - 26}" r="${g.dot.r}" fill="#fff"/></svg>`;
   const cell = (body, label, note, bad = true) =>
     `<div class="c" style="align-items:flex-start;width:200px">
        <div class="pad" style="background:#5d5e66;width:200px;height:160px;display:grid;place-items:center;position:relative">

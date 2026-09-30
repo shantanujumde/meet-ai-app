@@ -38,7 +38,7 @@ ICON_BG=00000000
 # pages and is too low here for one reason and too high for another, so it was
 # re-derived from the real files rather than reused:
 #
-#   real icon-path rasters   26% (mark-128, mark-512, the sparsest art)
+#   real icon-path rasters   25% (mark-128, mark-512, the sparsest art)
 #                            .. 86% (icon-16)
 #   tray template            34% (tray-32), 41% (tray-16)
 #   blank / broken-<img>     0%
@@ -46,7 +46,7 @@ ICON_BG=00000000
 #
 # (Re-measured for the "m." mark, 2026-09-30; the [ · ] figures were 28..85%
 # and 40/46%.) 3% is uncomfortably close to the 4% proof floor, so the icon
-# path gets its own: 10% is 3.3x above the worst observed failure and 2.6x
+# path gets its own: 10% is 3.3x above the worst observed failure and 2.5x
 # below the sparsest correct raster. Note the tray template only measures at all because
 # verify_render.py now counts alpha as a channel — it is pure black artwork
 # whose only varying channel is alpha, and on RGB alone it read 0% ink.
