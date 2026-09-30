@@ -795,8 +795,8 @@ for (const pkgRoot of installs) {
 console.log(
   duplicated
     ? "\nThis install has an export declared twice, so the module will not load and\n" +
-      "nothing was written. Restore it with `--revert` and re-apply, or copy the file\n" +
-      "from a healthy install of the same version."
+        "nothing was written. Restore it with `--revert` and re-apply, or copy the file\n" +
+        "from a healthy install of the same version."
     : failed
       ? "\nSome edits did not apply. The shipped build probably changed; re-derive the anchors."
       : `\nDone (${mode}). Restart the Paperclip server for changes to take effect.`,

@@ -120,7 +120,7 @@ async function main() {
 
     console.log(`\n--- follow-up ${ref(issue)}  [matched by ${matchedBy}]`);
     console.log(`    created by watchdog run ${issue.originRunId} of ${review.identifier}`);
-    console.log(`    parent ${parent ? parent.identifier : issue.parentId ?? "none"}`);
+    console.log(`    parent ${parent ? parent.identifier : (issue.parentId ?? "none")}`);
     console.log(`    blockedBy: ${blockedBy.map((b) => b.identifier).join(", ") || "(none)"}`);
 
     // `blockedBy` is current state, not birth state, and check 7 is about
@@ -131,7 +131,8 @@ async function main() {
     const born = new Date(issue.createdAt).getTime();
     const activity = await api(`/api/issues/${issue.id}/activity?limit=200`);
     const laterEdits = (Array.isArray(activity) ? activity : []).filter(
-      (r) => r.action === "issue.blockers_updated" && new Date(r.createdAt).getTime() > born + 10_000,
+      (r) =>
+        r.action === "issue.blockers_updated" && new Date(r.createdAt).getTime() > born + 10_000,
     );
     if (laterEdits.length > 0) {
       console.log(
@@ -146,7 +147,9 @@ async function main() {
     // review issue. The review issue is a child of the watched issue and is
     // created by the same agent, which is how it slipped past the first fix.
     if (blockedBy.some((b) => b.id === review.id)) {
-      console.log(`    CHECK 7 FAIL: born blocked behind its own review issue ${review.identifier}`);
+      console.log(
+        `    CHECK 7 FAIL: born blocked behind its own review issue ${review.identifier}`,
+      );
       failed += 1;
     } else {
       const sibling = blockedBy.find((b) => {

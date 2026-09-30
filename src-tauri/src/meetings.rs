@@ -171,7 +171,11 @@ fn move_contents(old_root: &Path, new_root: &Path) -> Result<(), UiError> {
         }
     }
     if !conflicts.is_empty() {
-        let noun = if conflicts.len() == 1 { "item" } else { "items" };
+        let noun = if conflicts.len() == 1 {
+            "item"
+        } else {
+            "items"
+        };
         return Err(UiError::app(
             "folder-conflict",
             format!(
