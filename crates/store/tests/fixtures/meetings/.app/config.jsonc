@@ -1,0 +1,4 @@
+// Not a meeting: `scan` must skip every dot-folder under the root.
+{
+  "retention_days": 30
+}
