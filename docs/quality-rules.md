@@ -52,6 +52,18 @@ repo.
 
   That is the normal case: each run gets its own worktree (see CONTRIBUTING.md,
   "Agent runs and the working tree").
+
+  Any Bash call counts, even a read-only one like `git diff`, because the gate
+  does not try to guess what a shell command did. So a reviewer with a PR
+  branch checked out can still be checked against that branch's files. To keep
+  it from "fixing" code it never touched, the failure report:
+  - tags each line that names such a file with
+    `(from branch, not edited in this session)`
+  - lists those files at the end
+  - finishes with: "If you did not change these files in this session, say so
+    and stop; do not edit them to satisfy the gate."
+
+  The limit of 2 retries still applies. After it, the run is let through.
 - In the primary checkout, only the transcript list is used, even on a
   feature branch, because other runs' files may be sitting there. Bash-tool
   edits are not caught there. Run the gate by hand with the file names.
