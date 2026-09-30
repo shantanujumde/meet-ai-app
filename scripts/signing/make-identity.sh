@@ -77,7 +77,7 @@ report() {
   echo "Every TCC grant is keyed to that SHA-1. Assert the baseline before a gate run:"
   echo "  codesign -d -r- build/meet-ai.app 2>&1 | grep -qi '${fp:-????}' && echo baseline-ok"
   echo
-  echo "use:  SIGN_IDENTITY=\"$NAME\" SIGN_KEYCHAIN=\"$KEYCHAIN\" ./build.sh"
+  echo "use:  SIGN_IDENTITY=\"$NAME\" SIGN_KEYCHAIN=\"$KEYCHAIN\" spikes/phase0a-tcc/build.sh"
 }
 
 if [[ "$MODE" == "print" ]]; then

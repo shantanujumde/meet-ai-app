@@ -141,7 +141,7 @@ def measure(capture, rate, freq, window_ms, skip_seconds):
 def main():
     root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/meet-ai-tur10")
     if not root.is_dir():
-        sys.exit(f"no such directory: {root} — run ./verify-tur10.sh first")
+        sys.exit(f"no such directory: {root} — run scripts/signing/verify-tur10.sh first")
 
     failures = []
     for run in ("granted", "rebuilt", "denied"):
