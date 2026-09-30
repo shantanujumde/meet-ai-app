@@ -80,7 +80,7 @@ const at1x = (file, px, label, cls = "") =>
       "app icon",
       `${composer}
      <section><h2>Legacy rasters — icon.icns, 32x32.png, favicons, .ico</h2>
-       <p class="note">The files render.sh ships, 1:1. 16px is drawn pixel by pixel; 24–64px use the small artwork (dot set a little further out); 128px and up use the master. On macOS 26 the <code>.icns</code> is only the fallback for <code>Assets.car</code>.</p>
+       <p class="note">The files render.sh ships, 1:1. 16px is drawn pixel by pixel; 24–64px use the small artwork files, which now carry the master's geometry; 128px and up use the master. On macOS 26 the <code>.icns</code> is only the fallback for <code>Assets.car</code>.</p>
        <div class="row pad dock">${strip(legacy)}</div>
        <div class="row pad light" style="margin-top:12px">${strip([16, 24, 32, 48, 64, 128, 256])}</div></section>
      <section><h2>Legacy rasters — pixel inspection</h2>
@@ -218,7 +218,7 @@ writeFileSync(
   const tile = (inner, style = "") =>
     `<div style="width:120px;height:120px;border-radius:27px;background:linear-gradient(${P.tileTop},${P.tileBottom});display:grid;place-items:center;overflow:hidden;${style}">${inner}</div>`;
   const white = (w) => sized("meet-ai-logomark-mono-white.svg", w, w);
-  // "m" with its dot lifted to where an i's tittle would be: Xiaomi's old "mi".
+  // "m" with its dot lifted to where an i's tittle would be: Xiaomi's "mi".
   // Drawn from the real construction, so it tracks MDOT: the dot's column
   // becomes an i stem from just under the x-height to the baseline, and the
   // dot sits above the x-height.
@@ -248,7 +248,7 @@ writeFileSync(
           ${cell(tile(white(92), "transform:scaleX(1.4)"), "Stretch it", "The stroke stops being uniform and the dot becomes an ellipse.")}
           ${cell(`<div style="width:120px;height:120px;border-radius:27px;background:linear-gradient(#3AA0F4,#3C4BF2);display:grid;place-items:center">${white(92)}</div>`, "Recolour the tile", "Dusk is the identity. Blue and purple are the meeting-notes field's colours — the reason it was not chosen.")}
           ${cell(tile(`<div style="filter:drop-shadow(0 8px 6px rgba(0,0,0,.45))">${white(92)}</div>`), "Add effects", "No drop shadow, bevel, glow or glass on the glyph.")}
-          ${cell(tile(tittle), "Move the dot", "The dot is a full stop on the baseline. Lifted to where an i's tittle sits, it spells a white &ldquo;mi&rdquo; — Xiaomi's old mark.")}
+          ${cell(tile(tittle), "Move the dot", "The dot is a full stop on the baseline. Lifted to where an i's tittle sits, it spells a white &ldquo;mi&rdquo; — Xiaomi's mark.")}
         </div>
         <div class="row" style="margin-top:16px;align-items:flex-start">
           ${cell(tile(white(92), "transform:rotate(-14deg)"), "Rotate it", "It is a letter; it reads upright.")}

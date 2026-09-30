@@ -262,29 +262,38 @@ export { f };
        the legs' round caps;
      - the whole "m." is centred horizontally as a unit.
    One change from the prototype: the gap between the last leg and the dot,
-   44 -> 60. A .icon has one drawing for every size, and ictool's 16px @1x
-   render of the 44 gap fused the dot onto the last leg in Default, Tinted and
-   Clear — the "m." read as an m with a foot. Tested 44 / 60 / 76 / 92: 60 is
-   the smallest that keeps a light column between them at 16px, and at Dock
-   sizes it still reads as a full stop rather than a separate dot. Width 700.
+   44 -> 84. A .icon has one drawing for every size, and Finder's 16px @1x
+   list icon is rendered from it. At 44 ictool's 16px @1x render fused the dot
+   onto the last leg in Default, Tinted and Clear — the "m." read as an m with
+   a foot. 60 fixed the fusing but not the bridge: 0.94px of gap, and on the
+   baseline row the darkest pixel between leg and dot was still 41% of the way
+   to white (38% in Tinted and Clear), a grey foot rather than a gap. Because
+   the "m." is centred, a wider gap moves the leg left and the dot right by
+   half each, so both edges straddle the same two columns and the darkest one
+   clears slowly: 68 -> 34%, 76 -> 26%, 84 -> 19% (14% in Tinted and Clear).
+   84 is the smallest tested that leaves that column four-fifths tile in all
+   four appearances. It is still narrower than the counters (108), so at
+   Dock sizes the dot reads as a full stop, not a separate "m .". Width 724.
    The dot is the full stop, not an `i` tittle. It was moved off the tittle
    position deliberately: a white lower-case "mi" with a dot over the i is
-   Xiaomi's old mark. */
+   Xiaomi's mark. */
 export const MDOT = {
   stroke: 100,
   arch: 104, // shoulder radius, centreline
   xtop: 356, // x-height, centreline
   baseline: 668, // centreline
-  gap: 60, // white between the last leg and the dot
+  gap: 84, // white between the last leg and the dot
   dotR: 62,
   cx: 512, // horizontal centre of the whole "m."
 };
 
-/* The same symbol for 20..64px rasters and the favicon: identical m, the dot
-   pushed 16 units further out. At 20px the master's 60-unit gap is under a
-   pixel and the dot starts to fuse with the last leg; 76 keeps a whole pixel of
-   white down to 20px. Dock sizes use MDOT. */
-export const MDOT_SMALL = { ...MDOT, gap: 76 };
+/* The symbol for 20..64px rasters and the favicon. It used to push the dot
+   16 units further out (76, against the master's old 60), because at 20px 60
+   units was under a pixel of white. The master's 84 is 1.6px at 20px, more
+   than 76 ever gave, so the small artwork is now the master's geometry. The
+   name and its files stay so the raster ladder and anything linking the
+   -small- files keep working. */
+export const MDOT_SMALL = MDOT;
 
 /* Resolve a symbol spec to drawable parts: the m's centreline paths, the dot,
    and the visual (ink) box. Every consumer draws from this — build.mjs's SVG
