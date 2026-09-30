@@ -86,6 +86,7 @@ pub fn run() {
             commands::list_meetings,
             commands::read_meeting,
             commands::save_notes,
+            commands::change_meetings_folder,
             commands::reveal_meeting,
             commands::permission_status,
             commands::open_privacy_settings,
@@ -120,20 +121,36 @@ fn global_shortcut_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
             if event.state() != ShortcutState::Pressed {
                 return;
             }
-            let Some(recorder) = app.try_state::<recording::Recorder>() else {
+            if app.try_state::<recording::Recorder>().is_none() {
                 tracing::error!("the recorder state is missing; ignoring the record shortcut");
                 return;
-            };
-            match recorder.toggle(app) {
-                Ok(status) => tracing::info!(phase = ?status.phase, "record shortcut"),
-                Err(error) => {
-                    // The window may be closed or unfocused — that is the whole
-                    // point of a global shortcut — so there may be nothing on
-                    // screen to put an error next to. A notification is the one
-                    // surface that is guaranteed to be visible.
-                    tracing::warn!(message = %error.message, "record shortcut refused");
-                    notify_refusal(app, &error.message);
-                }
+            }
+            // `Recorder::toggle` blocks on real wall-clock time now (SPEC
+            // §8.1's permission measurement, then Core Audio opening or
+            // closing) — running it straight from this callback would freeze
+            // the app for however long that takes. A worker thread keeps the
+            // callback itself instant; the phase-claiming mutex inside
+            // `Recorder` is what actually makes a double-tapped shortcut a
+            // no-op rather than a race, not the timing of this call.
+            let app = app.clone();
+            if let Err(error) = std::thread::Builder::new()
+                .name("meet-ai-record-shortcut".to_string())
+                .spawn(move || {
+                    let recorder = app.state::<recording::Recorder>();
+                    match recorder.toggle(&app) {
+                        Ok(status) => tracing::info!(phase = ?status.phase, "record shortcut"),
+                        Err(error) => {
+                            // The window may be closed or unfocused — that is the
+                            // whole point of a global shortcut — so there may be
+                            // nothing on screen to put an error next to. A
+                            // notification is the one surface guaranteed visible.
+                            tracing::warn!(message = %error.message, "record shortcut refused");
+                            notify_refusal(&app, &error.message);
+                        }
+                    }
+                })
+            {
+                tracing::error!(%error, "could not spawn a worker thread for the record shortcut");
             }
         })
         .build()

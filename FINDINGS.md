@@ -845,3 +845,223 @@ apostrophe: the real label is **“Don’t Allow”** with U+2019, so a naive
 `contains "Allow"` matches the deny button too and a clicker built that way
 would silently deny when told to allow. Verified against a decoy dialog that
 does not mention us — left untouched, timed out, exit non-zero.
+
+## 11. TUR-128 — why manual gate testing sees duplicate/stale "meet-ai" TCC rows (measured, 2026-09-28)
+
+Spun out of Tess's TUR-127 reproduction: System Settings showed two rows named
+"meet-ai" under Microphone, `tccutil reset AudioCapture pro.saleschat.meetai`
+reported clearing 4 entries in one call, and the AudioCapture list showed three
+"meet-ai" rows defaulted to **ON** with no prompt. The code fix in TUR-127 reads
+`AVCaptureDevice.authorizationStatus` from inside the running process, so it is
+correct regardless of how many stale TCC rows exist — but a tester toggling the
+wrong row in System Settings gets a confusing, unattributable result. This
+section is the root cause and a recipe that survives it.
+
+### 11.1 Root cause A — reproduced exactly: 4 registered copies of the bundle ID, not all on the current cert
+
+`tccutil reset` printed **4** identical success lines on this machine, live,
+reproducing Tess's number exactly:
+
+```
+$ tccutil reset AudioCapture pro.saleschat.meetai
+Successfully reset AudioCapture approval status for pro.saleschat.meetai
+Successfully reset AudioCapture approval status for pro.saleschat.meetai
+Successfully reset AudioCapture approval status for pro.saleschat.meetai
+Successfully reset AudioCapture approval status for pro.saleschat.meetai
+```
+
+`tccutil reset <service> <bundle-id>` resolves the bundle ID through
+LaunchServices to *every* registered app matching it, not to a single TCC row,
+and prints one line per resolved instance. This machine has four:
+
+```
+$ mdfind "kMDItemCFBundleIdentifier == 'pro.saleschat.meetai'"
+/Users/…/apps/meet-ai/target/release/bundle/macos/meet-ai.app
+/Users/…/apps/meet-ai/spikes/phase0a-tcc/build/meet-ai.app
+/Users/…/Downloads/meet-ai.app
+/Users/…/Applications/meet-ai.app
+```
+
+Three build outputs plus a stray copy in Downloads and an installed copy in
+Applications, all sharing the bundle ID `pro.saleschat.meetai` because that
+identifier is deliberately fixed (SETUP.md Step 1: "never changes"). That part
+is by design and harmless *if* they're all signed with the same identity — but
+they aren't:
+
+```
+$ codesign -d -r- target/release/bundle/macos/meet-ai.app | tail -1
+designated => identifier "pro.saleschat.meetai" and certificate leaf = H"eafb73d29b2f35ca25c2f9fd193869fd880a7e0d"
+$ codesign -d -r- spikes/phase0a-tcc/build/meet-ai.app | tail -1
+designated => identifier "pro.saleschat.meetai" and certificate leaf = H"be3fb2c8c0ce4ac08348a09f0bf278094626e347"   # ← different
+$ codesign -d -r- ~/Downloads/meet-ai.app | tail -1
+designated => identifier "pro.saleschat.meetai" and certificate leaf = H"eafb73d29b2f35ca25c2f9fd193869fd880a7e0d"
+$ codesign -d -r- ~/Applications/meet-ai.app | tail -1
+designated => identifier "pro.saleschat.meetai" and certificate leaf = H"eafb73d29b2f35ca25c2f9fd193869fd880a7e0d"
+```
+
+**This is the ticket's hypothesis, confirmed exactly.** `be3fb2c8…` is the
+*first* identity this project ever minted (§10.3's own worked example uses that
+same leaf). At some point between §10.3 and §10.4 the local identity was
+regenerated — a deleted-and-recreated keychain, or an early `--rotate` before
+the idempotency guard existed — and the current identity became `eafb73d2…`,
+the value SETUP.md documents today. The spike build directory was never
+rebuilt after that rotation, so it is still signed against the old leaf: same
+`CFBundleIdentifier` string, same bundle ID argument to `tccutil`, but a
+genuinely different designated requirement and therefore a genuinely different
+TCC client. Rebuilding it (`spikes/phase0a-tcc/build.sh`) fixes that one
+instance instantly, because `make-identity.sh` only ever hands out the current
+identity — the old leaf isn't secretly still around, it's baked into a binary
+nobody rebuilt.
+
+So: **the identity-minting process is not actively drifting** (§10.3's
+idempotency guard works, and this machine has exactly one identity in its
+keychain right now), **but every build output signed before the one historical
+rotation is a permanently orphaned TCC client that a plain `tccutil reset` will
+enumerate and "clear" without ever making it match the current app again** —
+because there is nothing to match; it needs rebuilding, not resetting.
+
+### 11.2 Root cause B — path-keyed rows from ad-hoc builds never die, and share the same display name
+
+§10.6 already proved path-keyed TCC rows are permanent (`tccutil reset` errors
+`-10814` on a path; deleting the build directory does not help). That is live
+on this machine too, and independently produces "extra meet-ai rows":
+
+```
+$ tccutil list -s kTCCServiceMicrophone | grep -i meet
+/Users/…/spikes/phase0a-tcc/build/meet-ai.app/Contents/MacOS/meet-ai   # path-keyed, stale
+pro.saleschat.meetai                                                   # bundle-ID-keyed, current
+
+$ tccutil list -s kTCCServiceAudioCapture | grep -i meet
+/Users/…/spikes/phase0a-tcc/build/meet-ai.app/Contents/MacOS/meet-ai
+/private/tmp/meet-ai-fresh-1790494489/meet-ai.app/Contents/MacOS/meet-ai
+/private/tmp/meet-ai-fresh2-1790494596/meet-ai.app/Contents/MacOS/meet-ai
+```
+
+These predate the TUR-10 signing fix and are unreachable by `tccutil reset` by
+design (§10.6) — System Settings still shows them as "meet-ai" because the
+build directories they point at still exist on disk, so a tester comparing
+before/after a reset can see rows that still say "meet-ai" and still say "On"
+and reasonably (but wrongly) read that as the reset having failed, or as a
+fresh unprompted grant. They are neither — they were granted once, long ago,
+during earlier ad-hoc testing, and nothing since has been able to touch them.
+
+### 11.3 Root cause C — the phase0a spike bundle also has a *second, real* bundle ID hiding under the same display name
+
+`spikes/phase0a-tcc/build.sh` builds and signs **two** distinct TCC clients
+into one `.app`:
+
+```
+$ grep CFBundleIdentifier -A1 spikes/phase0a-tcc/Info-app.plist spikes/phase0a-tcc/Info-helper.plist
+Info-app.plist:     pro.saleschat.meetai            (CFBundleDisplayName: meet-ai)
+Info-helper.plist:  pro.saleschat.meetai.tap-probe  (CFBundleDisplayName: meet-ai)
+```
+
+`meet-tap-probe` is compiled with its own `__TEXT,__info_plist` and its own
+`NSAudioCaptureUsageDescription`/`NSMicrophoneUsageDescription`, so it can (and
+during Phase 0a testing, does) independently trigger its own TCC prompt and get
+its own row — genuinely a different app to `tccd`, genuinely displayed as
+"meet-ai" (same `CFBundleDisplayName`) to a human. This is fine for the spike's
+purpose (isolating the tap from the app was the point), but it means **testing
+the TUR-95/TUR-115 gate against `spikes/phase0a-tcc/build/meet-ai.app` instead
+of the real Tauri bundle structurally guarantees a second "meet-ai" identity**.
+The real app (`src-tauri/tauri.conf.json` → single `identifier: pro.saleschat.meetai`,
+confirmed — no second bundle ID anywhere else in the repo) does not have this
+problem. The gate must run against `target/release/bundle/macos/meet-ai.app`
+(via `just bundle-signed`), never the spike bundle.
+
+### 11.4 A justfile bug found in the course of this, fixed
+
+While confirming the identity resolves consistently across environments,
+`just sign`'s default `SIGN_KEYCHAIN` (`env_var("HOME") + "/Library/Keychains/…"`)
+turned out to use raw `$HOME` rather than the account home — the exact trap
+`make-identity.sh` and `build.sh` were already hardened against (TUR-10,
+§10.3). Under any session where `$HOME` is redirected (a Paperclip agent run
+is one; observed live during this investigation), the computed path does not
+exist, `just sign` silently falls through to a bare `-s "meet-ai Local Signing"`
+with no `--keychain`, and the default keychain search list does not contain the
+identity either:
+
+```
+$ echo $HOME
+/var/folders/…/paperclip-run-tur-73-…          # not /Users/shantanujumde
+$ security find-identity -v -p codesigning      # no --keychain, default search list
+     0 valid identities found
+```
+
+That makes `codesign` fail outright rather than drift to a different identity
+— not silent duplication, but it does mean `just bundle-signed` cannot be
+trusted to run unattended in exactly the kind of environment a future
+automated gate check would use. Fixed by giving the `sign` recipe the same
+`dscl`-based real-home fallback `build.sh` already has; re-verified afterward
+on this machine with `$HOME` still redirected:
+
+```
+$ just sign
+==> sealing bundle: target/release/bundle/macos/meet-ai.app
+$ codesign -d -r- target/release/bundle/macos/meet-ai.app
+designated => identifier "pro.saleschat.meetai" and certificate leaf = H"eafb73d2…"
+```
+
+Identity-keyed, matching SETUP.md's recorded leaf, with `$HOME` still pointed
+somewhere that doesn't exist.
+
+### 11.5 The recipe — reset + re-test that survives all of the above
+
+1. **Find every app on disk claiming the bundle ID, and check each one's cert leaf
+   against the current identity — before touching TCC:**
+   ```bash
+   mdfind "kMDItemCFBundleIdentifier == 'pro.saleschat.meetai'"
+   spikes/phase0a-tcc/make-identity.sh --print   # prints the current leaf
+
+   for app in $(mdfind "kMDItemCFBundleIdentifier == 'pro.saleschat.meetai'"); do
+     echo "$app"; codesign -d -r- "$app" 2>&1 | tail -1
+   done
+   ```
+   Any result is one of the lines `tccutil reset` will print — §11.1 measured
+   4 on this machine, not the 1 a fresh checkout would assume. **Any app whose
+   leaf doesn't match the current identity is not the same TCC client as the
+   one you're about to test**, no matter what its bundle ID string says.
+   Rebuild it (or delete it if it's a stray copy you don't need — the
+   Downloads/Applications copies in §11.1 were exactly that) before relying on
+   a reset to put it back in a known state. Never point a gate run at
+   `spikes/phase0a-tcc/build/meet-ai.app` for this reason and for §11.3's
+   second-bundle-ID reason.
+
+2. **Enumerate every row before resetting, not just the ones System Settings shows
+   with a distinguishable name:**
+   ```bash
+   tccutil list -s kTCCServiceMicrophone   | grep -i meet
+   tccutil list -s kTCCServiceAudioCapture | grep -i meet
+   ```
+   Anything that is a filesystem path rather than `pro.saleschat.meetai` is a
+   stale, permanent, ad-hoc-era row (§11.2/§10.6). Reset cannot touch it and it
+   will still be there after. Do not mistake its continued presence — or its
+   "On" state — for a fresh, unprompted grant.
+
+3. **Reset both services** — they are tracked independently and are commonly in
+   different states (§10.6):
+   ```bash
+   tccutil reset AudioCapture pro.saleschat.meetai
+   tccutil reset Microphone   pro.saleschat.meetai
+   ```
+
+4. **Re-list and diff against step 2.** Only the `pro.saleschat.meetai` line
+   should have changed (disappeared). If a path-keyed line's state changed too,
+   something else touched it — that's a real finding, not this recipe's
+   pre-existing noise.
+
+5. **Run the gate** (`open target/release/bundle/macos/meet-ai.app`, or the
+   Record button per TUR-95) and confirm the prompt names **meet-ai** — if
+   System Settings later shows more than one "meet-ai" row, use step 2's output
+   to know which one is `pro.saleschat.meetai` before toggling anything.
+
+6. **One-time cleanup for this machine:** the three AudioCapture path rows and
+   one Microphone path row listed in §11.2 are permanently stuck and will keep
+   making every future run of step 2 noisy. They can only be removed by hand
+   (System Settings → Privacy & Security → Microphone / System Audio Recording
+   Only → select the path-looking row → remove) or via `TCC.db` surgery behind
+   Full Disk Access (§10.6) — `tccutil` cannot do it. Not done as part of this
+   ticket since it's a live edit to the tester's permission database outside
+   version control; flagged here so whoever runs the next gate knows why the
+   rows are there and that removing them is safe (they belong to build
+   directories from superseded ad-hoc spikes, not the shipped app).

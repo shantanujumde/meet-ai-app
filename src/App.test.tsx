@@ -26,13 +26,13 @@ vi.mock("@/ipc/client", () => ({
     phase: "idle",
     meetingId: null,
     startedAtMs: null,
-    stub: true,
   }),
   toggleRecording: vi.fn(),
   openPrivacySettings: vi.fn(),
   revealMeeting: vi.fn(),
   readMeeting: vi.fn(),
   saveNotes: vi.fn(),
+  changeMeetingsFolder: vi.fn(),
   engineEnvironment: vi.fn().mockResolvedValue({
     sidecar: null,
     whisperModel: null,
@@ -81,6 +81,20 @@ test("someone who has finished onboarding gets the meeting list, with its empty 
   expect(emptyState.textContent).toMatch(/⌘⇧R/);
   expect(emptyState.textContent).toMatch(/nothing leaves this Mac/i);
   expect(within(emptyState).getByRole("button", { name: /start recording/i })).toBeEnabled();
+});
+
+test("someone who has finished onboarding is not trapped on a leftover setup URL", async () => {
+  // The single-instance window can be refocused sitting wherever it was left,
+  // including partway through setup from before it was finished. Landing back
+  // there every time it is reopened is exactly the bug this guards against.
+  window.location.hash = "#/onboarding/permission";
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { name: /no meetings yet/i })).toBeInTheDocument();
+  expect(
+    screen.queryByRole("heading", { name: /let meet-ai hear your mac/i }),
+  ).not.toBeInTheDocument();
 });
 
 test("a denied permission disables recording instead of letting it fail at click time", async () => {

@@ -129,6 +129,36 @@ const COPY: Record<string, ErrorCopy> = {
     actionLabel: null,
     remedy: { action: "none" },
   },
+  "app/recording-in-progress": {
+    headline: "Stop recording first",
+    body: "meet-ai is still writing this meeting's files to the current folder. Stop the recording, then change the folder.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
+  "app/same-folder": {
+    headline: "That's already the folder",
+    body: "Pick a different folder to move your meetings somewhere else.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
+  "app/nested-folder": {
+    headline: "That folder won't work",
+    body: "A meetings folder can't be moved inside itself, or contain the folder it is moving from. Pick a folder outside the current one.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
+  "app/folder-conflict": {
+    headline: "Some meetings already exist there",
+    body: "The folder you picked already has something with the same name as one of your existing meetings, so meet-ai stopped before it could overwrite anything.",
+    actionLabel: "Copy details",
+    remedy: { action: "copy-details" },
+  },
+  "app/no-config-dir": {
+    headline: "meet-ai could not remember that choice",
+    body: "It could not find a place on this Mac to save your chosen folder, so it kept using the old one. Nothing moved.",
+    actionLabel: "Copy details",
+    remedy: { action: "copy-details" },
+  },
 };
 
 /** The copy for an error. Never throws, and never returns nothing. */

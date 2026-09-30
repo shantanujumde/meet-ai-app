@@ -114,6 +114,7 @@ Pin these exactly in `Cargo.toml` and commit `Cargo.lock`. 🆕 = new major with
 | `objc2-core-audio-types` | **0.3.2** | |
 | `objc2-core-foundation` | **0.3.2** | 🆕 not in the original list — the process tap's aggregate-device description is a `CFDictionary`, and this crate is where `objc2-core-audio` sources that type from. Already resolved transitively at 0.3.2 before this was made a direct dependency, so pinning it added no version churn |
 | `objc2-foundation` | **0.3.2** | |
+| `objc2-av-foundation` | **0.3.2** | 🆕 TUR-127 — SPEC §8.1 named `AVCaptureDevice.authorizationStatus(for: .audio)` as the mic's likely exemption from the process tap's "every `OSStatus` lies" problem, but left it unverified; a field denial proved `cpal`'s own return code cannot be trusted for that case, so `permission_check::check_mic` now asks this API first. `default-features = false`, only the `AVCaptureDevice`+`AVMediaFormat` features — the crate's ~170 default features are the whole framework surface, none of the rest needed |
 | `block2` | **0.6.2** | needed for Core Audio tap IO callbacks |
 | `cpal` | **0.18.2** 🆕 | mic capture. LLMs know 0.15 — the device/stream API changed |
 | `rubato` | **5.0.0** 🆕 | 48k→16k resample. Went 0.16 → 5.0; almost no training data on 5.x |
@@ -437,7 +438,7 @@ measured in FINDINGS §10.3–10.4.
 
 ```bash
 spikes/phase0a-tcc/make-identity.sh          # ~7s, no admin password needed
-spikes/phase0a-tcc/make-identity.sh --print  # leaf SHA-1: be3fb2c8…
+spikes/phase0a-tcc/make-identity.sh --print  # leaf SHA-1: eafb73d2…
 ```
 
 The script generates the cert, puts it in its own keychain
@@ -457,7 +458,7 @@ Use `--print` to read the fingerprint back, and check a built bundle against it:
 
 ```bash
 codesign -d -r- build/meet-ai.app
-# designated => identifier "pro.saleschat.meetai" and certificate leaf = H"be3fb2c8…"
+# designated => identifier "pro.saleschat.meetai" and certificate leaf = H"eafb73d2…"
 ```
 
 Verify with `security find-identity -v -p codesigning ~/Library/Keychains/meet-ai-signing.keychain-db`
@@ -579,6 +580,13 @@ open src-tauri/target/release/bundle/macos/meet-ai.app
 
 Pass = the prompt appears, names **meet-ai** (not the helper), and non-silent samples arrive.
 ⚠️ Prompt appears but samples are silent = **fail**, not pass.
+
+⚠️ If System Settings shows more than one row named **meet-ai** (Microphone or
+"System Audio Recording Only"), do not guess which one to toggle — the extras
+are almost always permanent path-keyed rows left over from pre-identity ad-hoc
+builds (or, if you built `spikes/phase0a-tcc` instead of the real app, a second
+real bundle ID, `pro.saleschat.meetai.tap-probe`). `tccutil reset` above only
+ever reaches `pro.saleschat.meetai`. Full recipe and root cause: FINDINGS §11.
 
 Then commit and start Phase 0.
 

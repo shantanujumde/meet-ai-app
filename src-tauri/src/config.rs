@@ -2,13 +2,18 @@
 //! `~/Meetings/.app/config.jsonc`.
 //!
 //! This is deliberately not a config system. Phase 6 (SPEC §5) owns the rest of
-//! §3.5 — `meetings_root`, `audio`, `calendar`, `detection`, `tickets`, `repos`,
-//! and even `transcription.language`/`transcription.live` — plus the JSON
-//! schema and the settings UI to edit it. This module exists only to make the
-//! Phase 1 exit gate true: **"engine switch is a config change only."** Before
-//! this, `src-tauri/src/engine.rs` hardcoded the engine to
+//! §3.5 — `audio`, `calendar`, `detection`, `tickets`, `repos`, and even
+//! `transcription.language`/`transcription.live` — plus the JSON schema and the
+//! settings UI to edit it. This module exists only to make the Phase 1 exit
+//! gate true: **"engine switch is a config change only."** Before this,
+//! `src-tauri/src/engine.rs` hardcoded the engine to
 //! [`stt::registry::Preference::Auto`][crate::engine], so trying whisper meant
 //! rebuilding, not editing a file.
+//!
+//! `meetings_root` is the one §3.5 key that jumped ahead of Phase 6 (TUR-82):
+//! it lives in `meetings.rs`, not here, and not in `config.jsonc` at all —
+//! finding the root has to work *before* `config.jsonc` can be located, since
+//! that file is itself under the root.
 //!
 //! When Phase 6 lands, delete this file and fold [`Transcription`] into
 //! whatever struct replaces it — do not build a second reader beside it.

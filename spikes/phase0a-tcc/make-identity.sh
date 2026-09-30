@@ -8,7 +8,7 @@
 #
 #   ad-hoc:    designated => cdhash H"8a42ac53…"              (changes every build)
 #   identity:  designated => identifier "pro.saleschat.meetai" and
-#                            certificate leaf = H"be3fb2c8…"  (stable)
+#                            certificate leaf = H"eafb73d2…"  (stable)
 #
 # THIS SCRIPT IS IDEMPOTENT ON PURPOSE. The leaf SHA-1 it prints is what TCC
 # keys every grant to. Minting a fresh cert changes it, orphaning every existing
