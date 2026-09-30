@@ -74,6 +74,29 @@ impl From<modelfetch::Error> for UiError {
     }
 }
 
+impl From<store::Error> for UiError {
+    fn from(error: store::Error) -> Self {
+        // Kept in the `app` domain, with the same kinds the old in-shell reader
+        // produced (`io`, `bad-meeting-id`), so moving the reader into `store`
+        // changed no error the webview receives. A separate `store` domain is
+        // the cleaner shape, but `UiError['domain']` in src/ipc/types.ts is a
+        // closed union; widening it belongs with the UI that needs to tell
+        // the cases apart (TUR-102), not with the move. The two new kinds fall
+        // through to the generic copy until then.
+        match error {
+            // `store::Error::Io`'s own message is the generic "could not read
+            // or write the meetings folder"; the OS error is what to show.
+            store::Error::Io(io) => io.into(),
+            store::Error::BadId(id) => Self::app(
+                "bad-meeting-id",
+                format!("{id:?} is not a meeting folder name."),
+            ),
+            error @ store::Error::Frontmatter { .. } => Self::app("frontmatter", error.to_string()),
+            error @ store::Error::Index(_) => Self::app("index", error.to_string()),
+        }
+    }
+}
+
 impl From<std::io::Error> for UiError {
     fn from(error: std::io::Error) -> Self {
         Self::app("io", error.to_string())
