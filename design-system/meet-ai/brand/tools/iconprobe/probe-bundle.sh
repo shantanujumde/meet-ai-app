@@ -11,9 +11,14 @@
 # render here is therefore checked against a captured generic-icon baseline and
 # the run fails rather than reporting a fallback as a result.
 set -euo pipefail
+# Paths come from where this script lives, not a fixed checkout: a hard-coded
+# repo path wrote lab bundles into whichever checkout it named, even when run
+# from a worktree (TUR-86). ICONPROBE_SRC points it at a different bundle.
+REPO="${0:A:h:h:h:h:h:h}"
 LAB="${ICONPROBE_OUT:-${0:A:h}}"
-REPO="/Users/shantanujumde/apps/meet-ai"
-SRC="$REPO/target/release/bundle/macos/meet-ai.app"
+SRC="${ICONPROBE_SRC:-$REPO/target/release/bundle/macos/meet-ai.app}"
+SYSICON="${SYSICON:-$REPO/target/icon-lab/bin/sysicon}"
+[[ -x "$SYSICON" ]] || SYSICON="$LAB/sysicon"
 LSREG="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 label="$1"; icns="$2"
 stamp="$(date +%s)$RANDOM"
@@ -38,6 +43,6 @@ touch "$app"
 
 mkdir -p "$LAB/out"
 for px in 16 32 41 64 128; do
-  "$LAB/sysicon" "$app" "$px" "$LAB/out/R-$label-$px.png"
+  "$SYSICON" "$app" "$px" "$LAB/out/R-$label-$px.png"
 done
 echo "$label signed+rendered: $app"

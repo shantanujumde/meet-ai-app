@@ -18,8 +18,8 @@ use tauri::{AppHandle, Listener as _, Manager as _};
 
 use crate::recording::{self, Phase};
 
-/// The menu-bar glyph: the brackets and the record dot, drawn on the 16px pixel
-/// grid by the brand build (`design-system/meet-ai/brand/tools/build.mjs`) and
+/// The menu-bar glyph: "m.", the brand symbol, drawn on the 16px pixel grid by
+/// the brand build (`design-system/meet-ai/brand/tools/build.mjs`) and
 /// rasterised by its `render.sh`. Never hand-exported.
 ///
 /// The 2x raster is the one embedded. `tray-icon` sizes every status-item image
