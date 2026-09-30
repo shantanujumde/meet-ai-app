@@ -200,7 +200,8 @@ All four sit behind one trait — `CalendarProvider { list_events(range) -> Vec<
 | Rust toolchain | stable, pinned via `rust-toolchain.toml` |
 | Target | `aarch64-apple-darwin` only (v1) |
 | Swift sidecar | `swiftc` from Command Line Tools — **full Xcode not required**. Built by `just sidecar`, signed with the same identity, embedded at `Contents/MacOS/meet-stt` |
-| Info.plist keys | `NSMicrophoneUsageDescription`, **`NSAudioCaptureUsageDescription`** (the tap permission key), `LSMinimumSystemVersion = 26.0` (A8) |
+| Info.plist keys | `NSMicrophoneUsageDescription`, **`NSAudioCaptureUsageDescription`** (the tap permission key), `LSMinimumSystemVersion = 26.0` (A8), `CFBundleIconName` (A10) |
+| App icon | "m." in white on the Dusk gradient tile, coral to violet (design-system/meet-ai/brand/README.md). Icon Composer source `design-system/meet-ai/brand/meet-ai.icon` (made by `render.sh`), compiled by `actool` into `src-tauri/icons/Assets.car`, which is **committed**. The bundle carries `Assets.car` in `Contents/Resources`; `icon.icns` still ships as the fallback. Xcode 26+ is needed only to regenerate `Assets.car` — routine builds stay CLT-only (A10) |
 | Entitlements | `com.apple.security.device.audio-input` |
 | Signing | **Local self-signed identity + hardened runtime.** Required for TCC to register the app at all — this is not optional even for personal use |
 | Notarization / auto-update / CI | **Out of scope** (L17) |
@@ -529,6 +530,20 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A10 — 2026-09-30 · The app icon ships as an Icon Composer `.icon`; Xcode is needed only to regenerate it (amends §2.9; narrows A1's toolchain note; TUR-35, TUR-85)
+
+**Decision:** the app icon's source is `design-system/meet-ai/brand/meet-ai.icon`, made by `render.sh`. `actool` compiles it into `src-tauri/icons/Assets.car`, and that file is **committed** — the same call as `icon.icns`, which `.gitignore` already records as a committed `render.sh` output. The bundle gets `Assets.car` in `Contents/Resources` and `CFBundleIconName` in `Info.plist`. The `.icns` still ships as the fallback; it costs nothing to keep.
+
+**No post-bundle step.** The TUR-35 plan assumed Tauri has no asset-catalog support, so `Assets.car` would be copied in after `tauri build` and the bundle re-signed. That was out of date: tauri-bundler 2.9 copies any `.car` listed in `bundle.icon` to `Contents/Resources/Assets.car` itself, next to the `.icns`. `CFBundleIconName` is set explicitly in `src-tauri/Info.plist` rather than left to Tauri's `assetutil` lookup, which only warns when it fails. `just sign` already seals the whole bundle after `tauri build`, so the catalog is covered with no new signing step; `sign` now refuses to seal a bundle whose `Assets.car` or `CFBundleIconName` is missing.
+
+**Found on the way:** `src-tauri/Info.plist` still said `LSMinimumSystemVersion 14.4`, and that file overrides `tauri.conf.json`, so shipped bundles said 14.4 despite A8. Corrected to 26.0.
+
+**What this buys, stated plainly.** Platform alignment, not a visible fix. On macOS 26 a legacy `.icns` means the system picks the icon container for us; a `.icon` is the supported way to control it. Today's icon is already correct on 26 at every size measured, so a signed bundle that looks the same as before is the expected result, not a failure. It does **not** buy per-size art: a `.icon` is one 1024 canvas the system renders every size from, so `meet-ai-appicon-16-fullcolor.svg` still reaches only the favicon and `.ico`. And there is no legacy or hybrid icon to build, because A8 put the floor at macOS 26.
+
+**The toolchain note, narrowed — an addendum to A1, not a reversal.** *Xcode 26 or later is required only to regenerate `src-tauri/icons/Assets.car` from the `.icon` source; routine builds still need only Command Line Tools.* That holds because `Assets.car` is a portable binary that is committed, so a CLT-only machine builds and ships it untouched. §2.6, §2.9 and §7 all say the sidecar needs no Xcode; that stays true, since `swiftc` is still the only Swift involved. The compile step (`just icon-car`) points at Xcode for itself through `DEVELOPER_DIR`; nobody switches `xcode-select` globally for it. A machine that regenerates the icon needs a one-time Xcode setup (license and first launch, by full path since `xcode-select` stays on CLT); the commands are in `SETUP.md` step 0.4.
+
+**Verified 2026-09-30** (TUR-86, `design-system/meet-ai/brand/proofs/tur86/RESULTS.md`): on a real signed bundle macOS draws `Assets.car`, not the `.icns`; the `.icns` fallback is pixel-identical to the old bundle; `codesign --verify --deep --strict` passes. Same at 11 of 13 sizes, better at 512@2x and 1024, where the `.icns` bundle was drawn inside a light system plate. Worse at none.
+
 ### A9 — 2026-09-28 · Whisper half of the silence-hallucination guard verified on real hardware (closes TUR-67; amends nothing in §1)
 
 `whisper_writes_nothing_for_silence` (`crates/stt/tests/silence.rs`) has existed
@@ -725,4 +740,4 @@ Live registry check produced four substantive changes, all simplifications. No �
 3. **Config: `json_comments` → `jsonc-parser` 0.33.1.** The former last shipped in 2023.
 4. **Three deliberate non-latest pins** where a new major buys nothing this project needs and costs LLM familiarity: `sha2` 0.10.9 (not 0.11), `reqwest` 0.12.28 (not 0.13), `notify` 8.2.0 (9.0 is an rc).
 
-Also recorded: this machine has **no Rust toolchain installed** and no `just`; full Xcode is **not** required (Command Line Tools suffice, since L2 drops ScreenCaptureKit). Toolchain pinned to Rust **1.98.0**.
+Also recorded: this machine has **no Rust toolchain installed** and no `just`; full Xcode is **not** required (Command Line Tools suffice, since L2 drops ScreenCaptureKit). Toolchain pinned to Rust **1.98.0**. *(Narrowed by A10: Xcode 26+ is needed only to regenerate the app icon's `Assets.car`.)*
