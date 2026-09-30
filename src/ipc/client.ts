@@ -32,6 +32,7 @@ import { toUiError } from "./types";
 
 /** Tauri event names. These are string literals shared with Rust. */
 export const RECORDING_STATE_EVENT = "recording://state";
+export const RECORDING_REFUSED_EVENT = "recording://refused";
 export const MODEL_PROGRESS_EVENT = "model://progress";
 
 /**
@@ -105,6 +106,21 @@ export async function permissionStatus(): Promise<PermissionStatus> {
     };
   }
   return call<PermissionStatus>("permission_status");
+}
+
+/**
+ * The silent check the app runs on launch: the microphone's stored decision
+ * only, so no chime. It never answers `granted` — see `permission::quick`.
+ */
+export async function permissionQuick(): Promise<PermissionStatus> {
+  if (!hasBackend()) {
+    return {
+      state: "unknown",
+      measured: false,
+      detail: NO_BACKEND.message,
+    };
+  }
+  return call<PermissionStatus>("permission_quick");
 }
 
 export function openPrivacySettings(pane: PrivacyPane): Promise<void> {
@@ -209,6 +225,14 @@ function subscribe<T>(event: string, onEvent: (payload: T) => void): () => void 
 
 export function onRecordingState(handler: (status: RecordingStatus) => void): () => void {
   return subscribe<RecordingStatus>(RECORDING_STATE_EVENT, handler);
+}
+
+/**
+ * A start or stop the window did not ask for — ⌘⇧R, the menu bar — that Rust
+ * refused. The window's own button gets its refusal back from the call.
+ */
+export function onRecordingRefused(handler: (error: UiError) => void): () => void {
+  return subscribe<UiError>(RECORDING_REFUSED_EVENT, handler);
 }
 
 export function onModelProgress(handler: (progress: ModelProgress) => void): () => void {

@@ -106,36 +106,62 @@ fn mic_authorization_status() -> objc2_av_foundation::AVAuthorizationStatus {
     }
 }
 
-/// Start the mic briefly and see whether Core Audio lets it through.
+/// A stored `Denied`/`Restricted` microphone decision, if there is one.
 ///
-/// Bounded by [`crate::AUDIO_PERMISSION_TIMEOUT`] inside `MicSource::start`:
-/// worst case this blocks that long waiting for a dialog nobody answers.
-pub fn check_mic() -> ChannelResult {
+/// `None` covers `Authorized` and `NotDetermined` alike: neither says anything
+/// about the mic until a stream is actually opened.
+fn stored_mic_denial() -> Option<ChannelResult> {
     #[cfg(target_os = "macos")]
     {
         use objc2_av_foundation::AVAuthorizationStatus;
         let status = mic_authorization_status();
         if status == AVAuthorizationStatus::Denied {
-            return ChannelResult {
+            return Some(ChannelResult {
                 state: ChannelState::Denied,
                 detail: "macOS reports the microphone permission as explicitly denied \
                          (AVAuthorizationStatusDenied)"
                     .into(),
-            };
+            });
         }
         if status == AVAuthorizationStatus::Restricted {
-            return ChannelResult {
+            return Some(ChannelResult {
                 state: ChannelState::Denied,
                 detail: "macOS reports the microphone as restricted (parental controls or an \
                          MDM profile), which this client cannot change"
                     .into(),
-            };
+            });
         }
-        // `Authorized` and `NotDetermined` both fall through: `Authorized`
-        // still opens the stream below to also confirm a device exists,
-        // `NotDetermined` opens it because that is what triggers the OS
-        // consent dialog in the first place.
     }
+    None
+}
+
+/// The microphone's stored decision alone: nothing opened, nothing played.
+///
+/// The instant, silent half of [`check_mic`], for a caller that must not make
+/// a sound — the app runs this every time it starts, and TUR-24 (SPEC A7)
+/// keeps the chime to setup and to the start of a recording. A stored denial
+/// is as authoritative here as it is there; anything else is
+/// [`ChannelState::Unmeasurable`], never `Granted`, because nothing was opened
+/// to prove it.
+pub fn mic_decision() -> ChannelResult {
+    stored_mic_denial().unwrap_or_else(|| ChannelResult {
+        state: ChannelState::Unmeasurable,
+        detail: "the microphone has not been opened since meet-ai started".into(),
+    })
+}
+
+/// Start the mic briefly and see whether Core Audio lets it through.
+///
+/// Bounded by [`crate::AUDIO_PERMISSION_TIMEOUT`] inside `MicSource::start`:
+/// worst case this blocks that long waiting for a dialog nobody answers.
+pub fn check_mic() -> ChannelResult {
+    if let Some(denial) = stored_mic_denial() {
+        return denial;
+    }
+    // `Authorized` and `NotDetermined` both fall through: `Authorized` still
+    // opens the stream below to also confirm a device exists, `NotDetermined`
+    // opens it because that is what triggers the OS consent dialog in the
+    // first place.
 
     let (dir, dest) = match scratch_dir("mic") {
         Ok(paths) => paths,

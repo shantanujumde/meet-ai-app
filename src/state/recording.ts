@@ -15,7 +15,12 @@
  */
 
 import { create } from "zustand";
-import { onRecordingState, recordingStatus, toggleRecording } from "@/ipc/client";
+import {
+  onRecordingRefused,
+  onRecordingState,
+  recordingStatus,
+  toggleRecording,
+} from "@/ipc/client";
 import type { RecordingStatus, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 
@@ -81,7 +86,16 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
  */
 export function watchRecordingState(): () => void {
   void useRecordingStore.getState().refresh();
-  return onRecordingState((status) => {
+  const stopState = onRecordingState((status) => {
     useRecordingStore.getState().applyFromBackend(status);
   });
+  // A refused ⌘⇧R press lands in the same banner as a refused button press.
+  // Without it the phase flips Starting -> Idle and nothing says why.
+  const stopRefused = onRecordingRefused((error) => {
+    useRecordingStore.setState({ error });
+  });
+  return () => {
+    stopState();
+    stopRefused();
+  };
 }

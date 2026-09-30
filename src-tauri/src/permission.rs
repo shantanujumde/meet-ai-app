@@ -88,6 +88,37 @@ pub fn measure() -> Status {
     )
 }
 
+/// What can be known without making a sound: the microphone's stored decision.
+///
+/// The app runs this every time it starts, where [`measure`]'s chime would
+/// beep on every launch — TUR-24 and SPEC A7 keep the chime to setup and the
+/// start of a recording. It only ever answers `Denied` or `Unknown`: system
+/// audio has no silent answer, so a switched-off system-audio grant is caught
+/// by the next Record press, which runs [`measure`] and refuses.
+pub fn quick() -> Status {
+    #[cfg(debug_assertions)]
+    if let Some(forced) = forced_status() {
+        return forced;
+    }
+
+    let mic = permission_check::mic_decision();
+    if mic.state == ChannelState::Denied {
+        return Status {
+            state: State::Denied,
+            measured: true,
+            detail: format!(
+                "microphone: {}. system audio: checked when you next record.",
+                mic.detail
+            ),
+        };
+    }
+    Status {
+        state: State::Unknown,
+        measured: false,
+        detail: "meet-ai checks audio permission when you start a recording.".into(),
+    }
+}
+
 /// Fold the two channel readings into one [`Status`].
 ///
 /// Denied wins over everything else — if either channel is definitely off,

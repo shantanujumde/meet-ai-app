@@ -58,7 +58,9 @@ function Bootstrap() {
 
   useEffect(() => {
     void loadMeetings();
-    void loadPermission();
+    // Silent: the full check plays a chime, and SPEC A7 keeps that to setup
+    // and the start of a recording, not every launch.
+    void loadPermission({ silent: true });
     void loadOnboarding();
     // Mirrors Rust's recording state, including changes this window did not
     // cause — ⌘⇧R firing while the app is in the background, or the menu-bar
@@ -88,9 +90,11 @@ function Bootstrap() {
     }
     // Already finished: a wizard URL left over from a previous, unfinished
     // session (the single-instance window was simply refocused, never
-    // re-loaded) must not trap an otherwise-done user on setup forever.
-    if (onOnboardingRoute) navigate("/meetings", { replace: true });
-  }, [onboarding, onboardingLoading, location.pathname, navigate]);
+    // re-loaded) must not trap an otherwise-done user on setup forever. A trip
+    // the user asked for — the shell's "Fix this" banner — is let through.
+    const revisit = (location.state as { revisit?: boolean } | null)?.revisit === true;
+    if (onOnboardingRoute && !revisit) navigate("/meetings", { replace: true });
+  }, [onboarding, onboardingLoading, location.pathname, location.state, navigate]);
 
   return null;
 }
