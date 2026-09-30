@@ -12,6 +12,7 @@
 |---|---|---|---|
 | macOS | **26.6.2** | 26.0+ | ✅ at or above floor (SPEC A8) |
 | Xcode Command Line Tools | present (`/Library/Developer/CommandLineTools`) | CLT only | ✅ **full Xcode not required** — L2 drops ScreenCaptureKit, and `objc2` needs no Xcode project. `codesign` ships with CLT |
+| Xcode (full) | **27.0** at `/Applications/Xcode.app` | 26+, **only to regenerate the app icon** | one-time setup in step 0.4, only on a machine that recompiles `src-tauri/icons/Assets.car`. Routine builds never touch it (SPEC A10) |
 | Rust | ❌ **not installed** | 1.98.0 | install via rustup (step 0.1) |
 | Node | v26.4.0 | ≥20.19 | ✅ works. Current LTS is v24.20.0 "Krypton" — switch only if a tool complains |
 | pnpm | 11.9.0 | 11.25.0 | `pnpm self-update` |
@@ -253,6 +254,16 @@ pnpm self-update                      # 11.9.0 -> 11.25.0
 rustc --version                        # expect 1.98.0
 xcode-select -p                        # CLT path is fine; full Xcode not needed
 sw_vers -productVersion                # 26.6.2 — at or above the 26.0 floor
+
+# 0.4 ONLY if you regenerate the app icon (SPEC A10). Needs Xcode 26+ installed.
+#     Full paths because xcode-select stays on CLT — do not `xcode-select -s`.
+#     `just icon-car` points at Xcode by itself through DEVELOPER_DIR.
+#     Opening Xcode.app once and accepting its prompts does the same two steps.
+sudo /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -license accept
+sudo /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -runFirstLaunch
+# --find alone is not enough: it resolves before -runFirstLaunch, and actool
+# then fails with "A required plugin failed to load".
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun actool --version   # prints a plist
 ```
 
 ### Step 1 — ⛔ irreversibles, before any feature code

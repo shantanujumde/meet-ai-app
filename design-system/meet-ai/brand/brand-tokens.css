@@ -1,28 +1,38 @@
 /* =============================================================================
    meet-ai — brand tokens
-   These are IDENTITY tokens: the app icon, the mark, README and marketing
+   These are IDENTITY tokens: the app icon, the symbol, README and marketing
    surfaces. They are deliberately NOT wired into the product UI. The interface
    uses macOS system colours on purpose (design-system/meet-ai/tokens.css, the
-   "macOS system colors" block). Do not repoint --accent at --brand-ember.
+   "macOS system colors" block). Do not repoint --accent at a brand colour.
    ============================================================================= */
 :root {
-  /* Ink — the icon body. A dark, quiet object in the Dock. */
+  /* Dusk — the app-icon tile. Coral at the top, violet at the bottom. */
+  --brand-tile-top:    #F46A3A;
+  --brand-tile-bottom: #9B3CF2;
+  --brand-tile-flat:   #C85396;   /* one-colour stand-in for the gradient */
+  --brand-glyph:       #FFFFFF;   /* "m." on the tile */
+  /* Ink — the tile in Dark appearance, and one-colour dark. */
   --brand-ink:        #16181D;        /* flat / one-colour ink       */
-  --brand-ink-top:    #24262E;     /* icon gradient, top          */
-  --brand-ink-bottom: #121317;  /* icon gradient, bottom       */
-  /* Chalk — the mark on ink. */
+  --brand-ink-top:    #24262E;     /* dark tile gradient, top     */
+  --brand-ink-bottom: #121317;  /* dark tile gradient, bottom  */
+  /* Chalk — the symbol and wordmark on dark. */
   --brand-chalk:      #F4F5F7;
-  /* Ember — the record light. The one warm thing in the system. */
-  --brand-ember:       #FF8A3C;      /* primary brand colour        */
-  --brand-ember-core:  #FFC152;  /* highlight inside the dot    */
-  --brand-ember-rim:   #E85F21;   /* shadow side of the dot      */
+  /* Ember — the accent off the tile: the free-standing symbol's dot and the
+     wordmark's i tittle. */
+  --brand-ember:       #FF8A3C;
+  --brand-ember-core:  #FFC152;
+  --brand-ember-rim:   #E85F21;
   --brand-ember-ink:   #A8410D;   /* ember as TEXT on white      */
 }
-/* Contrast, measured (WCAG 2.1 relative luminance):
-     chalk on ink ......... 16.2:1   AAA
-     ink on white ......... 17.7:1   AAA
-     ember on ink ..........7.6:1    AAA
-     ember on white ........2.1:1    FAILS — never set ember as text on white
-     ember-ink on white ....6.1:1    AAA large / AA normal
-   Nothing in the identity depends on hue alone: the record dot is also the
-   only filled shape in the mark, so it survives greyscale and colour blindness. */
+/* Contrast (WCAG 2.1 relative luminance), computed by build.mjs:
+     white on tile top ........ 3.0:1    just clears 3:1 (graphics); rendered lower, README §3
+     white on tile bottom ..... 4.9:1    AA large
+     white on tile flat ....... 4.1:1    AA large
+     coral dot on ink (Dark) .. 5.9:1    AA
+     chalk on ink ............. 16.3:1   AAA
+     ink on white ............. 17.8:1   AAA
+     ember on ink ............. 7.6:1    AAA
+     ember on white ........... 2.3:1    FAILS — never set ember as text on white
+     ember-ink on white ....... 6.1:1    AA normal, AAA large
+   Nothing in the identity depends on hue alone: "m." is a letter and a full
+   stop, and reads the same in one colour. */
