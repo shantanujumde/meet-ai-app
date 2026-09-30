@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { MeetingDetail, RecordingStatus } from "@/ipc/types";
 import { useRecordingStore } from "@/state/recording";
 import { EMPTY_LIVE, useTranscriptStore } from "@/state/transcript";
+import { meetingDetail, transcriptLine } from "@/test/fixtures";
+import { ipc } from "@/test/ipcMock";
 import { Review } from "./Review";
 
 /**
@@ -12,37 +14,16 @@ import { Review } from "./Review";
  * ends, the finished `transcript.md` is read again and shown instead.
  */
 
-const readMeeting = vi.fn<(id: string) => Promise<MeetingDetail>>();
+vi.mock("@/ipc/client", async (importOriginal) =>
+  (await import("@/test/ipcMock")).mockClient(await importOriginal()),
+);
 
-vi.mock("@/ipc/client", () => ({
-  readMeeting: (id: string) => readMeeting(id),
-  revealMeeting: vi.fn(),
-  saveNotes: vi.fn(),
-  listMeetings: vi.fn(),
-}));
+const { readMeeting } = ipc;
 
 const ID = "2026-09-30-1015-meeting";
 
 function detail(lines: MeetingDetail["lines"]): MeetingDetail {
-  return {
-    summary: {
-      id: ID,
-      title: "Meeting",
-      date: "2026-09-30",
-      time: "10:15",
-      lineCount: lines.length,
-      lastTimestamp: null,
-      hasNotes: false,
-      hasAnalysis: false,
-      recordingState: "finished",
-      audioMs: null,
-    },
-    path: `/Meetings/${ID}`,
-    lines,
-    transcriptMissing: false,
-    unparsedLineCount: 0,
-    notes: "",
-  };
+  return meetingDetail({ summary: { id: ID }, lines });
 }
 
 function recording(status: Partial<RecordingStatus>) {
@@ -87,9 +68,7 @@ describe("Review while its meeting records", () => {
     expect(screen.getByRole("heading", { name: "Live transcript" })).toBeTruthy();
     expect(readMeeting).toHaveBeenCalledTimes(1);
 
-    readMeeting.mockResolvedValueOnce(
-      detail([{ seq: 0, time: "00:00:04", speaker: "You", text: "Said while recording." }]),
-    );
+    readMeeting.mockResolvedValueOnce(detail([transcriptLine({ text: "Said while recording." })]));
     act(() => recording({ phase: "idle" }));
 
     await waitFor(() => expect(readMeeting).toHaveBeenCalledTimes(2));
@@ -102,7 +81,7 @@ describe("Review while its meeting records", () => {
   test("another meeting recording leaves this one on its file", async () => {
     recording({ phase: "recording", meetingId: "2026-09-30-1100-meeting", startedAtMs: 0 });
     readMeeting.mockResolvedValueOnce(
-      detail([{ seq: 0, time: "00:00:01", speaker: "Others", text: "From the file." }]),
+      detail([transcriptLine({ time: "00:00:01", speaker: "Others", text: "From the file." })]),
     );
     renderReview();
 
