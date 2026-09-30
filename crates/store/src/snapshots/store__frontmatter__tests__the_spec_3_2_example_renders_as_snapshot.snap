@@ -1,0 +1,23 @@
+---
+source: crates/store/src/frontmatter.rs
+expression: text
+---
+---
+id: 2026-09-01-1430-standup
+title: Platform Standup
+date: "2026-09-01T14:30:00+05:30"
+duration_sec: 2714
+attendees:
+  - Shantanu
+  - Priya
+  - Dev
+calendar_event_id: ABC123
+repo: ~/apps/api
+analyzed_by: claude-code
+analyzed_at: "2026-09-01T15:32:00+05:30"
+---
+
+## Summary
+## Decisions
+## Action Items
+## Open Questions

@@ -153,7 +153,8 @@ crates/audio/      🔴 tap + mic + resample + wav. Has bin/meet-rec.
 crates/stt/        🟡 SttEngine trait, sidecar driver, whisper fallback, transcript format
 crates/modelfetch/ 🟡 whisper model download. Has bin/meet-stt-model. The only
                       crate in the speech path with an HTTP client — see below.
-crates/store/      🟢 markdown, frontmatter, watcher, derived SQLite index
+crates/store/      🟢 meeting-folder read/write + frontmatter (Phase 3a); watcher and
+                      derived SQLite index still to come (3b, 3c)
 crates/prompts/    🟢 minijinja templates + assembly
 crates/calendar/   🟡 CalendarProvider trait: eventkit | google | microsoft | ics
 crates/detect/     🟢 process + audio-activity heuristics
@@ -163,9 +164,10 @@ src/               🟢 React app
 design-system/     the visual language. Imported by src/index.css, not copied.
 ```
 
-Every crate compiles today and has at least one test. They are deliberately
-near-empty: the traits and data contracts that other people's code has to fit
-through are real, and the implementations are not written yet.
+Every crate compiles today and has at least one test. Crates whose phase has
+not started yet are deliberately near-empty: the traits and data contracts that
+other people's code has to fit through are real, and the implementations are
+not written yet.
 
 ## Rules that are easy to break by accident
 

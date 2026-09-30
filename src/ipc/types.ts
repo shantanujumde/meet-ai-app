@@ -40,7 +40,24 @@ export type MeetingSummary = {
   hasNotes: boolean;
   /** `meeting.md` exists, i.e. an agent has wrapped this meeting up. */
   hasAnalysis: boolean;
+  /** How the recording ended. See {@link RecordingState}. */
+  recordingState: RecordingState;
+  /**
+   * Milliseconds of audio a player can reach — the longer track's WAV header
+   * (SPEC A5). Null when the folder has no audio at all.
+   */
+  audioMs: number | null;
 };
+
+/**
+ * How a meeting's recording ended (TUR-97, SPEC §3.1).
+ *
+ * - `finished` — stopped on purpose, or there is no audio to judge by.
+ * - `interrupted` — cut short by a force quit, a crash or the Mac shutting
+ *   down. Shown as "Interrupted" and opened exactly like any other meeting.
+ * - `recording` — this app is writing it right now.
+ */
+export type RecordingState = "finished" | "interrupted" | "recording";
 
 /** One line of `transcript.md`, parsed per SPEC §3.4. */
 export type TranscriptLine = {
