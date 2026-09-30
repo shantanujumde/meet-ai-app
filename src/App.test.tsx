@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
-import type { MeetingList, PermissionStatus } from "@/ipc/types";
+import type { MeetingDetail, MeetingList, MeetingSummary, PermissionStatus } from "@/ipc/types";
 import { App } from "./App";
 
 /**
@@ -14,6 +14,7 @@ import { App } from "./App";
 const listMeetings = vi.fn<() => Promise<MeetingList>>();
 const permissionStatus = vi.fn<() => Promise<PermissionStatus>>();
 const onboardingState = vi.fn();
+const readMeeting = vi.fn<(id: string) => Promise<MeetingDetail>>();
 
 vi.mock("@/ipc/client", () => ({
   hasBackend: () => true,
@@ -30,7 +31,7 @@ vi.mock("@/ipc/client", () => ({
   toggleRecording: vi.fn(),
   openPrivacySettings: vi.fn(),
   revealMeeting: vi.fn(),
-  readMeeting: vi.fn(),
+  readMeeting: (id: string) => readMeeting(id),
   saveNotes: vi.fn(),
   changeMeetingsFolder: vi.fn(),
   engineEnvironment: vi.fn().mockResolvedValue({
@@ -44,6 +45,7 @@ vi.mock("@/ipc/client", () => ({
   modelCatalogue: vi.fn().mockResolvedValue([]),
   downloadModel: vi.fn(),
   onRecordingState: () => () => {},
+  onRecordingError: () => () => {},
   onModelProgress: () => () => {},
 }));
 
@@ -134,4 +136,75 @@ test("a meeting list that fails to load says so, verbatim, and offers a way on",
   expect(await screen.findByRole("alert")).toBeInTheDocument();
   expect(screen.getByText(/Permission denied \(os error 13\)/)).toBeInTheDocument();
   expect(screen.getByText(/does not have specific advice/i)).toBeInTheDocument();
+});
+
+// --- TUR-97: a recording killed mid-meeting --------------------------------
+
+const INTERRUPTED: MeetingSummary = {
+  id: "2026-09-30-1140-meeting",
+  title: "Meeting",
+  date: "2026-09-30",
+  time: "11:40",
+  lineCount: 1,
+  lastTimestamp: "00:00:04",
+  hasNotes: false,
+  hasAnalysis: false,
+  recordingState: "interrupted",
+  audioMs: 16_253,
+};
+
+const FINISHED: MeetingSummary = {
+  ...INTERRUPTED,
+  id: "2026-09-30-1129-meeting",
+  time: "11:29",
+  recordingState: "finished",
+  audioMs: 55_615,
+};
+
+test("an interrupted meeting is labelled in the list, and a finished one is not", async () => {
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  listMeetings.mockResolvedValue({
+    root: "/Users/test/Meetings",
+    rootExists: true,
+    meetings: [INTERRUPTED, FINISHED],
+  });
+
+  render(<App />);
+
+  // Once in the sidebar, once on the list page — and only on its own row.
+  const labels = await screen.findAllByText("Interrupted");
+  expect(labels).toHaveLength(2);
+  for (const label of labels) {
+    const row = label.closest("button");
+    expect(row?.textContent).toMatch(/11:40/);
+    expect(row?.textContent).not.toMatch(/11:29/);
+  }
+});
+
+test("an interrupted meeting opens like any other and says how much audio was kept", async () => {
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  listMeetings.mockResolvedValue({
+    root: "/Users/test/Meetings",
+    rootExists: true,
+    meetings: [INTERRUPTED],
+  });
+  readMeeting.mockResolvedValue({
+    summary: INTERRUPTED,
+    path: "/Users/test/Meetings/2026-09-30-1140-meeting",
+    lines: [{ seq: 0, time: "00:00:04", speaker: "You", text: "Can everyone hear me?" }],
+    transcriptMissing: false,
+    unparsedLineCount: 0,
+    notes: "",
+  });
+  window.location.hash = "#/meetings/2026-09-30-1140-meeting";
+
+  render(<App />);
+
+  expect(
+    await screen.findByText("Recording stopped unexpectedly. Audio up to 00:00:16 was saved."),
+  ).toBeInTheDocument();
+  // The transcript that survived is right there, and nothing is an error.
+  expect(screen.getByText("Can everyone hear me?")).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(readMeeting).toHaveBeenCalledWith("2026-09-30-1140-meeting");
 });

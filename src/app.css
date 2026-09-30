@@ -185,6 +185,12 @@
   color: var(--text-secondary);
 }
 
+/* TUR-97. The word carries the meaning; the colour only matches `.badge--warn`
+   on the list page, so the two surfaces read as the same signal. */
+.meeting-row__badge--interrupted {
+  color: var(--status-warning);
+}
+
 /* -----------------------------------------------------------------------------
    Content column
    -------------------------------------------------------------------------- */
@@ -237,6 +243,16 @@
   font-size: var(--text-footnote);
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+
+/* One quiet line under a meeting's title — an interrupted recording (TUR-97).
+   Plain text, not a banner: nothing is wrong with what was kept. */
+.page__notice {
+  font-size: var(--text-footnote);
+  line-height: var(--leading-normal);
+  color: var(--text-secondary);
+  max-width: var(--notes-measure);
   margin: 0;
 }
 
