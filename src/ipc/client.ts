@@ -15,6 +15,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { type Event, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
+import { NO_BACKEND } from "./errors";
 import type {
   EnvironmentView,
   LiveTranscriptSnapshot,
@@ -29,7 +31,6 @@ import type {
   SelectionView,
   TranscriptStatus,
   TranscriptUpdate,
-  UiError,
 } from "./types";
 import { toUiError } from "./types";
 
@@ -58,14 +59,6 @@ export function hasBackend(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-const NO_BACKEND: UiError = {
-  domain: "app",
-  kind: "no-backend",
-  message:
-    "This is the meet-ai window running without its Mac app behind it, so it cannot read or " +
-    "change anything on disk. Run `pnpm tauri dev` instead of `pnpm dev`.",
-};
-
 /** Call a Rust command, normalising whatever it throws into a `UiError`. */
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!hasBackend()) throw NO_BACKEND;
@@ -82,7 +75,7 @@ export async function listMeetings(): Promise<MeetingList> {
   if (!hasBackend()) {
     // The honest empty answer: no backend means no meetings are readable, and
     // the empty state is a designed screen rather than a failure.
-    return { root: "~/Meetings", rootExists: false, meetings: [] };
+    return { root: DEFAULT_ROOT_LABEL, rootExists: false, meetings: [] };
   }
   return call<MeetingList>("list_meetings");
 }

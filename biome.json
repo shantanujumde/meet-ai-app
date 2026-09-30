@@ -8,6 +8,11 @@
   "files": {
     "includes": ["**", "!.claude", "!design-system", "!spikes", "!crates/audio/fixtures/segments"]
   },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",

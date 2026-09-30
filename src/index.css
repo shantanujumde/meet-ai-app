@@ -6,10 +6,32 @@
 @import "../design-system/meet-ai/tokens.css";
 @import "../design-system/meet-ai/glass.css";
 
-/* Layer 3 for this app's own surfaces — the shell, the meeting list, the notes
-   pane, onboarding. Kept out of the design system so the system stays portable
-   and this file stays obviously app-specific. */
+/* Layer 3 for this app's own surfaces that have not moved to utilities yet —
+   the shell, the meeting list, the notes pane. Kept out of the design system so
+   the system stays portable and this file stays obviously app-specific.
+   Components move out of it one at a time; add nothing new to it. */
 @import "./app.css";
+
+/* The same tokens as Tailwind utilities (`bg-glass-raised`, `p-5`,
+   `rounded-card`, …) — see theme.css for the names and why the import needs
+   both options. */
+@import "./theme.css" theme(reference inline);
+
+/* Animations are new names, not tokens, so these are emitted as usual. */
+@theme {
+  /* Hashing has no sub-progress to report, so the download bar says "working"
+     rather than sitting at 100% looking frozen. */
+  --animate-progress-sweep: progress-sweep 1.4s var(--ease-in-out) infinite;
+
+  @keyframes progress-sweep {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(250%);
+    }
+  }
+}
 
 html,
 body,

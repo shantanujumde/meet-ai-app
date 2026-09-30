@@ -41,6 +41,12 @@ type AppStore = {
 
   onboarding: OnboardingState | null;
   onboardingLoading: boolean;
+  /**
+   * Why "Show setup again" did not work. Its own field, not `meetingsError`:
+   * a setup flag that failed to reset says nothing about the meeting list, and
+   * putting it there replaced a perfectly good list with an error screen.
+   */
+  onboardingError: UiError | null;
   loadOnboarding: () => Promise<void>;
   finishOnboarding: () => Promise<void>;
   restartOnboarding: () => Promise<void>;
@@ -105,6 +111,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   onboarding: null,
   onboardingLoading: true,
+  onboardingError: null,
 
   async loadOnboarding() {
     set({ onboardingLoading: true });
@@ -131,10 +138,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   async restartOnboarding() {
+    set({ onboardingError: null });
     try {
       set({ onboarding: await resetOnboarding() });
     } catch (thrown) {
-      set({ meetingsError: toUiError(thrown) });
+      set({ onboardingError: toUiError(thrown) });
     }
   },
 }));
