@@ -45,6 +45,7 @@ pub mod meeting;
 pub mod notes;
 pub mod ticket;
 pub mod transcript;
+pub mod watcher;
 
 /// The SPEC §3.1 folder layout, defined once in `meeting-format`.
 ///
