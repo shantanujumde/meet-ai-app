@@ -95,6 +95,8 @@ export type PermissionStatus = {
   /** False means nobody has actually checked — not that the answer is no. */
   measured: boolean;
   detail: string;
+  /** The grants that are off, by the Settings pane each lives in. Empty unless denied. */
+  denied: PrivacyPane[];
 };
 
 /** Which System Settings pane to deep-link to. */

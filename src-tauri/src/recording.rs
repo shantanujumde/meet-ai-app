@@ -53,10 +53,11 @@ use crate::permission;
 /// see the same change at the same time.
 pub const STATE_EVENT: &str = "recording://state";
 
-/// Emitted with a [`UiError`] when a recording ends on its own because a tick
-/// failed (TUR-97) — the one recorder failure with no command call waiting to
-/// return it. `STATE_EVENT` still carries the move back to `Idle`; this says
-/// why. A system notification goes out as well, because the window may be
+/// Emitted with a [`UiError`] for the recorder failures with no command call
+/// waiting to return them: a recording that ends on its own because a tick
+/// failed (TUR-97), and a start or stop from ⌘⇧R or the menu bar that was
+/// refused (TUR-127). `STATE_EVENT` still carries the move back to `Idle`; this
+/// says why. A system notification goes out as well, because the window may be
 /// hidden, which is the normal case for a recording started with ⌘⇧R.
 pub const ERROR_EVENT: &str = "recording://error";
 
@@ -213,15 +214,22 @@ impl Recorder {
         // the controls disabled while permission is absent; this measurement
         // is the backstop for the one path that has no button to disable, the
         // global shortcut firing with the window unfocused or hidden.
-        if permission::measure().state == permission::State::Denied {
+        let permission = permission::measure();
+        tracing::info!(
+            state = ?permission.state,
+            detail = %permission.detail,
+            "permission check before recording"
+        );
+        // The window mirrors this answer (Record disabled, "Fix this" shown), so
+        // a refusal here and a grant restored in Settings both reach it.
+        if let Err(error) = app.emit(permission::STATUS_EVENT, &permission) {
+            tracing::warn!(%error, "could not tell the window about the permission check");
+        }
+        if permission.state == permission::State::Denied {
             return Err(self.fail_start(
                 app,
                 None,
-                UiError::app(
-                    "permission-denied",
-                    "meet-ai is not allowed to record this Mac's audio, so starting a recording \
-                     would capture nothing but silence.",
-                ),
+                UiError::app("permission-denied", permission.refusal_message()),
             ));
         }
 

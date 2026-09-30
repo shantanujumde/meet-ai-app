@@ -55,7 +55,11 @@ tokio = { workspace = true, features = [
   "sync",
   "time",
 ] }
-tracing.workspace = true
+# `log`: nothing installs a tracing subscriber in the app, so without this every
+# `tracing::warn!` — "record shortcut refused", a failed permission check — is
+# dropped, and meet-ai.log only ever shows the webview's lines. With it, events
+# fall through to `log`, which tauri-plugin-log already writes to that file.
+tracing = { workspace = true, features = ["log"] }
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 

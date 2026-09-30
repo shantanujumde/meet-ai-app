@@ -15,9 +15,10 @@ import { Meetings } from "@/routes/Meetings";
 import { Onboarding } from "@/routes/Onboarding";
 import { Review } from "@/routes/Review";
 import { Settings } from "@/routes/Settings";
-import { useAppStore } from "@/state/app";
+import { useAppStore, watchPermissionStatus } from "@/state/app";
 import { useRecordingStore, watchRecordingState } from "@/state/recording";
 import { watchLiveTranscript } from "@/state/transcript";
+import { isRevisit } from "@/ui/permissionRoute";
 import { Shell } from "@/ui/Shell";
 
 export function App() {
@@ -59,7 +60,9 @@ function Bootstrap() {
 
   useEffect(() => {
     void loadMeetings();
-    void loadPermission();
+    // Silent: the full check plays a chime, and SPEC A7 keeps that to setup
+    // and the start of a recording, not every launch.
+    void loadPermission({ silent: true });
     void loadOnboarding();
     // Mirrors Rust's recording state, including changes this window did not
     // cause — ⌘⇧R firing while the app is in the background, or the menu-bar
@@ -68,9 +71,13 @@ function Bootstrap() {
     // Watched here rather than from the live pane, so lines keep landing while
     // the user is on another screen, and the pane has them when they come back.
     const stopTranscript = watchLiveTranscript();
+    // The full check every recording start runs, which is the only one that
+    // hears system audio after launch.
+    const stopPermission = watchPermissionStatus();
     return () => {
       stopRecording();
       stopTranscript();
+      stopPermission();
     };
   }, [loadMeetings, loadPermission, loadOnboarding]);
 
@@ -129,9 +136,10 @@ function Bootstrap() {
     }
     // Already finished: a wizard URL left over from a previous, unfinished
     // session (the single-instance window was simply refocused, never
-    // re-loaded) must not trap an otherwise-done user on setup forever.
-    if (onOnboardingRoute) navigate("/meetings", { replace: true });
-  }, [onboarding, onboardingLoading, location.pathname, navigate]);
+    // re-loaded) must not trap an otherwise-done user on setup forever. A trip
+    // the user asked for — the shell's "Fix this" banner — is let through.
+    if (onOnboardingRoute && !isRevisit(location.state)) navigate("/meetings", { replace: true });
+  }, [onboarding, onboardingLoading, location.pathname, location.state, navigate]);
 
   return null;
 }

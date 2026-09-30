@@ -16,8 +16,10 @@
  */
 
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
+import type { PrivacyPane } from "@/ipc/types";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
+import { openPermissionScreen } from "./permissionRoute";
 import { RecordControl } from "./RecordControl";
 import { Sidebar } from "./Sidebar";
 
@@ -83,13 +85,11 @@ export function Shell() {
 
         {!focused && permission?.state === "denied" ? (
           <div className="banner" role="status">
-            <p className="banner__text">
-              meet-ai cannot record this Mac's audio yet, so recording is turned off.
-            </p>
+            <p className="banner__text">{deniedBannerText(permission.denied)}</p>
             <button
               type="button"
               className="btn btn--small"
-              onClick={() => navigate("/onboarding/permission")}
+              onClick={() => openPermissionScreen(navigate)}
             >
               Fix this
             </button>
@@ -100,4 +100,19 @@ export function Shell() {
       </main>
     </div>
   );
+}
+
+const PANE_LABEL: Record<PrivacyPane, string> = {
+  microphone: "Microphone",
+  "audio-capture": "System Audio Recording",
+};
+
+/** Name the switch that is off, so the banner says where to go. */
+function deniedBannerText(denied: PrivacyPane[]): string {
+  const names = denied.map((pane) => PANE_LABEL[pane]);
+  if (names.length === 0) {
+    return "meet-ai cannot record this Mac's audio yet, so recording is turned off.";
+  }
+  const verb = names.length === 1 ? "is" : "are";
+  return `${names.join(" and ")} ${verb} switched off for meet-ai in System Settings, so recording is turned off.`;
 }

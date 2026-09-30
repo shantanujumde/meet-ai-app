@@ -84,8 +84,9 @@ export function watchRecordingState(): () => void {
   const stopState = onRecordingState((status) => {
     useRecordingStore.getState().applyFromBackend(status);
   });
-  // A recording Rust stopped by itself (TUR-97) has no button press to hang
-  // an error on, so it arrives as its own event and uses the same banner.
+  // A recording Rust stopped by itself (TUR-97), or a ⌘⇧R press it refused
+  // (TUR-127), has no button press to hang an error on, so it arrives as its
+  // own event and uses the same banner.
   const stopError = onRecordingError((error) => {
     useRecordingStore.setState({ error });
   });

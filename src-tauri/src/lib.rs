@@ -103,6 +103,7 @@ pub fn run() {
             commands::change_meetings_folder,
             commands::reveal_meeting,
             commands::permission_status,
+            commands::permission_quick,
             commands::open_privacy_settings,
             commands::onboarding_state,
             commands::complete_onboarding,
@@ -175,7 +176,7 @@ fn global_shortcut_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
                             // nothing on screen to put an error next to. A
                             // notification is the one surface guaranteed visible.
                             tracing::warn!(message = %error.message, "record shortcut refused");
-                            notify_refusal(&app, &error.message);
+                            notify_refusal(&app, &error);
                         }
                     }
                 })
@@ -206,18 +207,24 @@ fn register_record_shortcut<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 }
 
 /// Tell the user why a shortcut press did nothing, on a surface that does not
-/// need the window to be open.
+/// need the window to be open — and in the window too, when it is. The
+/// notification alone is silent whenever meet-ai may not post them, which made
+/// a refused ⌘⇧R look like it had done nothing at all.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn notify_refusal<R: tauri::Runtime>(app: &tauri::AppHandle<R>, message: &str) {
+fn notify_refusal<R: tauri::Runtime>(app: &tauri::AppHandle<R>, error: &error::UiError) {
+    use tauri::Emitter as _;
     use tauri_plugin_notification::NotificationExt as _;
 
-    if let Err(error) = app
+    if let Err(emit_error) = app.emit(recording::ERROR_EVENT, error) {
+        tracing::warn!(%emit_error, "could not tell the window about a refused recording");
+    }
+    if let Err(notify_error) = app
         .notification()
         .builder()
         .title("meet-ai did not start recording")
-        .body(message)
+        .body(&error.message)
         .show()
     {
-        tracing::warn!(%error, "could not show the refusal notification either");
+        tracing::warn!(%notify_error, "could not show the refusal notification either");
     }
 }

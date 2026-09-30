@@ -137,7 +137,7 @@ fn toggle_recording(app: &AppHandle) {
             // so there is no guaranteed place on screen to put an error next to
             // the control the user just used.
             tracing::warn!(message = %error.message, "menu-bar toggle refused");
-            crate::notify_refusal(app, &error.message);
+            crate::notify_refusal(app, &error);
         }
     }
 }
