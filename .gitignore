@@ -40,6 +40,10 @@ crates/audio/fixtures/*
 # Recordings and transcripts never belong in the repo.
 Meetings/
 *.wav
+# ...except store's hand-written fixture root. macOS is case-insensitive and
+# git runs with core.ignorecase there, so `Meetings/` above also matches this
+# lowercase `meetings/` and silently kept the TUR-99 gate fixtures out of main.
+!crates/store/tests/fixtures/meetings/
 
 # Spike build output (compiled binaries + signed bundle) is reproducible from
 # source via spikes/phase0a-tcc/build.sh.

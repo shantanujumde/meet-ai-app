@@ -82,6 +82,29 @@ function wholeDaysBetween(earlier: Date, later: Date): number {
 }
 
 /**
+ * What an interrupted meeting is called in the list (TUR-97, SPEC §3.1).
+ *
+ * One word, and a calm one: the audio and transcript up to the cut are good,
+ * so this is neither "Failed" nor "Corrupt" — but it is not a finished
+ * meeting either, and must not look like one.
+ */
+export const INTERRUPTED_LABEL = "Interrupted";
+
+/**
+ * The one-line explanation an interrupted meeting shows when it is opened.
+ *
+ * `audioMs` is the header-declared length (SPEC A5), so the time quoted is
+ * exactly as far as a player will go — never the frame-count sum, which after
+ * a crash runs up to one checkpoint past the audio that exists.
+ */
+export function describeInterruption(audioMs: number | null): string {
+  if (audioMs === null || audioMs < 1000) {
+    return "Recording stopped unexpectedly, before any audio was saved.";
+  }
+  return `Recording stopped unexpectedly. Audio up to ${formatElapsed(audioMs)} was saved.`;
+}
+
+/**
  * "12 lines" / "1 line" / "No transcript yet".
  *
  * Zero gets words rather than a "0", because a meeting with no transcript is a

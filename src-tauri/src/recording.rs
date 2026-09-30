@@ -23,6 +23,16 @@
 //! a start or a stop, and on stop it is finished *after* the audio is safely
 //! closed — so the worst an engine can do is leave `transcript.md` short, which
 //! the WAVs can always put right.
+//!
+//! While a recording is live, a ticker thread ([`ticker`], TUR-97) owns the
+//! `RecordingSession` and calls its `tick()` every
+//! [`audio::session::TICK_INTERVAL`], which is what checkpoints the WAV headers
+//! and `segments.json` every five seconds and reopens a segment on a default
+//! device change. The `Mutex` holds that ticker instead of the bare session, so
+//! the phase and the thing it owns still change together under one lock, and
+//! the lock is never held across a tick.
+
+mod ticker;
 
 use std::sync::{Arc, Mutex};
 
@@ -32,6 +42,8 @@ use serde::Serialize;
 use stt::Speaker;
 use tauri::{AppHandle, Emitter as _, Manager as _};
 
+use self::ticker::Ticker;
+
 use crate::error::UiError;
 use crate::live_transcript::{self, LiveTranscript, Transcription};
 use crate::permission;
@@ -40,6 +52,17 @@ use crate::permission;
 /// the UI never has to poll and the menu bar, the titlebar and the sidebar all
 /// see the same change at the same time.
 pub const STATE_EVENT: &str = "recording://state";
+
+/// Emitted with a [`UiError`] when a recording ends on its own because a tick
+/// failed (TUR-97) — the one recorder failure with no command call waiting to
+/// return it. `STATE_EVENT` still carries the move back to `Idle`; this says
+/// why. A system notification goes out as well, because the window may be
+/// hidden, which is the normal case for a recording started with ⌘⇧R.
+pub const ERROR_EVENT: &str = "recording://error";
+
+/// The ticker thread's name, so it is identifiable in a sample or a crash
+/// report next to `meet-ai-record-shortcut`.
+const TICKER_THREAD_NAME: &str = "meet-ai-recording-ticker";
 
 /// Where the recorder is right now.
 ///
@@ -81,11 +104,17 @@ impl Status {
 /// The recorder's status plus the live capture session behind it, one Mutex
 /// so a phase transition and the session it owns can never observe each other
 /// half-updated.
+///
+/// The session sits inside its [`Ticker`] rather than here directly (TUR-97):
+/// the ticker thread owns it while recording and hands it back through the
+/// join on stop. `Some` exactly when the phase is `Recording` — set in the
+/// same critical section as the `Starting -> Recording` move, and taken in the
+/// same one as `Recording -> Stopping`.
 struct Inner {
     status: Status,
-    session: Option<RecordingSession>,
-    /// The live transcript riding on `session`'s tees. Taken together with
-    /// the session on stop, so the two always end as a pair.
+    ticker: Option<Ticker<RecordingSession>>,
+    /// The live transcript riding on the session's tees (TUR-96). Taken
+    /// together with the ticker on stop, so the two always end as a pair.
     transcription: Option<Transcription>,
 }
 
@@ -93,7 +122,7 @@ impl Inner {
     fn idle() -> Self {
         Self {
             status: Status::idle(),
-            session: None,
+            ticker: None,
             transcription: None,
         }
     }
@@ -197,11 +226,17 @@ impl Recorder {
         }
 
         let started = chrono::Local::now();
-        // `None` on failure: the folder that failed may be an earlier
-        // meeting's, and cleaning up must never delete that.
-        let id = match crate::meetings::root()
-            .and_then(|root| create_meeting_folder(&root, &meeting_id(started)))
-        {
+        // TUR-97: each candidate id is published before its folder exists, so
+        // a meetings list taken mid-start (`meetings::Live`) always knows which
+        // folder is live and never mistakes it for an interrupted one.
+        // `fail_start` clears it with the rest of `Inner`. `None` on failure:
+        // the folder that failed may be an earlier meeting's, and cleaning up
+        // must never delete that.
+        let id = match crate::meetings::root().and_then(|root| {
+            create_meeting_folder(&root, &meeting_id(started), |candidate| {
+                self.lock().status.meeting_id = Some(candidate.to_string());
+            })
+        }) {
             Ok(id) => id,
             Err(error) => return Err(self.fail_start(app, None, error)),
         };
@@ -239,16 +274,74 @@ impl Recorder {
                     tracks,
                     Box::new(live_transcript::open_configured_engine),
                 );
-                Ok(self.transition(app, |inner| {
-                    inner.status.phase = Phase::Recording;
-                    inner.status.meeting_id = Some(id.clone());
-                    inner.status.started_at_ms = Some(started.timestamp_millis());
-                    inner.session = Some(session);
-                    inner.transcription = Some(transcription);
-                }))
+                self.enter_recording(app, &id, started, session, transcription)
+                    .map_err(|error| self.fail_start(app, Some(&id), error))
             }
             Err(message) => {
                 Err(self.fail_start(app, Some(&id), UiError::app("recorder-failed", message)))
+            }
+        }
+    }
+
+    /// `Starting -> Recording`, with the ticker thread spawned and stored in
+    /// the same critical section (TUR-97).
+    ///
+    /// Spawning under the lock is what keeps "phase is `Recording`" and "a
+    /// ticker exists" one fact: the thread's first tick is an interval away,
+    /// and its failure path ([`Recorder::fail_mid_recording`]) takes this lock
+    /// before looking at the phase, so it can never see `Starting`. If the
+    /// spawn fails, the session comes back to this thread and is stopped here,
+    /// so no capture stream or thread outlives a start that did not happen;
+    /// the caller's `fail_start` then removes the folder as for any other
+    /// failed start.
+    fn enter_recording(
+        &self,
+        app: &AppHandle,
+        id: &str,
+        started: chrono::DateTime<chrono::Local>,
+        session: RecordingSession,
+        transcription: Transcription,
+    ) -> Result<Status, UiError> {
+        let on_fail = {
+            let app = app.clone();
+            move |session, message| {
+                app.state::<Recorder>()
+                    .fail_mid_recording(&app, session, message)
+            }
+        };
+
+        let mut inner = self.lock();
+        match Ticker::spawn(
+            TICKER_THREAD_NAME,
+            audio::session::TICK_INTERVAL,
+            session,
+            tick_session,
+            on_fail,
+        ) {
+            Ok(ticker) => {
+                inner.status.phase = Phase::Recording;
+                inner.status.meeting_id = Some(id.to_string());
+                inner.status.started_at_ms = Some(started.timestamp_millis());
+                inner.ticker = Some(ticker);
+                inner.transcription = Some(transcription);
+                let status = inner.status.clone();
+                drop(inner);
+                if let Err(error) = app.emit(STATE_EVENT, &status) {
+                    tracing::warn!(%error, "could not tell the window about a recording state change");
+                }
+                Ok(status)
+            }
+            Err((session, error)) => {
+                drop(inner);
+                tracing::error!(%error, "could not spawn the recording ticker thread");
+                if let Err(message) = session.stop() {
+                    tracing::warn!(%message, "the session behind a failed start did not stop cleanly");
+                }
+                transcription.finish(live_transcript::STOP_TIMEOUT);
+                Err(UiError::app(
+                    "recorder-failed",
+                    format!("could not start the recorder's checkpoint thread: {error}"),
+                ))
             }
         }
     }
@@ -280,55 +373,211 @@ impl Recorder {
     }
 
     pub fn stop(&self, app: &AppHandle) -> Result<Status, UiError> {
-        let (session, transcription) = match self.claim_stopping(app) {
+        let (ticker, transcription) = match self.claim_stopping(app) {
             Err(status) => return Ok(status),
             Ok(taken) => taken,
         };
-
         // Audio first: it is the part that cannot be redone. Only once the
         // WAVs are closed — which also means every frame is in the tees — is
         // the transcript given its (bounded) chance to catch up. Its outcome
         // reaches the window as a `transcript://status` event, never as an
         // error from Stop: a short transcript is not a failed recording.
-        let stopped = session.map(RecordingSession::stop);
-        if let Some(transcription) = transcription {
-            transcription.finish(live_transcript::STOP_TIMEOUT);
-        }
+        let finish_transcription = move || {
+            if let Some(transcription) = transcription {
+                transcription.finish(live_transcript::STOP_TIMEOUT);
+            }
+        };
+
+        let Some(ticker) = ticker else {
+            tracing::error!("phase was Recording with no session attached; recovering to idle");
+            finish_transcription();
+            return Ok(self.transition(app, |inner| *inner = Inner::idle()));
+        };
+
+        // TUR-97: end the ticker and join it *before* the session's own stop.
+        // The session only comes back out of the join, so no tick can be
+        // running, or start, once we hold it — a checkpoint can never race the
+        // final header patch and `segments.json` write below. The wait is at
+        // most one tick already in flight; the thread is woken, not polled.
+        let session = match ticker.stop() {
+            Ok(Some(session)) => session,
+            Ok(None) => {
+                // Only a failed tick's handler keeps the session, and it only
+                // does so after claiming `Stopping` itself — which would have
+                // made our claim above lose. Unreachable in practice; recover
+                // rather than stick in `Stopping`.
+                tracing::error!("the recording ticker kept the session; recovering to idle");
+                finish_transcription();
+                return Ok(self.transition(app, |inner| *inner = Inner::idle()));
+            }
+            Err(message) => {
+                tracing::error!(%message, "the recording ticker died; the session went with it");
+                finish_transcription();
+                self.transition(app, |inner| *inner = Inner::idle());
+                return Err(UiError::app("recorder-failed", message));
+            }
+        };
+
+        let stopped = session.stop();
+        finish_transcription();
 
         match stopped {
-            Some(Ok(_report)) => Ok(self.transition(app, |inner| *inner = Inner::idle())),
-            Some(Err(message)) => {
+            Ok(_report) => Ok(self.transition(app, |inner| *inner = Inner::idle())),
+            Err(message) => {
                 tracing::warn!(message = %message, "recording did not stop cleanly");
                 self.transition(app, |inner| *inner = Inner::idle());
                 Err(UiError::app("recorder-failed", message))
             }
-            None => {
-                tracing::error!("phase was Recording with no session attached; recovering to idle");
-                Ok(self.transition(app, |inner| *inner = Inner::idle()))
-            }
         }
     }
 
-    /// Claim `Recording -> Stopping` and take the session and its transcript
-    /// with it, or report the phase that beat us to it.
+    /// Claim `Recording -> Stopping` and take the session (inside its ticker)
+    /// and its transcript with it, or report the phase that beat us to it.
     #[allow(clippy::type_complexity)]
     fn claim_stopping(
         &self,
         app: &AppHandle,
-    ) -> Result<(Option<RecordingSession>, Option<Transcription>), Status> {
+    ) -> Result<(Option<Ticker<RecordingSession>>, Option<Transcription>), Status> {
         let mut inner = self.lock();
         if inner.status.phase != Phase::Recording {
             return Err(inner.status.clone());
         }
         inner.status.phase = Phase::Stopping;
-        let session = inner.session.take();
+        let ticker = inner.ticker.take();
         let transcription = inner.transcription.take();
         let status = inner.status.clone();
         drop(inner);
         if let Err(error) = app.emit(STATE_EVENT, &status) {
             tracing::warn!(%error, "could not tell the window about a recording state change");
         }
-        Ok((session, transcription))
+        Ok((ticker, transcription))
+    }
+
+    /// What a failed `tick()` means (TUR-97): the recording is over. Stop the
+    /// session so what is on disk is finalised, go back to `Idle`, and tell
+    /// the user — never keep showing `Recording` over a session that has
+    /// stopped checkpointing.
+    ///
+    /// Why stop rather than log and keep ticking: every error `tick()` returns
+    /// leaves the session unable to carry on. A checkpoint error is a failed
+    /// fsync, header patch or `segments.json` write, or the microphone having
+    /// stopped delivering audio — retrying the same disk or device five
+    /// seconds later is not a plan, and ticking on would mean a recording the
+    /// UI calls live while nothing on disk is being made crash-safe. A reopen
+    /// error is worse: `reopen_segment` stops both channels before it rebuilds
+    /// them, so a failure part-way leaves the session holding stopped sources,
+    /// capturing nothing. `meet-rec` agrees that a tick error ends the
+    /// recording (its loop `?`s out of it), but it drops the session without
+    /// `stop()`, abandoning the header patch; the app stops it instead. That
+    /// is safe after either kind of failure: both sources' `stop()` are
+    /// idempotent (a second call on a stopped channel re-syncs and re-patches
+    /// what is there), so this still writes the contract §7 graceful-stop
+    /// anchor for whatever audio did land.
+    ///
+    /// Runs on the ticker thread, so it must never join that thread: it takes
+    /// its own ticker out of `Inner` and detaches it. If a user's stop has
+    /// already claimed `Stopping` — it is blocked joining this thread — the
+    /// session is handed back through the join so that stop finishes it
+    /// exactly as it would have without the failure.
+    fn fail_mid_recording(
+        &self,
+        app: &AppHandle,
+        session: RecordingSession,
+        message: String,
+    ) -> Option<RecordingSession> {
+        let transcription;
+        {
+            let mut inner = self.lock();
+            if inner.status.phase != Phase::Recording {
+                tracing::error!(
+                    %message,
+                    "a recording tick failed while it was already being stopped"
+                );
+                return Some(session);
+            }
+            tracing::error!(%message, "a recording tick failed; stopping the recording");
+            inner.status.phase = Phase::Stopping;
+            if let Some(own) = inner.ticker.take() {
+                own.detach();
+            }
+            transcription = inner.transcription.take();
+            let status = inner.status.clone();
+            drop(inner);
+            if let Err(error) = app.emit(STATE_EVENT, &status) {
+                tracing::warn!(%error, "could not tell the window about a recording state change");
+            }
+        }
+
+        // A panic in `stop()` must not strand the recorder in `Stopping`,
+        // where every toggle is ignored: this thread is about to end, and
+        // nobody else would ever move the phase on.
+        let stopped =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || session.stop()))
+                .unwrap_or_else(|payload| {
+                    Err(format!(
+                        "stopping panicked: {}",
+                        ticker::panic_message(&*payload)
+                    ))
+                });
+        // Audio first, then the transcript, as in `stop`.
+        if let Some(transcription) = transcription {
+            transcription.finish(live_transcript::STOP_TIMEOUT);
+        }
+        let body = match &stopped {
+            Ok(_report) => format!(
+                "The recording stopped because of an error ({message}). The audio recorded up to \
+                 that point was saved."
+            ),
+            Err(stop_message) => {
+                tracing::warn!(message = %stop_message, "the failed recording did not stop cleanly");
+                format!(
+                    "The recording stopped because of an error ({message}), and finishing its \
+                     files also failed ({stop_message})."
+                )
+            }
+        };
+        self.transition(app, |inner| *inner = Inner::idle());
+
+        let error = UiError::app("recording-interrupted", body);
+        if let Err(emit_error) = app.emit(ERROR_EVENT, &error) {
+            tracing::warn!(%emit_error, "could not tell the window a recording failed");
+        }
+        notify_interrupted(app, &error.message);
+        None
+    }
+}
+
+/// One tick of the live session, with a panic turned into an ordinary tick
+/// error (TUR-97). Without this, a panic would end the ticker thread silently:
+/// the UI would keep showing `Recording` while nothing checkpointed — the
+/// exact failure the ticker exists to remove — until the user pressed stop.
+/// Routed through [`Recorder::fail_mid_recording`] instead, it stops the
+/// session and tells the user like any other tick failure.
+fn tick_session(session: &mut RecordingSession) -> Result<(), String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| session.tick())).unwrap_or_else(
+        |payload| {
+            Err(format!(
+                "the recorder's checkpoint panicked: {}",
+                ticker::panic_message(&*payload)
+            ))
+        },
+    )
+}
+
+/// Tell the user a recording stopped on its own, on a surface that does not
+/// need the window to be open — the same reasoning as `lib.rs`'s
+/// `notify_refusal` for the shortcut.
+fn notify_interrupted(app: &AppHandle, message: &str) {
+    use tauri_plugin_notification::NotificationExt as _;
+
+    if let Err(error) = app
+        .notification()
+        .builder()
+        .title("meet-ai stopped recording")
+        .body(message)
+        .show()
+    {
+        tracing::warn!(%error, "could not show the interrupted-recording notification");
     }
 }
 
@@ -357,7 +606,15 @@ fn meeting_id(at: chrono::DateTime<chrono::Local>) -> String {
 /// its `segments.json`. It gets `<id>-2` (then `-3`, …) instead: still a §3.1
 /// `YYYY-MM-DD-HHMM-slug` name, just with a longer slug. `create_dir` rather
 /// than an existence check, so claiming the name is atomic.
-fn create_meeting_folder(root: &std::path::Path, base: &str) -> Result<String, UiError> {
+///
+/// `announce` hears each candidate id just before its folder is created, so
+/// the recorder can publish it first (TUR-97: a folder whose id is not known
+/// yet would read as an interrupted meeting).
+fn create_meeting_folder(
+    root: &std::path::Path,
+    base: &str,
+    mut announce: impl FnMut(&str),
+) -> Result<String, UiError> {
     std::fs::create_dir_all(root)?;
     let mut n = 1;
     let (id, dir) = loop {
@@ -367,6 +624,7 @@ fn create_meeting_folder(root: &std::path::Path, base: &str) -> Result<String, U
             format!("{base}-{n}")
         };
         let dir = root.join(&id);
+        announce(&id);
         match std::fs::create_dir(&dir) {
             Ok(()) => break (id, dir),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
@@ -412,7 +670,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let base = "2026-09-01-1430-meeting";
 
-        let first = create_meeting_folder(&root, base).unwrap();
+        let first = create_meeting_folder(&root, base, |_| {}).unwrap();
         assert_eq!(first, base);
         // The first meeting has content by the time the second starts.
         std::fs::write(
@@ -421,8 +679,8 @@ mod tests {
         )
         .unwrap();
 
-        let second = create_meeting_folder(&root, base).unwrap();
-        let third = create_meeting_folder(&root, base).unwrap();
+        let second = create_meeting_folder(&root, base, |_| {}).unwrap();
+        let third = create_meeting_folder(&root, base, |_| {}).unwrap();
         assert_eq!(second, "2026-09-01-1430-meeting-2");
         assert_eq!(third, "2026-09-01-1430-meeting-3");
 

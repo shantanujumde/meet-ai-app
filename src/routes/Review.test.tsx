@@ -34,6 +34,8 @@ function detail(lines: MeetingDetail["lines"]): MeetingDetail {
       lastTimestamp: null,
       hasNotes: false,
       hasAnalysis: false,
+      recordingState: "finished",
+      audioMs: null,
     },
     path: `/Meetings/${ID}`,
     lines,

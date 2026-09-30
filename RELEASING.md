@@ -111,6 +111,12 @@ just check
 
 It has to pass. There is no CI, so this local run is the only gate.
 
+If it stops at `cargo fmt --check` or at a Biome `format` error, run `just fmt`,
+look at the diff, and commit it on its own before the release commit. For
+v0.3.0 that was one `if/else` in `meetings.rs` and line wrapping in
+`tools/paperclip-tur73/`; Biome also rewrote runs of spaces inside regexes to
+` {12}`, which matches the same text.
+
 ## 4. Commit, open a PR, merge
 
 ```sh
@@ -138,6 +144,11 @@ git push origin vX.Y.Z
 git describe --tags --exact-match    # must print vX.Y.Z
 just bundle-signed                   # build, sign, verify; ~3 min
 ```
+
+`just bundle-signed` is `just build` then `just sign`. If the keychain could not
+be unlocked yet — an agent shell may refuse to run `unlock-keychain` because the
+command carries a password — run `just build` first, unlock the keychain
+yourself, then run `just sign` on the finished build.
 
 Check the result before shipping it:
 
@@ -192,6 +203,34 @@ Confirm it shows as Latest with both files attached:
 gh release list
 gh release view vX.Y.Z --json assets --jq '.assets[].name'
 ```
+
+## 9. Smoke-test what you shipped
+
+Install the zip from the release, not the local build, and make one recording.
+This is the only check that runs the signed app with real audio.
+
+```sh
+cd "$(mktemp -d)"
+gh release download vX.Y.Z
+shasum -a 256 -c meet-ai-X.Y.Z-macos-arm64.zip.sha256
+ditto -x -k meet-ai-X.Y.Z-macos-arm64.zip . && ditto meet-ai.app /Applications/meet-ai.app
+xattr -dr com.apple.quarantine /Applications/meet-ai.app
+open -a /Applications/meet-ai.app
+```
+
+Press ⌘⇧R, say a sentence, play some audio (`say "…"` works), press ⌘⇧R again.
+Then check the newest folder in `~/Meetings`:
+
+```sh
+M=$(command ls -dt ~/Meetings/*-meeting | head -1)
+cat "$M/audio/segments.json"                        # written on stop
+cargo run -q -p audio --bin drift-check -- "$M/audio"   # PASS
+target/meet-stt "$M/audio/system.wav"               # the audio you played
+target/meet-stt "$M/audio/mic.wav"                  # what you said
+```
+
+FINDINGS §12 has the v0.3.0 run and what a pass looks like. Delete the test
+meeting folder afterwards.
 
 ## When signing goes wrong
 

@@ -46,8 +46,10 @@ OPTIONS:
 /// How often the main loop wakes to check the stop condition and call
 /// [`audio::session::RecordingSession::tick`]. Coarse next to
 /// `audio::segments::CHECKPOINT_INTERVAL_S`; only bounds how late a stop
-/// request or a checkpoint is noticed.
-const POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// request or a checkpoint is noticed. The session's own
+/// [`audio::session::TICK_INTERVAL`], so the app's ticker thread (TUR-97) and
+/// this loop cannot drift apart on cadence.
+const POLL_INTERVAL: Duration = audio::session::TICK_INTERVAL;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
