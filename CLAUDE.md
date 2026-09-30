@@ -1,3 +1,7 @@
+## Quality gate
+
+Every agent run ends with the quality gate (`.claude/hooks/quality-gate-hook.sh`, wired to `Stop` and `SubagentStop`). It checks the files the run edited: biome, typecheck, related vitest tests, cargo fmt/clippy/test for the touched crates, and the repo rules. Fix what it reports; see `docs/quality-rules.md`. Run it by hand with `scripts/quality-gate.sh <files>` or `/quality-gate`.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
