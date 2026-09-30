@@ -235,6 +235,18 @@ All four sit behind one trait — `CalendarProvider { list_events(range) -> Vec<
 
 **Invariant:** nothing exists only in `index.db`. Delete it → full rescan restores every feature.
 
+**A partly written meeting is called "Interrupted"** (TUR-97). A meeting folder is in one of three states, and the list says which:
+
+| State | UI | What is on disk |
+|---|---|---|
+| Finished | nothing extra | Stopped on purpose: every WAV header declares exactly the bytes on disk *and* exactly the frames `segments.json` gives that channel (A5 §3's equality on graceful stop). Also any folder with no WAVs at all — nothing to judge by, e.g. after retention (L16) |
+| **Interrupted** | label in the list; on open, one line: *"Recording stopped unexpectedly. Audio up to HH:MM:SS was saved."* | Anything else: no `segments.json` beside a WAV, a header behind the samples or behind the segments, or a header that cannot be read. `kill -9`, force quit, a crash, a dead battery |
+| Recording | "● Recording" | The meeting this app is writing right now. Its files look interrupted until it stops, so it is never labelled that way |
+
+An interrupted meeting opens exactly like a finished one — transcript, notes, audio, no error screen and no repair step. The word was picked because it says what happened and nothing more: not *failed* or *corrupt* (what was kept is good), not *partial* (nothing else is coming), not *recovered* (the user did nothing), and not finished. The time quoted is the header's (A5: header frames are the only true duration). Classification reads two 44-byte headers and `segments.json`, never the samples.
+
+One silent fix-up runs at launch, before the record shortcut exists: a WAV whose header declares fewer bytes than are on disk **and** that has no `segments.json` beside it — every recording killed on v0.3.0, which never checkpointed and so left headers declaring 0 bytes over minutes of audio — gets its two header size fields raised to cover the whole frames already on disk. Nothing else is written: no sample is moved or truncated, a size is never lowered, a second run finds nothing to do, and the meeting stays Interrupted. A recording that has checkpointed is left as the recorder wrote it; its header is at most one checkpoint behind, and the samples past it were never in any `segments.json`.
+
 ### 3.2 `meeting.md`
 
 ```yaml

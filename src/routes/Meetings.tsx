@@ -10,7 +10,7 @@
 import { useNavigate } from "react-router";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
-import { formatLineCount, formatRelativeDate } from "@/ui/format";
+import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "@/ui/format";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
 export function Meetings() {
@@ -111,6 +111,11 @@ export function Meetings() {
               </span>
             </span>
             <span className="row__value">
+              {meeting.recordingState === "interrupted" ? (
+                <span className="badge badge--warn" style={{ marginInlineEnd: "var(--space-4)" }}>
+                  {INTERRUPTED_LABEL}
+                </span>
+              ) : null}
               {formatLineCount(meeting.lineCount)}
               {meeting.hasAnalysis ? " · wrapped up" : ""}
             </span>

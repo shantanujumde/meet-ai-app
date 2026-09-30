@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { formatBytes, formatElapsed, formatLineCount, formatRelativeDate } from "./format";
+import {
+  describeInterruption,
+  formatBytes,
+  formatElapsed,
+  formatLineCount,
+  formatRelativeDate,
+} from "./format";
 
 describe("model sizes", () => {
   test("the pinned models read as the numbers their source publishes", () => {
@@ -73,5 +79,23 @@ describe("transcript line counts", () => {
   test("one is singular", () => {
     expect(formatLineCount(1)).toBe("1 line");
     expect(formatLineCount(42)).toBe("42 lines");
+  });
+});
+
+describe("interrupted meetings (TUR-97)", () => {
+  test("say how far the saved audio goes, in the transcript's own clock format", () => {
+    // 16.25 s — the v0.3.0 kill on the dev machine, once its header is fixed.
+    expect(describeInterruption(16_253)).toBe(
+      "Recording stopped unexpectedly. Audio up to 00:00:16 was saved.",
+    );
+    expect(describeInterruption(3_725_000)).toMatch(/up to 01:02:05 was saved/);
+  });
+
+  test("never claim audio was saved when none a player can reach was", () => {
+    // A header still declaring 0 bytes, or a folder with no WAV at all.
+    expect(describeInterruption(0)).toBe(
+      "Recording stopped unexpectedly, before any audio was saved.",
+    );
+    expect(describeInterruption(null)).toMatch(/before any audio was saved/);
   });
 });
