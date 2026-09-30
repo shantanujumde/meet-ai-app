@@ -24,7 +24,13 @@
 
 import { useEffect } from "react";
 import { useNavigate, useParams } from "react-router";
-import { MEETINGS, onboardingStepPath } from "@/lib/routes";
+import {
+  isOnboardingStep,
+  MEETINGS,
+  type OnboardingStep,
+  onboardingStepPath,
+  ONBOARDING_STEPS as STEPS,
+} from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { Button, ButtonRow } from "@/ui/primitives";
 import { FolderStep } from "./onboarding/FolderStep";
@@ -32,17 +38,10 @@ import { PermissionStep } from "./onboarding/PermissionStep";
 import { SpeechStep } from "./onboarding/SpeechStep";
 import { WelcomeStep } from "./onboarding/WelcomeStep";
 
-const STEPS = ["welcome", "permission", "speech", "folder"] as const;
-type Step = (typeof STEPS)[number];
-
-function isStep(value: string | undefined): value is Step {
-  return STEPS.includes(value as Step);
-}
-
 export function Onboarding() {
   const { step } = useParams<{ step?: string }>();
   const navigate = useNavigate();
-  const current: Step = isStep(step) ? step : "welcome";
+  const current: OnboardingStep = isOnboardingStep(step) ? step : "welcome";
   const index = STEPS.indexOf(current);
 
   const permission = useAppStore((state) => state.permission);

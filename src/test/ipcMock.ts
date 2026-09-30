@@ -4,9 +4,10 @@
  *
  * jsdom is not Tauri, so a test mocks the client rather than leaving it to its
  * no-backend fallbacks — that way each test states the backend answer it is
- * testing against. What this adds is a *default* for every command (an
- * onboarded-looking but empty Mac: no meetings, permission not yet checked,
- * nothing recording), so a test only overrides the answers it is about.
+ * testing against. What this adds is a *default* for every command (a fresh
+ * Mac on first launch: onboarding not finished, no meetings, permission not
+ * yet checked, nothing recording), so a test only overrides the answers it is
+ * about — a test of the finished app sets `onboardingState` itself.
  *
  * Use it with:
  *
