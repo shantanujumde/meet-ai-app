@@ -71,9 +71,15 @@ pub async fn read_meeting(app: AppHandle, id: String) -> Result<MeetingDetail, U
     .await?
 }
 
+/// Through the [`FolderGate`]: a note saved under the old root while the
+/// folder is moving would be deleted with it.
 #[tauri::command]
-pub async fn save_notes(id: String, body: String) -> Result<(), UiError> {
-    on_blocking_pool(move || meetings::write_notes(&id, &body)).await?
+pub async fn save_notes(app: AppHandle, id: String, body: String) -> Result<(), UiError> {
+    on_blocking_pool(move || {
+        app.state::<FolderGate>()
+            .writing(|| meetings::write_notes(&id, &body))
+    })
+    .await?
 }
 
 /// Move the meetings folder somewhere else, taking every existing meeting
@@ -86,8 +92,9 @@ pub async fn save_notes(id: String, body: String) -> Result<(), UiError> {
 /// Checking the phase once is not enough now that the move runs off the main
 /// thread — the window stays live, and Record pressed a second into a
 /// minutes-long copy would start a meeting under the old root just before
-/// `move_contents` deletes it. The [`FolderGate`] move guard is held for the
-/// whole move, so every toggle is refused until it drops (see
+/// `move_contents` deletes it. The same goes for notes, the onboarding flag
+/// and a model download. The [`FolderGate`] move guard is held for the whole
+/// move, so every one of those writers is refused until it drops (see
 /// [`folder_move`]). The phase check comes after the guard is taken: from then
 /// on nothing can leave `Idle`, so the answer cannot go stale mid-move.
 #[tauri::command]
@@ -184,14 +191,16 @@ pub async fn onboarding_state() -> Result<onboarding::State, UiError> {
     on_blocking_pool(onboarding::state).await?
 }
 
+/// Writes `.app/onboarding.json` under the root, so through the
+/// [`FolderGate`] like every other writer there.
 #[tauri::command]
-pub async fn complete_onboarding() -> Result<onboarding::State, UiError> {
-    on_blocking_pool(onboarding::complete).await?
+pub async fn complete_onboarding(app: AppHandle) -> Result<onboarding::State, UiError> {
+    on_blocking_pool(move || app.state::<FolderGate>().writing(onboarding::complete)).await?
 }
 
 #[tauri::command]
-pub async fn reset_onboarding() -> Result<onboarding::State, UiError> {
-    on_blocking_pool(onboarding::reset).await?
+pub async fn reset_onboarding(app: AppHandle) -> Result<onboarding::State, UiError> {
+    on_blocking_pool(move || app.state::<FolderGate>().writing(onboarding::reset)).await?
 }
 
 // --- engine and models ----------------------------------------------------

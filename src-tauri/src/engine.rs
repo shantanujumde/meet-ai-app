@@ -23,6 +23,7 @@ use stt::registry::{self, Environment, Preference};
 use tauri::{AppHandle, Emitter as _, Manager as _};
 
 use crate::error::UiError;
+use crate::folder_move::FolderGate;
 use crate::meetings;
 
 /// SPEC §3.5's defaults.
@@ -304,9 +305,13 @@ pub async fn download(app: AppHandle, model_id: String) -> Result<String, UiErro
     // something only ever touched from one place in an `Arc<Mutex<_>>` to
     // satisfy a bound, not to fix a race.
     tauri::async_runtime::spawn_blocking(move || {
-        // Claimed here, on the writing thread, so the slot is held exactly as
-        // long as something can still write the `.part` file (see
+        // Both guards are taken here, on the writing thread, so they are held
+        // exactly as long as something can still write the `.part` file: the
+        // folder gate, so the meetings folder cannot move out from under the
+        // download (`crate::folder_move`), and the per-model claim (see
         // `Downloads::claim`).
+        let gate = app.state::<FolderGate>();
+        let _writing = gate.begin_write()?;
         let downloads = app.state::<Downloads>();
         let Some(_claim) = downloads.claim(&model_id) else {
             return Err(UiError::app(
