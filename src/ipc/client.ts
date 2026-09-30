@@ -30,6 +30,7 @@ import type {
   PrivacyPane,
   RecordingStatus,
   SelectionView,
+  TicketSummary,
   TranscriptStatus,
   TranscriptUpdate,
 } from "./types";
@@ -80,6 +81,17 @@ export async function listMeetings(): Promise<MeetingList> {
     return { root: DEFAULT_ROOT_LABEL, rootExists: false, meetings: [] };
   }
   return call<MeetingList>("list_meetings");
+}
+
+// --- tickets --------------------------------------------------------------
+
+export async function listTickets(): Promise<TicketSummary[]> {
+  if (!hasBackend()) return [];
+  return call<TicketSummary[]>("list_tickets");
+}
+
+export function createTicket(title: string, body: string): Promise<TicketSummary> {
+  return call<TicketSummary>("create_ticket", { title, body });
 }
 
 export function readMeeting(id: string): Promise<MeetingDetail> {
