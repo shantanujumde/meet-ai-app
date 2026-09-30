@@ -50,7 +50,7 @@ use std::time::Duration;
 
 use audio::tee::TeeFeed;
 use serde::Serialize;
-use stt::registry::{self, Environment};
+use stt::registry;
 use stt::{
     LiveLine, LiveUpdate, MarkdownSink, SeqCounter, SessionOptions, SharedSink, Speaker, SttEngine,
     SttSession, TranscriptSink, Utterance,
@@ -220,7 +220,10 @@ pub type OpenEngine = Box<dyn FnOnce() -> Result<Box<dyn SttEngine>, String> + S
 /// the live path too.
 pub fn open_configured_engine() -> Result<Box<dyn SttEngine>, String> {
     let transcription = crate::config::transcription();
-    let environment = Environment::discover(crate::engine::DEFAULT_LOCALE, &transcription.model);
+    // `engine::discover`, not `Environment::discover`: the model lives under the
+    // meetings root the user chose, and Settings looks there too — the two must
+    // never disagree about whether a model is installed.
+    let environment = crate::engine::discover(crate::engine::DEFAULT_LOCALE, &transcription.model);
     let (selection, engine) =
         registry::select(transcription.engine, &environment).map_err(|error| error.to_string())?;
     tracing::info!(
