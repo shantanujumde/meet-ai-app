@@ -33,6 +33,14 @@ hand-edit an SVG here — the next build overwrites it.
 - **The evidence for the 2026-09-30 decision.** `proof-competitors.jpg`,
   `proof-colour-concepts.jpg` and `proof-before-after.jpg` (§10), copied from
   the icon lab and compressed.
+- **The "m." mark in the real Dock and menu bar.** `proof-dock-real-mdot.png`
+  (the Dock row), `proof-dock-real-mdot-zoom.png` (the meet-ai tile, 4x) and
+  `proof-menubar-real-mdot.png` (the tray), cropped from a screen capture of
+  the signed bundle running on macOS 27.0, 2026-09-30. They confirm the Dock
+  draws the `.icon` from `Assets.car` — the rounded Dusk tile, not a square —
+  and that the tray template renders. They were taken with the dot gap at 60,
+  just before it went to 84 (§8); at Dock size the difference is under a
+  pixel. `proof-before-after.jpg` is from the same moment.
 
 ```
 node tools/build.mjs        # SVG masters + brand-tokens.css + render manifest
@@ -73,14 +81,14 @@ is meant to be found.
 | File | Use |
 |---|---|
 | `meet-ai-appicon-primary-fullcolor.svg` | **App icon master**, 1024 — Dusk tile, white "m." |
-| `meet-ai-appicon-small-fullcolor.svg` | App icon, 20–64px (dot set a little further out) |
+| `meet-ai-appicon-small-fullcolor.svg` | App icon, 20–64px (now the master's geometry, see §4) |
 | `meet-ai-appicon-16-fullcolor.svg` | App icon, 16px, drawn pixel by pixel |
 | `meet-ai-appicon-flat-fullcolor.svg` | App icon on one flat colour (print, no gradient) |
 | `meet-ai.icon/` | Icon Composer document — the macOS 26 app-icon source that compiles to `Assets.car` (see §8) |
 | `meet-ai-favicon.svg` | Web favicon — the small artwork on the Dusk tile |
-| `meet-ai-logomark-primary-ink.svg` | Symbol alone on light backgrounds, 40px and up |
-| `meet-ai-logomark-primary-chalk.svg` | Symbol alone on dark backgrounds, 40px and up |
-| `meet-ai-logomark-small-chalk.svg` | Symbol alone at 20–32px |
+| `meet-ai-logomark-primary-ink.svg` | Symbol alone on light backgrounds, 20px and up |
+| `meet-ai-logomark-primary-chalk.svg` | Symbol alone on dark backgrounds, 20px and up |
+| `meet-ai-logomark-small-chalk.svg` | Symbol alone at 20–32px (now the same drawing as `-primary-chalk`, kept under this name so links keep working) |
 | `meet-ai-logomark-mono-black.svg` / `-mono-white.svg` | One-colour symbol |
 | `meet-ai-wordmark-primary-ink.svg` / `-chalk.svg` | Wordmark alone |
 | `meet-ai-wordmark-mono-black.svg` / `-mono-white.svg` | One-colour wordmark |
@@ -178,24 +186,25 @@ the word; at one they read as a single word, "m.meet-ai".
 | Asset | Minimum | Below that |
 |---|---|---|
 | Lockup | 120px wide | Use the symbol alone |
-| Symbol alone, primary artwork | 40px | Switch to `-small-chalk` |
-| Symbol alone, small artwork | 20px | Use the app icon instead |
+| Symbol alone (primary or `-small-` artwork, now the same drawing) | 20px | Use the app icon instead |
 | App icon | 16px | Fixed; the 16px file is drawn for exactly this size |
 | Menu-bar template | 16px | Fixed; drawn for exactly this size |
 
-The app icon exists in **three drawings**, not one scaled:
+The app icon exists in **two drawings**, not one scaled:
 
-- **The master** (128px and up, and the `.icon`): the approved geometry.
-- **The small artwork** (20–64px, favicon): the same m with the dot 16 units
-  further out, so a whole pixel of tile stays between the dot and the last
-  leg at 20px.
+- **The master** (20px and up, and the `.icon`): the approved geometry. Its
+  84-unit gap leaves about 1.3px of tile between the dot and the last leg at
+  20px.
+  The small artwork files (`-small-`, 20–64px, and the favicon) used to push
+  the dot further out than the master's old 60-unit gap; they now carry the
+  master's geometry, and keep their names so nothing that links them breaks.
 - **The 16px icon**, drawn pixel by pixel: legs 2px wide on whole pixels,
   counters 1px, the shoulders two rows deep with their outer corners at half
   strength, and a solid 2×2 dot one clear pixel from the last leg. Drawn with
   the round construction, the shoulders and dot came out as half-strength
   pixels and the dot all but vanished.
 
-The menu-bar template is a fourth, separate drawing (§8). Use the right one;
+The menu-bar template is a third, separate drawing (§8). Use the right one;
 do not scale the wrong one and hope.
 
 ---
@@ -226,7 +235,7 @@ The rendered failure cases are in `proofs/proof-misuse.png`. In words:
 - **Do not add effects.** No drop shadow, bevel, outer glow or glass on the
   glyph. The `.icon` has Liquid Glass off for this reason (§8).
 - **Do not move the dot.** It is a full stop on the baseline. Lifted to where
-  an `i`'s tittle sits, "m." becomes a white "mi" — Xiaomi's old mark (§9).
+  an `i`'s tittle sits, "m." becomes a white "mi" — Xiaomi's mark (§9).
 - **Do not rotate it.** It is a letter; it reads upright.
 - **Do not rebuild the lockup.** Use the supplied file. Do not set "meet-ai" in
   a system font beside the mark — the wordmark is drawn, and a system font
@@ -308,9 +317,14 @@ What is in it, and why:
 - **One 1024 composition, no per-size art.** The format has no way to supply a
   drawing for a particular size; the system renders 16px through 1024px from
   this one file. The 16px drawing reaches only the favicon and `.ico`. That is
-  why the master's dot is 60 units from the last leg, not the prototype's 44:
-  at 44, ictool's 16px render fused the dot onto the leg in the Default,
-  Tinted and Clear appearances, and "m." read as an m with a foot.
+  why the master's dot is 84 units from the last leg, not the prototype's 44.
+  Finder's 16px @1x list icon comes from this file, and at 44 ictool's 16px
+  render fused the dot onto the leg in the Default, Tinted and Clear
+  appearances: "m." read as an m with a foot. 60 was under a pixel of gap and
+  still left a grey bridge on the baseline row (the darkest pixel between leg
+  and dot 41% of the way to white). At 84 that pixel is 19% (14% in Tinted
+  and Clear), a real gap in all four appearances, and the gap is still
+  narrower than the m's counters, so at Dock sizes the dot stays a full stop.
 - **The tile is the document fill, the glyph is two layers** (dot, m). The
   squircle, the grid margin, the edge highlight and the shadow are the
   system's, so none of them are drawn.
@@ -384,15 +398,20 @@ is unchanged.
 
 ## 9. Known risks
 
-- **Trademark is not cleared.** No search has been run, for the name or for
-  this mark. A proper clearance search is required before any public use.
-  Until then "m." is a working identity, not a registered one.
-- **Closest resemblance: Xiaomi's old "mi".** A white lower-case m on an
-  orange tile, with a dot, sits near Xiaomi's pre-2021 logo — a white "mi" on
-  orange, the dot being the i's tittle. The approved concept already moved
-  the dot off the tittle position to a full stop on the baseline, and the
-  tile runs to violet rather than staying flat orange; §6 forbids moving it
-  back. Worth checking properly in the trademark search.
+- **Trademark is not cleared.** A desk scan was run on 2026-09-30 —
+  [`TRADEMARK-SCAN.md`](TRADEMARK-SCAN.md): the US register, the App Store
+  and the web, overall risk **medium**, nothing identical found. It is not
+  legal advice: a registered-mark clearance by counsel is still required
+  before any public launch. Until then "m." is a working identity, not a
+  registered one. The closest marks it found are monday.com's "m." (two bars
+  and a dot, software classes, shown on a gradient tile) and Memletz's white
+  rounded "m." (US, class 42); the scan lists what keeps us distinct from each.
+- **Resemblance to Xiaomi's "mi".** A white lower-case m on an orange tile,
+  with a dot, sits near Xiaomi's logo — a white "MI" on orange, which its 2021
+  redesign kept (it only rounded the tile), so it is the current mark, not a
+  retired one. The approved concept already moved the dot off the tittle
+  position to a full stop on the baseline, and the tile runs to violet rather
+  than staying flat orange; §6 forbids moving it back.
 - **Letter-on-a-tile is a common genre.** Jamie ("J" on purple), Bluedot ("b"
   on blue), Krisp ("K") and Notion ("N") all use a single letter; "m." stands
   apart on colour and on the full stop, not on the idea of a letter.
@@ -439,7 +458,7 @@ keeps three legs and two open counters, and the dot stays a dot. It is also the 
 concept that is a *letter*, so it ties straight to the wordmark.
 
 **What changed from the prototype when it went into the pipeline**, each for a
-measured reason: the dot is 60 units from the m instead of 44 (§8, it fused at
+measured reason: the dot is 84 units from the m instead of 44 (§8, it fused at
 16px); the top stop is `#F46A3A` instead of `#FF7A45` (§3, contrast); the tile
 gradient is written vertical, which is how ictool had already rendered the
 prototype (§8); the Dark-appearance dot is solid coral instead of a miniature
@@ -454,4 +473,6 @@ was replaced by one for "m.". The bracket geometry itself is kept at the
 bottom of `geometry.mjs`, clearly marked retired, only so `concepts.mjs` and
 `tune.mjs` can still redraw the historical record.
 
-**Still open.** The trademark search (§9).
+**Still open.** Trademark clearance by counsel. The 2026-09-30 desk scan
+([`TRADEMARK-SCAN.md`](TRADEMARK-SCAN.md), §9) found medium risk and nothing
+identical; the EU, WIPO and UK registers and an image search were not run.

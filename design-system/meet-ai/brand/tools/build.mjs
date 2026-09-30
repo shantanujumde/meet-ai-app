@@ -328,7 +328,7 @@ function raster(name, svgRel, size) {
 
 /* App-icon rasters, three tiers:
      16px       -> the 16px-grid drawing (pixel aligned)
-     20..64px   -> the small artwork (dot set further out)
+     20..64px   -> the small artwork (now the master's geometry, MDOT_SMALL)
      128px+     -> the primary artwork
    The crossover sits at 128, not 64: 64 is `icon_32x32@2x`, i.e. the 32pt
    design at 2x, so small art is correct there on Apple's own terms. */
