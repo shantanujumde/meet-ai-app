@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use audio::Channel;
 use audio::segments::{
     CHECKPOINT_INTERVAL_S, CLOSE_ANCHOR_SLACK_MS, DriftError, DriftReport, FINAL_TAIL_SLACK_MS,
-    Segments, SegmentsExt, reason,
+    Segments, SegmentsDrift, reason,
 };
 
 /// The fixture spec's tolerance on every expected value: ±1 frame at 16 kHz.

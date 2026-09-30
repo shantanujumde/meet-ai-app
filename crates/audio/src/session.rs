@@ -613,7 +613,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::segments::SegmentsExt as _;
+    use crate::segments::SegmentsDrift as _;
     use crate::wav_writer::WavWriter;
 
     /// A hardware-free `AudioSource` for exercising [`align_and_pad`]'s

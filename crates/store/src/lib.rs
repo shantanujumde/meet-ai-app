@@ -46,10 +46,14 @@ pub mod notes;
 pub mod ticket;
 pub mod transcript;
 
-/// File names inside a meeting folder (SPEC §3.1). The three every crate
-/// touches are defined once in `meeting_format::layout` and re-exported here
-/// at their old paths; the whole layout is at [`layout`].
+/// The SPEC §3.1 folder layout, defined once in `meeting-format`.
+///
+/// Transitional re-export; new code should import from `meeting_format`.
 pub use meeting_format::layout;
+/// File names inside a meeting folder (SPEC §3.1), re-exported at their old
+/// paths.
+///
+/// Transitional re-export; new code should import from `meeting_format`.
 pub use meeting_format::layout::{MEETING_FILE, NOTES_FILE, TRANSCRIPT_FILE};
 /// Tickets are store's alone (§3.3), so their folder name stays here.
 pub const TICKETS_DIR: &str = "tickets";

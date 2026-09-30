@@ -45,7 +45,7 @@
 //!   and the header lengths only grow. So the surviving crash state is segments
 //!   describing frames the header has not declared yet — frames no reader ever
 //!   asks about. The opposite direction, audio the segments do not cover, is the
-//!   one that ordering exists to eliminate. That is why [`SegmentsExt::frame_to_sec`]
+//!   one that ordering exists to eliminate. That is why [`SegmentsTimeline::frame_to_sec`]
 //!   treats a past-the-end frame as a broken invariant worth logging, not as a
 //!   routine short read.
 //!
@@ -69,6 +69,8 @@ use crate::{Channel, Error};
 /// point of sharing is that the two can no longer disagree. The reader's
 /// tolerance survived the move: a file without `version`, anchors or the A5
 /// clocks still parses, as v1.
+///
+/// Transitional re-export; new code should import from `meeting_format`.
 pub use meeting_format::segments::{Anchor, Segment, Segments};
 
 /// The `version` this parser was written against (contract §0) — by
@@ -80,9 +82,9 @@ const KNOWN_VERSION: u32 = meeting_format::segments::SCHEMA_VERSION;
 ///
 /// A trait because [`Segments`] lives in `meeting-format`, and Rust only
 /// allows inherent methods in the defining crate. Bring it into scope — `use
-/// stt::segments::SegmentsExt` — and `Segments::read(..)` and
+/// stt::segments::SegmentsTimeline` — and `Segments::read(..)` and
 /// `segments.frame_to_sec(..)` read as they did.
-pub trait SegmentsExt: Sized {
+pub trait SegmentsTimeline: Sized {
     /// Read `segments.json` from a meeting's `audio/` directory.
     ///
     /// A newer `version` than this parser knows is a warning, not an error: the
@@ -111,7 +113,7 @@ pub trait SegmentsExt: Sized {
     fn frame_to_sec(&self, channel: Channel, frame: u64) -> Option<f64>;
 }
 
-impl SegmentsExt for Segments {
+impl SegmentsTimeline for Segments {
     fn read(path: &Path) -> Result<Self, Error> {
         let body = std::fs::read_to_string(path)?;
         let segments: Self = serde_json::from_str(&body)

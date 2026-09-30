@@ -19,11 +19,12 @@
 //! `#[cfg(target_os)]` anywhere, because `stt` and `store` must stay free of
 //! mac-only code (SPEC §8.2) and they both depend on this.
 
-#![forbid(unsafe_op_in_unsafe_fn)]
+#![forbid(unsafe_code)]
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Write as _};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub mod layout;
 pub mod segments;
@@ -111,10 +112,27 @@ impl Speaker {
 /// power cut after a successful return can still bring back the old file,
 /// which for `segments.json` is a checkpoint silently lost (§7/§11).
 ///
-/// The temp name is a dotfile (`.{name}.tmp.{pid}`): the folder scan in
-/// `store` already skips dotfiles, and the pid keeps two processes writing the
-/// same file from sharing one. On failure the temp file is removed, best
+/// The temp name is a dotfile, `.{name}.tmp.{pid}.{n}`: the folder scan in
+/// `store` already skips dotfiles, the pid keeps two processes apart, and `n`
+/// (a process-wide counter) keeps two *threads* apart — two concurrent saves
+/// of `notes.md` sharing one temp file would truncate each other mid-write and
+/// rename a mixed file into place. The temp file is also opened `create_new`,
+/// so a stale leftover with the same name is never written through; the next
+/// counter value is tried instead. On failure the temp file is removed, best
 /// effort, so a failed save leaves no litter.
+///
+/// **An error after the rename is still an error.** If the folder `fsync`
+/// fails, the new contents are already in place at `path` but the rename is
+/// not known to be durable, and this returns `Err` rather than pretend it is.
+/// That is the conservative choice: the caller sees a failed save and may
+/// retry (which is harmless — the write is idempotent), instead of reporting
+/// success for a file a power cut could still take back. The one exception is
+/// a filesystem that cannot sync a directory at all (`EINVAL`/`ENOTSUP`),
+/// which is treated as done — see `sync_dir`.
+///
+/// Cost: two `fsync`s per write, which on macOS are `F_FULLFSYNC`-grade
+/// flushes through Rust's `sync_all`. Fine for a checkpoint every five
+/// seconds or a notes save; not for a hot loop.
 ///
 /// Does not create `path`'s folder; a caller that may be first to write there
 /// creates it.
@@ -129,14 +147,9 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
             format!("{} has no file name to write", path.display()),
         )
     })?;
-    let tmp = dir.join(format!(
-        ".{}.tmp.{}",
-        name.to_string_lossy(),
-        std::process::id()
-    ));
 
+    let (tmp, mut file) = create_temp(dir, &name.to_string_lossy())?;
     let written = (|| {
-        let mut file = File::create(&tmp)?;
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
@@ -147,6 +160,29 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     }
     written?;
     sync_dir(dir)
+}
+
+/// Every temp name this process hands out is distinct, across threads.
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// How many taken names to step past before giving up. Only a folder full of
+/// leftovers from this same pid could exhaust it.
+const TEMP_ATTEMPTS: u32 = 64;
+
+/// Open a fresh temp file next to the target, never one another writer holds.
+fn create_temp(dir: &Path, name: &str) -> io::Result<(PathBuf, File)> {
+    let pid = std::process::id();
+    let mut last = None;
+    for _ in 0..TEMP_ATTEMPTS {
+        let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let tmp = dir.join(format!(".{name}.tmp.{pid}.{n}"));
+        match OpenOptions::new().write(true).create_new(true).open(&tmp) {
+            Ok(file) => return Ok((tmp, file)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => last = Some(e),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| io::Error::other("no free temp file name")))
 }
 
 /// `fsync` a folder so a rename inside it survives a power cut.
@@ -216,6 +252,62 @@ mod tests {
         std::fs::create_dir_all(dir.join(layout::NOTES_FILE).join("child")).unwrap();
         assert!(write_atomic(&dir.join(layout::NOTES_FILE), b"draft").is_err());
         assert_eq!(names(&dir), [layout::NOTES_FILE]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn concurrent_writers_in_one_process_never_publish_a_mixed_file() {
+        // Two saves of the same file from two threads (notes autosave racing a
+        // flush) must each publish a whole payload: with one shared temp name,
+        // one thread's `create` truncates the other's half-written bytes and the
+        // rename publishes the mix.
+        const THREADS: usize = 8;
+        const ROUNDS: usize = 25;
+        let dir = scratch("concurrent");
+        let path = dir.join(layout::NOTES_FILE);
+        // Large enough that a write is not one syscall's worth of bytes.
+        let payloads: Vec<Vec<u8>> = (0..THREADS)
+            .map(|t| vec![b'a' + t as u8; 256 * 1024])
+            .collect();
+
+        std::thread::scope(|scope| {
+            for payload in &payloads {
+                let path = &path;
+                scope.spawn(move || {
+                    for _ in 0..ROUNDS {
+                        write_atomic(path, payload).unwrap();
+                    }
+                });
+            }
+        });
+
+        let on_disk = std::fs::read(&path).unwrap();
+        assert!(
+            payloads.contains(&on_disk),
+            "the file is not any one writer's complete payload ({} bytes)",
+            on_disk.len()
+        );
+        assert_eq!(names(&dir), [layout::NOTES_FILE], "temp files left behind");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_stale_temp_file_is_stepped_past_not_written_through() {
+        let dir = scratch("stale");
+        let path = dir.join(layout::SEGMENTS_FILE);
+        // A leftover at the very next name this process would pick.
+        let next = TEMP_COUNTER.load(Ordering::Relaxed);
+        let stale = dir.join(format!(
+            ".{}.tmp.{}.{next}",
+            layout::SEGMENTS_FILE,
+            std::process::id()
+        ));
+        std::fs::write(&stale, b"leftover").unwrap();
+        write_atomic(&path, b"fresh").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"fresh");
+        // Parallel tests may have taken `next` first; either way the stale file
+        // was never written through or renamed into place.
+        assert_eq!(std::fs::read(&stale).unwrap(), b"leftover");
         std::fs::remove_dir_all(&dir).ok();
     }
 

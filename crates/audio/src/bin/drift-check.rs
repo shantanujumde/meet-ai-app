@@ -20,7 +20,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use audio::Channel;
-use audio::segments::{DRIFT_GATE_MS, Segments, SegmentsExt as _};
+use audio::segments::{DRIFT_GATE_MS, Segments, SegmentsDrift as _};
 use audio::wav_writer::read_header_frames;
 
 const USAGE: &str = "\

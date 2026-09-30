@@ -22,7 +22,7 @@
 //!
 //! 2. **The frame-count invariant is an inequality.** `segments.json` and the
 //!    two WAV headers are three separate writes; `kill -9` lands between them.
-//!    See [`SegmentsExt::check_wav_header`] for which direction is the safe one
+//!    See [`SegmentsDrift::check_wav_header`] for which direction is the safe one
 //!    and why the checkpoint writes in the order it does.
 //!
 //! 3. **Sleep is a segment boundary, and host time alone cannot describe it.**
@@ -47,14 +47,16 @@ use crate::Channel;
 /// [`SCHEMA_VERSION`] — lives in `meeting-format`, shared with `stt`'s reader,
 /// and is re-exported here at its old paths. What stays in this module is what
 /// only the writer and `drift-check` need: the drift maths
-/// ([`SegmentsExt`]), the gate constants, and [`SegmentsWriter`].
+/// ([`SegmentsDrift`]), the gate constants, and [`SegmentsWriter`].
+///
+/// Transitional re-export; new code should import from `meeting_format`.
 pub use meeting_format::segments::{Anchor, SCHEMA_VERSION, Segment, Segments, reason};
 
 /// Milliseconds of audio a WAV header declares.
 ///
 /// This is the **only** correct source of a recording's duration. It is not
 /// `sum(*_frames)`: after `kill -9` the segments legitimately describe up to one
-/// checkpoint more than the headers expose (see [`SegmentsExt::check_wav_header`]),
+/// checkpoint more than the headers expose (see [`SegmentsDrift::check_wav_header`]),
 /// so summing overstates by up to [`CHECKPOINT_INTERVAL_S`] seconds and lets a
 /// player or a scrubber place a position past the end of the audio that exists.
 pub fn duration_ms(wav_header_frames: u64) -> f64 {
@@ -63,6 +65,8 @@ pub fn duration_ms(wav_header_frames: u64) -> f64 {
 
 /// The rate of every WAV this crate writes (SPEC §2.3 does the resampling).
 /// The same number as [`meeting_format::SAMPLE_RATE`], by definition.
+///
+/// Transitional alias; new code should use `meeting_format::SAMPLE_RATE`.
 pub const SAMPLE_RATE_HZ: u32 = meeting_format::SAMPLE_RATE;
 
 /// SPEC §5 Phase 0 exit gate.
@@ -73,7 +77,7 @@ pub const DRIFT_GATE_MS: f64 = 200.0;
 pub const CHECKPOINT_INTERVAL_S: u64 = 5;
 
 /// How much audio a **deliberately closed** segment may carry past its last
-/// anchor before [`SegmentsExt::drift`] refuses the recording.
+/// anchor before [`SegmentsDrift::drift`] refuses the recording.
 ///
 /// A segment that is not the last one was closed on purpose — a device change,
 /// a format change, a wake — and the writer got to run code on the way out. So
@@ -98,6 +102,24 @@ pub const CLOSE_ANCHOR_SLACK_MS: f64 = 250.0;
 /// allows. Anything beyond that is not a ragged shutdown — it is a recording
 /// whose anchors stopped while the audio kept going.
 pub const FINAL_TAIL_SLACK_MS: f64 = CHECKPOINT_INTERVAL_S as f64 * 1000.0 + CLOSE_ANCHOR_SLACK_MS;
+
+/// The fields [`SegmentsDrift::from_json`] requires that the shared schema
+/// defaults. Parsed first and thrown away: its only job is serde's
+/// missing-field error. Everything else is ignored here and checked by the
+/// real parse.
+#[derive(serde::Deserialize)]
+struct Strict {
+    #[allow(dead_code)]
+    segments: Vec<StrictSegment>,
+}
+
+#[derive(serde::Deserialize)]
+#[allow(dead_code)]
+struct StrictSegment {
+    mic_frames: u64,
+    sys_frames: u64,
+    reason: String,
+}
 
 /// Drift arithmetic on one anchor. Private: the trait exists only so the maths
 /// below reads as `anchor.drift_ms(..)` over a type this crate does not own.
@@ -307,11 +329,19 @@ impl DriftReport {
 ///
 /// A trait because [`Segments`] is defined in `meeting-format` (so `stt` reads
 /// the same type this crate writes) and Rust only allows inherent methods in
-/// the defining crate. Bring it into scope — `use audio::segments::SegmentsExt`
+/// the defining crate. Bring it into scope — `use audio::segments::SegmentsDrift`
 /// — and `Segments::from_json(..)`, `segments.drift()` and friends read exactly
 /// as they did when these were inherent methods.
-pub trait SegmentsExt: Sized {
-    /// Parse `segments.json`.
+pub trait SegmentsDrift: Sized {
+    /// Parse `segments.json`, strictly.
+    ///
+    /// The shared schema is tolerant — it defaults a missing `mic_frames`,
+    /// `sys_frames` or `reason`, because `stt` would rather place a timestamp
+    /// than refuse a recording. Drift maths cannot afford that: a defaulted
+    /// `0` frame count reads as a segment with no audio, and the coverage and
+    /// boundary figures built on it are nonsense that still looks like a
+    /// number. So this refuses such a file with serde's own "missing field"
+    /// error, exactly as it did before the schema moved to `meeting-format`.
     fn from_json(json: &str) -> Result<Self, serde_json::Error>;
 
     /// The crash-window invariant, checked against what a WAV header actually
@@ -347,7 +377,7 @@ pub trait SegmentsExt: Sized {
     /// What every segment boundary cost, in milliseconds of unrecorded wall
     /// clock, in `idx` order.
     ///
-    /// Public and separate from [`SegmentsExt::drift`] because a boundary gap is
+    /// Public and separate from [`SegmentsDrift::drift`] because a boundary gap is
     /// arithmetic on segment *totals* — it does not depend on anchors at all,
     /// and stays answerable for a recording whose drift `drift()` refuses to
     /// certify. "What did the AirPods swap cost?" is still a fair question
@@ -355,8 +385,9 @@ pub trait SegmentsExt: Sized {
     fn boundary_gaps(&self) -> Vec<BoundaryGap>;
 }
 
-impl SegmentsExt for Segments {
+impl SegmentsDrift for Segments {
     fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str::<Strict>(json)?;
         serde_json::from_str(json)
     }
 
@@ -617,7 +648,7 @@ pub struct SegmentOpen {
 /// sequences that as the *second* of the checkpoint's three writes — after
 /// `WavWriter::fsync_data` on both channels, before `WavWriter::patch_header`
 /// on either (see the `wav_writer` module docs and
-/// [`SegmentsExt::check_wav_header`] for why that order is the safe direction).
+/// [`SegmentsDrift::check_wav_header`] for why that order is the safe direction).
 pub struct SegmentsWriter {
     segments: Vec<Segment>,
 }
@@ -676,7 +707,7 @@ impl SegmentsWriter {
     /// `close_anchor` must be latched *after* the outgoing stream's ring
     /// buffer has been drained — [`CLOSE_ANCHOR_SLACK_MS`] is sized for
     /// exactly that drain. Latch it before draining (or skip it) and
-    /// [`SegmentsExt::drift`] will correctly refuse the segment later: from the
+    /// [`SegmentsDrift::drift`] will correctly refuse the segment later: from the
     /// reader's side, a missing close anchor is indistinguishable from a
     /// writer that never got the chance to run this method, which is exactly
     /// the failure F1 exists to catch.
@@ -687,7 +718,7 @@ impl SegmentsWriter {
     }
 
     /// A read-only snapshot of everything written so far — e.g. to run
-    /// [`SegmentsExt::check_wav_header`] mid-recording without a round trip
+    /// [`SegmentsDrift::check_wav_header`] mid-recording without a round trip
     /// through disk.
     pub fn as_segments(&self) -> Segments {
         Segments {
@@ -794,6 +825,29 @@ mod tests {
         assert_eq!(parsed.segments[0].mic_device_rate, None);
         assert_eq!(parsed.segments[0].start_continuous_ns, None);
         assert_eq!(parsed.segments[0].start_unix_ns, None);
+    }
+
+    #[test]
+    fn a_segment_missing_its_frame_counts_is_refused_not_zeroed() {
+        // The shared schema would default these to 0 for stt's sake; the drift
+        // path must refuse, as it did when the schema lived here.
+        for missing in ["mic_frames", "sys_frames", "reason"] {
+            let mut segment = serde_json::json!({
+                "idx": 0, "start_host_ns": 0, "mic_rate": 16000, "sys_rate": 16000,
+                "mic_frames": 16000, "sys_frames": 16000, "reason": "start",
+            });
+            segment.as_object_mut().unwrap().remove(missing);
+            let json = serde_json::json!({ "version": 1, "segments": [segment] }).to_string();
+
+            let err = Segments::from_json(&json).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(&format!("missing field `{missing}`")),
+                "{missing}: {err}"
+            );
+            // The tolerant shared parse still reads it — that is stt's path.
+            assert!(serde_json::from_str::<Segments>(&json).is_ok());
+        }
     }
 
     #[test]

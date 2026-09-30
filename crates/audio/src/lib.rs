@@ -96,6 +96,8 @@ pub mod tee;
 /// Defined once in `meeting-format` and re-exported here, so the channel this
 /// crate records and the channel `stt` transcribes are the same type — not two
 /// enums kept in step by hand.
+///
+/// Transitional re-export; new code should import from `meeting_format`.
 pub use meeting_format::Channel;
 
 /// A platform's implementation of one capture channel.

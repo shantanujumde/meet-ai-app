@@ -25,7 +25,7 @@ use std::io::{Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 
 use audio::Channel;
-use audio::segments::{Segments, SegmentsExt as _, duration_ms};
+use audio::segments::{Segments, SegmentsDrift as _, duration_ms};
 // The canonical header `audio::wav_writer` writes, and the size of one mono
 // 16-bit frame: the audio check below compares a file's real length against
 // what its header declares, and [`read_header_frames`] refuses any file that
