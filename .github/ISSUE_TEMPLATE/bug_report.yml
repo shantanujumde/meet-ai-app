@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in meet-ai does not work the way it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please do not paste real transcripts, recordings,
+        or meeting titles here. Swap in placeholder text if you need to show output.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What went wrong, in a sentence or two.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open meet-ai
+        2. Press ⌘⇧R
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: meet-ai version
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Run `sw_vers -productVersion`.
+      placeholder: "26.0"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Any error text or log lines. Remove anything from a real meeting first.
+      render: text
