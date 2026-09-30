@@ -10,7 +10,24 @@
 	<string>meet-ai records your microphone so your own voice appears in meeting transcripts.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>meet-ai records this Mac's audio so other participants appear in meeting transcripts.</string>
+	<!-- Tauri merges this file over the Info.plist it generates, and it merges
+	     it LAST — every key here beats the matching one from tauri.conf.json.
+	     That is how 14.4 kept shipping after SPEC A8 moved the floor to 26 and
+	     tauri.conf.json's minimumSystemVersion was changed to match: the built
+	     bundle still said 14.4, because this file said so. Keep the two equal. -->
 	<key>LSMinimumSystemVersion</key>
-	<string>14.4</string>
+	<string>26.0</string>
+	<!-- The Icon Composer icon inside Contents/Resources/Assets.car (TUR-85).
+	     It must equal the .icon's filename stem, because that stem is what
+	     `just icon-car` passes to actool as the icon's name — `icon-car` and
+	     `just sign` both check they agree. CFBundleIconFile (the legacy
+	     icon.icns) is still written by Tauri and still ships: CFBundleIconName
+	     wins on macOS 26, CFBundleIconFile is the fallback.
+	     Tauri would also derive this key from Assets.car on its own, but only
+	     by parsing `assetutil` output, and a failed parse there is a log line,
+	     not an error — the icon would quietly fall back to the .icns. Stating
+	     it here makes the key deterministic. -->
+	<key>CFBundleIconName</key>
+	<string>meet-ai</string>
 </dict>
 </plist>

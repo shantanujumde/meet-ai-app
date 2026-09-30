@@ -54,9 +54,14 @@ const WAV_DATA_SIZE_OFFSET: u64 = 40;
 ///
 /// `MEET_AI_MEETINGS_ROOT` overrides both. That exists so this screen can be
 /// driven against a fixture folder without writing into the developer's real
-/// meetings.
+/// meetings. It is read under the same rule as `stt::model::default_model_dir`
+/// (one variable name, and empty means unset rather than "the current
+/// directory"), so the app and the CLI tools cannot resolve two different roots
+/// from one environment.
 pub fn root() -> Result<PathBuf, UiError> {
-    if let Some(custom) = std::env::var_os("MEET_AI_MEETINGS_ROOT") {
+    if let Some(custom) =
+        std::env::var_os(stt::model::MEETINGS_ROOT_ENV).filter(|value| !value.is_empty())
+    {
         return Ok(PathBuf::from(custom));
     }
     if let Some(configured) = configured_root() {

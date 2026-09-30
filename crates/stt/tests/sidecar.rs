@@ -196,6 +196,15 @@ fn transcription_emits_nothing_but_json_lines() {
     let Some(binary) = sidecar_or_skip() else {
         return;
     };
+    // Transcribing needs Apple's engine and its en-US model. Without them the
+    // sidecar answers with an `engine_unavailable` error line, which is correct
+    // behaviour, not the stdout noise this test is looking for. Skip the same
+    // way accuracy.rs and live.rs do.
+    let probe = stt::apple::AppleEngine::probe(&binary, "en-US").expect("meet-stt --probe");
+    if !probe.is_usable_offline() {
+        eprintln!("SKIPPED: Apple's engine is not usable offline here");
+        return;
+    }
 
     let output = Command::new(&binary)
         .arg(fixtures::path("two-speaker-60s/mic.wav"))
