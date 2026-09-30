@@ -11,6 +11,39 @@ Developer ID, and are not notarized.
 
 ## [Unreleased]
 
+### Added
+
+- `crates/store` reads and writes the meetings folder (Phase 3a, TUR-99):
+  `meeting.md` with its frontmatter and four sections, `tickets/TICK-NNNN.md`,
+  `notes.md`, and read-only `transcript.md`. Frontmatter keys the app does not
+  know survive a rewrite. A malformed file loads with a "needs attention"
+  problem attached instead of failing, and never stops the files or meetings
+  around it from loading. A file that loaded broken or was not UTF-8 text is
+  refused on write rather than overwritten.
+  - Frontmatter that nests more than 64 levels deep or uses YAML aliases
+    (`*name`) is flagged as broken. Both shapes could crash the app or fill
+    memory from a file of a few kilobytes.
+  - YAML comments inside frontmatter are dropped when a file is rewritten,
+    and list and quoting style may change; values are kept.
+
+### Changed
+
+- The meeting list and review view read through `crates/store` instead of the
+  app shell's own parser. What the screens show is unchanged, with one
+  exception: a transcript line with no space after the speaker (`You:text`)
+  now counts as unparsed, matching the SPEC §3.4 pattern exactly.
+
+### Fixed
+
+- A silent or quiet stretch of a meeting could get a made-up line in its
+  transcript on the Apple speech engine (`You: I` over room noise). Apple's
+  results now pass the same speech detector the whisper engine already uses:
+  a line is kept only if its time range overlaps audio the detector heard as
+  speech. The same check stops the live pane flashing that word.
+- The room-noise test fixture is now generated from a fixed seed. Before, it
+  drew new noise on every regeneration, and the silence tests passed or failed
+  depending on the draw.
+
 ## [0.3.0] — 2026-09-30
 
 The Record button now records for real, and the permission check in

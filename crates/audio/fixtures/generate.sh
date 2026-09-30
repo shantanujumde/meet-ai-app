@@ -47,8 +47,14 @@ ffmpeg -loglevel error -y -f lavfi -i "anullsrc=r=$RATE:cl=mono" -t 30 \
 # room with an air conditioner is what actually makes whisper emit "Thank you."
 # VAD has to reject this too, so it gets its own fixture rather than being
 # folded into the one above.
+#
+# The seed is fixed. Unseeded, every regeneration drew new noise, and Apple's
+# SpeechTranscriber finalizes a hallucinated "I" on about half of the draws, so
+# the silence tests passed or failed by luck. Seed 1 is one of the draws it
+# does hallucinate on: the fixture keeps exercising the VAD gate in
+# crates/stt/src/apple.rs instead of passing without it.
 echo "room-tone-30s.wav"
-ffmpeg -loglevel error -y -f lavfi -i "anoisesrc=r=$RATE:c=pink:a=0.004" -t 30 \
+ffmpeg -loglevel error -y -f lavfi -i "anoisesrc=r=$RATE:c=pink:a=0.004:seed=1" -t 30 \
   -ac 1 -c:a pcm_s16le room-tone-30s.wav
 
 # --- 3. two-speaker-60s/ -----------------------------------------------------

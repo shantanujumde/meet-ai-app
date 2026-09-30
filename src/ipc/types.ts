@@ -40,7 +40,24 @@ export type MeetingSummary = {
   hasNotes: boolean;
   /** `meeting.md` exists, i.e. an agent has wrapped this meeting up. */
   hasAnalysis: boolean;
+  /** How the recording ended. See {@link RecordingState}. */
+  recordingState: RecordingState;
+  /**
+   * Milliseconds of audio a player can reach — the longer track's WAV header
+   * (SPEC A5). Null when the folder has no audio at all.
+   */
+  audioMs: number | null;
 };
+
+/**
+ * How a meeting's recording ended (TUR-97, SPEC §3.1).
+ *
+ * - `finished` — stopped on purpose, or there is no audio to judge by.
+ * - `interrupted` — cut short by a force quit, a crash or the Mac shutting
+ *   down. Shown as "Interrupted" and opened exactly like any other meeting.
+ * - `recording` — this app is writing it right now.
+ */
+export type RecordingState = "finished" | "interrupted" | "recording";
 
 /** One line of `transcript.md`, parsed per SPEC §3.4. */
 export type TranscriptLine = {
@@ -126,6 +143,59 @@ export type RecordingStatus = {
   meetingId: string | null;
   /** Unix epoch ms, so the UI runs its own timer instead of being fed ticks. */
   startedAtMs: number | null;
+};
+
+/**
+ * Who a live line belongs to: `you` is the mic track, `others` the system
+ * track. Lower-case on the wire; the pane renders them as §3.4's `You`/`Others`.
+ */
+export type LiveSpeaker = "you" | "others";
+
+/**
+ * One line in the live pane, volatile or settled.
+ *
+ * The one snake_case field in this file: `start_sec` is the TUR-96 event
+ * contract as agreed with `src-tauri`, not a slip from the camelCase rule above.
+ */
+export type LiveLine = {
+  /** Meeting-global and monotonic. Stable enough to be the React key. */
+  seq: number;
+  speaker: LiveSpeaker;
+  /** Utterance start, in seconds from the start of the recording (§3.4). */
+  start_sec: number;
+  text: string;
+};
+
+/**
+ * One `transcript://update` event.
+ *
+ * `volatile` replaces that speaker's in-progress guess, `final` settles it into
+ * a line, and `dropped` means the guess came to nothing — the recognizer threw
+ * it away, or the silence guard (TUR-67) did — so it clears without a line.
+ */
+export type TranscriptUpdate =
+  | ({ kind: "volatile" | "final" } & LiveLine)
+  | { kind: "dropped"; speaker: LiveSpeaker; seq: number };
+
+export type TranscriptState = "idle" | "running" | "stopped" | "failed";
+
+/** One `transcript://status` event. */
+export type TranscriptStatus = {
+  state: TranscriptState;
+  /** Which engine is transcribing, e.g. `apple-speech` or `whisper`. */
+  engine: string | null;
+  /** A sentence for the user when `state` is `failed`. */
+  detail: string | null;
+};
+
+/**
+ * What `live_transcript` returns: everything so far, so a window opened
+ * mid-meeting catches up before the events carry on from there.
+ */
+export type LiveTranscriptSnapshot = {
+  status: TranscriptStatus;
+  finals: LiveLine[];
+  volatile: LiveLine[];
 };
 
 /** Narrow an unknown thrown value to a {@link UiError}. */

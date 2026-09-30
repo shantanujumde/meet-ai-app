@@ -15,12 +15,7 @@
  */
 
 import { create } from "zustand";
-import {
-  onRecordingRefused,
-  onRecordingState,
-  recordingStatus,
-  toggleRecording,
-} from "@/ipc/client";
+import { onRecordingError, onRecordingState, recordingStatus, toggleRecording } from "@/ipc/client";
 import type { RecordingStatus, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 
@@ -89,13 +84,14 @@ export function watchRecordingState(): () => void {
   const stopState = onRecordingState((status) => {
     useRecordingStore.getState().applyFromBackend(status);
   });
-  // A refused ⌘⇧R press lands in the same banner as a refused button press.
-  // Without it the phase flips Starting -> Idle and nothing says why.
-  const stopRefused = onRecordingRefused((error) => {
+  // A recording Rust stopped by itself (TUR-97), or a ⌘⇧R press it refused
+  // (TUR-127), has no button press to hang an error on, so it arrives as its
+  // own event and uses the same banner.
+  const stopError = onRecordingError((error) => {
     useRecordingStore.setState({ error });
   });
   return () => {
     stopState();
-    stopRefused();
+    stopError();
   };
 }

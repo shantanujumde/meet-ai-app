@@ -229,20 +229,21 @@ fn the_apple_engine_reports_that_it_streams() {
 
 /// The silence gate, on the Apple engine, over a real subprocess.
 ///
-/// Same assertions as `whisper_streams_nothing_over_thirty_quiet_seconds`,
-/// with one deliberate exception: unlike whisper and replay, the Apple engine
-/// has no [`stt::session::SpanAssembler`] in front of it — SPEC §2.5 is
-/// explicit that engine 1 does native long-form streaming precisely so it does
-/// *not* need VAD chunking, so nothing here gates what the analyzer is allowed
-/// to see the way `SpanAssembler` gates whisper. Measured on this machine
-/// (macOS 27.0, `en-US` installed): `silence-30s.wav` produces no volatile at
-/// all, but `room-tone-30s.wav` produces exactly one transient hypothesis that
-/// never finalizes — Apple's own model guessing at pink noise for a moment
-/// before deciding there is nothing there. That is not the bug this gate
-/// exists to catch: it never reaches the sink, and `finish()` withdraws it
-/// before returning, so no stale tail survives to the pane. What must never
-/// happen — a *finalized* line, or a tail still showing after `finish()` — is
-/// asserted below and holds on both fixtures.
+/// Same assertions as `whisper_streams_nothing_over_thirty_quiet_seconds`.
+/// The gate sits in a different place, though. Unlike whisper and replay, the
+/// Apple engine has no [`stt::session::SpanAssembler`] in front of it. SPEC
+/// §2.5 is explicit that engine 1 does native long-form streaming precisely so
+/// it does *not* need VAD chunking, so the analyzer hears the quiet audio too.
+/// Measured on this machine (macOS 27.0, `en-US` installed):
+/// `silence-30s.wav` produces nothing, but `room-tone-30s.wav` makes Apple
+/// guess `"I"`. In about half of all pink-noise draws the guess is also
+/// *finalized*. The fixture's noise is seeded (`seed=1` in `generate.sh`) to
+/// one of those draws: the raw sidecar settles `"I"` over its first few
+/// seconds, so this test exercises the gate on every run instead of on a coin
+/// flip. What stops it is [`stt::vad::SpeechTimeline`]: every Apple result is
+/// held against the
+/// same detector whisper is gated by, and one over audio the detector heard no
+/// speech in is neither shown nor written.
 #[test]
 fn apple_streams_nothing_settled_over_thirty_quiet_seconds() {
     fixtures::ensure();
@@ -285,6 +286,11 @@ fn apple_streams_nothing_settled_over_thirty_quiet_seconds() {
             sink.lines()
         );
         assert!(sink.is_empty(), "{name}: quiet audio reached disk");
+        assert!(
+            seen.volatiles().is_empty(),
+            "{name}: a hypothesis was shown for audio with no speech in it: {:?}",
+            seen.volatiles()
+        );
         assert_eq!(
             seen.tail_for(Speaker::You),
             None,
