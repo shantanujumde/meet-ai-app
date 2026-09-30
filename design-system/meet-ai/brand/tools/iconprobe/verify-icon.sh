@@ -159,6 +159,21 @@ else
 fi
 
 # --- 4. lab copies ---------------------------------------------------------------
+# LaunchServices keeps what we register, so the lab copies come back out on
+# any exit, not only a clean one. EXIT alone is not enough: zsh skips it when
+# errexit fires, or a signal trap exits, inside a function — and the trials
+# are functions. So ZERR and the signals unregister too; unregister empties
+# the list, so running it twice is harmless, and it leaves $? alone.
+registered=()
+unregister() {
+  (( ZSH_SUBSHELL )) && return 0  # a trap inherited by $(…) is not ours to run
+  local c
+  for c in "${registered[@]}"; do "$LSREG" -u "$c" >/dev/null 2>&1 || true; done
+  registered=()
+}
+trap unregister EXIT ZERR
+trap 'unregister; exit 129' HUP; trap 'unregister; exit 130' INT; trap 'unregister; exit 143' TERM
+
 # Each trial is a re-signed copy with its own bundle id. A copy that kept the
 # real id could be answered out of the IconServices cache with the icon of a
 # different build of the same app — which would make every comparison "same".
@@ -167,7 +182,11 @@ KEYCHAIN="${REAL_HOME:-$HOME}/Library/Keychains/meet-ai-signing.keychain-db"
 resign() {
   # --preserve-metadata keeps the app's entitlements; nested code (meet-stt)
   # keeps its own signature and is sealed into the new outer one.
-  if [[ -f "$KEYCHAIN" ]] && security find-identity -v -p codesigning "$KEYCHAIN" 2>/dev/null | grep -q "$IDENTITY"; then
+  # Captured, not piped into `grep -q`: under pipefail, grep exiting early can
+  # SIGPIPE security, fail the pipeline, and quietly drop to ad-hoc signing.
+  local ids=""
+  [[ -f "$KEYCHAIN" ]] && ids="$(security find-identity -v -p codesigning "$KEYCHAIN" 2>/dev/null || true)"
+  if [[ "$ids" == *"$IDENTITY"* ]]; then
     codesign --force --options runtime --timestamp=none --preserve-metadata=entitlements \
       --keychain "$KEYCHAIN" -s "$IDENTITY" "$1" >/dev/null 2>&1
   else
@@ -192,7 +211,6 @@ if [[ -n "$icns" ]]; then
   iconutil -c icns "$RUN/decoy.iconset" -o "$decoy_icns"
 fi
 
-registered=()
 # trial <name> <mutation...>: mutations are "decoy" (swap the .icns for the
 # decoy) and "nocar" (drop Assets.car and CFBundleIconName, i.e. the bundle as
 # it would be with only the legacy path).
@@ -213,8 +231,8 @@ trial() {
   local id; id="$($PB -c 'Print :CFBundleIdentifier' "$copy/Contents/Info.plist")"
   $PB -c "Set :CFBundleIdentifier $id.iconprobe.$(date +%s)$RANDOM" "$copy/Contents/Info.plist"
   resign "$copy" || { echo "lab copy $name did not re-sign cleanly" >&2; exit 1 }
-  "$LSREG" -f "$copy" >/dev/null 2>&1 || true
   registered+=("$copy")
+  "$LSREG" -f "$copy" >/dev/null 2>&1 || true
   touch "$copy"
   mkdir -p "$RUN/trials/$name/renders"
   for r in "${RUNGS[@]}"; do render "$copy" "$r" "$RUN/trials/$name/renders/R-$r.png"; done
@@ -307,15 +325,24 @@ fi
 # --- 6. rung by rung against the baseline ----------------------------------------
 typeset -a rungrows
 if [[ -n "$against" ]]; then
+  typeset -i diffs=0 lost=0
   for r in "${RUNGS[@]}"; do
-    o="$("$BIN/pixdiff" "$against/renders/R-$r.png" "$RUN/renders/R-$r.png")"
-    c="${${o#*changed=}%\%}"
-    if (( c <= SAME )); then v="same"; else v="**REVIEW** — differs, judge better/worse on the sheet"; fi
+    # pixdiff exits 2 on a missing render and 3 on a size mismatch; either is
+    # a rung we could not compare, reported as such rather than ending the run.
+    if o="$("$BIN/pixdiff" "$against/renders/R-$r.png" "$RUN/renders/R-$r.png" 2>&1)"; then
+      c="${${o#*changed=}%\%}"
+      if (( c <= SAME )); then v="same"; else v="**REVIEW** — differs, judge better/worse on the sheet"; diffs+=1; fi
+    else
+      v="**REVIEW** — could not compare: ${o:-pixdiff failed}"; o="—"; lost+=1
+    fi
     rungrows+=("| $r | $o | $v |")
   done
-  diffs=0; for row in "${rungrows[@]}"; do [[ "$row" == *REVIEW* ]] && diffs=$((diffs + 1)); done
-  if (( diffs == 0 )); then check "vs baseline" PASS "all ${#RUNGS} rungs indistinguishable from ${against:t}"
-  else check "vs baseline" REVIEW "$diffs of ${#RUNGS} rungs differ from ${against:t} — see the sheets"; fi
+  if (( diffs + lost == 0 )); then check "vs baseline" PASS "all ${#RUNGS} rungs indistinguishable from ${against:t}"
+  else
+    detail="$diffs of ${#RUNGS} rungs differ from ${against:t}"
+    (( lost )) && detail+=", $lost could not be compared"
+    check "vs baseline" REVIEW "$detail — see the sheets"
+  fi
 fi
 
 # --- 7. contact sheets -------------------------------------------------------------
@@ -323,7 +350,8 @@ for spec in "${SHEETS[@]}"; do
   gname="${spec%%:*}" rest="${spec#*:}"; mag="${rest%%:*}"; rs=(${=rest#*:})
   cells=()
   for r in "${rs[@]}"; do
-    [[ -n "$against" ]] && cells+=("base $r=$against/renders/R-$r.png")
+    # A baseline render that is missing is already a row above; sheet would crash on it.
+    [[ -n "$against" && -f "$against/renders/R-$r.png" ]] && cells+=("base $r=$against/renders/R-$r.png")
     cells+=("$label $r=$RUN/renders/R-$r.png")
   done
   "$BIN/sheet" "$RUN/sheets/$gname.png" "$mag" "${cells[@]}" >/dev/null
@@ -339,8 +367,8 @@ if [[ -d "$RUN/trials/decoy" ]]; then
   done
 fi
 
-# LaunchServices keeps what we registered; take the lab copies back out.
-for c in "${registered[@]}"; do "$LSREG" -u "$c" >/dev/null 2>&1 || true; done
+# Done with the lab copies; the traps above cover every other way out.
+unregister
 
 # --- summary -------------------------------------------------------------------------
 {

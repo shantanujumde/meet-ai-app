@@ -14,7 +14,7 @@ SIGN_KEYCHAIN := env_var_or_default("SIGN_KEYCHAIN", env_var("HOME") + "/Library
 
 # Full Xcode, used by `icon-car` and nothing else. Pointed at per command via
 # DEVELOPER_DIR rather than `xcode-select -s`, so swiftc, clang and cargo in
-# every other recipe keep using Command Line Tools (SPEC A2).
+# every other recipe keep using Command Line Tools (SPEC A10).
 XCODE_DEVELOPER_DIR := env_var_or_default("XCODE_DEVELOPER_DIR", "/Applications/Xcode.app/Contents/Developer")
 
 # The one command. If this is green, the repo is healthy.
@@ -172,7 +172,7 @@ build: sidecar
 
 # The Icon Composer icon, compiled (TUR-85). This is the ONLY recipe that needs
 # full Xcode: `build` just copies the committed Assets.car, so routine builds
-# stay on Command Line Tools (SPEC A2).
+# stay on Command Line Tools (SPEC A10).
 #
 # No post-bundle copy and no extra re-sign. tauri-bundler 2.9 (what
 # @tauri-apps/cli 2.11.4 ships) treats a `.car` in `bundle.icon` as a compiled
@@ -225,9 +225,11 @@ icon-car:
 
     # actool before 26 does not know the .icon format (Tauri refuses < 26 for
     # the same reason). Unparseable is not fatal: actool itself will reject the
-    # input if it is too old, and loudly.
+    # input if it is too old, and loudly. `|| true` is what makes that so —
+    # under pipefail a failing `actool --version` fails the assignment, and
+    # `set -e` would end the recipe here with no message.
     version="$(xcrun actool --version 2>/dev/null \
-                 | sed -n '/short-bundle-version/{n;s:.*<string>\([0-9][0-9]*\).*:\1:p;}')"
+                 | sed -n '/short-bundle-version/{n;s:.*<string>\([0-9][0-9]*\).*:\1:p;}' || true)"
     if [[ -n "$version" && "$version" -lt 26 ]]; then
       echo "actool $version is too old for a .icon; Xcode 26+ is required" >&2
       exit 1

@@ -14,7 +14,7 @@
    IconComposerFoundation) and checked by rendering every macOS appearance
    with Icon Composer's own ictool — not written from memory.
    ============================================================================= */
-import { writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PALETTE as P, BRACKETS, bracketPaths, f } from "./geometry.mjs";
@@ -136,15 +136,17 @@ const icon = {
   "supported-platforms": { squares: ["macOS"] },
 };
 
+// Assets/ is written from icon.json's own layer list, so the two cannot
+// disagree. That matters because ictool renders a layer whose image-name points
+// nowhere as if the layer were not there — no error, just a missing dot.
+const artwork = { "dot.svg": dot, "brackets.svg": brackets };
+const names = icon.groups.flatMap((grp) => grp.layers).map((l) => l["image-name"]);
+
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(join(OUT, "Assets"), { recursive: true });
-writeFileSync(join(OUT, "Assets", "brackets.svg"), brackets);
-writeFileSync(join(OUT, "Assets", "dot.svg"), dot);
+for (const name of names) {
+  if (!artwork[name]) throw new Error(`icon.json names a layer with no artwork: ${name}`);
+  writeFileSync(join(OUT, "Assets", name), artwork[name]);
+}
 writeFileSync(join(OUT, "icon.json"), `${JSON.stringify(icon, null, 2)}\n`);
-
-// ictool renders a layer whose image-name points nowhere as if the layer were
-// not there — no error, just a missing dot. So check the references here.
-for (const l of icon.groups.flatMap((grp) => grp.layers))
-  if (!existsSync(join(OUT, "Assets", l["image-name"])))
-    throw new Error(`icon.json names a missing layer: ${l["image-name"]}`);
-console.log(`   ${OUT.split("/").pop()}  icon.json + Assets/brackets.svg, Assets/dot.svg`);
+console.log(`   ${OUT.split("/").pop()}  icon.json + ${names.map((n) => `Assets/${n}`).join(", ")}`);

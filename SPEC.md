@@ -540,12 +540,9 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 **What this buys, stated plainly.** Platform alignment, not a visible fix. On macOS 26 a legacy `.icns` means the system picks the icon container for us; a `.icon` is the supported way to control it. Today's icon is already correct on 26 at every size measured, so a signed bundle that looks the same as before is the expected result, not a failure. It does **not** buy per-size art: a `.icon` is one 1024 canvas the system renders every size from, so `meet-ai-appicon-16-fullcolor.svg` still reaches only the favicon and `.ico`. And there is no legacy or hybrid icon to build, because A8 put the floor at macOS 26.
 
-**The toolchain note, narrowed — an addendum to A1, not a reversal.** *Xcode 26 or later is required only to regenerate `src-tauri/icons/Assets.car` from the `.icon` source; routine builds still need only Command Line Tools.* That holds because `Assets.car` is a portable binary that is committed, so a CLT-only machine builds and ships it untouched. §2.6, §2.9 and §7 all say the sidecar needs no Xcode; that stays true, since `swiftc` is still the only Swift involved. The compile step (`just icon-car`) points at Xcode for itself through `DEVELOPER_DIR`; nobody switches `xcode-select` globally for it. A machine that regenerates the icon needs a one-time setup, with full paths because `xcode-select` still points at CLT and plain `xcodebuild` refuses:
+**The toolchain note, narrowed — an addendum to A1, not a reversal.** *Xcode 26 or later is required only to regenerate `src-tauri/icons/Assets.car` from the `.icon` source; routine builds still need only Command Line Tools.* That holds because `Assets.car` is a portable binary that is committed, so a CLT-only machine builds and ships it untouched. §2.6, §2.9 and §7 all say the sidecar needs no Xcode; that stays true, since `swiftc` is still the only Swift involved. The compile step (`just icon-car`) points at Xcode for itself through `DEVELOPER_DIR`; nobody switches `xcode-select` globally for it. A machine that regenerates the icon needs a one-time Xcode setup (license and first launch, by full path since `xcode-select` stays on CLT); the commands are in `SETUP.md` step 0.4.
 
-```bash
-sudo /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -license accept
-sudo /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -runFirstLaunch
-```
+**Verified 2026-09-30** (TUR-86, `design-system/meet-ai/brand/proofs/tur86/RESULTS.md`): on a real signed bundle macOS draws `Assets.car`, not the `.icns`; the `.icns` fallback is pixel-identical to the old bundle; `codesign --verify --deep --strict` passes. Same at 11 of 13 sizes, better at 512@2x and 1024, where the `.icns` bundle was drawn inside a light system plate. Worse at none.
 
 ### A9 — 2026-09-28 · Whisper half of the silence-hallucination guard verified on real hardware (closes TUR-67; amends nothing in §1)
 
