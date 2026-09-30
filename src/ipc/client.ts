@@ -42,6 +42,7 @@ export const RECORDING_STATE_EVENT = "recording://state";
  */
 export const RECORDING_ERROR_EVENT = "recording://error";
 export const MODEL_PROGRESS_EVENT = "model://progress";
+export const PERMISSION_STATUS_EVENT = "permission://status";
 export const TRANSCRIPT_UPDATE_EVENT = "transcript://update";
 export const TRANSCRIPT_STATUS_EVENT = "transcript://status";
 
@@ -107,14 +108,16 @@ export function revealMeeting(id: string): Promise<void> {
 
 // --- permission and onboarding -------------------------------------------
 
+/** Both permission calls' answer when there is no Rust side to ask. */
+const NO_BACKEND_PERMISSION: PermissionStatus = {
+  state: "unknown",
+  measured: false,
+  detail: NO_BACKEND.message,
+  denied: [],
+};
+
 export async function permissionStatus(): Promise<PermissionStatus> {
-  if (!hasBackend()) {
-    return {
-      state: "unknown",
-      measured: false,
-      detail: NO_BACKEND.message,
-    };
-  }
+  if (!hasBackend()) return NO_BACKEND_PERMISSION;
   return call<PermissionStatus>("permission_status");
 }
 
@@ -123,14 +126,16 @@ export async function permissionStatus(): Promise<PermissionStatus> {
  * only, so no chime. It never answers `granted` — see `permission::quick`.
  */
 export async function permissionQuick(): Promise<PermissionStatus> {
-  if (!hasBackend()) {
-    return {
-      state: "unknown",
-      measured: false,
-      detail: NO_BACKEND.message,
-    };
-  }
+  if (!hasBackend()) return NO_BACKEND_PERMISSION;
   return call<PermissionStatus>("permission_quick");
+}
+
+/**
+ * The full check Rust runs when a recording starts, however it was started
+ * (window, ⌘⇧R, menu bar). The window's permission state follows it.
+ */
+export function onPermissionStatus(handler: (status: PermissionStatus) => void): () => void {
+  return subscribe<PermissionStatus>(PERMISSION_STATUS_EVENT, handler);
 }
 
 export function openPrivacySettings(pane: PrivacyPane): Promise<void> {

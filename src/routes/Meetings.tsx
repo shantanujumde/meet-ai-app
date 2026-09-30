@@ -11,6 +11,7 @@ import { useNavigate } from "react-router";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
 import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "@/ui/format";
+import { openPermissionScreen } from "@/ui/permissionRoute";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
 export function Meetings() {
@@ -66,7 +67,7 @@ export function Meetings() {
                 <button
                   type="button"
                   className="btn"
-                  onClick={() => navigate("/onboarding/permission")}
+                  onClick={() => openPermissionScreen(navigate)}
                 >
                   Fix audio permission first
                 </button>

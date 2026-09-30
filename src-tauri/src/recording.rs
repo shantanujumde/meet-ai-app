@@ -220,15 +220,16 @@ impl Recorder {
             detail = %permission.detail,
             "permission check before recording"
         );
+        // The window mirrors this answer (Record disabled, "Fix this" shown), so
+        // a refusal here and a grant restored in Settings both reach it.
+        if let Err(error) = app.emit(permission::STATUS_EVENT, &permission) {
+            tracing::warn!(%error, "could not tell the window about the permission check");
+        }
         if permission.state == permission::State::Denied {
             return Err(self.fail_start(
                 app,
                 None,
-                UiError::app(
-                    "permission-denied",
-                    "meet-ai is not allowed to record this Mac's audio, so starting a recording \
-                     would capture nothing but silence.",
-                ),
+                UiError::app("permission-denied", permission.refusal_message()),
             ));
         }
 

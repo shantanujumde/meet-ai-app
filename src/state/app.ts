@@ -17,6 +17,7 @@ import {
   completeOnboarding,
   listMeetings,
   onboardingState,
+  onPermissionStatus,
   permissionQuick,
   permissionStatus,
   resetOnboarding,
@@ -94,6 +95,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           state: "unknown",
           measured: false,
           detail: toUiError(thrown).message,
+          denied: [],
         },
       });
     } finally {
@@ -136,3 +138,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 }));
+
+/**
+ * Follow the permission check Rust runs at every recording start.
+ *
+ * That check is the only one that hears system audio after launch (launch is
+ * silent, SPEC A7), so without this a refused Record left the button enabled
+ * and "Fix this" hidden, and a grant restored in Settings stayed "denied"
+ * until a relaunch. Returns the teardown, like `watchRecordingState`.
+ */
+export function watchPermissionStatus(): () => void {
+  return onPermissionStatus((status) => {
+    useAppStore.setState({ permission: status });
+  });
+}
