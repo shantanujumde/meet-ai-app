@@ -23,6 +23,7 @@ const IDLE: RecordingStatus = {
   phase: "idle",
   meetingId: null,
   startedAtMs: null,
+  error: null,
 };
 
 type RecordingStore = {
@@ -58,7 +59,7 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     if (get().busy) return;
     set({ busy: true, error: null });
     try {
-      set({ status: await toggleRecording() });
+      set(withError(await toggleRecording()));
     } catch (thrown) {
       set({ error: toUiError(thrown) });
     } finally {
@@ -67,6 +68,8 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
   },
 
   clearError() {
+    const { error } = get();
+    if (error) rememberDismissed(error);
     set({ error: null });
   },
 
@@ -88,9 +91,47 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
  * the reason the refusal just showed.
  */
 function withError(status: RecordingStatus): Partial<RecordingStore> {
-  if (status.error) return { status, error: status.error };
-  if (status.phase === "starting") return { status, error: null };
+  if (status.phase === "starting") {
+    rememberDismissed(null);
+    return { status, error: null };
+  }
+  if (status.error && !wasDismissed(status.error)) return { status, error: status.error };
   return { status };
+}
+
+/**
+ * The error the user last dismissed, so it does not come back.
+ *
+ * Rust keeps the reason on the idle status until the next start — it has to,
+ * so a window opened later still learns why — which means every re-read of
+ * that status (a webview reload, `watchRecordingState` subscribing again) hands
+ * back the banner the user already closed. Remembering what was dismissed, and
+ * forgetting it on the next `starting`, keeps it closed without a Rust round
+ * trip. Session storage rather than module state because a reload is one of the
+ * re-reads; it is a per-window convenience, so a storage that throws or comes
+ * back empty only means the banner shows once more.
+ */
+const DISMISSED_KEY = "meet-ai.recording.dismissed-error";
+
+function errorKey(error: UiError): string {
+  return JSON.stringify([error.domain, error.kind, error.message]);
+}
+
+function rememberDismissed(error: UiError | null) {
+  try {
+    if (error) sessionStorage.setItem(DISMISSED_KEY, errorKey(error));
+    else sessionStorage.removeItem(DISMISSED_KEY);
+  } catch {
+    // No storage: the banner may come back once. Nothing else depends on it.
+  }
+}
+
+function wasDismissed(error: UiError): boolean {
+  try {
+    return sessionStorage.getItem(DISMISSED_KEY) === errorKey(error);
+  } catch {
+    return false;
+  }
 }
 
 /**

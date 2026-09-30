@@ -150,7 +150,7 @@ impl Inner {
     /// `Idle -> Starting`, or the phase that beat us to it. A new start is
     /// what clears the last recording's error: from here on the status
     /// describes this attempt, and a refusal puts its own reason back.
-    fn claim_starting(&mut self) -> Result<Status, Status> {
+    fn enter_starting(&mut self) -> Result<Status, Status> {
         if self.status.phase != Phase::Idle {
             return Err(self.status.clone());
         }
@@ -221,10 +221,8 @@ impl Recorder {
 
     /// Claim `Idle -> Starting`, or report the phase that beat us to it.
     fn claim_starting(&self, app: &AppHandle) -> Result<(), Status> {
-        let status = self.lock().claim_starting()?;
-        if let Err(error) = app.emit(STATE_EVENT, &status) {
-            tracing::warn!(%error, "could not tell the window about a recording state change");
-        }
+        let status = self.lock().enter_starting()?;
+        announce(app, &status);
         Ok(())
     }
 
@@ -526,28 +524,10 @@ impl Recorder {
         session: RecordingSession,
         message: String,
     ) -> Option<RecordingSession> {
-        let transcription;
-        {
-            let mut inner = self.lock();
-            if inner.status.phase != Phase::Recording {
-                tracing::error!(
-                    %message,
-                    "a recording tick failed while it was already being stopped"
-                );
-                return Some(session);
-            }
-            tracing::error!(%message, "a recording tick failed; stopping the recording");
-            inner.status.phase = Phase::Stopping;
-            if let Some(own) = inner.ticker.take() {
-                own.detach();
-            }
-            transcription = inner.transcription.take();
-            let status = inner.status.clone();
-            drop(inner);
-            if let Err(error) = app.emit(STATE_EVENT, &status) {
-                tracing::warn!(%error, "could not tell the window about a recording state change");
-            }
-        }
+        let Some((stopping, transcription)) = self.claim_interrupted(&message) else {
+            return Some(session);
+        };
+        announce(app, &stopping);
 
         // A panic in `stop()` must not strand the recorder in `Stopping`,
         // where every toggle is ignored: this thread is about to end, and
@@ -568,16 +548,59 @@ impl Recorder {
         if let Some(stop_message) = stop_error {
             tracing::warn!(message = %stop_message, "the failed recording did not stop cleanly");
         }
-        let error = interrupted(&message, stop_error.map(String::as_str));
-        let status = self.transition(app, |inner| inner.end(Some(error)));
-        // The notification says what the status says, read back off the
-        // status, so the window and the notification cannot tell two
-        // different stories. It goes out because the window may be hidden,
-        // which is the normal case for a recording started with ⌘⇧R.
-        if let Some(error) = &status.error {
-            notify_interrupted(app, &error.message);
-        }
+        let (idle, error) = self.end_interrupted(&message, stop_error.map(String::as_str));
+        announce(app, &idle);
+        // The same `UiError` the idle status carries, so the window and the
+        // notification cannot tell two different stories. It goes out
+        // because the window may be hidden, which is the normal case for a
+        // recording started with ⌘⇧R.
+        notify_interrupted(app, &error.message);
         None
+    }
+
+    /// The first half of [`Recorder::fail_mid_recording`]: claim
+    /// `Recording -> Stopping` for a failed tick and take what the stop needs.
+    /// `None` means a user's stop got there first and owns the ending.
+    ///
+    /// Split out (with [`Recorder::end_interrupted`]) so the state changes a
+    /// failed tick makes are testable on a real `Ticker` thread without an
+    /// `AppHandle` or Core Audio; what stays in `fail_mid_recording` is only
+    /// stopping the session and telling the app.
+    fn claim_interrupted(&self, message: &str) -> Option<(Status, Option<Transcription>)> {
+        let mut inner = self.lock();
+        if inner.status.phase != Phase::Recording {
+            tracing::error!(
+                %message,
+                "a recording tick failed while it was already being stopped"
+            );
+            return None;
+        }
+        tracing::error!(%message, "a recording tick failed; stopping the recording");
+        inner.status.phase = Phase::Stopping;
+        // This runs on the ticker's own thread, which must never join itself.
+        if let Some(own) = inner.ticker.take() {
+            own.detach();
+        }
+        let transcription = inner.transcription.take();
+        Some((inner.status.clone(), transcription))
+    }
+
+    /// The second half: back to `Idle` with the reason on the status, once
+    /// the session is stopped (`stop_error` is how that went). Returns the
+    /// idle status to announce and the error it carries.
+    fn end_interrupted(&self, message: &str, stop_error: Option<&str>) -> (Status, UiError) {
+        let error = interrupted(message, stop_error);
+        let mut inner = self.lock();
+        inner.end(Some(error.clone()));
+        (inner.status.clone(), error)
+    }
+}
+
+/// Tell every window about a state change. A webview that has gone away is
+/// not an error worth propagating up into a recording control.
+fn announce(app: &AppHandle, status: &Status) {
+    if let Err(error) = app.emit(STATE_EVENT, status) {
+        tracing::warn!(%error, "could not tell the window about a recording state change");
     }
 }
 
@@ -792,17 +815,29 @@ mod tests {
         let recorder = Arc::new(Recorder::default());
         {
             let mut inner = recorder.lock();
-            inner.claim_starting().expect("a fresh recorder is idle");
+            inner.enter_starting().expect("a fresh recorder is idle");
             inner.status.phase = Phase::Recording;
             inner.status.meeting_id = Some("2026-09-30-1300-meeting".into());
         }
 
-        // The same two steps `fail_mid_recording` takes once the session is
-        // stopped: build the reason, then end on it.
+        // `fail_mid_recording`'s own two halves, with the parts that need an
+        // `AppHandle` and a real session — stopping it, the emits and the
+        // notification — left out. The phase seen between them is recorded
+        // so the test also sees the `Stopping` the window is shown.
+        let between = Arc::new(Mutex::new(None));
         let on_fail = {
-            let recorder = Arc::clone(&recorder);
-            move |_state: u32, message: String| {
-                recorder.lock().end(Some(interrupted(&message, None)));
+            let (recorder, between) = (Arc::clone(&recorder), Arc::clone(&between));
+            move |state: u32, message: String| {
+                let Some((stopping, transcription)) = recorder.claim_interrupted(&message) else {
+                    return Some(state);
+                };
+                assert!(transcription.is_none(), "this test starts no transcript");
+                *between.lock().unwrap() = Some(stopping.phase);
+                let (idle, error) = recorder.end_interrupted(&message, None);
+                assert_eq!(
+                    idle.error.as_ref().map(|e| &e.message),
+                    Some(&error.message)
+                );
                 None
             }
         };
@@ -824,6 +859,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         assert_eq!(ticker.stop().expect("joins cleanly"), None);
+        assert_eq!(*between.lock().unwrap(), Some(Phase::Stopping));
 
         let status = recorder.status();
         assert!(status.meeting_id.is_none());
@@ -838,7 +874,7 @@ mod tests {
 
         let starting = recorder
             .lock()
-            .claim_starting()
+            .enter_starting()
             .expect("idle again, so a new start is allowed");
         assert_eq!(starting.phase, Phase::Starting);
         assert!(
@@ -847,19 +883,32 @@ mod tests {
         );
     }
 
+    /// A tick that fails while a user's stop is already under way leaves the
+    /// ending to that stop: nothing is claimed, no error is set, and the
+    /// session goes back through the join.
+    #[test]
+    fn a_failed_tick_during_a_user_stop_leaves_the_ending_to_that_stop() {
+        let recorder = Recorder::default();
+        recorder.lock().status.phase = Phase::Stopping;
+        assert!(recorder.claim_interrupted("mic fsync: disk full").is_none());
+        let status = recorder.status();
+        assert_eq!(status.phase, Phase::Stopping);
+        assert!(status.error.is_none());
+    }
+
     /// A clean stop leaves no error behind, and a start that is refused puts
     /// its own reason on the idle status (TUR-127: ⌘⇧R has nowhere else to
     /// say it).
     #[test]
     fn only_an_unclean_ending_leaves_an_error_on_the_idle_status() {
         let mut inner = Inner::idle();
-        inner.claim_starting().unwrap();
+        inner.enter_starting().unwrap();
         inner.status.phase = Phase::Recording;
         inner.end(None);
         assert_eq!(inner.status.phase, Phase::Idle);
         assert!(inner.status.error.is_none());
 
-        inner.claim_starting().unwrap();
+        inner.enter_starting().unwrap();
         inner.end(Some(UiError::app("permission-denied", "not allowed")));
         assert_eq!(inner.status.phase, Phase::Idle);
         assert_eq!(
@@ -869,7 +918,7 @@ mod tests {
 
         // Mid-transition, a second start is turned away without touching it.
         inner.status.phase = Phase::Stopping;
-        assert!(inner.claim_starting().is_err());
+        assert!(inner.enter_starting().is_err());
         assert!(inner.status.error.is_some());
     }
 
