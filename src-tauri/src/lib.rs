@@ -18,11 +18,11 @@ mod meetings;
 mod onboarding;
 mod permission;
 mod recording;
+mod tickets;
 mod watch;
 // The menu bar is a desktop surface; the mobile targets have nothing to put an
 // item in.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-mod tickets;
 mod tray;
 
 /// Start/stop recording from anywhere, including with the window unfocused.
