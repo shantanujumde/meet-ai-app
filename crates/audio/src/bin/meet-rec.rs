@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use audio::AudioSource;
 use audio::mic::MicSource;
-use audio::segments::{SAMPLE_RATE_HZ, Segments};
+use audio::segments::{SAMPLE_RATE_HZ, Segments, SegmentsDrift as _};
 use audio::session::{RecordingSession, default_system_source};
 use audio::wav_writer::read_header_frames;
 

@@ -50,36 +50,20 @@ pub use session::{
 pub use sink::{CollectingSink, MarkdownSink, TranscriptSink};
 pub use transcribe::{MeetingPaths, Outcome, transcribe_meeting, transcribe_track};
 
-/// Which captured track an utterance came from.
+/// Which captured track an utterance came from, and who said it (L5).
 ///
-/// Mirrors `audio::Channel`. It is duplicated rather than imported because
-/// SPEC §8.2 forbids `crates/stt` from depending on the platform-specific
-/// capture crate — that dependency is exactly how mac assumptions leak into
-/// portable code and turn a Windows port into a rewrite.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Channel {
-    Mic,
-    System,
-}
+/// The same types `audio` records with, from `meeting-format`. Not imported
+/// from `audio` itself: SPEC §8.2 forbids `crates/stt` from depending on the
+/// platform-specific capture crate — that dependency is exactly how mac
+/// assumptions leak into portable code and turn a Windows port into a rewrite.
+///
+/// Transitional re-export; new code should import from `meeting_format`.
+pub use meeting_format::{Channel, Speaker};
 
-impl Channel {
-    /// The file this channel is recorded to, relative to `audio/`.
-    pub fn wav_filename(self) -> &'static str {
-        match self {
-            Channel::Mic => "mic.wav",
-            Channel::System => "system.wav",
-        }
-    }
-
-    /// The speaker this channel is attributed to (L5).
-    pub fn speaker(self) -> Speaker {
-        match self {
-            Channel::Mic => Speaker::You,
-            Channel::System => Speaker::Others,
-        }
-    }
-}
+/// The §3.4 whitespace rule, shared with `store`'s reader.
+///
+/// Transitional re-export; new code should import from `meeting_format`.
+pub use meeting_format::transcript::collapse_whitespace;
 
 /// One finalized thing somebody said.
 ///
@@ -99,56 +83,14 @@ pub struct Utterance {
     pub text: String,
 }
 
-/// The two speaker labels v1 can produce (L5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Speaker {
-    /// The microphone channel — the person using this Mac.
-    You,
-    /// The system-audio channel — everyone else on the call.
-    Others,
-}
-
-impl Speaker {
-    /// The literal label written into `transcript.md`.
-    pub fn label(self) -> &'static str {
-        match self {
-            Speaker::You => "You",
-            Speaker::Others => "Others",
-        }
-    }
-}
-
-/// Collapse recognized text the way SPEC §3.4 requires.
-///
-/// One utterance is exactly one line, so every `\n`, `\r`, `\t` and run of
-/// spaces becomes a single space. Returns `None` for whitespace-only input —
-/// that is the last line of defence against a hallucinated empty segment.
-pub fn collapse_whitespace(raw: &str) -> Option<String> {
-    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.is_empty() {
-        None
-    } else {
-        Some(collapsed)
-    }
-}
-
 /// Render one `transcript.md` line: `[HH:MM:SS] Speaker: text`.
 ///
-/// Must satisfy `^\[(\d{2}:\d{2}:\d{2})\] (You|Others): (.*)$`. No escaping —
-/// the prefix is fixed-width and anchored, so `]` and `:` inside speech are
-/// safe.
+/// Must satisfy `^\[(\d{2}:\d{2}:\d{2})\] (You|Others): (.*)$`. The rendering
+/// is `meeting_format::transcript::render_line`, the same one `store`'s reader
+/// is held to; the text is not re-collapsed, because an [`Utterance`] is
+/// collapsed by construction.
 pub fn format_transcript_line(utterance: &Utterance) -> String {
-    let (h, m, s) = (
-        utterance.start_sec / 3600,
-        (utterance.start_sec % 3600) / 60,
-        utterance.start_sec % 60,
-    );
-    format!(
-        "[{h:02}:{m:02}:{s:02}] {}: {}",
-        utterance.speaker.label(),
-        utterance.text
-    )
+    meeting_format::transcript::render_line(utterance.start_sec, utterance.speaker, &utterance.text)
 }
 
 /// Read a 16 kHz mono WAV into PCM samples.
