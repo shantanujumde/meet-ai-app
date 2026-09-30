@@ -57,7 +57,7 @@ branch still count as new. On `main`, the base is `HEAD`.
 
 | Rule | What it catches | Fix |
 | --- | --- | --- |
-| R1 | a file over 600 non-test lines that is new or grew (Rust: before the first `#[cfg(test)]`) | move the new code into its own module |
+| R1 | a file over 600 non-test lines that is new or grew (Rust: before the `#[cfg(test)] mod` test module) | move the new code into its own module |
 | R2 (warn) | a `"name://event"` string outside `src-tauri/src/events.rs` and `src/ipc/bindings.ts` | use the event constant |
 | R3 (warn) | `"transcript.md"`, `"notes.md"`, `"segments.json"`, `"meeting.md"` or `".app"` in Rust outside `crates/meeting-format` | use the meeting-format constant |
 | R4 | a new `.unwrap()` / `.expect(` in non-test Rust under `crates/*/src` or `src-tauri/src` (strings and comments ignored) | return the error with `?`; if it truly cannot fail, add `// quality: allow-unwrap <reason>` on that line or the line above |
@@ -78,7 +78,7 @@ R2 and R3 print warnings until their phase lands. To make them fail, flip
    - `added_lines`: line numbers added since the diff base
    - `added_text FILE STOP [OPTOUT]`: the added lines themselves, skipping
      opted-out ones
-   - `test_start`: the line of the first `#[cfg(test)]`
+   - `test_start`: where the `#[cfg(test)] mod` test module starts; `cfg_test_item_lines`: lines of single `#[cfg(test)]` items
    - `is_rust_test_file`, `is_ts_test_file`, `is_new_file`
 3. Add it to `RULES` (per file) or `RUN_ONCE` (once per run).
 4. If existing code is not ready yet, give it a `RN_LEVEL=warn` variable and
@@ -103,8 +103,10 @@ R2 and R3 print warnings until their phase lands. To make them fail, flip
 
 - It runs on `Stop` and `SubagentStop` (`.claude/settings.json`, 600 s timeout).
 - It takes the files from the run's own transcript: the ones edited with Edit,
-  Write, MultiEdit or NotebookEdit. On a branch other than `main`, it also adds
+  Write, MultiEdit or NotebookEdit. In its own linked worktree on a branch other than `main`, it also adds
   the files the branch changed, so Bash-tool edits are caught too.
+- A session with no edit and no Bash calls (read-only, such as a reviewer)
+  passes at once. The primary checkout only ever uses the transcript list.
 - A sub-agent is checked against its own transcript only. A `SubagentStop`
   without `agent_transcript_path` is skipped.
 - On a failure it exits 2 and sends the report back to the model. It blocks at

@@ -39,14 +39,22 @@ repo.
   the Edit, Write, MultiEdit or NotebookEdit tools. A sub-agent is checked
   against its own transcript only. If Claude Code does not pass one, that stop
   is skipped.
+- A session with no edit calls and no Bash calls is read-only, such as a
+  reviewer. It passes at once. It is never held to account for what the branch
+  already had.
 - Edits made through the Bash tool (`sed -i`, a heredoc) are not in that list.
-  So when the run is on its own branch, the gate also adds every file the
-  branch changed since it left `main`, plus untracked files. That is the normal
-  case: each run gets its own worktree (see CONTRIBUTING.md, "Agent runs and the
-  working tree").
-- On `main` itself, only the transcript list is used, because other work may
-  be sitting in that checkout. Bash-tool edits are not caught there. Run the
-  gate by hand with the file names.
+  So the gate also adds every file the branch changed since it left `main`,
+  plus untracked files. It does this only when all three are true:
+  - the run is in a linked worktree (made with `git worktree add`, so its
+    `git-dir` differs from `git-common-dir`)
+  - it is on a branch other than `main`
+  - it made at least one edit or Bash call
+
+  That is the normal case: each run gets its own worktree (see CONTRIBUTING.md,
+  "Agent runs and the working tree").
+- In the primary checkout, only the transcript list is used, even on a
+  feature branch, because other runs' files may be sitting there. Bash-tool
+  edits are not caught there. Run the gate by hand with the file names.
 
 ### Time limit
 
@@ -80,7 +88,7 @@ the base commit is the baseline, so there is no list to keep up to date.
 ### R1: file too big (ERROR for new or growing files)
 
 A source file has more than 600 lines of non-test code. For Rust, that means
-the lines before the first `#[cfg(test)]`. For TypeScript, it is the whole
+the lines before the test module (a `#[cfg(test)]` followed by `mod ...`). For TypeScript, it is the whole
 file, and `*.test.*` files are skipped.
 
 - ERROR: a new file is over 600 lines, or a file got longer than it was at the
@@ -127,7 +135,7 @@ single owner means one place to change it.
 A new `.unwrap()` or `.expect(` in non-test Rust under `crates/*/src/` or
 `src-tauri/src/`. These are skipped:
 
-- test code: everything after the first `#[cfg(test)]`, and `tests/` folders
+- test code: the `#[cfg(test)] mod ...` module and everything after it, single `#[cfg(test)]` items (a test-only fn or impl block), and `tests/` folders
 - `src/bin/` tools
 - text inside string literals and `//` comments
 
