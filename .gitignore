@@ -52,6 +52,12 @@ spikes/*/build/
 # Brand raster staging. Reproducible from design-system/meet-ai/brand/tools via
 # `node build.mjs && ./render.sh`; the committed outputs are src-tauri/icons/,
 # public/, and the SVG masters.
+#
+# src-tauri/icons/Assets.car is committed too, for a different reason: it is
+# compiled from design-system/meet-ai/brand/meet-ai.icon by `just icon-car`, and
+# that needs Xcode 26+ (actool). Committing the compiled catalog is what keeps
+# routine builds on Command Line Tools only (SPEC A2). actool's other outputs
+# (partial Info.plist, its own .icns) go to a temp dir and never land here.
 design-system/meet-ai/brand/tools/.render/
 
 # graphify knowledge graph and its cache. Regenerated locally by

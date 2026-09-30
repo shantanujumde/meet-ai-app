@@ -12,6 +12,11 @@ SIGN_IDENTITY := env_var_or_default("SIGN_IDENTITY", "meet-ai Local Signing")
 # default keychains.
 SIGN_KEYCHAIN := env_var_or_default("SIGN_KEYCHAIN", env_var("HOME") + "/Library/Keychains/meet-ai-signing.keychain-db")
 
+# Full Xcode, used by `icon-car` and nothing else. Pointed at per command via
+# DEVELOPER_DIR rather than `xcode-select -s`, so swiftc, clang and cargo in
+# every other recipe keep using Command Line Tools (SPEC A2).
+XCODE_DEVELOPER_DIR := env_var_or_default("XCODE_DEVELOPER_DIR", "/Applications/Xcode.app/Contents/Developer")
+
 # The one command. If this is green, the repo is healthy.
 #
 # `sidecar` is a dependency, not decoration. Two reasons:
@@ -153,8 +158,146 @@ model ID="small.en-q5_1":
 check-whisper:
     cargo test -p stt --features whisper-model-tests -- --nocapture
 
+# Assets.car is committed, so on a normal checkout the first line never fires.
+# When it does, something deleted the file, and that is a real error, not a
+# "skip the new icon" case: building on without it would ship the legacy .icns
+# alone with nothing going red. Tauri fails on it too, but only after the
+# frontend build and cargo, and without saying where the file comes from.
+# Build the release app bundle. Fails fast if src-tauri/icons/Assets.car is missing.
 build: sidecar
+    @[[ -f src-tauri/icons/Assets.car ]] || { echo "src-tauri/icons/Assets.car is missing. It is committed, so restore it from git; if the .icon changed, regenerate it with \`just icon-car\` (needs Xcode 26+)." >&2; exit 1; }
     pnpm tauri build
+
+# --- app icon ----------------------------------------------------------------
+
+# The Icon Composer icon, compiled (TUR-85). This is the ONLY recipe that needs
+# full Xcode: `build` just copies the committed Assets.car, so routine builds
+# stay on Command Line Tools (SPEC A2).
+#
+# No post-bundle copy and no extra re-sign. tauri-bundler 2.9 (what
+# @tauri-apps/cli 2.11.4 ships) treats a `.car` in `bundle.icon` as a compiled
+# asset catalog: it copies it to Contents/Resources/Assets.car while it lays
+# the bundle out, keeps the .icns as CFBundleIconFile beside it, and merges
+# src-tauri/Info.plist (which carries CFBundleIconName) over the result. All of
+# that happens before `just sign`, whose outer seal then covers Assets.car like
+# any other resource. The plan on TUR-35 assumed Tauri had no asset-catalog
+# step; this version does. Tauri could also run actool itself if handed the
+# `.icon` directly, but then every `just build` would need Xcode — the thing
+# committing the .car exists to avoid.
+#
+# The name passed to --app-icon is the .icon's filename stem, and it has to
+# equal CFBundleIconName in src-tauri/Info.plist or macOS finds no icon of that
+# name in the catalog and silently uses the .icns. So that is checked against
+# three things: Info.plist, actool's own partial Info.plist, and what is really
+# in the compiled catalog (assetutil). The partial plist and the .icns actool
+# also writes stay in a temp dir — render.sh owns the .icns, and its TUR-22
+# small-end decision is not something actool should overwrite.
+#
+# Compile meet-ai.icon into src-tauri/icons/Assets.car (needs Xcode 26+); commit the result.
+icon-car:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ICON="design-system/meet-ai/brand/meet-ai.icon"
+    OUT="src-tauri/icons/Assets.car"
+    NAME="$(basename "$ICON" .icon)"
+    export DEVELOPER_DIR="{{XCODE_DEVELOPER_DIR}}"
+    XCODEBUILD="$DEVELOPER_DIR/usr/bin/xcodebuild"
+
+    [[ -d "$ICON" ]] || { echo "no Icon Composer source at $ICON (a .icon is a directory)" >&2; exit 1; }
+    [[ -x "$XCODEBUILD" ]] || {
+      echo "full Xcode 26+ was not found at $DEVELOPER_DIR." >&2
+      echo "Install it, or point XCODE_DEVELOPER_DIR at the one you have. Command Line Tools have no actool." >&2
+      exit 1
+    }
+
+    # xcrun refuses every Xcode tool until the licence is accepted, and says
+    # so on stderr; pass that through with the exact fix. The full xcodebuild
+    # path is spelled out because `sudo` drops DEVELOPER_DIR, and a bare
+    # `sudo xcodebuild` would act on whatever xcode-select points at.
+    if ! probe="$(xcrun --find actool 2>&1)"; then
+      echo "actool is not usable from $DEVELOPER_DIR:" >&2
+      echo "  $probe" >&2
+      if [[ "$probe" == *licen* ]]; then
+        echo "fix: sudo \"$XCODEBUILD\" -license accept" >&2
+      fi
+      exit 1
+    fi
+
+    # actool before 26 does not know the .icon format (Tauri refuses < 26 for
+    # the same reason). Unparseable is not fatal: actool itself will reject the
+    # input if it is too old, and loudly.
+    version="$(xcrun actool --version 2>/dev/null \
+                 | sed -n '/short-bundle-version/{n;s:.*<string>\([0-9][0-9]*\).*:\1:p;}')"
+    if [[ -n "$version" && "$version" -lt 26 ]]; then
+      echo "actool $version is too old for a .icon; Xcode 26+ is required" >&2
+      exit 1
+    fi
+
+    want="$(plutil -extract CFBundleIconName raw -o - src-tauri/Info.plist 2>/dev/null || true)"
+    [[ "$want" == "$NAME" ]] || {
+      echo "src-tauri/Info.plist has CFBundleIconName '${want:-<missing>}', but the icon is $NAME.icon" >&2
+      echo "they must match or macOS never finds the icon in Assets.car" >&2
+      exit 1
+    }
+
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    echo "==> actool $(xcrun --find actool) ($NAME.icon, macOS 26.0)"
+    if ! xcrun actool "$ICON" --compile "$tmp" \
+         --output-format human-readable-text --notices --warnings --errors \
+         --output-partial-info-plist "$tmp/partial.plist" \
+         --app-icon "$NAME" --include-all-app-icons \
+         --enable-on-demand-resources NO \
+         --development-region en \
+         --target-device mac \
+         --minimum-deployment-target 26.0 \
+         --platform macosx > "$tmp/actool.log" 2>&1; then
+      cat "$tmp/actool.log" >&2
+      echo "actool failed. On a freshly installed Xcode it usually wants its first-launch" >&2
+      echo "packages: sudo \"$XCODEBUILD\" -runFirstLaunch" >&2
+      exit 1
+    fi
+    # Notices and warnings are printed even on success: an Icon Composer file
+    # can compile with a layer quietly dropped, and this is the only place
+    # that would say so.
+    cat "$tmp/actool.log"
+
+    [[ -s "$tmp/Assets.car" ]] || { echo "actool exited 0 but wrote no Assets.car" >&2; exit 1; }
+    got="$(plutil -extract CFBundleIconName raw -o - "$tmp/partial.plist" 2>/dev/null || true)"
+    [[ "$got" == "$NAME" ]] || {
+      echo "actool's partial Info.plist names the icon '${got:-<missing>}', expected $NAME" >&2
+      exit 1
+    }
+    "{{just_executable()}}" _car-has-icon "$tmp/Assets.car" "$NAME"
+
+    cp "$tmp/Assets.car" "$OUT"
+    echo "==> wrote $OUT ($(wc -c < "$OUT" | tr -d ' ') bytes); commit it"
+
+# Does this Assets.car hold an app icon with this name? Shared by `icon-car`
+# (on actool's output) and `sign` (on the bundle's copy), so the two cannot
+# drift apart.
+#
+# assetutil ships with macOS itself, not with Xcode, so this runs on a Command
+# Line Tools machine. Its output is a pretty-printed JSON array, one object per
+# asset; the app icon is the object whose AssetType is "Icon Image". awk rather
+# than jq or python for the same reason `sign` uses plutil: nothing to install.
+# A colour or layer asset can share the icon's name, which is why the type is
+# matched too, not the name alone. Any parse miss comes out as "not found", so
+# a change in assetutil's format goes red rather than passing.
+[private]
+_car-has-icon CAR NAME:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ -s "{{CAR}}" ]] || { echo "no Assets.car at {{CAR}}" >&2; exit 1; }
+    if ! assetutil --info "{{CAR}}" | awk -v n="{{NAME}}" '
+           /^  \{/ { t = 0; name = "" }
+           /^    "AssetType" : "Icon Image"/ { t = 1 }
+           /^    "Name" : "/ { name = $0; sub(/^    "Name" : "/, "", name); sub(/",?$/, "", name) }
+           /^  \}/ { if (t && name == n) found = 1 }
+           END { exit !found }'; then
+      echo "{{CAR}} has no app icon named '{{NAME}}' (assetutil --info)" >&2
+      exit 1
+    fi
 
 # --- signing ---------------------------------------------------------------
 
@@ -248,6 +391,27 @@ sign:
       }
     done < <(plutil -extract bundle.externalBin json -o - src-tauri/tauri.conf.json 2>/dev/null \
                | tr -d '[]"' | tr ',' '\n' | sed -e 's:.*/::' -e '/^$/d')
+
+    # Same failure shape for the Icon Composer icon (TUR-85). A missing
+    # Assets.car, or a CFBundleIconName that names nothing inside it, is not an
+    # error to macOS: it falls back to the legacy icon.icns, the app still
+    # launches with an icon, and sign + `--verify --deep` are both green. So it
+    # is checked here, before the seal, and only when tauri.conf.json actually
+    # declares a .car in bundle.icon — the same "declared means required" rule
+    # as externalBin above. Tauri always names the copy Contents/Resources/
+    # Assets.car, whatever the source file is called.
+    # Captured, not piped into `grep -q`: under pipefail, grep exiting early
+    # can SIGPIPE plutil, fail the pipeline, and skip this check with no output.
+    declared_icons="$(plutil -extract bundle.icon json -o - src-tauri/tauri.conf.json 2>/dev/null || true)"
+    if [[ "$declared_icons" == *'.car"'* ]]; then
+      icon_name="$(plutil -extract CFBundleIconName raw -o - "$APP/Contents/Info.plist" 2>/dev/null || true)"
+      [[ -n "$icon_name" ]] || {
+        echo "bundle.icon declares an Assets.car but $APP/Contents/Info.plist has no CFBundleIconName" >&2
+        exit 1
+      }
+      "{{just_executable()}}" _car-has-icon "$APP/Contents/Resources/Assets.car" "$icon_name"
+      echo "==> app icon: Assets.car holds '$icon_name' (CFBundleIconName)"
+    fi
 
     # Sidecars and helpers, inside-out, so the outer seal covers final bytes.
     # Counted and printed: "0 nested" must be a statement, not a silence.
