@@ -315,7 +315,7 @@ impl Recorder {
             sys: Some(sys_tee),
         };
 
-        match RecordingSession::start_with_tees(meeting_dir.join("audio"), mic, sys, tees) {
+        match RecordingSession::start_with_tees(meeting_format::layout::audio_dir(&meeting_dir), mic, sys, tees) {
             Ok(session) => {
                 // Mic is `You`, system audio is `Others` (L5). A system track
                 // that never came up gets no session, rather than a sidecar
@@ -326,7 +326,7 @@ impl Recorder {
                 }
                 let transcription = app.state::<LiveTranscript>().start(
                     Arc::new(app.clone()),
-                    meeting_dir.join("transcript.md"),
+                    meeting_format::layout::transcript_path(&meeting_dir),
                     tracks,
                     Box::new(live_transcript::open_configured_engine),
                 );
@@ -730,8 +730,11 @@ fn create_meeting_folder(
             Err(error) => return Err(error.into()),
         }
     };
-    std::fs::create_dir_all(dir.join("audio"))?;
-    for file in ["transcript.md", "notes.md"] {
+    std::fs::create_dir_all(meeting_format::layout::audio_dir(&dir))?;
+    for file in [
+        meeting_format::layout::TRANSCRIPT_FILE,
+        meeting_format::layout::NOTES_FILE,
+    ] {
         let path = dir.join(file);
         if !path.exists() {
             std::fs::write(&path, "")?;

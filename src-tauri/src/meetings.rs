@@ -65,7 +65,7 @@ pub fn root() -> Result<PathBuf, UiError> {
         return Ok(configured);
     }
     dirs::home_dir()
-        .map(|home| home.join("Meetings"))
+        .map(|home| meeting_format::layout::default_root(&home))
         .ok_or_else(|| {
             UiError::app(
                 "no-home-dir",
