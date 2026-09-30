@@ -10,8 +10,7 @@
  */
 
 import type { NavigateFunction } from "react-router";
-
-export const PERMISSION_ROUTE = "/onboarding/permission";
+import { PERMISSION_ROUTE } from "./routes";
 
 type RevisitState = { revisit: true };
 

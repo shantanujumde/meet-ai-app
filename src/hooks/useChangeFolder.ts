@@ -8,22 +8,23 @@
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useState } from "react";
 import { changeMeetingsFolder, hasBackend } from "@/ipc/client";
+import { NO_BACKEND } from "@/ipc/errors";
 import { toUiError, type UiError } from "@/ipc/types";
+import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
 import { useAppStore } from "@/state/app";
-
-const NO_BACKEND_MESSAGE =
-  "This is the meet-ai window running without its Mac app behind it, so it cannot open a folder picker.";
 
 export function useChangeFolder() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<UiError | null>(null);
-  const root = useAppStore((state) => state.meetings?.root) ?? "~/Meetings";
+  const root = useAppStore((state) => state.meetings?.root) ?? DEFAULT_ROOT_LABEL;
 
   const pick = useCallback(async () => {
     setError(null);
 
+    // The same `app/no-backend` error every other command rejects with, so the
+    // screen shows the agreed copy for it rather than the generic fallback.
     if (!hasBackend()) {
-      setError(toUiError(new Error(NO_BACKEND_MESSAGE)));
+      setError(NO_BACKEND);
       return;
     }
 

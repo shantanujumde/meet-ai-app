@@ -68,6 +68,9 @@ tracing-subscriber.workspace = true
 audio.workspace = true
 calendar.workspace = true
 detect.workspace = true
+# The meeting folder layout (`audio/`, `segments.json`, `.app/`): named once
+# there, for this crate and `audio`/`stt`/`store` alike.
+meeting-format.workspace = true
 # The model download screen calls `modelfetch::ensure` directly. This is the
 # only place in the app that can reach the network, which is what keeps the
 # offline claim (L9–L11) structural rather than merely intended — `stt` has no

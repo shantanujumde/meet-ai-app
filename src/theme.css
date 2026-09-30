@@ -1,0 +1,102 @@
+/* -----------------------------------------------------------------------------
+   The design system, as Tailwind utilities.
+
+   Every value points at a token in tokens.css rather than copying it, so dark
+   mode, Increase Contrast and the reduced-transparency fallbacks — all of
+   which work by redefining those variables on :root — reach the utilities for
+   free.
+
+   Imported by index.css with `theme(reference inline)`. `inline` makes a
+   utility write the token itself (`rounded-card` is
+   `border-radius: var(--radius-card)`), and `reference` stops Tailwind emitting
+   its own copy of each variable. Both matter because several names are the
+   same as the tokens' (`--radius-*`, `--text-<size>`, `--shadow-*`): emitted,
+   `--radius-card: var(--radius-card)` would be a cycle. The options live on
+   the import rather than on `@theme` because Biome's CSS parser accepts only
+   one `@theme` option.
+
+   Utility names follow the tokens:
+     * colour   — `text-fg-secondary`, `bg-glass-raised`, `border-separator`,
+                  `text-warning`. Text colours are `fg-*` so that `text-*`
+                  stays free for the type scale.
+     * spacing  — `p-5`, `gap-4` are `--space-5`, `--space-4`: the 4pt grid,
+                  not Tailwind's 0.25rem steps. Only 1–10 exist; reach for a
+                  token-named arbitrary value before anything past that.
+     * radius   — `rounded-card`, `rounded-capsule`, …
+     * type     — `text-body`, `text-caption1`, `leading-prose`, `font-ui`.
+   -------------------------------------------------------------------------- */
+@theme {
+  --color-fg-primary: var(--text-primary);
+  --color-fg-secondary: var(--text-secondary);
+  --color-fg-tertiary: var(--text-tertiary);
+  --color-on-accent: var(--text-on-accent);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-glass: var(--accent-glass);
+
+  --color-canvas: var(--surface-canvas);
+  --color-content: var(--surface-content);
+  --color-content-alt: var(--surface-content-alt);
+  --color-glass-regular: var(--surface-glass-regular);
+  --color-glass-clear: var(--surface-glass-clear);
+  --color-glass-raised: var(--surface-glass-raised);
+  --color-glass-sunken: var(--surface-glass-sunken);
+  --color-row-hover: var(--sidebar-row-hover);
+
+  --color-rim: var(--rim-border);
+  --color-separator: var(--separator);
+  --color-separator-strong: var(--separator-strong);
+
+  --color-recording: var(--status-recording);
+  --color-success: var(--status-success);
+  --color-warning: var(--status-warning);
+  --color-danger: var(--status-danger);
+
+  --color-speaker-1: var(--speaker-1);
+  --color-speaker-2: var(--speaker-2);
+  --color-speaker-3: var(--speaker-3);
+  --color-speaker-4: var(--speaker-4);
+
+  --spacing-1: var(--space-1);
+  --spacing-2: var(--space-2);
+  --spacing-3: var(--space-3);
+  --spacing-4: var(--space-4);
+  --spacing-5: var(--space-5);
+  --spacing-6: var(--space-6);
+  --spacing-7: var(--space-7);
+  --spacing-8: var(--space-8);
+  --spacing-9: var(--space-9);
+  --spacing-10: var(--space-10);
+
+  --radius-window: var(--radius-window);
+  --radius-panel: var(--radius-panel);
+  --radius-card: var(--radius-card);
+  --radius-control: var(--radius-control);
+  --radius-chip: var(--radius-chip);
+  --radius-capsule: var(--radius-capsule);
+
+  --font-ui: var(--font-ui);
+  --font-mono: var(--font-mono);
+
+  --text-caption2: var(--text-caption2);
+  --text-caption1: var(--text-caption1);
+  --text-footnote: var(--text-footnote);
+  --text-body: var(--text-body);
+  --text-callout: var(--text-callout);
+  --text-headline: var(--text-headline);
+  --text-title3: var(--text-title3);
+  --text-title2: var(--text-title2);
+  --text-title1: var(--text-title1);
+
+  --leading-tight: var(--leading-tight);
+  --leading-normal: var(--leading-normal);
+  --leading-prose: var(--leading-prose);
+
+  --shadow-raised: var(--shadow-raised);
+  --shadow-floating: var(--shadow-floating);
+  --shadow-sheet: var(--shadow-sheet);
+
+  --ease-out: var(--ease-out);
+  --ease-in-out: var(--ease-in-out);
+}

@@ -177,13 +177,14 @@ not written yet.
 
 - **Read docs.rs for the exact pinned version** before writing against `cpal`
   0.18, `rubato` 5.0, `ringbuf` 0.5, `rusqlite` 0.40, `keyring` 4.2, `vite` 8,
-  `react-router` 8, `tailwindcss` 4, `vitest` 4, `lucide-react` 1, `typescript`
+  `react-router` 8, `tailwindcss` 4, `vitest` 4, `tailwind-merge` 3, `typescript`
   7. Model memory is a liability for all of these — it produces a
   plausible-looking API that silently does not exist.
 - **`objc2` 0.6.4 alongside `objc2-*` 0.3.2 is correct.** Framework crates
   version independently. Never "align" them.
 - **Tailwind v4 has no `tailwind.config.js`.** Config is CSS-first, in
-  `src/index.css`. There is deliberately no such file in this repo.
+  `src/index.css`, with the design-token theme in `src/theme.css`. There is
+  deliberately no such file in this repo.
 - **`Cargo.lock` and `pnpm-lock.yaml` are committed and they matter.** See the
   Tauri note below.
 - **Bundle id `pro.saleschat.meetai` is frozen.** macOS TCC keys audio
