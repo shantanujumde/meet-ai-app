@@ -11,13 +11,46 @@ Developer ID, and are not notarized.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-30
+
+The Record button now records for real, and the permission check in
+onboarding measures real access instead of always saying "not checked".
+
 ### Added
 
+- Recording from the app. The Record button (and ⌘⇧R) opens the microphone
+  and the system-audio tap and writes `mic.wav`, `system.wav` and
+  `segments.json` into the meeting folder; stop closes both cleanly. The
+  capture loop moved out of the `meet-rec` binary into
+  `audio::session::RecordingSession`, which `meet-rec` now also uses.
+  Starting and stopping run off the UI thread, and a double-tapped shortcut
+  is ignored rather than opening a second tap.
+- Start refuses with a clear reason when permission is denied, and removes
+  the empty meeting folder it would otherwise leave. A tap that fails to
+  open is reported as an error instead of sitting in "Recording" with
+  nothing written.
+- The onboarding permission check is real. System audio is checked by
+  playing the permission chime and hearing it back through the tap; the mic
+  is checked with `AVCaptureDevice.authorizationStatus` first, so a stored
+  "Denied" is caught even though the mic still opens and returns audio.
 - A "Change…" button next to the meetings folder, in Settings and in the
   onboarding folder step. Picking a new folder moves every existing meeting
   into it (merging rather than overwriting if the folder already has
   something in it); nothing is left behind at the old location. Refused
   while a recording is in progress.
+- `RELEASING.md`: the release steps, signing-keychain unlock, and recovery
+  for the "Keychain Not Found" dialogs.
+
+### Fixed
+
+- The window can be dragged by its titlebar again. CSS
+  `-webkit-app-region: drag` does nothing in Tauri's macOS webview, so the
+  titlebar now uses `data-tauri-drag-region`.
+- A user who had finished onboarding could be left on a stale setup page
+  when the window was refocused. They are now sent back to the app.
+- With the transcription engine set to Auto, the message now says why
+  Apple's engine could not be used (sidecar missing, OS too old, on-device
+  model not installed) instead of only "unavailable".
 
 ## [0.2.0] — 2026-09-28
 
@@ -168,6 +201,7 @@ Calendar integration, Claude Code analysis, ticket generation, the MCP server,
 notarization, and Windows support. See SPEC.md §7 for the phase order and §8
 for the seams each of those lands on.
 
-[unreleased]: https://github.com/shantanujumde/meet-ai-app/compare/v0.2.0...HEAD
+[unreleased]: https://github.com/shantanujumde/meet-ai-app/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/shantanujumde/meet-ai-app/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/shantanujumde/meet-ai-app/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/shantanujumde/meet-ai-app/releases/tag/v0.1.0
