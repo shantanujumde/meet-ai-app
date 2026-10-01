@@ -139,8 +139,8 @@ mod tests {
 
     #[test]
     fn empty_text_never_reaches_the_file() {
-        let dir = std::env::temp_dir().join(format!("meet-ai-sink-{}", std::process::id()));
-        let path = dir.join("transcript.md");
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("transcript.md");
         let _ = std::fs::remove_file(&path);
 
         let mut sink = MarkdownSink::create(&path).unwrap();
@@ -150,13 +150,12 @@ mod tests {
 
         assert_eq!(sink.lines_written(), 0);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn lines_are_appended_in_the_spec_format() {
-        let dir = std::env::temp_dir().join(format!("meet-ai-sink-fmt-{}", std::process::id()));
-        let path = dir.join("transcript.md");
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("transcript.md");
         let _ = std::fs::remove_file(&path);
 
         let mut sink = MarkdownSink::create(&path).unwrap();
@@ -176,6 +175,5 @@ mod tests {
             "[00:00:04] You: Sessions are the blocker.\n\
              [00:00:11] Others: Right, let's ticket it.\n"
         );
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -217,14 +217,6 @@ fn sync_dir(_dir: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
 
-    fn scratch(name: &str) -> std::path::PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("meeting-format-{name}-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     fn names(dir: &Path) -> Vec<String> {
         let mut names: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
@@ -236,24 +228,24 @@ mod tests {
 
     #[test]
     fn a_rewrite_replaces_the_file_and_leaves_no_temp_file() {
-        let dir = scratch("rewrite");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let path = dir.join(layout::SEGMENTS_FILE);
         write_atomic(&path, b"first").unwrap();
         write_atomic(&path, b"second").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"second");
         assert_eq!(names(&dir), [layout::SEGMENTS_FILE]);
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn a_failed_rename_cleans_up_its_temp_file() {
         // A non-empty folder where the file should be: the temp file writes
         // fine and the rename over it fails.
-        let dir = scratch("failed");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         std::fs::create_dir_all(dir.join(layout::NOTES_FILE).join("child")).unwrap();
         assert!(write_atomic(&dir.join(layout::NOTES_FILE), b"draft").is_err());
         assert_eq!(names(&dir), [layout::NOTES_FILE]);
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -264,7 +256,8 @@ mod tests {
         // rename publishes the mix.
         const THREADS: usize = 8;
         const ROUNDS: usize = 25;
-        let dir = scratch("concurrent");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let path = dir.join(layout::NOTES_FILE);
         // Large enough that a write is not one syscall's worth of bytes.
         let payloads: Vec<Vec<u8>> = (0..THREADS)
@@ -289,12 +282,12 @@ mod tests {
             on_disk.len()
         );
         assert_eq!(names(&dir), [layout::NOTES_FILE], "temp files left behind");
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn a_stale_temp_file_is_stepped_past_not_written_through() {
-        let dir = scratch("stale");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let path = dir.join(layout::SEGMENTS_FILE);
         // A leftover at the very next name this process would pick.
         let next = TEMP_COUNTER.load(Ordering::Relaxed);
@@ -309,7 +302,6 @@ mod tests {
         // Parallel tests may have taken `next` first; either way the stale file
         // was never written through or renamed into place.
         assert_eq!(std::fs::read(&stale).unwrap(), b"leftover");
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
