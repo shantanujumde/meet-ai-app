@@ -18,6 +18,7 @@ mod meetings;
 mod onboarding;
 mod permission;
 mod recording;
+mod search;
 mod tickets;
 mod watch;
 // The menu bar is a desktop surface; the mobile targets have nothing to put an
@@ -80,6 +81,7 @@ pub fn run() {
         .manage(engine::Downloads::default())
         .manage(folder_move::FolderGate::default())
         .manage(watch::MeetingsWatch::default())
+        .manage(search::SearchIndex::default())
         .setup(|_app| {
             // TUR-97: before the record shortcut exists, so nothing can be
             // mid-recording while this rewrites a header. Fast — two 44-byte
@@ -96,6 +98,11 @@ pub fn run() {
             }
             // TUR-100: notice edits made to the meetings folder outside the app.
             watch::state(_app.handle()).restart(_app.handle());
+            // TUR-101: open the search index now, rebuilding it if it is missing.
+            {
+                let handle = _app.handle().clone();
+                std::thread::spawn(move || search::state(&handle).warm());
+            }
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 register_record_shortcut(_app.handle());
@@ -125,6 +132,7 @@ pub fn run() {
             commands::live_transcript,
             commands::list_tickets,
             commands::create_ticket,
+            search::search,
         ])
         .build(tauri::generate_context!())
         .expect("meet-ai failed to start")
