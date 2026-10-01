@@ -22,7 +22,7 @@ const FILE: &str = "onboarding.json";
 /// One nullable timestamp rather than a boolean plus a date: two fields can
 /// disagree, and "completed but with no date" is a state nobody wants to have
 /// to reason about. The frontend reads `completedAt !== null`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, specta::Type, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
     /// When the user finished onboarding, as an RFC 3339 string. `None` means

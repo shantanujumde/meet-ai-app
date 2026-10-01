@@ -87,7 +87,7 @@ const STALE_GUESS: Duration = Duration::from_secs(6);
 const FEED_POLL: Duration = Duration::from_millis(100);
 
 /// Where live transcription is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
     /// Not transcribing: no meeting yet, or the engine is still loading.
@@ -101,7 +101,7 @@ pub enum State {
 }
 
 /// What [`STATUS_EVENT`] carries.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 pub struct Status {
     pub state: State,
     /// `apple-speech` or `whisper`, once one has been opened.
@@ -122,7 +122,7 @@ impl Status {
 
 /// What the `live_transcript` command returns: enough for a window opened
 /// mid-meeting to draw exactly what an always-open one shows.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct Snapshot {
     pub status: Status,
     /// Every settled line of the current meeting, in arrival order.

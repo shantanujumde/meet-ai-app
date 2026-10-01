@@ -71,7 +71,7 @@ const TICKER_THREAD_NAME: &str = "meet-ai-recording-ticker";
 /// start, the SPEC §8.1 permission measurement ahead of it) and flushing the
 /// last WAV header both take long enough to see, and a shortcut pressed twice
 /// in that window must be ignored rather than queued.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum Phase {
     Idle,
@@ -81,7 +81,7 @@ pub enum Phase {
 }
 
 /// The recorder's state as the webview sees it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub phase: Phase,
@@ -89,6 +89,7 @@ pub struct Status {
     pub meeting_id: Option<String>,
     /// Unix epoch milliseconds the recording started, so the UI can run its own
     /// timer instead of being fed a tick per second over IPC.
+    #[specta(type = Option<specta_typescript::Number>)]
     pub started_at_ms: Option<i64>,
     /// Why the last recording ended badly, or the last start was refused: it
     /// stopped on its own because a tick failed (TUR-97), it did not close

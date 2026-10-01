@@ -14,7 +14,7 @@
 use serde::Serialize;
 
 /// An error as the webview sees it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UiError {
     /// Which error enum this came from: `stt`, `model`, or `app`.

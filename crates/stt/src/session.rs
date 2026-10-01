@@ -102,11 +102,14 @@ impl SeqCounter {
 /// show sub-second placement while the `[HH:MM:SS]` line format cannot, and
 /// truncating early would throw the precision away before anyone could use it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct LiveLine {
     /// Meeting-global, monotonic. Stable React key.
+    #[cfg_attr(feature = "specta", specta(type = u32))]
     pub seq: u64,
     pub speaker: Speaker,
     /// Seconds from the start of the recording.
+    #[cfg_attr(feature = "specta", specta(type = specta_typescript::Number))]
     pub start_sec: f64,
     /// Already whitespace-collapsed and known non-empty.
     pub text: String,

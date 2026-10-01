@@ -8,6 +8,7 @@
 // `tracing`; only the plugin's own level filters need `log` types.
 use tauri_plugin_log::log;
 
+mod bindings;
 mod commands;
 mod config;
 mod engine;
@@ -110,30 +111,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::list_meetings,
-            commands::read_meeting,
-            commands::save_notes,
-            commands::change_meetings_folder,
-            commands::reveal_meeting,
-            commands::permission_status,
-            commands::permission_quick,
-            commands::open_privacy_settings,
-            commands::onboarding_state,
-            commands::complete_onboarding,
-            commands::reset_onboarding,
-            commands::engine_environment,
-            commands::engine_selection,
-            commands::model_catalogue,
-            commands::download_model,
-            commands::recording_status,
-            commands::toggle_recording,
-            commands::stop_recording,
-            commands::live_transcript,
-            commands::list_tickets,
-            commands::create_ticket,
-            search::search,
-        ])
+        .invoke_handler(bindings::builder().invoke_handler())
         .build(tauri::generate_context!())
         .expect("meet-ai failed to start")
         .run(|app, event| {

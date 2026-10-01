@@ -57,6 +57,7 @@ async fn on_blocking_pool<T: Send + 'static>(
 /// never labelled interrupted — mid-recording its files look exactly like a
 /// killed one's (TUR-97).
 #[tauri::command]
+#[specta::specta]
 pub async fn list_meetings(app: AppHandle) -> Result<MeetingList, UiError> {
     on_blocking_pool(move || {
         let status = app.state::<Recorder>().status();
@@ -66,6 +67,7 @@ pub async fn list_meetings(app: AppHandle) -> Result<MeetingList, UiError> {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn read_meeting(app: AppHandle, id: String) -> Result<MeetingDetail, UiError> {
     on_blocking_pool(move || {
         let status = app.state::<Recorder>().status();
@@ -77,6 +79,7 @@ pub async fn read_meeting(app: AppHandle, id: String) -> Result<MeetingDetail, U
 /// Through the [`FolderGate`]: a note saved under the old root while the
 /// folder is moving would be deleted with it.
 #[tauri::command]
+#[specta::specta]
 pub async fn save_notes(app: AppHandle, id: String, body: String) -> Result<(), UiError> {
     on_blocking_pool(move || {
         app.state::<FolderGate>()
@@ -107,6 +110,7 @@ pub async fn save_notes(app: AppHandle, id: String, body: String) -> Result<(), 
 /// [`folder_move`]). The phase check comes after the guard is taken: from then
 /// on nothing can leave `Idle`, so the answer cannot go stale mid-move.
 #[tauri::command]
+#[specta::specta]
 pub async fn change_meetings_folder(
     app: AppHandle,
     new_root: String,
@@ -136,6 +140,7 @@ pub async fn change_meetings_folder(
 /// question rather than a debugging affordance. Finding the folder reads the
 /// meeting from disk, so it goes to the blocking pool with the rest.
 #[tauri::command]
+#[specta::specta]
 pub async fn reveal_meeting(app: AppHandle, id: String) -> Result<(), UiError> {
     on_blocking_pool(move || {
         // Only the path is used, so which meeting is live does not matter here.
@@ -158,6 +163,7 @@ pub async fn reveal_meeting(app: AppHandle, id: String) -> Result<(), UiError> {
 /// logged, because otherwise a broken measurement looks exactly like a working
 /// one.
 #[tauri::command]
+#[specta::specta]
 pub async fn permission_status() -> permission::Status {
     tauri::async_runtime::spawn_blocking(permission::measure)
         .await
@@ -169,6 +175,7 @@ pub async fn permission_status() -> permission::Status {
 
 /// The silent launch-time check — no chime (see `permission::quick`).
 #[tauri::command]
+#[specta::specta]
 pub fn permission_quick() -> permission::Status {
     permission::quick()
 }
@@ -179,6 +186,7 @@ pub fn permission_quick() -> permission::Status {
 /// which is the behaviour SPEC §8.1 asks for. The on-screen steps name the pane
 /// as well, so the instructions still work even if both fail.
 #[tauri::command]
+#[specta::specta]
 pub fn open_privacy_settings(app: AppHandle, pane: permission::Pane) -> Result<(), UiError> {
     match app.opener().open_url(pane.url(), None::<&str>) {
         Ok(()) => Ok(()),
@@ -201,6 +209,7 @@ pub fn open_privacy_settings(app: AppHandle, pane: permission::Pane) -> Result<(
 /// commands. `onboarding_state` is on the launch path; a slow or sleeping disk
 /// must not hold the first paint.
 #[tauri::command]
+#[specta::specta]
 pub async fn onboarding_state() -> Result<onboarding::State, UiError> {
     on_blocking_pool(onboarding::state).await?
 }
@@ -208,11 +217,13 @@ pub async fn onboarding_state() -> Result<onboarding::State, UiError> {
 /// Writes `.app/onboarding.json` under the root, so through the
 /// [`FolderGate`] like every other writer there.
 #[tauri::command]
+#[specta::specta]
 pub async fn complete_onboarding(app: AppHandle) -> Result<onboarding::State, UiError> {
     on_blocking_pool(move || app.state::<FolderGate>().writing(onboarding::complete)).await?
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn reset_onboarding(app: AppHandle) -> Result<onboarding::State, UiError> {
     on_blocking_pool(move || app.state::<FolderGate>().writing(onboarding::reset)).await?
 }
@@ -227,6 +238,7 @@ pub async fn reset_onboarding(app: AppHandle) -> Result<onboarding::State, UiErr
 /// pointer, a stat per model — so it runs on the blocking pool like every other
 /// command that touches the filesystem, not on the main thread.
 #[tauri::command]
+#[specta::specta]
 pub async fn engine_environment() -> Result<EnvironmentView, UiError> {
     on_blocking_pool(|| {
         let transcription = config::transcription();
@@ -238,6 +250,7 @@ pub async fn engine_environment() -> Result<EnvironmentView, UiError> {
 /// Runs `meet-stt --probe`, median ~160 ms. The settings route renders a
 /// "Checking…" row and calls this after paint.
 #[tauri::command]
+#[specta::specta]
 pub async fn engine_selection() -> Result<SelectionView, UiError> {
     // The probe spawns a process and waits on it, which would otherwise park a
     // tokio worker thread for the whole 160 ms.
@@ -255,6 +268,7 @@ pub async fn engine_selection() -> Result<SelectionView, UiError> {
 /// A stat per model under the meetings root, which means reading the root
 /// pointer first — disk, so the blocking pool.
 #[tauri::command]
+#[specta::specta]
 pub async fn model_catalogue() -> Result<Vec<ModelView>, UiError> {
     on_blocking_pool(engine::catalogue).await
 }
@@ -266,6 +280,7 @@ pub async fn model_catalogue() -> Result<Vec<ModelView>, UiError> {
 /// is taken inside `engine::download`, on the thread that writes the file, so
 /// it lasts exactly as long as the writer does (see `engine::Claim`).
 #[tauri::command]
+#[specta::specta]
 pub async fn download_model(app: AppHandle, id: String) -> Result<String, UiError> {
     engine::download(app, id).await
 }
@@ -273,6 +288,7 @@ pub async fn download_model(app: AppHandle, id: String) -> Result<String, UiErro
 // --- recording ------------------------------------------------------------
 
 #[tauri::command]
+#[specta::specta]
 pub fn recording_status(recorder: State<'_, Recorder>) -> Status {
     recorder.status()
 }
@@ -285,6 +301,7 @@ pub fn recording_status(recorder: State<'_, Recorder>) -> Status {
 /// The toggle goes through the [`FolderGate`], the same as ⌘⇧R and the menu
 /// bar, so the button cannot start a recording while the folder is moving.
 #[tauri::command]
+#[specta::specta]
 pub async fn toggle_recording(app: AppHandle) -> Result<Status, UiError> {
     on_blocking_pool(move || folder_move::toggle_recording(&app)).await?
 }
@@ -292,6 +309,7 @@ pub async fn toggle_recording(app: AppHandle) -> Result<Status, UiError> {
 /// Stopping is never gated: a move only runs while nothing is recording, so
 /// there is nothing for a stop to race.
 #[tauri::command]
+#[specta::specta]
 pub async fn stop_recording(app: AppHandle) -> Result<Status, UiError> {
     on_blocking_pool(move || app.state::<Recorder>().stop(&app)).await?
 }
@@ -303,18 +321,21 @@ pub async fn stop_recording(app: AppHandle) -> Result<Status, UiError> {
 /// In-memory only and cheap; after this, `transcript://update` and
 /// `transcript://status` keep it current, deduplicated by `seq`.
 #[tauri::command]
+#[specta::specta]
 pub fn live_transcript(live: State<'_, LiveTranscript>) -> Snapshot {
     live.snapshot()
 }
 
 /// Every ticket in the meetings folder, newest first (TUR-102).
 #[tauri::command]
+#[specta::specta]
 pub async fn list_tickets() -> Result<Vec<TicketSummary>, UiError> {
     on_blocking_pool(tickets::list).await?
 }
 
 /// Add a ticket by hand. Through the [`FolderGate`], like [`save_notes`].
 #[tauri::command]
+#[specta::specta]
 pub async fn create_ticket(
     app: AppHandle,
     title: String,
