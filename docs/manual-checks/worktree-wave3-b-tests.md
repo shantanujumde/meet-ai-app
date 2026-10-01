@@ -7,6 +7,7 @@ Phase 7 (rest): `tempfile` in crate tests, `test-support` crate, split of long s
 1. `cargo test -p audio --ignored` and `cargo test -p stt --ignored` on a Mac with permissions.
    Expect: pass as before; the closed-loop tests now use `tempfile::TempDir` for their output folders.
    Why skipped: ignored tests need real devices, permissions or a downloaded model. They compile and are listed as ignored in the normal run.
+   **Run 2026-10-01:** `audio` passes on the built-in speakers and mic (details in `worktree-wave1-c-crates.md` #3); `stt` has no ignored tests. The command needs `--` before `--ignored`.
 
 ## Follow-up after Wave 3 Phase 3 (src-tauri is split)
 
