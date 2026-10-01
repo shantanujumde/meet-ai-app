@@ -23,6 +23,7 @@ running app behaves as before. None of them was run headless.
 3. **Shortcut refusal.** Press ⌘⇧R while a folder move is running. Expect: the
    "did not start recording" notification (now in `notify.rs`). Skipped: needs
    the running app and notification permission.
+   **Passed 2026-10-01:** ⌘⇧R 0.25 s into a move was refused (log: "meet-ai is moving your meetings folder. Try again when it finishes.") and the window showed the same message as a banner. The banner stays after the move ends, until dismissed. Note that ⌘⇧R while the "Move your meetings folder?" confirmation is still open does start a recording.
 4. **Interrupted recording notice.** Kill the capture mid-meeting if you can
    (unplug the input device). Expect: "meet-ai stopped recording" notification.
    Skipped: needs a device.
@@ -53,5 +54,6 @@ running app behaves as before. None of them was run headless.
    live_transcript::e2e -- --ignored --nocapture --test-threads=1`, after
    `just fixtures`). They need a whisper model or the Apple speech model.
    Skipped: model download / sidecar.
+   **Passed 2026-10-01:** 4 of 4. Word error rates: Whisper You 3.2% / Others 0.0%, Apple You 6.5% / Others 0.0%.
 
 Separate follow-up (not part of this task): flip rule R2 to ERROR once a human decides.

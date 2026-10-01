@@ -13,8 +13,9 @@ Everything below needs the real running app, so it was not run here.
 - **Partly run 2026-10-01** on a signed bundle. Meetings list, a meeting,
   onboarding, Settings, model download, and start/stop recording all work,
   and the "config asked for whisper but no model" error showed as a normal
-  `UiError` banner. Still open: a ticket and changing the meetings folder
-  (Flow 4).
+  `UiError` banner. Tickets (list, create, broken file) and changing the
+  meetings folder (confirmation, move, refusal banner) also work, so this is
+  **passed**.
 
 ## Decision taken without an answer from Shann
 
