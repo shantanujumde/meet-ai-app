@@ -589,6 +589,13 @@ Two supporting notes for the implementation:
   ⚠️ Not measured here — §8 only exercised the mic's *granted* path, and this run
   did not touch `kTCCServiceMicrophone` at all. Confirm it before relying on it;
   after §10.1 the null hypothesis for any macOS permission API is that it lies.
+  ✅ **Measured 2026-10-01** on a signed bundle: after
+  `tccutil reset Microphone pro.saleschat.meetai` and "Don't Allow" on the
+  prompt, `authorizationStatus` returned `.denied` and onboarding showed it.
+  After switching meet-ai on in System Settings, Check again
+  read granted. The status API tells the truth for the mic. The same reset
+  printed 7 success lines, so this machine now has 7 registered copies of the
+  bundle ID, up from §11.1's 4.
 
 ⛔ **And never ship without `NSAudioCaptureUsageDescription`.** 10.1's denial
 *is* that bug: the key was missing, so macOS denied in 1 ms, drew no dialog, told
