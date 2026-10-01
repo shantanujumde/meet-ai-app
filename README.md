@@ -80,9 +80,12 @@ has the details.
 4. Open a pull request against `main`. CI runs the same check, and PRs are
    squash-merged.
 
-One rule matters more than the rest: nothing in this app may send meeting
-audio, transcripts, titles or file names over the network. No telemetry, no
-cloud AI calls.
+One rule matters more than the rest: the app itself never sends meeting audio,
+transcripts, titles or file names over the network. No telemetry, no cloud AI
+calls of its own. The one exception is your choice: when a call ends, the app
+hands the transcript (never the audio) to the agent you picked at setup, Claude
+Code or Codex, which sends it to that agent's provider under your own account.
+You can turn this off for any meeting.
 
 Found a bug or have an idea? [Open an issue](https://github.com/shantanujumde/meet-ai-app/issues/new/choose).
 

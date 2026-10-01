@@ -197,7 +197,10 @@ not written yet.
   install, with no migration path.
 - **No AI calls, no API keys, no telemetry, ever.** L9/L10/L11. Nothing in this
   codebase may make an outbound request carrying meeting content, titles, or
-  filenames.
+  filenames. The single exception is `crates/agent` (SPEC A11): it may pass a
+  transcript to the agent CLI the user picked (`claude` or `codex`) as a local
+  child process, and only when the user has notes turned on for that meeting.
+  The CLI does the network call under the user's own login.
 - **Never commit a key, a recording, or a real transcript.**
 
 ## Agent runs and the working tree
