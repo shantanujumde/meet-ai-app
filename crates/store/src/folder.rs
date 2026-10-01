@@ -237,17 +237,16 @@ mod tests {
 
     /// A scratch folder under the OS temp dir, removed on drop. Named per test
     /// so tests running in parallel never share one.
-    struct Scratch(PathBuf);
+    #[allow(dead_code)] // field 1 keeps the directory alive until drop
+    struct Scratch(PathBuf, tempfile::TempDir);
 
     impl Scratch {
         fn new(name: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "meet-ai-store-folder-{name}-{}",
-                std::process::id()
-            ));
-            std::fs::remove_dir_all(&path).ok();
-            std::fs::create_dir_all(&path).unwrap();
-            Self(path)
+            let guard = tempfile::Builder::new()
+                .prefix(&format!("meet-ai-store-folder-{name}-"))
+                .tempdir()
+                .unwrap();
+            Self(guard.path().to_path_buf(), guard)
         }
 
         /// Create an empty file at `rel` (components joined with
@@ -256,12 +255,6 @@ mod tests {
             let path = rel.iter().fold(self.0.clone(), |p, c| p.join(c));
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, "").unwrap();
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            std::fs::remove_dir_all(&self.0).ok();
         }
     }
 

@@ -77,7 +77,6 @@ pub(crate) async fn download_with_retry(
 mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
     use sha2::{Digest, Sha256};
@@ -176,13 +175,6 @@ mod tests {
         }
     }
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("meet-ai-retry-{}-{name}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     #[tokio::test]
     async fn fails_twice_then_succeeds() {
         let data = body();
@@ -194,12 +186,12 @@ mod tests {
                 ranges: true,
             },
         );
-        let dir = temp_dir("twice");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let s = spec(&server.url, &data, &data);
         let path = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap();
         assert_eq!(std::fs::read(path).unwrap(), data);
         assert_eq!(server.seen.lock().unwrap().len(), 3);
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]
@@ -213,13 +205,13 @@ mod tests {
                 ranges: true,
             },
         );
-        let dir = temp_dir("resume");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let s = spec(&server.url, &data, &data);
         let path = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap();
         assert_eq!(std::fs::read(path).unwrap(), data);
         let seen = server.seen.lock().unwrap().clone();
         assert_eq!(seen, vec![None, Some("bytes=5-".to_string())]);
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]
@@ -233,12 +225,12 @@ mod tests {
                 ranges: false,
             },
         );
-        let dir = temp_dir("norange");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let s = spec(&server.url, &data, &data);
         let path = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap();
         assert_eq!(std::fs::read(path).unwrap(), data);
         assert_eq!(server.seen.lock().unwrap().len(), 2);
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]
@@ -252,13 +244,13 @@ mod tests {
                 ranges: true,
             },
         );
-        let dir = temp_dir("giveup");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let s = spec(&server.url, &data, &data);
         let error = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap_err();
         assert!(matches!(error, Error::Download(_)), "got {error:?}");
         assert_eq!(server.seen.lock().unwrap().len(), 4, "1 try + 3 retries");
         assert!(!dir.join("retry.bin").exists());
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]
@@ -272,14 +264,14 @@ mod tests {
                 ranges: true,
             },
         );
-        let dir = temp_dir("checksum");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let s = spec(&server.url, &data, b"some other bytes");
         let error = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap_err();
         assert!(matches!(error, Error::Checksum { .. }), "got {error:?}");
         assert_eq!(server.seen.lock().unwrap().len(), 1);
         assert!(!dir.join("retry.bin").exists());
         assert!(!dir.join("retry.bin.part").exists());
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

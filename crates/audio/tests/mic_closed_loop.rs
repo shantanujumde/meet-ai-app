@@ -63,9 +63,8 @@ fn the_chime_played_through_speakers_is_recovered_from_a_real_mic_recording() {
         .expect("building the output stream");
     output_stream.play().expect("starting chime playback");
 
-    let dir = std::env::temp_dir().join(format!("meet-ai-mic-closed-loop-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let dest = dir.join("mic.wav");
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("mic.wav");
     let _ = std::fs::remove_file(&dest);
 
     let mut mic = MicSource::new();
@@ -123,5 +122,4 @@ fn the_chime_played_through_speakers_is_recovered_from_a_real_mic_recording() {
     );
 
     let _ = std::fs::remove_file(&dest);
-    let _ = std::fs::remove_dir(&dir);
 }

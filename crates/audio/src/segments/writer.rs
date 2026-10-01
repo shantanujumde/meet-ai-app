@@ -133,13 +133,10 @@ mod tests {
     use super::*;
     use crate::segments::{DRIFT_GATE_MS, DriftError, SAMPLE_RATE_HZ, reason};
 
-    fn temp_path(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "meet-ai-segments-writer-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir.join(name)
+    fn temp_path(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(name);
+        (dir, path)
     }
 
     fn open(reason: &str, start_host_ns: u64) -> SegmentOpen {
@@ -166,8 +163,7 @@ mod tests {
             sys_frames: 80_000,
         });
 
-        let path = temp_path("single.json");
-        let _ = std::fs::remove_file(&path);
+        let (_dir, path) = temp_path("single.json");
         writer.write_atomic(&path).unwrap();
 
         let on_disk = std::fs::read_to_string(&path).unwrap();
@@ -183,8 +179,7 @@ mod tests {
     fn write_atomic_overwrites_the_previous_checkpoint_and_leaves_no_temp_file() {
         let mut writer = SegmentsWriter::new(open(reason::START, 0));
         writer.update_frames(10, 10);
-        let path = temp_path("overwrite.json");
-        let _ = std::fs::remove_file(&path);
+        let (_dir, path) = temp_path("overwrite.json");
         writer.write_atomic(&path).unwrap();
         let first = std::fs::read_to_string(&path).unwrap();
 

@@ -45,10 +45,8 @@ fn the_chime_played_through_the_default_output_is_recovered_from_a_real_tap_reco
     let mono = chime::looped_samples(output_rate, total_millis);
     let cursor = Arc::new(AtomicUsize::new(0));
 
-    let dir =
-        std::env::temp_dir().join(format!("meet-ai-system-closed-loop-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let dest = dir.join("system.wav");
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("system.wav");
     let _ = std::fs::remove_file(&dest);
 
     // Start the tap *before* playback so the aggregate device is already
@@ -133,5 +131,4 @@ fn the_chime_played_through_the_default_output_is_recovered_from_a_real_tap_reco
     );
 
     let _ = std::fs::remove_file(&dest);
-    let _ = std::fs::remove_dir(&dir);
 }

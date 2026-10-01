@@ -157,8 +157,8 @@ fn a_silent_meeting_produces_an_empty_transcript_file() {
         return;
     }
 
-    let root = std::env::temp_dir().join(format!("meet-ai-silent-{}", std::process::id()));
-    std::fs::remove_dir_all(&root).ok();
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join("audio")).unwrap();
     std::fs::copy(
         fixtures::path("silence-30s.wav"),
@@ -181,6 +181,4 @@ fn a_silent_meeting_produces_an_empty_transcript_file() {
     );
     let body = std::fs::read_to_string(&outcome.transcript_path).unwrap();
     assert_eq!(body, "", "transcript.md should be empty, found: {body:?}");
-
-    std::fs::remove_dir_all(&root).ok();
 }
