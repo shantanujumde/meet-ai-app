@@ -4,8 +4,10 @@
 //!
 //! L9 and L10 are the whole design: this app makes **no AI calls**. It renders a
 //! self-contained prompt from a user-editable `minijinja` template in
-//! `.app/prompts/*.md`, puts it on the clipboard, and the user's own agent does
-//! the work. Nothing in this crate may grow a network client.
+//! `.app/prompts/*.md`. `crates/agent` passes it to the user's own agent CLI in
+//! the background, or the UI puts it on the clipboard for Start Work and when
+//! no agent is installed (SPEC A11). Nothing in this crate may grow a network
+//! client.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
@@ -18,7 +20,7 @@ pub enum PromptKind {
     /// Start work on a ticket in the user's repo.
     StartWork,
     /// Push a drafted ticket to the user's tracker, using the agent's own
-    /// credentials (L11 — this app stores zero tokens).
+    /// connections (L11 — this app stores zero tokens). The Sync run.
     PushTicket,
 }
 

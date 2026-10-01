@@ -1,6 +1,6 @@
 [package]
 name = "prompts"
-description = "minijinja templates and prompt assembly for the copy-to-clipboard agent flow."
+description = "minijinja templates and prompt assembly for the agent runs and the copy-prompt fallback."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -1,7 +1,8 @@
 //! `meeting.md` — frontmatter plus the four fixed sections (SPEC §3.2).
 //!
-//! Sections are located by heading, never by position: the agent writes this
-//! file, and SPEC §3.2 only promises it will not *rename* the headings. It may
+//! Sections are located by heading, never by position: on the copy-prompt
+//! fallback the agent writes this file, and SPEC §3.2 only promises it will not
+//! *rename* the headings. It may
 //! reorder them, leave one out, or add a heading of its own. All of that must
 //! load, and anything this code does not model must survive a write.
 //!
@@ -213,7 +214,7 @@ impl Meeting {
             .get_str_list("attendees")
             .unwrap_or_default()
     }
-    /// An agent has stamped this file (`analyzed_by` is set).
+    /// The notes have been written (`analyzed_by` is set).
     pub fn is_analyzed(&self) -> bool {
         self.frontmatter.get_str("analyzed_by").is_some()
     }

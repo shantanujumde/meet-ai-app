@@ -95,7 +95,7 @@ Pin these exactly in `Cargo.toml` and commit `Cargo.lock`. 🆕 = new major with
 | Rust toolchain | **1.98.0** (2026-08-18) | `rust-toolchain.toml`, pinned. Tauri MSRV is 1.77.2 |
 | `tauri` | **2.11.5** | |
 | `tauri-build` | **2.6.3** | build-dependency |
-| `tauri-plugin-clipboard-manager` | **2.3.3** | the whole L9/L14 flow |
+| `tauri-plugin-clipboard-manager` | **2.3.3** | L14 Start Work and the L9 copy-prompt fallback (SPEC A11) |
 | `tauri-plugin-notification` | **2.4.0** | |
 | `tauri-plugin-global-shortcut` | **2.3.2** | |
 | `tauri-plugin-dialog` | **2.7.3** | |
@@ -562,14 +562,18 @@ Spec: SPEC.md (locked). Versions: SETUP.md. Evidence: docs/findings.md.
 - OS-specific code ONLY in crates/audio/src/macos/ and crates/calendar/src/eventkit.rs.
 - All paths via `dirs` + `PathBuf::join`. Never `format!("{}/...")`, never a literal `~`.
 - Bundle id `pro.saleschat.meetai` is frozen. Changing it revokes users' audio permission.
-- No AI calls, no API keys, no telemetry in this codebase. Ever.
+- No AI calls, no API keys, no telemetry in this codebase. Ever. Only crates/agent
+  may hand a transcript to the user's chosen agent CLI (claude / codex), as a
+  local child process, when notes are on for that meeting (SPEC A11).
 - markdown is the source of truth; index.db is derived and must be safe to delete.
 - transcript.md: ONE utterance = ONE line. Collapse \n\r\t and whitespace runs to a
   single space. Never write empty text. Append-only, never rewrite a line.
 - Only FINALIZED text is persisted. Volatile/partial results go to the UI event
   channel only and never touch disk. All engines write via one TranscriptSink.
 - The watcher must suppress self-writes (path -> Instant, 750ms) or it will reload
-  notes.md under the user's cursor. Agent writes are NOT suppressed.
+  notes.md under the user's cursor. Agent writes are NOT suppressed (on the
+  background path the app writes meeting.md and tickets itself, so those are
+  self-writes).
 
 ## Commands
 just dev | just rec | just check | just sign

@@ -83,73 +83,75 @@ Items 36 to 73 are the rest of the same use case, pulled out of `SPEC.md` so the
 
 ### Handing work to my agent
 
-29. It should give me a button that copies a full prompt to the clipboard, ready to paste into Claude Code or whatever agent I use.
-30. The prompt should carry everything the agent needs: the transcript, where to write the results, and the exact format to write them in.
-31. In v1 it should contain no AI of its own. No model, no API key, no calls to anyone. Optional built-in AI is a v2 question, sold as a personal or enterprise subscription for people who do not want the copy-paste step. It stays optional, off by default, and the agent-prompt path keeps working with no subscription and no key.
-32. It should notice when the agent writes the summary and the tickets back into the folder, and show them in the UI within a couple of seconds.
-33. It should give me the same one-click prompt for a single ticket, with the transcript excerpt and the repo path already filled in, so the agent can start work.
-34. It should not push tickets to Jira or Linear itself. The prompt tells the agent to do it with the agent's own connection.
-35. The prompt should say exactly what to write back: a summary, the decisions we made, the action items, and the questions we left open. Fixed headings, so the app can find them and I always get the same shape.
+29. When a call ends, it should hand the transcript to the agent I already use (Claude Code or Codex, picked once at setup along with the model) and get my notes and tasks back on its own. No copying, no pasting, no second app to open. The default model is Opus.
+30. The prompt it hands my agent should carry everything the agent needs: the transcript, my typed notes, and the exact shape of the answer.
+31. In v1 it should contain no AI of its own. No model, no API key, and no network calls from the app itself. It runs my agent's own command-line tool on my machine, so the agent uses my login and my plan. Optional built-in AI is a v2 question, sold as a personal or enterprise subscription for people who do not use an agent at all. It stays optional, off by default, and the run-my-agent path keeps working with no subscription and no key.
+32. It should check what the agent sends back before saving anything, then write the summary and the tasks into the meeting folder itself and show them within seconds. If the run fails, it should say why and give me a Retry button.
+33. It should let me turn notes off for one meeting, for private calls, so nothing from that call is sent to my agent.
+34. For a single ticket, it should give me a one-click prompt with the transcript excerpt and the repo path already filled in, copied to the clipboard, so I can start work in my own agent session.
+35. It should not push tickets to Jira or Linear itself. A Sync button on each task, plus Sync all on the meeting, asks my agent to do it with the agent's own connection, and the app saves the issue link it gets back.
+36. If no agent the app can run is installed, it should fall back to copying the same prompt to the clipboard, and pick up the files the agent writes.
+37. The answer should always have the same shape: a summary, the decisions we made, the action items, and the questions we left open. Fixed headings, so the app can find them and I always get the same shape.
 
 ### Knowing when to record
 
-36. It should show me today's meetings straight from the Mac Calendar app, with no login and no setup (L13).
-37. It should let me connect Google or Microsoft, or paste a calendar link, for the case where my Mac calendar is empty.
-38. It should name the meeting itself from the calendar event, so I never type a title.
-39. It should remind me a minute before a meeting starts.
-40. It should also spot Zoom, Meet, Teams or Slack running, and plain audio activity, so ad-hoc calls with no invite still get caught.
-41. It should stay quiet for solo calendar blocks. Two or more people, or it says nothing.
-42. Before a call it should show me a short brief: what we said last time, and the recent commits in the repo this meeting is about.
-43. It should let me start recording myself at any moment from a keyboard shortcut or the menu bar, with no meeting and no calendar entry involved.
+38. It should show me today's meetings straight from the Mac Calendar app, with no login and no setup (L13).
+39. It should let me connect Google or Microsoft, or paste a calendar link, for the case where my Mac calendar is empty.
+40. It should name the meeting itself from the calendar event, so I never type a title.
+41. It should remind me a minute before a meeting starts.
+42. It should also spot Zoom, Meet, Teams or Slack running, and plain audio activity, so ad-hoc calls with no invite still get caught.
+43. It should stay quiet for solo calendar blocks. Two or more people, or it says nothing.
+44. Before a call it should show me a short brief: what we said last time, and the recent commits in the repo this meeting is about.
+45. It should let me start recording myself at any moment from a keyboard shortcut or the menu bar, with no meeting and no calendar entry involved.
 
 ### While the call is running
 
-44. It should be a small quiet window that sits next to Zoom without slowing the machine down.
-45. It should let me collapse the live transcript and see only my notes, then open it again (L18).
-46. It should show plainly that it is recording, and for how long.
-47. It should only write settled text to the transcript file. The live pane may show words that change as I speak; the file must never be rewritten.
-48. It should stop with one click and finish writing every file before it says it is done.
-49. It should warn me when I have no headphones, because then both tracks hear the same voices (L6).
-50. It should keep going if the internet drops mid-call.
+46. It should be a small quiet window that sits next to Zoom without slowing the machine down.
+47. It should let me collapse the live transcript and see only my notes, then open it again (L18).
+48. It should show plainly that it is recording, and for how long.
+49. It should only write settled text to the transcript file. The live pane may show words that change as I speak; the file must never be rewritten.
+50. It should stop with one click and finish writing every file before it says it is done.
+51. It should warn me when I have no headphones, because then both tracks hear the same voices (L6).
+52. It should keep going if the internet drops mid-call.
 
 ### After the call
 
-51. It should open any past meeting and show the transcript, my notes, the summary and the tickets in one place.
-52. It should let me search words across every meeting and jump to that line in the transcript.
-53. It should show tickets with a status I can change: open, in progress, done, dropped. Plus who owns it and a size guess.
-54. It should let me write or edit a ticket by hand, with no agent involved.
-55. It should let me point a meeting at a repo folder, so every prompt it copies already has the right path in it.
-56. If the agent writes the file in the wrong shape, it should flag the meeting as needing attention, not break or lose the file.
-57. It should never overwrite the notes I typed when the agent writes its summary into the same folder.
-58. It should record which agent analyzed the meeting and when, so I can tell a stale summary from a fresh one.
-59. Once the agent has pushed a ticket, it should show me the tracker link on that ticket so I can click straight through.
-60. It should keep the size guess on every ticket from day one, so in a few months I can look back and see how wrong my guesses usually are.
+53. It should open any past meeting and show the transcript, my notes, the summary and the tickets in one place.
+54. It should let me search words across every meeting and jump to that line in the transcript.
+55. It should show tickets with a status I can change: open, in progress, done, dropped. Plus who owns it and a size guess.
+56. It should let me write or edit a ticket by hand, with no agent involved.
+57. It should let me point a meeting at a repo folder, so every prompt it builds already has the right path in it.
+58. If the agent writes the file in the wrong shape, it should flag the meeting as needing attention, not break or lose the file.
+59. It should never overwrite the notes I typed when the summary is written into the same folder.
+60. It should record which agent and model analyzed the meeting and when, so I can tell a stale summary from a fresh one.
+61. Once the agent has pushed a ticket, it should show me the tracker link on that ticket so I can click straight through.
+62. It should keep the size guess on every ticket from day one, so in a few months I can look back and see how wrong my guesses usually are.
 
 ### First run and permissions
 
-61. First run should be three steps and nothing else: give permission, get the speech model if one is needed, pick the meetings folder.
-62. If I say no to permission, the record button should stay visibly switched off, with one line on what that breaks and a button that opens the right System Settings page.
-63. On a new macOS it should use the built-in Apple speech engine with no download at all. On an older one it should download the model once, resume if the download breaks, and check it is not corrupt.
-64. Switching speech engine should be one line in a settings file, not a reinstall.
-65. If my Mac is older than the version it needs, it should say so on first run, not fail silently when I press record.
+63. First run should be four steps and nothing else: give permission, get the speech model if one is needed, pick the meetings folder, pick the agent and model that write my notes. It should tell me in one plain sentence that the transcript goes to that agent's provider under my account.
+64. If I say no to permission, the record button should stay visibly switched off, with one line on what that breaks and a button that opens the right System Settings page.
+65. On a new macOS it should use the built-in Apple speech engine with no download at all. On an older one it should download the model once, resume if the download breaks, and check it is not corrupt.
+66. Switching speech engine should be one line in a settings file, not a reinstall.
+67. If my Mac is older than the version it needs, it should say so on first run, not fail silently when I press record.
 
 ### Staying trustworthy
 
-66. It should send no usage data, ever. No account, no sign-in, no phone-home.
-67. It should hold no tracker tokens and no AI keys. The only secret it can ever hold is a calendar login, in the Keychain, and only if I connect one.
-68. Everything it owns should be plain files under `~/Meetings/`, so I can back it up, open it in Obsidian, or delete it in Finder.
-69. Deleting a meeting folder should delete the meeting. There should be no second copy anywhere.
-70. It should write nothing outside `~/Meetings/`, and the prompts it hands my agent should say the same (L10).
+68. It should send no usage data, ever. No account, no sign-in, no phone-home.
+69. It should hold no tracker tokens and no AI keys. The only secret it can ever hold is a calendar login, in the Keychain, and only if I connect one.
+70. Everything it owns should be plain files under `~/Meetings/`, so I can back it up, open it in Obsidian, or delete it in Finder.
+71. Deleting a meeting folder should delete the meeting. There should be no second copy anywhere.
+72. It should write nothing outside `~/Meetings/`, and the prompts it hands my agent should say the same (L10).
 
 ### Settings and hooks
 
-71. All settings should live in one commented JSON file with a schema, so my editor autocompletes it.
-72. It should let me run my own script at three points: transcript ready, analysis done, meeting ended.
-73. Every number I might want to change — how long audio is kept, which model, which tracker, which repo — should be in that one file, not buried in code.
+73. All settings should live in one commented JSON file with a schema, so my editor autocompletes it.
+74. It should let me run my own script at three points: transcript ready, analysis done, meeting ended.
+75. Every number I might want to change — how long audio is kept, which model, which tracker, which repo — should be in that one file, not buried in code.
 
-Requirement 31 is the bet. Every competitor builds the AI in, then owns the retries, the output checking, the per-provider adapters and the key storage. Doing none of that keeps the app agent-agnostic and deletes most of the codebase.
+Requirement 31 is the bet. Every competitor builds the AI in, then owns the model bills, the provider accounts and the key storage. Running the agent the user already pays for skips all of that. The app still owns a small amount: one thin runner per agent CLI, a schema check on the answer, and a Retry button. That is the price of removing the copy-paste step, and it stays far smaller than a built-in AI.
 
-When optional AI does arrive it goes behind the same folder contract: it writes the same files, in the same headings, into the same meeting folder. The app never grows a second way to store a summary, so a subscriber and a copy-paste user get the same shape and either can switch off the other at any time.
+When optional AI does arrive it goes behind the same folder contract: it writes the same files, in the same headings, into the same meeting folder. The app never grows a second way to store a summary, so a subscriber and an agent user get the same shape and either can switch off the other at any time.
 
 ## What done looks like
 
