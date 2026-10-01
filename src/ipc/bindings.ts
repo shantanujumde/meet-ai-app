@@ -132,6 +132,13 @@ export const commands = {
 	listTickets: () => typedError<meet_ai_lib_tickets_TicketSummary[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("list_tickets")),
 	/**  Add a ticket by hand. Through the [`FolderGate`], like [`save_notes`]. */
 	createTicket: (title: string, body: string) => typedError<meet_ai_lib_tickets_TicketSummary, meet_ai_lib_error_UiError>(__TAURI_INVOKE("create_ticket", { title, body })),
+	/**
+	 *  Search every meeting's transcript, notes, summary and tickets.
+	 * 
+	 *  Runs on the blocking pool: the first call after launch can still be
+	 *  rebuilding the index, and SQLite is disk work.
+	 */
+	search: (query: string) => typedError<store_index_Hit[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("search", { query })),
 };
 
 /* Types */
@@ -151,6 +158,20 @@ export type meet_ai_lib_engine_EnvironmentView = {
 	 *  land.
 	 */
 	modelsDir: string | null,
+};
+
+/**  One search result. */
+export type store_index_Hit = {
+	meetingId: string,
+	title: string,
+	date: string | null,
+	/**
+	 *  The matching text, each matched word wrapped in [`MATCH_START`] and
+	 *  [`MATCH_END`].
+	 */
+	snippet: string,
+	/**  `HH:MM:SS` into the recording; `None` for a title, notes or ticket hit. */
+	timestamp: string | null,
 };
 
 /**

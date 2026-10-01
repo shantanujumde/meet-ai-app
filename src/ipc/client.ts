@@ -132,7 +132,7 @@ export function createTicket(title: string, body: string): Promise<TicketSummary
 
 export async function search(query: string): Promise<SearchHit[]> {
   if (!hasBackend()) return [];
-  return call<SearchHit[]>("search", { query });
+  return call(() => commands.search(query));
 }
 
 export function readMeeting(id: string): Promise<MeetingDetail> {

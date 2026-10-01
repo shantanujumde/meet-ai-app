@@ -98,6 +98,7 @@ pub fn state(app: &AppHandle) -> tauri::State<'_, SearchIndex> {
 /// Runs on the blocking pool: the first call after launch can still be
 /// rebuilding the index, and SQLite is disk work.
 #[tauri::command]
+#[specta::specta]
 pub async fn search(app: AppHandle, query: String) -> Result<Vec<Hit>, UiError> {
     tauri::async_runtime::spawn_blocking(move || state(&app).search(&query))
         .await

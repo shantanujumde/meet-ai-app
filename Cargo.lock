@@ -5081,6 +5081,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "specta",
  "stt",
  "thiserror 2.0.20",
  "tracing",

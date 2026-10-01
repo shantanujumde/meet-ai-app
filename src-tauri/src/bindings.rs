@@ -7,7 +7,7 @@
 
 use tauri_specta::{Builder, collect_commands};
 
-use crate::commands;
+use crate::{commands, search};
 
 pub fn builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
@@ -32,6 +32,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         commands::live_transcript,
         commands::list_tickets,
         commands::create_ticket,
+        search::search,
     ])
 }
 

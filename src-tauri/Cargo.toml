@@ -85,7 +85,7 @@ meeting-format = { workspace = true, features = ["specta"] }
 # exemption the justfile documents.
 modelfetch.workspace = true
 prompts.workspace = true
-store.workspace = true
+store = { workspace = true, features = ["specta"] }
 stt = { workspace = true, features = ["specta"] }
 
 # Desktop-only plugins. A global shortcut, a single-instance guard and an
