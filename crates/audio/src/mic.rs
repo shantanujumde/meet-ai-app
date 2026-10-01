@@ -126,10 +126,14 @@ impl MicSource {
         let mut resampler = Resampler::new(device_rate);
         let chunk_raw_len = resampler.input_chunk_frames() * channels.max(1);
 
-        let mut pending: Vec<f32> = Vec::with_capacity(chunk_raw_len * 2);
+        // Every buffer below is sized once, here, and only cleared and refilled
+        // inside the loop: `pending` holds less than one chunk before each
+        // refill of at most `scratch.len()` samples, so it never regrows.
         let mut scratch = vec![0.0f32; 4096];
-        let mut mono = Vec::with_capacity(resampler.input_chunk_frames());
-        let mut i16_buf: Vec<i16> = Vec::with_capacity(resampler.input_chunk_frames());
+        let mut pending: Vec<f32> = Vec::with_capacity(chunk_raw_len + scratch.len());
+        let mut mono: Vec<f32> = Vec::with_capacity(resampler.input_chunk_frames());
+        let mut resampled: Vec<f32> = Vec::with_capacity(resampler.output_frames_max());
+        let mut i16_buf: Vec<i16> = Vec::with_capacity(resampler.output_frames_max());
 
         loop {
             let popped = consumer.pop_slice(&mut scratch);
@@ -143,14 +147,14 @@ impl MicSource {
             }
 
             while pending.len() >= chunk_raw_len {
-                let raw: Vec<f32> = pending.drain(..chunk_raw_len).collect();
-                downmix_to_mono(&raw, channels.max(1), &mut mono);
-                let out = resampler.process(&mono);
-                if out.is_empty() {
+                downmix_to_mono(&pending[..chunk_raw_len], channels.max(1), &mut mono);
+                pending.drain(..chunk_raw_len);
+                resampler.process_into(&mono, &mut resampled);
+                if resampled.is_empty() {
                     continue;
                 }
                 i16_buf.clear();
-                i16_buf.extend(out.iter().copied().map(f32_to_i16));
+                i16_buf.extend(resampled.iter().copied().map(f32_to_i16));
                 let host_ns = last_cb_host_ns.load(Ordering::Relaxed);
 
                 let mut guard = shared.lock().expect("mic writer mutex poisoned");
