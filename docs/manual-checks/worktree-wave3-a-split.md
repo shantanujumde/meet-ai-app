@@ -25,5 +25,4 @@ running app behaves as before. None of them was run headless.
    `just fixtures`). They need a whisper model or the Apple speech model.
    Skipped: model download / sidecar.
 
-7. **Flip rule R2 to ERROR** (`R2_LEVEL=error` in `scripts/quality-rules.sh`, and the heading in `docs/quality-rules.md`). events.rs now exists and R2 reports no warnings. Skipped: the edit was blocked in this run; one-line change for a human.
-8. **Behaviour note:** meetings recovery now uses `store::folder::meeting_dirs`; one unreadable folder entry now makes recovery log and return 0 instead of skipping just that entry.
+Separate follow-up (not part of this task): flip rule R2 to ERROR once a human decides.

@@ -208,32 +208,58 @@ pub fn scan(root: &Path) -> Result<Vec<MeetingFolder>, Error> {
 }
 
 /// Every meeting folder directly under `root`, unsorted: directories only,
-/// dot-folders skipped. A missing `root` has none.
+/// dot-folders skipped. A missing `root` has none. An entry that cannot be read
+/// or inspected is logged and skipped, never failing the rest.
 pub fn meeting_dirs(root: &Path) -> Result<Vec<PathBuf>, Error> {
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
     };
-    let mut dirs = Vec::new();
-    for entry in entries {
-        let entry = entry?;
+    Ok(keep_dirs(entries, |entry| {
         // `.app` holds config, models, logs and the derived index — it is not
         // a meeting. Skipping every dot-entry also covers `.DS_Store` and
         // whatever else the OS or a sync client leaves behind.
         if entry.file_name().to_string_lossy().starts_with('.') {
-            continue;
+            return Ok(None);
         }
-        if entry.file_type()?.is_dir() {
-            dirs.push(entry.path());
+        Ok(entry.file_type()?.is_dir().then(|| entry.path()))
+    }))
+}
+
+/// Run `inspect` over each entry, keeping the paths it returns. An entry that
+/// failed to read, or that `inspect` could not inspect, is logged and left out.
+fn keep_dirs<T>(
+    entries: impl IntoIterator<Item = std::io::Result<T>>,
+    inspect: impl Fn(&T) -> std::io::Result<Option<PathBuf>>,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    for entry in entries {
+        match entry.and_then(|entry| inspect(&entry)) {
+            Ok(Some(path)) => dirs.push(path),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(%error, "skipping an unreadable entry in the meetings folder");
+            }
         }
     }
-    Ok(dirs)
+    dirs
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_unreadable_entry_does_not_hide_the_other_folders() {
+        let entries = vec![
+            Ok(PathBuf::from("a")),
+            Err(std::io::Error::other("unreadable")),
+            Ok(PathBuf::from("b")),
+        ];
+        let dirs = keep_dirs(entries, |path: &PathBuf| Ok(Some(path.clone())));
+        assert_eq!(dirs, [PathBuf::from("a"), PathBuf::from("b")]);
+    }
 
     /// A scratch folder under the OS temp dir, removed on drop. Named per test
     /// so tests running in parallel never share one.
