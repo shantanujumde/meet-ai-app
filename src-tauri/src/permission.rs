@@ -21,7 +21,7 @@ use audio::permission_check::{self, ChannelResult, ChannelState};
 use serde::{Deserialize, Serialize};
 
 /// Where the user stands with audio permission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum State {
     /// Not measured yet. The honest answer until the positive-control tone
@@ -34,7 +34,7 @@ pub enum State {
 }
 
 /// The permission answer plus enough context for the screen to explain itself.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub state: State,
@@ -238,7 +238,7 @@ fn forced_status() -> Option<Status> {
 /// `Privacy_AudioCapture` and `Privacy_Microphone` are both in that table. The
 /// pane root stays here as the third entry because an unknown anchor lands on
 /// the root anyway, and because this list will be wrong on some future macOS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Pane {
     /// "System Audio Recording Only" — the tap permission.

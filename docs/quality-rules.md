@@ -194,12 +194,15 @@ classes). For a value only known at runtime, such as a measured width, opt out
 on the same line or the line above:
 `{/* quality: allow-style <reason> */}` or `// quality: allow-style <reason>`.
 
-### R7: generated bindings out of date (not active yet)
+### R7: generated bindings out of date
 
-This rule is turned off until a `just bindings` recipe exists (Phase 2). It
-would regenerate `src/ipc/bindings.ts` into a temp copy and compare. It is off
-so the gate never rewrites a file in the working tree. A commented stub in
-`scripts/quality-rules.sh` shows where it goes.
+`src/ipc/bindings.ts` is generated from the Rust command list by
+`just bindings` (a headless test, `export_bindings` in
+`src-tauri/src/bindings.rs`). The rule regenerates it into a temp copy and
+compares. It runs once per gate run, and only when a changed file can change the
+output: command files, the types they send, `Cargo.toml`, or `bindings.ts`
+itself. It never rewrites the working tree. The fix is `just bindings`, then
+commit the file. CI runs the same check (`git diff --exit-code`).
 
 **Why:** `bindings.ts` is the TypeScript view of the Rust commands. If it is
 stale, the frontend calls commands with the wrong shape, and that only shows up

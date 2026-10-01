@@ -14,8 +14,13 @@ name = "meeting_format"
 # must stay free of mac-only code (SPEC §8.2). No `#[cfg(target_os)]` deps, no
 # JSON parser (each reader brings its own), no logging.
 [dependencies]
+# Optional: only the app shell turns it on, to generate TypeScript bindings.
+specta = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 # Test-only: the schema tests parse real `segments.json` shapes.
 serde_json.workspace = true
+
+[features]
+specta = ["dep:specta"]

@@ -100,6 +100,11 @@ sidecar:
     swiftc -O sidecar/meet-stt/main.swift -o target/meet-stt
     cp target/meet-stt "target/meet-stt-$(rustc -vV | sed -n 's/^host: //p')"
 
+# Regenerate src/ipc/bindings.ts from the Rust command list. Headless: it runs a
+# test, never the app. CI runs this and fails if the committed file differs.
+bindings: sidecar
+    cargo test -p meet-ai --lib export_bindings
+
 dev: sidecar
     pnpm tauri dev
 

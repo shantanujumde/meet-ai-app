@@ -64,6 +64,7 @@ CREATE VIRTUAL TABLE transcript_fts USING fts5(
 
 /// One search result.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "camelCase")]
 pub struct Hit {
     pub meeting_id: String,

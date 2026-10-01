@@ -85,6 +85,11 @@ tauri-plugin-opener = "=2.5.5"
 tauri-plugin-single-instance = "=2.4.4"
 tauri-plugin-updater = "=2.11.0"
 
+# --- generated TypeScript bindings (Phase 2) ---
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+specta-typescript = "=0.0.12"
+tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
+
 [profile.release]
 # Audio work is realtime-sensitive; do not let a debug-ish release profile in.
 lto = true

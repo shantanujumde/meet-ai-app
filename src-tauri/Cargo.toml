@@ -41,6 +41,9 @@ tauri = { workspace = true, features = [
   "image-png",
   "macos-private-api",
 ] }
+specta.workspace = true
+specta-typescript.workspace = true
+tauri-specta.workspace = true
 tauri-plugin-clipboard-manager.workspace = true
 tauri-plugin-dialog.workspace = true
 tauri-plugin-fs.workspace = true
@@ -70,7 +73,7 @@ calendar.workspace = true
 detect.workspace = true
 # The meeting folder layout (`audio/`, `segments.json`, `.app/`): named once
 # there, for this crate and `audio`/`stt`/`store` alike.
-meeting-format.workspace = true
+meeting-format = { workspace = true, features = ["specta"] }
 # The model download screen calls `modelfetch::ensure` directly. This is the
 # only place in the app that can reach the network, which is what keeps the
 # offline claim (L9–L11) structural rather than merely intended — `stt` has no
@@ -82,8 +85,8 @@ meeting-format.workspace = true
 # exemption the justfile documents.
 modelfetch.workspace = true
 prompts.workspace = true
-store.workspace = true
-stt.workspace = true
+store = { workspace = true, features = ["specta"] }
+stt = { workspace = true, features = ["specta"] }
 
 # Desktop-only plugins. A global shortcut, a single-instance guard and an
 # updater have no meaning on mobile, and Tauri's own template gates them the

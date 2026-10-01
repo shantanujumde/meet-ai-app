@@ -65,36 +65,14 @@
 //! streaming-shaped version of the hallucination bug.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::sink::TranscriptSink;
 pub use crate::span_assembler::{ReadySpan, SpanAssembler};
 use crate::{Error, Speaker, Utterance, collapse_whitespace};
 
-/// A monotonic counter shared by every session in one meeting.
-///
-/// Meeting-global rather than per-session on purpose: the mic and the system
-/// track run as two sessions but render into one pane, so their keys have to
-/// come out of one sequence or they collide.
-#[derive(Debug, Clone, Default)]
-pub struct SeqCounter(Arc<AtomicU64>);
-
-impl SeqCounter {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Take the next number. Starts at 0 and never repeats within a meeting.
-    pub fn next(&self) -> u64 {
-        self.0.fetch_add(1, Ordering::Relaxed)
-    }
-
-    /// How many numbers have been handed out. Test affordance.
-    pub fn issued(&self) -> u64 {
-        self.0.load(Ordering::Relaxed)
-    }
-}
+mod seq_counter;
+pub use seq_counter::SeqCounter;
 
 /// One line on its way to the live pane.
 ///
@@ -102,11 +80,14 @@ impl SeqCounter {
 /// show sub-second placement while the `[HH:MM:SS]` line format cannot, and
 /// truncating early would throw the precision away before anyone could use it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 pub struct LiveLine {
     /// Meeting-global, monotonic. Stable React key.
+    #[cfg_attr(feature = "specta", specta(type = u32))]
     pub seq: u64,
     pub speaker: Speaker,
     /// Seconds from the start of the recording.
+    #[cfg_attr(feature = "specta", specta(type = specta_typescript::Number))]
     pub start_sec: f64,
     /// Already whitespace-collapsed and known non-empty.
     pub text: String,

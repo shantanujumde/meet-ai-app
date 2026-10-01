@@ -17,7 +17,7 @@ use crate::meetings;
 const CREATE_ATTEMPTS: u32 = 5;
 
 /// One ticket as the webview sees it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TicketSummary {
     pub id: String,

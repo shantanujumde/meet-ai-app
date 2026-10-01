@@ -13,6 +13,9 @@ version.workspace = true
 # reaches the network" (L9/L10/L11) structural rather than a promise, and it is
 # what keeps this crate inside the `just check-windows` seam guard.
 [dependencies]
+# Optional: only the app shell turns it on, to generate TypeScript bindings.
+specta = { workspace = true, optional = true }
+specta-typescript = { workspace = true, optional = true }
 dirs.workspace = true
 earshot.workspace = true
 hound.workspace = true
@@ -52,3 +55,5 @@ default = []
 # Opt-in: runs the accuracy + silence gate against a real downloaded whisper
 # model. Off by default so `just check` never needs 190 MB or a network.
 whisper-model-tests = []
+# Generates TypeScript bindings in the app shell; see src-tauri.
+specta = ["dep:specta", "dep:specta-typescript"]

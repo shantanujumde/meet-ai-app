@@ -84,6 +84,7 @@ impl Channel {
 /// reader that hands parsed lines to the UI serializes that instead (see
 /// `store::transcript::Line`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "lowercase")]
 pub enum Speaker {
     /// The microphone channel — the person using this Mac.
