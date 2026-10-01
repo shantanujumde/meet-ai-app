@@ -18,10 +18,10 @@ Skipped because they need the running app (a window). Everything else was tested
 - 1 ✅ No `tickets/` folder: "No tickets yet" empty state.
 - 2 ✅ Create is dimmed with a blank title and a click on it writes nothing. A filled form writes `tickets/TICK-0001.md` with `status: open` and `meeting: ~` (YAML null), and the ticket shows at the top.
 - 3 ✅ A `TICK-9999.md` with no frontmatter is listed under its file name, and the good ticket still shows.
-- 4 ⏳ Not run: the move took about 2 s for 3.3 GB, too short to also open the form and create a ticket.
+- 4 ✅ Re-run with 150,000 small files so the move took about 58 s. Create during the move was refused with "Your meetings folder is moving. meet-ai is moving your meetings folder. Try again when it finishes.", the typed title stayed in the form, and no `TICK-*.md` was written in either folder. The message shows twice (once as text, once in the code-style box). During the move the sidebar dropped the meeting and showed only the filler folder.
 
 Bugs found:
-- **The root `tickets/` folder shows up as a meeting.** After the first ticket, the sidebar and the meetings page list "tickets · No date · No transcript yet" and the count goes up by one.
+- **Any folder in the meetings root shows up as a meeting**, not only `tickets/` (a `filler/` folder did too). After the first ticket, the sidebar and the meetings page list "tickets · No date · No transcript yet" and the count goes up by one.
 - **Tickets made on this screen are not searchable.** The index reads tickets inside meeting folders (`crates/store/src/index.rs`, `folder.tickets`), but this screen writes to the root `tickets/` folder. A word only in TICK-0001 gives "No matches", even after a full index rebuild.
 
 ## Environment notes

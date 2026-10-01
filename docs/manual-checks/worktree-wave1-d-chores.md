@@ -15,7 +15,7 @@ Mac with the real setup, or network.
 - `just kill-gate --help` ✅ prints the gate's usage.
 - `scripts/signing/make-identity.sh --print` ✅ prints leaf `eafb73d29b2f35ca25c2f9fd193869fd880a7e0d`, the same as the keychain; nothing changed.
 - `AUTO_CLICK=1 scripts/signing/verify-tur10.sh` ✅ ran with nobody at the keyboard. The grant is keyed by bundle ID, it survives a rebuild with no prompt, and an explicit Don't Allow records silence while reporting success (`zero_sample_fraction` 1, `create_tap_osstatus` 0). No new path-keyed TCC rows. Side effects: it rebuilt `spikes/phase0a-tcc/build/meet-ai.app`, now signed with the current leaf (it was on the old `be3fb2c8…`, findings §11.1), and it leaves meet-ai's Microphone and System Audio grants reset.
-- `just check-windows` not run.
+- `just check-windows` ✅ green for audio, calendar, stt, prompts, detect and meeting-format; `audio` gives 8 dead-code warnings on the Windows target (macOS-only helpers).
 
 ## Decisions taken without an answer
 
