@@ -84,6 +84,11 @@ jobs:
       - name: just check
         run: just check
 
+      - name: Generated bindings are up to date
+        run: |
+          just bindings
+          git diff --exit-code src/ipc/bindings.ts
+
       - name: pnpm build
         run: pnpm build
 
