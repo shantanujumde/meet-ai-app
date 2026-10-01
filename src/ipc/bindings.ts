@@ -9,8 +9,8 @@ export const commands = {
 	 *  never labelled interrupted — mid-recording its files look exactly like a
 	 *  killed one's (TUR-97).
 	 */
-	listMeetings: () => typedError<meet_ai_lib_meetings_MeetingList, meet_ai_lib_error_UiError>(__TAURI_INVOKE("list_meetings")),
-	readMeeting: (id: string) => typedError<meet_ai_lib_meetings_MeetingDetail, meet_ai_lib_error_UiError>(__TAURI_INVOKE("read_meeting", { id })),
+	listMeetings: () => typedError<meet_ai_lib_meetings_list_MeetingList, meet_ai_lib_error_UiError>(__TAURI_INVOKE("list_meetings")),
+	readMeeting: (id: string) => typedError<meet_ai_lib_meetings_view_MeetingDetail, meet_ai_lib_error_UiError>(__TAURI_INVOKE("read_meeting", { id })),
 	/**
 	 *  Through the [`FolderGate`]: a note saved under the old root while the
 	 *  folder is moving would be deleted with it.
@@ -33,7 +33,7 @@ export const commands = {
 	 *  [`folder_move`]). The phase check comes after the guard is taken: from then
 	 *  on nothing can leave `Idle`, so the answer cannot go stale mid-move.
 	 */
-	changeMeetingsFolder: (newRoot: string) => typedError<meet_ai_lib_meetings_MeetingList, meet_ai_lib_error_UiError>(__TAURI_INVOKE("change_meetings_folder", { newRoot })),
+	changeMeetingsFolder: (newRoot: string) => typedError<meet_ai_lib_meetings_list_MeetingList, meet_ai_lib_error_UiError>(__TAURI_INVOKE("change_meetings_folder", { newRoot })),
 	/**
 	 *  Open a meeting's folder in Finder.
 	 * 
@@ -52,7 +52,7 @@ export const commands = {
 	 *  logged, because otherwise a broken measurement looks exactly like a working
 	 *  one.
 	 */
-	permissionStatus: () => __TAURI_INVOKE<meet_ai_lib_permission_Status>("permission_status"),
+	measurePermission: () => __TAURI_INVOKE<meet_ai_lib_permission_Status>("measure_permission"),
 	/**  The silent launch-time check — no chime (see `permission::quick`). */
 	permissionQuick: () => __TAURI_INVOKE<meet_ai_lib_permission_Status>("permission_quick"),
 	/**
@@ -110,7 +110,7 @@ export const commands = {
 	 *  Starting or stopping blocks on real wall-clock time — SPEC §8.1's
 	 *  positive-control permission measurement on start, Core Audio warming up or
 	 *  winding down either side — so both run on a blocking thread rather than
-	 *  parking a tokio worker, the same reason `permission_status` does.
+	 *  parking a tokio worker, the same reason `measure_permission` does.
 	 * 
 	 *  The toggle goes through the [`FolderGate`], the same as ⌘⇧R and the menu
 	 *  bar, so the button cannot start a recording while the folder is moving.
@@ -140,6 +140,19 @@ export const commands = {
 	 */
 	search: (query: string) => typedError<store_index_Hit[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("search", { query })),
 };
+
+/* Constants */
+export const MEETINGS_CHANGED_EVENT = "meetings-changed" as const;
+
+export const MODEL_PROGRESS_EVENT = "model://progress" as const;
+
+export const PERMISSION_STATUS_EVENT = "permission://status" as const;
+
+export const RECORDING_STATE_EVENT = "recording://state" as const;
+
+export const TRANSCRIPT_STATUS_EVENT = "transcript://status" as const;
+
+export const TRANSCRIPT_UPDATE_EVENT = "transcript://update" as const;
 
 /* Types */
 /**  What the filesystem says, with no subprocess involved. */
@@ -192,11 +205,11 @@ export type stt_session_LiveLine = {
 };
 
 /**  A finished meeting, opened for review. */
-export type meet_ai_lib_meetings_MeetingDetail = {
-	summary: meet_ai_lib_meetings_MeetingSummary,
+export type meet_ai_lib_meetings_view_MeetingDetail = {
+	summary: meet_ai_lib_meetings_view_MeetingSummary,
 	/**  Absolute path, so "Reveal in Finder" and the error copy can name it. */
 	path: string,
-	lines: meet_ai_lib_meetings_TranscriptLine[],
+	lines: meet_ai_lib_meetings_view_TranscriptLine[],
 	/**  `transcript.md` is missing entirely — a different state from "empty". */
 	transcriptMissing: boolean,
 	/**  Lines that did not match §3.4 and were skipped. Surfaced, not hidden. */
@@ -205,18 +218,18 @@ export type meet_ai_lib_meetings_MeetingDetail = {
 };
 
 /**  The meeting list plus enough context to write honest empty-state copy. */
-export type meet_ai_lib_meetings_MeetingList = {
+export type meet_ai_lib_meetings_list_MeetingList = {
 	root: string,
 	/**
 	 *  The folder does not exist yet. Before the first recording it never does,
 	 *  and that is not an error worth alarming anyone about.
 	 */
 	rootExists: boolean,
-	meetings: meet_ai_lib_meetings_MeetingSummary[],
+	meetings: meet_ai_lib_meetings_view_MeetingSummary[],
 };
 
 /**  One row in the meeting list. */
-export type meet_ai_lib_meetings_MeetingSummary = {
+export type meet_ai_lib_meetings_view_MeetingSummary = {
 	/**  The folder name, e.g. `2026-09-01-1430-standup`. Also the route param. */
 	id: string,
 	/**  What to show in the list. */
@@ -400,7 +413,7 @@ export type meet_ai_lib_permission_State =
 /**  The user said No, or the tone did not come back. */
 "denied";
 
-/**  What [`STATUS_EVENT`] carries. */
+/**  What [`TRANSCRIPT_STATUS_EVENT`] carries. */
 export type meet_ai_lib_live_transcript_Status = {
 	state: meet_ai_lib_live_transcript_State,
 	/**  `apple-speech` or `whisper`, once one has been opened. */
@@ -473,7 +486,7 @@ export type meet_ai_lib_tickets_TicketSummary = {
 };
 
 /**  One parsed transcript line. */
-export type meet_ai_lib_meetings_TranscriptLine = {
+export type meet_ai_lib_meetings_view_TranscriptLine = {
 	/**  0-based line number within `transcript.md`, per the Phase 2a contract. */
 	seq: number,
 	/**  `HH:MM:SS`, the utterance *start* (SPEC §3.4). */

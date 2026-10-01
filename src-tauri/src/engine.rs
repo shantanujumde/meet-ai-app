@@ -36,9 +36,6 @@ use crate::meetings;
 pub const DEFAULT_LOCALE: &str = "en-US";
 pub const DEFAULT_MODEL: &str = "large-v3-turbo-q5_0";
 
-/// Progress events for a model download.
-pub const MODEL_PROGRESS_EVENT: &str = "model://progress";
-
 /// What the filesystem says, with no subprocess involved.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -79,7 +76,7 @@ pub struct ModelView {
     pub installed: bool,
 }
 
-/// Progress for one model, as emitted on [`MODEL_PROGRESS_EVENT`].
+/// Progress for one model, as emitted on [`crate::events::MODEL_PROGRESS_EVENT`].
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProgressEvent {
@@ -128,9 +125,7 @@ impl Downloads {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
-        self.in_flight
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::lock::lock_or_recover(&self.in_flight)
     }
 }
 
@@ -343,7 +338,7 @@ pub async fn download(app: AppHandle, model_id: String) -> Result<String, UiErro
                     total_bytes: progress.total_bytes,
                     verifying: progress.verifying,
                 };
-                if let Err(error) = emitter.emit(MODEL_PROGRESS_EVENT, &event) {
+                if let Err(error) = emitter.emit(crate::events::MODEL_PROGRESS_EVENT, &event) {
                     tracing::warn!(%error, "could not report download progress to the window");
                 }
             };

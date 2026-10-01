@@ -24,7 +24,7 @@ vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
 );
 
-const { listMeetings, permissionStatus, permissionQuick, onboardingState, readMeeting } = ipc;
+const { listMeetings, measurePermission, permissionQuick, onboardingState, readMeeting } = ipc;
 
 beforeEach(() => {
   window.location.hash = "";
@@ -38,7 +38,7 @@ test("opening the app does not play the permission tone", async () => {
 
   await screen.findByRole("heading", { name: /no meetings yet/i });
   await waitFor(() => expect(permissionQuick).toHaveBeenCalled());
-  expect(permissionStatus).not.toHaveBeenCalled();
+  expect(measurePermission).not.toHaveBeenCalled();
 });
 
 test("a first-time user lands on onboarding rather than on an empty list", async () => {
@@ -87,7 +87,7 @@ test("a denied permission disables recording instead of letting it fail at click
     denied: ["microphone"],
   };
   permissionQuick.mockResolvedValue(denied);
-  permissionStatus.mockResolvedValue(denied);
+  measurePermission.mockResolvedValue(denied);
 
   render(<App />);
 
@@ -114,7 +114,7 @@ test("Fix this opens the permission screen even after onboarding is finished", a
     denied: ["microphone"],
   };
   permissionQuick.mockResolvedValue(denied);
-  permissionStatus.mockResolvedValue(denied);
+  measurePermission.mockResolvedValue(denied);
 
   render(<App />);
 
@@ -140,7 +140,7 @@ test("Fix audio permission first opens the permission screen after onboarding", 
     denied: ["microphone"],
   };
   permissionQuick.mockResolvedValue(denied);
-  permissionStatus.mockResolvedValue(denied);
+  measurePermission.mockResolvedValue(denied);
 
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: /fix audio permission first/i }));

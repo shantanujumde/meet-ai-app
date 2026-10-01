@@ -10,7 +10,7 @@
 //! positive-control permission measurement, then Core Audio warming up each
 //! channel — so every entry point here is meant to be called off a thread that
 //! must stay responsive. `commands::toggle_recording`/`stop_recording` run this
-//! on a blocking thread the same way `commands::permission_status` does; the
+//! on a blocking thread the same way `commands::measure_permission` does; the
 //! ⌘⇧R handler in `lib.rs` gives it a worker thread of its own so the shortcut
 //! callback never blocks. Nothing here needs to know which caller it is: the
 //! phase check and transition happen inside one `Mutex`, so whichever caller's
@@ -34,7 +34,7 @@
 //!
 //! Whatever ends a recording or refuses a start without a clean answer — a
 //! tick that failed, a stop that could not close the files, a start that was
-//! refused — is said once, on the idle status [`STATE_EVENT`] carries
+//! refused — is said once, on the idle status [`RECORDING_STATE_EVENT`] carries
 //! ([`Status::error`]). There is no second error event: the window reads the
 //! reason off the same status that moves it to `Idle`, so the two can never
 //! arrive apart or out of order, and the interrupted-recording notification
@@ -53,15 +53,13 @@ use {meeting_format::layout, stt::Speaker};
 
 pub use self::phase::Phase;
 use self::ticker::Ticker;
+use store::folder_name::create_meeting_folder;
 
 use crate::error::UiError;
+use crate::events::{PERMISSION_STATUS_EVENT, RECORDING_STATE_EVENT};
 use crate::live_transcript::{self, LiveTranscript, Transcription};
+use crate::lock::lock_or_recover;
 use crate::permission;
-
-/// The Tauri event the frontend subscribes to. Every transition emits one, so
-/// the UI never has to poll and the menu bar, the titlebar and the sidebar all
-/// see the same change at the same time.
-pub const STATE_EVENT: &str = "recording://state";
 
 /// The ticker thread's name, so it is identifiable in a sample or a crash
 /// report next to `meet-ai-record-shortcut`.
@@ -188,7 +186,7 @@ impl Recorder {
     pub fn refuse_start(&self, app: &AppHandle, error: &UiError) {
         let refused = self.lock().refuse_start(error.clone());
         if let Some(status) = refused {
-            announce(app, &status);
+            emit_state(app, &status);
         }
     }
 
@@ -196,9 +194,7 @@ impl Recorder {
     /// Recovering is strictly better than taking the whole app down; the worst
     /// case is a stuck phase, not a half-broken invariant.
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        lock_or_recover(&self.inner)
     }
 
     /// Mutate the state and tell the whole app about it in one step, so a
@@ -211,9 +207,7 @@ impl Recorder {
         };
         // A webview that has gone away is not an error worth propagating up
         // into a recording control.
-        if let Err(error) = app.emit(STATE_EVENT, &next) {
-            tracing::warn!(%error, "could not tell the window about a recording state change");
-        }
+        emit_state(app, &next);
         next
     }
 
@@ -235,7 +229,7 @@ impl Recorder {
     /// Claim `Idle -> Starting`, or report the phase that beat us to it.
     fn claim_starting(&self, app: &AppHandle) -> Result<(), Status> {
         let status = self.lock().enter_starting()?;
-        announce(app, &status);
+        emit_state(app, &status);
         Ok(())
     }
 
@@ -258,7 +252,7 @@ impl Recorder {
         );
         // The window mirrors this answer (Record disabled, "Fix this" shown), so
         // a refusal here and a grant restored in Settings both reach it.
-        if let Err(error) = app.emit(permission::STATUS_EVENT, &permission) {
+        if let Err(error) = app.emit(PERMISSION_STATUS_EVENT, &permission) {
             tracing::warn!(%error, "could not tell the window about the permission check");
         }
         if permission.state == permission::State::Denied {
@@ -277,9 +271,13 @@ impl Recorder {
         // the folder that failed may be an earlier meeting's, and cleaning up
         // must never delete that.
         let id = match crate::meetings::root().and_then(|root| {
-            create_meeting_folder(&root, &meeting_id(started), |candidate| {
-                self.lock().status.meeting_id = Some(candidate.to_string());
-            })
+            Ok(create_meeting_folder(
+                &root,
+                &meeting_id(started),
+                |candidate| {
+                    self.lock().status.meeting_id = Some(candidate.to_string());
+                },
+            )?)
         }) {
             Ok(id) => id,
             Err(error) => return Err(self.fail_start(app, None, error)),
@@ -370,9 +368,7 @@ impl Recorder {
                 inner.transcription = Some(transcription);
                 let status = inner.status.clone();
                 drop(inner);
-                if let Err(error) = app.emit(STATE_EVENT, &status) {
-                    tracing::warn!(%error, "could not tell the window about a recording state change");
-                }
+                emit_state(app, &status);
                 Ok(status)
             }
             Err((session, error)) => {
@@ -499,9 +495,7 @@ impl Recorder {
         let transcription = inner.transcription.take();
         let status = inner.status.clone();
         drop(inner);
-        if let Err(error) = app.emit(STATE_EVENT, &status) {
-            tracing::warn!(%error, "could not tell the window about a recording state change");
-        }
+        emit_state(app, &status);
         Ok((ticker, transcription))
     }
 
@@ -540,7 +534,7 @@ impl Recorder {
         let Some((stopping, transcription)) = self.claim_interrupted(&message) else {
             return Some(session);
         };
-        announce(app, &stopping);
+        emit_state(app, &stopping);
 
         // A panic in `stop()` must not strand the recorder in `Stopping`,
         // where every toggle is ignored: this thread is about to end, and
@@ -562,12 +556,12 @@ impl Recorder {
             tracing::warn!(message = %stop_message, "the failed recording did not stop cleanly");
         }
         let (idle, error) = self.end_interrupted(&message, stop_error.map(String::as_str));
-        announce(app, &idle);
+        emit_state(app, &idle);
         // The same `UiError` the idle status carries, so the window and the
         // notification cannot tell two different stories. It goes out
         // because the window may be hidden, which is the normal case for a
         // recording started with ⌘⇧R.
-        notify_interrupted(app, &error.message);
+        crate::notify::interrupted(app, &error.message);
         None
     }
 
@@ -611,8 +605,8 @@ impl Recorder {
 
 /// Tell every window about a state change. A webview that has gone away is
 /// not an error worth propagating up into a recording control.
-fn announce(app: &AppHandle, status: &Status) {
-    if let Err(error) = app.emit(STATE_EVENT, status) {
+fn emit_state(app: &AppHandle, status: &Status) {
+    if let Err(error) = app.emit(RECORDING_STATE_EVENT, status) {
         tracing::warn!(%error, "could not tell the window about a recording state change");
     }
 }
@@ -651,81 +645,13 @@ fn tick_session(session: &mut RecordingSession) -> Result<(), String> {
     )
 }
 
-/// Tell the user a recording stopped on its own, on a surface that does not
-/// need the window to be open — the same reasoning as `lib.rs`'s
-/// `notify_refusal` for the shortcut.
-fn notify_interrupted(app: &AppHandle, message: &str) {
-    use tauri_plugin_notification::NotificationExt as _;
-
-    if let Err(error) = app
-        .notification()
-        .builder()
-        .title("meet-ai stopped recording")
-        .body(message)
-        .show()
-    {
-        tracing::warn!(%error, "could not show the interrupted-recording notification");
-    }
-}
-
 /// Build a SPEC §3.1 meeting id: `YYYY-MM-DD-HHMM-slug`.
 ///
 /// The slug is `meeting` until Phase 5a can name it from the calendar event.
 /// A fixed slug is better than a guessed one — the list falls back to showing
 /// the date and time, which is true, instead of a title nobody chose.
 fn meeting_id(at: chrono::DateTime<chrono::Local>) -> String {
-    format!("{}-meeting", at.format("%Y-%m-%d-%H%M"))
-}
-
-/// Create the meeting folder and the files SPEC §3.1 says live in it.
-///
-/// `transcript.md` is created empty and never written to here: §3.4 makes it
-/// append-only and `crates/stt`'s `TranscriptSink` is the only thing allowed to
-/// append. Creating it up front means the review view can open a meeting that
-/// is still recording without a missing-file branch. `audio/` is also created
-/// here, ahead of `RecordingSession::start`'s own (idempotent)
-/// `create_dir_all`, so folder creation stays one step even though the audio
-/// inside it is now the session's to write.
-///
-/// Returns the id actually used. Ids only resolve to the minute, so a second
-/// recording started in the same minute as the last one would land in that
-/// meeting's folder — appending to its WAVs and `transcript.md` and replacing
-/// its `segments.json`. It gets `<id>-2` (then `-3`, …) instead: still a §3.1
-/// `YYYY-MM-DD-HHMM-slug` name, just with a longer slug. `create_dir` rather
-/// than an existence check, so claiming the name is atomic.
-///
-/// `announce` hears each candidate id just before its folder is created, so
-/// the recorder can publish it first (TUR-97: a folder whose id is not known
-/// yet would read as an interrupted meeting).
-fn create_meeting_folder(
-    root: &std::path::Path,
-    base: &str,
-    mut announce: impl FnMut(&str),
-) -> Result<String, UiError> {
-    std::fs::create_dir_all(root)?;
-    let mut n = 1;
-    let (id, dir) = loop {
-        let id = if n == 1 {
-            base.to_string()
-        } else {
-            format!("{base}-{n}")
-        };
-        let dir = root.join(&id);
-        announce(&id);
-        match std::fs::create_dir(&dir) {
-            Ok(()) => break (id, dir),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
-            Err(error) => return Err(error.into()),
-        }
-    };
-    std::fs::create_dir_all(layout::audio_dir(&dir))?;
-    for file in [layout::TRANSCRIPT_FILE, layout::NOTES_FILE] {
-        let path = dir.join(file);
-        if !path.exists() {
-            std::fs::write(&path, "")?;
-        }
-    }
-    Ok(id)
+    store::folder_name::meeting_id(&at.format("%Y-%m-%d-%H%M").to_string())
 }
 
 #[cfg(test)]

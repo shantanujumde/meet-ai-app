@@ -16,10 +16,10 @@ import { create } from "zustand";
 import {
   completeOnboarding,
   listMeetings,
+  measurePermission,
   onboardingState,
   onPermissionStatus,
   permissionQuick,
-  permissionStatus,
   resetOnboarding,
 } from "@/ipc/client";
 import type { MeetingList, OnboardingState, PermissionStatus, UiError } from "@/ipc/types";
@@ -102,7 +102,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     set({ permissionLoading: true });
     try {
-      set({ permission: await permissionStatus() });
+      set({ permission: await measurePermission() });
     } catch (thrown) {
       // A permission check that itself fails is still an unknown answer, not a
       // denial. Reporting it as denied would send the user to System Settings
