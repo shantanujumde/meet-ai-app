@@ -209,7 +209,7 @@ pub fn scan(root: &Path) -> Result<Vec<MeetingFolder>, Error> {
 
 /// Every meeting folder directly under `root`, unsorted: directories only,
 /// dot-folders skipped. A missing `root` has none.
-fn meeting_dirs(root: &Path) -> Result<Vec<PathBuf>, Error> {
+pub fn meeting_dirs(root: &Path) -> Result<Vec<PathBuf>, Error> {
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),

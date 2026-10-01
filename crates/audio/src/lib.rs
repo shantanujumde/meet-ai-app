@@ -64,6 +64,9 @@ pub mod segments;
 /// it only knows about bytes and file offsets, never about Core Audio.
 pub mod wav_writer;
 
+/// Finished-vs-interrupted classification and header repair for a recording's WAVs.
+pub mod wav_repair;
+
 /// Device-rate → 16 kHz mono resampling (SPEC §2.3). Platform-agnostic: `cpal`
 /// and the Core Audio tap both hand back PCM at whatever rate the device
 /// negotiated, and this is the one place that brings it to the rate every WAV

@@ -40,6 +40,7 @@ use std::path::Path;
 use std::time::Duration;
 
 pub mod folder;
+pub mod folder_name;
 pub mod frontmatter;
 pub mod index;
 pub mod meeting;

@@ -39,6 +39,7 @@ crates/audio/fixtures/*
 
 # Recordings and transcripts never belong in the repo.
 Meetings/
+!src-tauri/src/meetings/
 *.wav
 # ...except store's hand-written fixture root. macOS is case-insensitive and
 # git runs with core.ignorecase there, so `Meetings/` above also matches this
