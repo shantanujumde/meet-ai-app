@@ -11,11 +11,12 @@ How it was run: 4 recordings of 44–70 s. During each, a 33 s test sound played
 | 1. Output | ✅ 16 kHz mono, same format as the Sep 30 build. Mic and system lengths within 50 ms of each other and of the actual time. |
 | 2. Tap callback, channels | ✅ All 4 runs: the left-only and right-only tones arrive at exact pitch (440.0 / 880.0 Hz) and the same loudness (within 5%). No channel lost or misread. |
 | 2. Dropouts | ✅ 3 of 4 runs: 0 glitches. ⚠️ Run 2 (Whisper, first model load of the session, 6 s of Metal setup): extra sound mixed on top of the tone for about 75 ms at 4.68 s. No samples lost or repeated (no phase jump, same loudness after), so probably an outside sound, not the tap. The Whisper repeat had no glitch, but the model was already loaded, so the cold load was not re-tested. |
-| 3. CPU | ⏳ Short runs only: about 4% average, peak 14.7% (Whisper) / 5.2% (Apple). The 30 min run is still open. |
+| 3. CPU | ✅ 30 min run (Apple engine, the user's real mic and system audio while working), sampled every 5 s: meet-ai + meet-stt **5.2% average**, median 5.2%, p95 6.4%, max 9.8%. Memory flat: 138 MB at start, 133 MB at end, 145 MB max. Both WAVs 1798.53 s; 351 checkpoint anchors, 0 ms shortfall on either channel, so no audio lost. No baseline from before this change to compare with. |
 | 4. Whisper live partials | ✅ Grey text first, then settled. Test voice word for word with `small.en-q5_1`. |
 | 5. Apple live path | ✅ Test voice word for word, split into slightly shorter lines than Whisper. |
 
 Found along the way:
+- In the 30 min run the log twice said `utterance arrived out of order; transcript.md is append-only so it is kept in arrival order` (1546 then 1543, and 1742 then 1741), so two transcript lines are out of time order by 1–3 s.
 - `config.jsonc` with `"engine": "whisper"` and no `model` asks for the default `large-v3-turbo-q5_0`. With only `small.en-q5_1` installed, live transcription fails with "no model is downloaded yet", which is misleading because one is. The message should name the missing model.
 - The log file is cut back to empty while the app runs. The log plugin uses its defaults in `src-tauri/src/lib.rs` (small size limit, one file kept), and Whisper writes about 70 lines on every model load, so a few recordings wipe earlier lines. That makes a user-sent log useless. Consider raising the size, keeping old files, or turning `whisper_rs` down to WARN.
 

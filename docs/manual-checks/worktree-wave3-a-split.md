@@ -35,6 +35,15 @@ running app behaves as before. None of them was run headless.
    (`default_output_device_changed`); replug gave 2 reopens 1.5 s apart (output,
    then input). Lost at the switches, over a 49.2 s span: about 0.6 s of mic,
    about 2.5 s of system audio. Still open: a way to make a tick fail for real.
+   **Tick failure forced 2026-10-01** by making the meeting's `audio/` read-only
+   after the recording started: the next checkpoint failed (`writing
+   segments.json: Permission denied (os error 13)`) and the recording stopped.
+   The window did its part: a red banner with the reason, and the meeting listed
+   as Interrupted with "Recording stopped unexpectedly. Audio up to 00:00:10 was
+   saved." **The macOS notification did not appear.** `notify::interrupted` did
+   not log a failure, but the system log has no notification activity for
+   `pro.saleschat.meetai`. Still open: check whether meet-ai has notification
+   permission at all, and whether the plugin ever asks for it.
 5. **Meetings list with a cut-short recording.** Open the list with a meeting
    whose WAV has no finished header. Expect: it is listed as interrupted and the
    audio is repaired as before (code moved to `audio::wav_repair`). Skipped:
