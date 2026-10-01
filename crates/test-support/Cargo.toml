@@ -1,0 +1,10 @@
+[package]
+name = "test-support"
+description = "Dev-only helpers shared by the crates' tests (tone generators)."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]

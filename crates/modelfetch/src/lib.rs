@@ -358,14 +358,6 @@ pub(crate) async fn remove_if_present(path: &Path) {
 mod tests {
     use super::*;
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("meet-ai-modelfetch-{}-{name}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     /// A tiny stand-in for a catalogue entry.
     ///
     /// The real models are 190 MB and 574 MB; writing and hashing one of those
@@ -424,7 +416,8 @@ mod tests {
     async fn an_installed_model_is_returned_without_touching_the_network() {
         // Nothing is listening and the URL does not resolve, so a request
         // would fail the test rather than pass it. That is the point.
-        let dir = temp_dir("installed");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         std::fs::write(dir.join(TINY.filename), b"already verified").unwrap();
 
         let mut calls = 0;
@@ -432,7 +425,6 @@ mod tests {
 
         assert_eq!(path, dir.join(TINY.filename));
         assert_eq!(calls, 0, "the installed path must not report progress");
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]
@@ -440,7 +432,8 @@ mod tests {
         // The resume case where the previous run got all the bytes. No request
         // goes out, and the caller still gets a progress callback before the
         // verifying one — otherwise the bar jumps from nothing to "checking".
-        let dir = temp_dir("complete-part");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         std::fs::write(dir.join(format!("{}.part", TINY.filename)), [0u8; 8]).unwrap();
 
         let mut seen: Vec<Progress> = Vec::new();
@@ -454,12 +447,12 @@ mod tests {
         assert!(!seen[0].verifying);
         assert!(seen[1].verifying);
         assert!(!dir.join(format!("{}.part", TINY.filename)).exists());
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]
     async fn a_wrong_digest_is_a_checksum_error_and_deletes_the_bad_bytes() {
-        let dir = temp_dir("bad-digest");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let part = dir.join(format!("{}.part", TINY.filename));
         std::fs::write(&part, b"notzeros").unwrap();
 
@@ -476,14 +469,14 @@ mod tests {
             !part.exists(),
             "\"download again from scratch\" would resume bad bytes"
         );
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]
     async fn an_oversized_part_file_is_discarded_rather_than_resumed() {
         // Resuming past the pinned size would surface as a checksum failure,
         // which reads as tampering. Start over instead.
-        let dir = temp_dir("oversized");
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let part = dir.join(format!("{}.part", TINY.filename));
         std::fs::write(&part, [0u8; 32]).unwrap();
 
@@ -510,6 +503,5 @@ mod tests {
             0,
             "an oversized partial must not be resumed"
         );
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

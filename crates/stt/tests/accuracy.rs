@@ -155,8 +155,8 @@ fn a_full_meeting_folder_becomes_one_interleaved_transcript() {
         return;
     }
 
-    let root = std::env::temp_dir().join(format!("meet-ai-meeting-{}", std::process::id()));
-    std::fs::remove_dir_all(&root).ok();
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
     std::fs::create_dir_all(root.join("audio")).unwrap();
     for name in ["mic.wav", "system.wav", "segments.json"] {
         std::fs::copy(
@@ -209,8 +209,6 @@ fn a_full_meeting_folder_becomes_one_interleaved_transcript() {
             "empty text reached the file: {line:?}"
         );
     }
-
-    std::fs::remove_dir_all(&root).ok();
 }
 
 #[cfg(all(target_os = "macos", feature = "whisper-model-tests"))]

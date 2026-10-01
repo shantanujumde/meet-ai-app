@@ -50,18 +50,15 @@ pub fn write(dir: &Path, body: &str) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
     use crate::Problem;
     use crate::folder::{self, FileProblem};
 
-    /// A scratch folder unique to this test and this process, emptied first.
-    fn scratch(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("meet-ai-store-notes-{name}-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        dir
+    fn scratch(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("meet-ai-store-notes-{name}-"))
+            .tempdir()
+            .unwrap()
     }
 
     fn is_invalid_data<T>(result: Result<T, Error>) -> bool {
@@ -70,15 +67,16 @@ mod tests {
 
     #[test]
     fn missing_notes_are_an_empty_page() {
-        let dir = scratch("missing");
+        let _dir_guard = scratch("missing");
+        let dir = _dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(read(&dir).unwrap(), "");
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn notes_round_trip_and_leave_no_temp_file_behind() {
-        let dir = scratch("round-trip");
+        let _dir_guard = scratch("round-trip");
+        let dir = _dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let body = "# Follow-ups\n\n- ask about [TUR-17]: sessions\n";
         write(&dir, "first draft").unwrap();
@@ -89,12 +87,12 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, vec![std::ffi::OsString::from(NOTES_FILE)]);
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn non_utf8_notes_are_an_error_and_the_folder_load_flags_them() {
-        let dir = scratch("not-utf8-read");
+        let _dir_guard = scratch("not-utf8-read");
+        let dir = _dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(NOTES_FILE), b"caf\xe9 notes").unwrap();
         assert!(is_invalid_data(read(&dir)));
@@ -109,12 +107,12 @@ mod tests {
             "{:?}",
             loaded.problems
         );
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn writing_over_non_utf8_notes_is_refused_and_the_bytes_are_unchanged() {
-        let dir = scratch("not-utf8-write");
+        let _dir_guard = scratch("not-utf8-write");
+        let dir = _dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let bytes: &[u8] = b"caf\xe9 notes";
         std::fs::write(dir.join(NOTES_FILE), bytes).unwrap();
@@ -125,6 +123,5 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, vec![std::ffi::OsString::from(NOTES_FILE)]);
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

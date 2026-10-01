@@ -21,6 +21,7 @@ serde = { workspace = true, features = ["derive"] }
 [dev-dependencies]
 # Test-only: the schema tests parse real `segments.json` shapes.
 serde_json.workspace = true
+tempfile.workspace = true
 
 [features]
 specta = ["dep:specta"]

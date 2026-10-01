@@ -15,6 +15,7 @@ const RETRO: &str = "2026-09-02-1000-retro";
 /// A throwaway copy of the fixture root, removed on drop.
 struct FixtureCopy {
     root: PathBuf,
+    _guard: tempfile::TempDir,
 }
 
 impl FixtureCopy {
@@ -23,17 +24,16 @@ impl FixtureCopy {
             .join("tests")
             .join("fixtures")
             .join("meetings");
-        let root =
-            std::env::temp_dir().join(format!("meet-ai-store-index-{name}-{}", std::process::id()));
-        fs::remove_dir_all(&root).ok();
+        let guard = tempfile::Builder::new()
+            .prefix(&format!("meet-ai-store-index-{name}-"))
+            .tempdir()
+            .unwrap();
+        let root = guard.path().to_path_buf();
         copy_dir(&source, &root);
-        Self { root }
-    }
-}
-
-impl Drop for FixtureCopy {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).ok();
+        Self {
+            root,
+            _guard: guard,
+        }
     }
 }
 

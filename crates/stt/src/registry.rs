@@ -337,18 +337,8 @@ mod tests {
     fn discovery_finds_the_whisper_model_in_the_directory_it_is_given() {
         // The app passes `<its meetings root>/.app/models`. A model that moved
         // there with the meetings folder must be found, whatever `~` says.
-        /// Removed on drop, so a failed assertion does not leave it behind.
-        struct Scratch(PathBuf);
-        impl Drop for Scratch {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
-
-        let root = Scratch(
-            std::env::temp_dir().join(format!("meet-ai-registry-discover-{}", std::process::id())),
-        );
-        let dir = crate::model::model_dir(&root.0);
+        let root = tempfile::tempdir().unwrap();
+        let dir = crate::model::model_dir(root.path());
         std::fs::create_dir_all(&dir).unwrap();
         let spec = crate::model::find("small.en-q5_1").unwrap();
         std::fs::write(dir.join(spec.filename), b"not really a model").unwrap();

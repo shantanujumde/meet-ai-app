@@ -32,22 +32,26 @@ const PLANNING: &str = "2026-09-03-0900-planning";
 /// A throwaway copy of the fixture root, removed on drop.
 struct FixtureCopy {
     root: PathBuf,
+    _guard: tempfile::TempDir,
 }
 
 impl FixtureCopy {
-    /// `name` keeps copies from tests running in parallel apart.
+    /// `name` prefixes the temp dir so a leftover is easy to trace.
     fn new(name: &str) -> Self {
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("fixtures")
             .join("meetings");
-        let root = std::env::temp_dir().join(format!(
-            "meet-ai-store-fixture-{name}-{}",
-            std::process::id()
-        ));
-        fs::remove_dir_all(&root).ok();
+        let guard = tempfile::Builder::new()
+            .prefix(&format!("meet-ai-store-fixture-{name}-"))
+            .tempdir()
+            .unwrap();
+        let root = guard.path().to_path_buf();
         copy_dir(&source, &root);
-        Self { root }
+        Self {
+            root,
+            _guard: guard,
+        }
     }
 
     fn dir(&self, id: &str) -> PathBuf {
@@ -56,12 +60,6 @@ impl FixtureCopy {
 
     fn load(&self, id: &str) -> MeetingFolder {
         folder::load(&self.dir(id)).unwrap()
-    }
-}
-
-impl Drop for FixtureCopy {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).ok();
     }
 }
 

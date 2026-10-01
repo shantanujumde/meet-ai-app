@@ -161,20 +161,19 @@ mod tests {
         }
     }
 
-    fn meeting_dir(name: &str) -> MeetingPaths {
-        let root =
-            std::env::temp_dir().join(format!("meet-ai-transcribe-{}-{name}", std::process::id()));
-        std::fs::remove_dir_all(&root).ok();
+    fn meeting_dir() -> (tempfile::TempDir, MeetingPaths) {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
         std::fs::create_dir_all(root.join("audio")).unwrap();
         // The engine is scripted, so the files only have to exist.
         std::fs::write(root.join("audio/mic.wav"), b"").unwrap();
         std::fs::write(root.join("audio/system.wav"), b"").unwrap();
-        MeetingPaths::new(root)
+        (tmp, MeetingPaths::new(root))
     }
 
     #[test]
     fn the_two_tracks_interleave_by_timestamp_with_the_right_labels() {
-        let paths = meeting_dir("merge");
+        let (_tmp, paths) = meeting_dir();
         let mut engine = ScriptedEngine {
             mic: vec![
                 (7, "Sessions are still in memory."),
@@ -194,15 +193,13 @@ mod tests {
              [00:00:14] Others: How long will that take?\n\
              [00:00:20] You: About two days.\n"
         );
-
-        std::fs::remove_dir_all(&paths.root).ok();
     }
 
     #[test]
     fn a_silent_meeting_produces_an_empty_transcript_not_a_missing_one() {
         // The whole-stack version of the silence gate: zero lines, but the
         // file still exists so the UI has something to open.
-        let paths = meeting_dir("silent");
+        let (_tmp, paths) = meeting_dir();
         let mut engine = ScriptedEngine {
             mic: vec![],
             system: vec![],
@@ -214,13 +211,11 @@ mod tests {
             std::fs::read_to_string(&outcome.transcript_path).unwrap(),
             ""
         );
-
-        std::fs::remove_dir_all(&paths.root).ok();
     }
 
     #[test]
     fn a_missing_track_does_not_abort_the_other_one() {
-        let paths = meeting_dir("one-sided");
+        let (_tmp, paths) = meeting_dir();
         std::fs::remove_file(paths.wav(Channel::System)).unwrap();
 
         let mut engine = ScriptedEngine {
@@ -232,8 +227,6 @@ mod tests {
         assert_eq!(outcome.lines, 1);
         let body = std::fs::read_to_string(&outcome.transcript_path).unwrap();
         assert_eq!(body, "[00:00:03] You: Can anyone hear me?\n");
-
-        std::fs::remove_dir_all(&paths.root).ok();
     }
 
     #[test]

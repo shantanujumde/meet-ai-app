@@ -211,8 +211,8 @@ mod tests {
 
     #[test]
     fn atomic_write_leaves_no_temp_file_behind() {
-        let dir = std::env::temp_dir().join(format!("meet-ai-store-atomic-{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         let path = dir.join("notes.md");
         write_atomic(&path, "first").unwrap();
         write_atomic(&path, "second").unwrap();
@@ -222,6 +222,5 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, vec![std::ffi::OsString::from("notes.md")]);
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

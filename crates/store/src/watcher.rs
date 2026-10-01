@@ -188,7 +188,8 @@ mod tests {
 
     #[test]
     fn self_writes_suppress_only_the_noted_path_and_only_for_the_window() {
-        let dir = scratch_dir("selfwrites-unit");
+        let _dir_guard = scratch_dir("selfwrites-unit");
+        let dir = _dir_guard.path().to_path_buf();
         let noted = dir.join("notes.md");
         let other = dir.join("meeting.md");
         std::fs::write(&noted, "x").unwrap();
@@ -204,8 +205,6 @@ mod tests {
         // `note` ran after `before`, so this is past the window for certain.
         let later = later + Duration::from_millis(50);
         assert!(!writes.is_suppressed(&stored, later));
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -232,7 +231,8 @@ mod tests {
 
     #[test]
     fn an_external_write_is_reported() {
-        let root = scratch_dir("external");
+        let _root_guard = scratch_dir("external");
+        let root = _root_guard.path().to_path_buf();
         let folder = root.join("2026-09-01-1430-standup");
         std::fs::create_dir_all(&folder).unwrap();
 
@@ -255,13 +255,12 @@ mod tests {
             }
         }
         assert!(seen, "no change reported for {expected:?}");
-
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn a_noted_self_write_is_not_reported() {
-        let root = scratch_dir("selfwrite");
+        let _root_guard = scratch_dir("selfwrite");
+        let root = _root_guard.path().to_path_buf();
         let folder = root.join("2026-09-01-1430-standup");
         std::fs::create_dir_all(&folder).unwrap();
         let file = folder.join("notes.md");
@@ -284,17 +283,12 @@ mod tests {
             rx.recv_timeout(wait).is_err(),
             "a self-write must not reach on_change"
         );
-
-        std::fs::remove_dir_all(&root).ok();
     }
 
-    fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "meet-ai-store-watcher-{name}-{}",
-            std::process::id()
-        ));
-        std::fs::remove_dir_all(&dir).ok();
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn scratch_dir(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("meet-ai-store-watcher-{name}-"))
+            .tempdir()
+            .unwrap()
     }
 }
