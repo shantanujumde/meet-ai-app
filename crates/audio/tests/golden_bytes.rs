@@ -35,12 +35,10 @@ fn signal(frames: usize, rate: u32) -> Vec<f32> {
         .collect()
 }
 
-fn temp_path(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("meet-ai-golden-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(name);
-    let _ = std::fs::remove_file(&path);
-    path
+fn temp_path(name: &str) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(name);
+    (dir, path)
 }
 
 /// Chunks shaped like resampler output (~341 frames at 48 kHz, varying), as i16.
@@ -64,7 +62,7 @@ fn pipeline_i16(rate: u32, seconds: usize) -> Vec<Vec<i16>> {
 #[test]
 fn golden_wav_file_bytes() {
     let chunks = pipeline_i16(48_000, 3);
-    let path = temp_path("golden.wav");
+    let (_dir, path) = temp_path("golden.wav");
     let mut w = WavWriter::create(&path).unwrap();
     for (i, c) in chunks.iter().enumerate() {
         w.append(c).unwrap();

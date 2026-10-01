@@ -165,15 +165,6 @@ pub fn downmix_to_mono(interleaved: &[f32], channels: usize, out: &mut Vec<f32>)
 mod tests {
     use super::*;
 
-    fn sine(frames: usize, sample_rate: u32, freq_hz: f32) -> Vec<f32> {
-        (0..frames)
-            .map(|n| {
-                let t = n as f32 / sample_rate as f32;
-                0.5 * (2.0 * std::f32::consts::PI * freq_hz * t).sin()
-            })
-            .collect()
-    }
-
     /// Goertzel power at one frequency bin, normalised so a full-scale tone
     /// centred exactly on `freq_hz` reads close to `1.0`. Same technique Tess
     /// used to validate the tone probe (`spikes/phase0a-tcc/tone-probe-margin.py`)
@@ -217,7 +208,7 @@ mod tests {
     fn frame_count_lands_near_the_expected_ratio() {
         // 5 s of 48 kHz in, ~5 s of 16 kHz out — a 3:1 ratio, exactly what the
         // segments.json contract's anchor formulas assume (§11).
-        let input = sine(48_000 * 5, 48_000, 440.0);
+        let input = test_support::sine_f32(48_000 * 5, 48_000, 440.0, 0.5);
         let output = resample_all(48_000, &input);
 
         let expected = input.len() as f64 / 3.0;
@@ -230,7 +221,7 @@ mod tests {
 
     #[test]
     fn a_440_hz_tone_survives_48k_to_16k_resampling() {
-        let input = sine(48_000 * 2, 48_000, 440.0);
+        let input = test_support::sine_f32(48_000 * 2, 48_000, 440.0, 0.5);
         let output = resample_all(48_000, &input);
 
         // 16 kHz Nyquist is 8 kHz, so 440 Hz is nowhere near the cutoff —
@@ -254,7 +245,7 @@ mod tests {
         // anti-aliased resampler removes it before decimating; a naive one
         // would fold it down to |12000 - 16000| = 4000 Hz and it would show
         // up right in the middle of speech band.
-        let input = sine(48_000 * 2, 48_000, 12_000.0);
+        let input = test_support::sine_f32(48_000 * 2, 48_000, 12_000.0, 0.5);
         let output = resample_all(48_000, &input);
 
         let aliased_bin = goertzel_power(&output, 16_000, 4_000.0);
@@ -268,7 +259,7 @@ mod tests {
     fn a_non_48k_device_rate_still_resamples_correctly() {
         // Not every device is 48 kHz (FINDINGS §8 measured it for the built-in
         // and AirPods mics, but this must not assume it everywhere).
-        let input = sine(44_100 * 2, 44_100, 440.0);
+        let input = test_support::sine_f32(44_100 * 2, 44_100, 440.0, 0.5);
         let output = resample_all(44_100, &input);
 
         let expected = input.len() as f64 * 16_000.0 / 44_100.0;
@@ -310,7 +301,7 @@ mod tests {
         // start near zero." Feed a tone from sample zero and confirm the
         // first *returned* samples are already at meaningful tone amplitude,
         // not the sinc filter's own ramp-up.
-        let input = sine(48_000, 48_000, 440.0);
+        let input = test_support::sine_f32(48_000, 48_000, 440.0, 0.5);
         let output = resample_all(48_000, &input);
 
         assert!(
