@@ -166,18 +166,13 @@ fn hms_to_sec(value: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
 
-    /// A scratch folder unique to this test and this process, emptied first.
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "meet-ai-store-transcript-{name}-{}",
-            std::process::id()
-        ));
-        std::fs::remove_dir_all(&dir).ok();
-        dir
+    fn scratch(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("meet-ai-store-transcript-{name}-"))
+            .tempdir()
+            .unwrap()
     }
 
     #[test]
@@ -277,19 +272,20 @@ mod tests {
 
     #[test]
     fn a_missing_file_is_none_and_an_empty_file_is_an_empty_transcript() {
-        let dir = scratch("missing");
+        let _dir_guard = scratch("missing");
+        let dir = _dir_guard.path().to_path_buf();
         let path = dir.join(crate::TRANSCRIPT_FILE);
         assert_eq!(read(&path).unwrap(), None);
 
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&path, "").unwrap();
         assert_eq!(read(&path).unwrap(), Some(Transcript::default()));
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn non_utf8_content_loads_as_unreadable() {
-        let dir = scratch("binary");
+        let _dir_guard = scratch("binary");
+        let dir = _dir_guard.path().to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(crate::TRANSCRIPT_FILE);
         std::fs::write(&path, b"[00:00:04] You: \xff\xfe\n").unwrap();
@@ -300,7 +296,6 @@ mod tests {
             "{:?}",
             t.problems
         );
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -362,7 +357,8 @@ mod tests {
     fn store_reads_back_exactly_what_the_stt_sink_wrote() {
         use stt::TranscriptSink;
 
-        let dir = scratch("sink");
+        let _dir_guard = scratch("sink");
+        let dir = _dir_guard.path().to_path_buf();
         let path = dir.join(crate::TRANSCRIPT_FILE);
         let mut sink = stt::MarkdownSink::create(&path).unwrap();
         for (start_sec, speaker, text) in CROSS_CHECK {
@@ -388,6 +384,5 @@ mod tests {
             t.lines.iter().map(|l| l.seq).collect::<Vec<_>>(),
             vec![0, 1, 2, 3]
         );
-        std::fs::remove_dir_all(&dir).ok();
     }
 }
