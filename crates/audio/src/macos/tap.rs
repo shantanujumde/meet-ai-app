@@ -24,6 +24,7 @@
 //! of genuine logic that doesn't touch Core Audio — is additionally
 //! unit-tested against synthetic channel data.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -76,24 +77,22 @@ fn f32_to_i16(sample: f32) -> i16 {
 /// Writes into `out` (cleared and resized as needed) rather than returning a
 /// fresh `Vec`, so the IO callback can call this every cycle without
 /// allocating once `out`'s capacity has grown to steady state (SPEC §2.3).
-///
-/// `channels` must all report the same frame count; the shortest is used if
-/// they don't, matching the tap's own guarantee that every buffer in one
-/// `AudioBufferList` covers the same IO cycle.
-fn interleave_into(channels: &[Vec<f32>], out: &mut Vec<f32>) {
+/// Channel `c` is read straight from `channel(c)`, so there is no staging copy.
+/// The shortest channel sets the frame count if they differ.
+fn interleave_into<'a>(count: usize, channel: impl Fn(usize) -> &'a [f32], out: &mut Vec<f32>) {
     out.clear();
-    if channels.is_empty() {
+    if count == 0 {
         return;
     }
-    if channels.len() == 1 {
-        out.extend_from_slice(&channels[0]);
+    if count == 1 {
+        out.extend_from_slice(channel(0));
         return;
     }
-    let frames = channels.iter().map(|c| c.len()).min().unwrap_or(0);
-    out.resize(frames * channels.len(), 0.0);
-    for (c, channel) in channels.iter().enumerate() {
-        for f in 0..frames {
-            out[f * channels.len() + c] = channel[f];
+    let frames = (0..count).map(|c| channel(c).len()).min().unwrap_or(0);
+    out.resize(frames * count, 0.0);
+    for c in 0..count {
+        for (f, sample) in channel(c).iter().take(frames).enumerate() {
+            out[f * count + c] = *sample;
         }
     }
 }
@@ -307,10 +306,14 @@ impl SystemSource {
         let mut resampler = Resampler::new(device_rate);
         let chunk_raw_len = resampler.input_chunk_frames() * channels.max(1);
 
-        let mut pending: Vec<f32> = Vec::with_capacity(chunk_raw_len * 2);
+        // Every buffer below is sized once, here, and only cleared and refilled
+        // inside the loop: `pending` holds less than one chunk before each
+        // refill of at most `scratch.len()` samples, so it never regrows.
         let mut scratch = vec![0.0f32; 4096];
-        let mut mono = Vec::with_capacity(resampler.input_chunk_frames());
-        let mut i16_buf: Vec<i16> = Vec::with_capacity(resampler.input_chunk_frames());
+        let mut pending: Vec<f32> = Vec::with_capacity(chunk_raw_len + scratch.len());
+        let mut mono: Vec<f32> = Vec::with_capacity(resampler.input_chunk_frames());
+        let mut resampled: Vec<f32> = Vec::with_capacity(resampler.output_frames_max());
+        let mut i16_buf: Vec<i16> = Vec::with_capacity(resampler.output_frames_max());
 
         loop {
             let popped = consumer.pop_slice(&mut scratch);
@@ -324,14 +327,14 @@ impl SystemSource {
             }
 
             while pending.len() >= chunk_raw_len {
-                let raw: Vec<f32> = pending.drain(..chunk_raw_len).collect();
-                downmix_to_mono(&raw, channels.max(1), &mut mono);
-                let out = resampler.process(&mono);
-                if out.is_empty() {
+                downmix_to_mono(&pending[..chunk_raw_len], channels.max(1), &mut mono);
+                pending.drain(..chunk_raw_len);
+                resampler.process_into(&mono, &mut resampled);
+                if resampled.is_empty() {
                     continue;
                 }
                 i16_buf.clear();
-                i16_buf.extend(out.iter().copied().map(f32_to_i16));
+                i16_buf.extend(resampled.iter().copied().map(f32_to_i16));
                 let host_ns = last_cb_host_ns.load(Ordering::Relaxed);
 
                 let mut guard = shared.lock().expect("system writer mutex poisoned");
@@ -481,13 +484,10 @@ impl SystemSource {
         let last_cb_host_ns = Arc::new(AtomicU64::new(0));
         let running = Arc::new(AtomicBool::new(true));
 
-        // Every callback needs to mutate its own scratch (de-interleave
-        // buffers, the interleaved output, and the ring-buffer producer),
-        // but the IO block itself must be `Fn` (Core Audio's `DynBlock`
-        // requires it, since nothing prevents a re-entrant call). One
-        // `Mutex` around all three gives interior mutability with a single
-        // lock per callback rather than three.
-        let callback_state = Mutex::new((producer, Vec::<Vec<f32>>::new(), Vec::<f32>::new()));
+        // The IO block must be `Fn`, so the producer and interleave buffer sit
+        // in a `RefCell`: no lock on the real-time thread, and a re-entrant
+        // call skips its cycle. `interleaved` is sized once (2 x 16384 frames).
+        let callback_state = RefCell::new((producer, Vec::<f32>::with_capacity(32_768)));
         let last_cb_host_ns_for_block = Arc::clone(&last_cb_host_ns);
         let io_block: RcBlock<IoBlockFn> = RcBlock::new(
             move |_now: std::ptr::NonNull<AudioTimeStamp>,
@@ -506,38 +506,33 @@ impl SystemSource {
                 if n == 0 {
                     return;
                 }
-                let Ok(mut state) = callback_state.lock() else {
+                let Ok(mut state) = callback_state.try_borrow_mut() else {
                     return;
                 };
-                let (producer, channel_scratch, interleaved) = &mut *state;
+                let (producer, interleaved) = &mut *state;
 
                 // `mBuffers` is declared `[AudioBuffer; 1]` but is really a
                 // C flexible array member — buffer `i` lives at
                 // `mBuffers.as_ptr().add(i)`, exactly like the Swift probe's
                 // `UnsafeMutableAudioBufferListPointer`.
                 let buffers_ptr = abl.mBuffers.as_ptr();
-                if channel_scratch.len() < n {
-                    channel_scratch.resize_with(n, Vec::new);
-                }
-                let mut any_frames = 0usize;
-                for (i, dest) in channel_scratch.iter_mut().enumerate().take(n) {
-                    // SAFETY: `i < mNumberBuffers`, and `mData` is valid for
-                    // `mDataByteSize` bytes of `f32` per Core Audio's own
-                    // documented layout for this (non-interleaved) tap format.
+                // SAFETY: `i < mNumberBuffers`, and `mData` is valid for
+                // `mDataByteSize` bytes of `f32` per Core Audio's own
+                // documented layout for this (non-interleaved) tap format;
+                // both outlive this call. A null `mData` reads as empty.
+                let channel = |i: usize| -> &[f32] {
                     let buf = unsafe { &*buffers_ptr.add(i) };
-                    let count = buf.mDataByteSize as usize / std::mem::size_of::<f32>();
-                    any_frames = any_frames.max(count);
-                    dest.clear();
-                    if !buf.mData.is_null() {
-                        let slice =
-                            unsafe { std::slice::from_raw_parts(buf.mData.cast::<f32>(), count) };
-                        dest.extend_from_slice(slice);
+                    if buf.mData.is_null() {
+                        return &[];
                     }
-                }
+                    let count = buf.mDataByteSize as usize / std::mem::size_of::<f32>();
+                    unsafe { std::slice::from_raw_parts(buf.mData.cast::<f32>(), count) }
+                };
+                let any_frames = (0..n).map(|i| channel(i).len()).max().unwrap_or(0);
                 if any_frames == 0 {
                     return;
                 }
-                interleave_into(&channel_scratch[..n], interleaved);
+                interleave_into(n, channel, interleaved);
                 let _ = producer.push_slice(interleaved);
             },
         );
@@ -708,7 +703,7 @@ mod tests {
 
     fn interleave(channels: &[Vec<f32>]) -> Vec<f32> {
         let mut out = Vec::new();
-        interleave_into(channels, &mut out);
+        interleave_into(channels.len(), |i| &channels[i][..], &mut out);
         out
     }
 
@@ -749,7 +744,8 @@ mod tests {
     #[test]
     fn interleave_into_reuses_a_buffer_without_leaking_stale_tail_samples() {
         let mut out = vec![9.0f32; 32];
-        interleave_into(&[vec![1.0, 2.0], vec![10.0, 20.0]], &mut out);
+        let channels = [vec![1.0, 2.0], vec![10.0, 20.0]];
+        interleave_into(2, |i| &channels[i][..], &mut out);
         assert_eq!(out, vec![1.0, 10.0, 2.0, 20.0]);
     }
 

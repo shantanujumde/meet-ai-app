@@ -49,6 +49,19 @@ pub(super) struct AppleSession {
     /// place that ever sees the sample count — the reader thread only sees
     /// text.
     samples_written: u64,
+    /// Reused by every `feed` for the little-endian bytes the sidecar reads,
+    /// so a block costs no allocation once the first one has sized it.
+    bytes: Vec<u8>,
+}
+
+/// Fill `out` with `samples` as little-endian `i16` bytes, replacing what was
+/// there. Keeps `out`'s capacity, which is the point: no per-block allocation.
+fn pcm_to_le_bytes(samples: &[i16], out: &mut Vec<u8>) {
+    out.clear();
+    out.reserve(samples.len() * 2);
+    for sample in samples {
+        out.extend_from_slice(&sample.to_le_bytes());
+    }
 }
 
 impl AppleSession {
@@ -140,6 +153,7 @@ impl AppleSession {
             reader: Some(reader),
             heard,
             samples_written: 0,
+            bytes: Vec::new(),
         })
     }
 }
@@ -164,10 +178,7 @@ impl SttSession for AppleSession {
             .expect("speech timeline mutex")
             .push(samples);
 
-        let mut bytes = Vec::with_capacity(samples.len() * 2);
-        for sample in samples {
-            bytes.extend_from_slice(&sample.to_le_bytes());
-        }
+        pcm_to_le_bytes(samples, &mut self.bytes);
 
         // A dead or wedged sidecar surfaces here as a typed error, never a
         // panic: `BrokenPipe` if the process has exited (Rust's SIGPIPE is
@@ -175,7 +186,7 @@ impl SttSession for AppleSession {
         // or whatever the OS reports if the pipe cannot take more right now.
         // The caller — not this crate — decides what "stop the session, keep
         // recording" means; this only has to report the failure honestly.
-        stdin.write_all(&bytes).map_err(|e| {
+        stdin.write_all(&self.bytes).map_err(|e| {
             Error::Sidecar(format!(
                 "meet-stt's stdin is gone, transcription stopped: {e}"
             ))
@@ -339,6 +350,33 @@ mod tests {
     use super::*;
     use crate::Speaker;
     use crate::apple::testutil::{ROOM_TONE, ROOM_TONE_THEN_SPEECH, heard};
+
+    #[test]
+    fn pcm_converts_to_pinned_little_endian_bytes() {
+        let mut out = Vec::new();
+        pcm_to_le_bytes(&[0x0102, -2, i16::MIN, i16::MAX, 0], &mut out);
+        assert_eq!(out, [0x02, 0x01, 0xFE, 0xFF, 0x00, 0x80, 0xFF, 0x7F, 0, 0]);
+    }
+
+    #[test]
+    fn the_byte_buffer_is_reused_across_blocks() {
+        let mut out = Vec::new();
+        let block: Vec<i16> = (0..1_600).collect();
+        pcm_to_le_bytes(&block, &mut out);
+        let capacity = out.capacity();
+        let pointer = out.as_ptr();
+        for _ in 0..100 {
+            pcm_to_le_bytes(&block, &mut out);
+        }
+        pcm_to_le_bytes(&block[..10], &mut out);
+        assert_eq!(
+            out.len(),
+            20,
+            "stale bytes must not leak into a short block"
+        );
+        assert_eq!(out.capacity(), capacity);
+        assert_eq!(out.as_ptr(), pointer);
+    }
 
     #[test]
     fn a_live_final_over_silence_is_neither_written_nor_shown() {

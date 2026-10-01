@@ -265,6 +265,50 @@ fn timeline(scores: Vec<f32>, config: SegmentConfig) -> SpeechTimeline {
     SpeechTimeline::new(config, Box::new(ScriptedVad { scores, next: 0 }))
 }
 
+/// Golden: the timeline settles pinned spans for a pinned script, whatever the
+/// block sizes (including ones that straddle frame boundaries).
+#[test]
+fn the_timeline_golden_spans_are_independent_of_block_size() {
+    let mut scores = vec![0.0; 40];
+    for frame in (4..=9).chain(20..=25) {
+        scores[frame] = 0.9;
+    }
+    let cfg = SegmentConfig {
+        pad_frames: 2,
+        ..config()
+    };
+    let pcm = pcm_for(40);
+    let expected = vec![
+        SpeechSpan {
+            start_sample: 2 * FRAME_SAMPLES,
+            end_sample: 12 * FRAME_SAMPLES,
+        },
+        SpeechSpan {
+            start_sample: 18 * FRAME_SAMPLES,
+            end_sample: 28 * FRAME_SAMPLES,
+        },
+    ];
+    for block in [1, 100, 256, 257, 1_000, pcm.len()] {
+        let mut live = timeline(scores.clone(), cfg);
+        for chunk in pcm.chunks(block) {
+            live.push(chunk);
+        }
+        live.finish();
+        assert_eq!(live.spans(), expected, "block size {block}");
+    }
+}
+
+#[test]
+fn the_timeline_carry_buffer_never_reallocates() {
+    let mut live = timeline(vec![], config());
+    let before = live.carry_capacity();
+    let block = vec![0i16; 500];
+    for i in 0..2_000 {
+        live.push(&block[..1 + (i * 37) % 500]);
+    }
+    assert_eq!(live.carry_capacity(), before);
+}
+
 fn sec(frames: usize) -> f64 {
     (frames * FRAME_SAMPLES) as f64 / SAMPLE_RATE as f64
 }
