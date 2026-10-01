@@ -213,7 +213,7 @@ export type meet_ai_lib_meetings_MeetingSummary = {
 	/**  `meeting.md` exists, i.e. an agent has wrapped this meeting up. */
 	hasAnalysis: boolean,
 	/**  Whether the recording ended on purpose. See [`RecordingState`]. */
-	recordingState: meet_ai_lib_meetings_RecordingState,
+	recordingState: meet_ai_lib_recording_state_RecordingState,
 	/**
 	 *  Milliseconds of audio a player can actually reach: the longer of the
 	 *  two tracks, measured from its WAV header (SPEC A5 — header frames are
@@ -267,7 +267,7 @@ export type meet_ai_lib_permission_Pane =
  *  last WAV header both take long enough to see, and a shortcut pressed twice
  *  in that window must be ignored rather than queued.
  */
-export type meet_ai_lib_recording_Phase = "idle" | "starting" | "recording" | "stopping";
+export type meet_ai_lib_recording_phase_Phase = "idle" | "starting" | "recording" | "stopping";
 
 /**
  *  How a meeting's recording ended, as the UI names it (TUR-97).
@@ -287,7 +287,7 @@ export type meet_ai_lib_recording_Phase = "idle" | "starting" | "recording" | "s
  *  The list shows the word as a label; the meeting itself says in one line
  *  how much audio was kept.
  */
-export type meet_ai_lib_meetings_RecordingState = 
+export type meet_ai_lib_recording_state_RecordingState = 
 /**
  *  Stopped on purpose, or there is no audio to judge by (a folder from
  *  before recording existed, or one whose WAVs retention has deleted).
@@ -413,7 +413,7 @@ export type meet_ai_lib_permission_Status = {
 
 /**  The recorder's state as the webview sees it. */
 export type meet_ai_lib_recording_Status = {
-	phase: meet_ai_lib_recording_Phase,
+	phase: meet_ai_lib_recording_phase_Phase,
 	/**  The folder name of the meeting being recorded, `None` when idle. */
 	meetingId: string | null,
 	/**

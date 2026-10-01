@@ -19,6 +19,7 @@ mod meetings;
 mod onboarding;
 mod permission;
 mod recording;
+mod recording_state;
 mod search;
 mod tickets;
 mod watch;

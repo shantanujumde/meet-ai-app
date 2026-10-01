@@ -40,6 +40,7 @@
 //! arrive apart or out of order, and the interrupted-recording notification
 //! is built from that status too.
 
+mod phase;
 mod ticker;
 
 use std::sync::{Arc, Mutex};
@@ -50,6 +51,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter as _, Manager as _};
 use {meeting_format::layout, stt::Speaker};
 
+pub use self::phase::Phase;
 use self::ticker::Ticker;
 
 use crate::error::UiError;
@@ -64,21 +66,6 @@ pub const STATE_EVENT: &str = "recording://state";
 /// The ticker thread's name, so it is identifiable in a sample or a crash
 /// report next to `meet-ai-record-shortcut`.
 const TICKER_THREAD_NAME: &str = "meet-ai-recording-ticker";
-
-/// Where the recorder is right now.
-///
-/// `Starting` and `Stopping` are not decoration: opening the tap (and, on
-/// start, the SPEC §8.1 permission measurement ahead of it) and flushing the
-/// last WAV header both take long enough to see, and a shortcut pressed twice
-/// in that window must be ignored rather than queued.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
-#[serde(rename_all = "kebab-case")]
-pub enum Phase {
-    Idle,
-    Starting,
-    Recording,
-    Stopping,
-}
 
 /// The recorder's state as the webview sees it.
 #[derive(Debug, Clone, Serialize, specta::Type)]
