@@ -258,9 +258,6 @@ fn params(config: &WhisperConfig) -> FullParams<'_, '_> {
     params
 }
 
-/// Run one VAD-approved span through whisper and return what survives layers
-/// 2 and 3 of the hallucination guard.
-///
 /// Fill `audio` with `samples` as `f32` in `[-1, 1]`, replacing what was there.
 ///
 /// whisper.cpp refuses anything under ~1 s of audio, so shorter input is padded
@@ -278,6 +275,9 @@ fn to_whisper_audio(samples: &[i16], audio: &mut Vec<f32>) {
     }
 }
 
+/// Run one VAD-approved span through whisper and return what survives layers
+/// 2 and 3 of the hallucination guard.
+///
 /// The single place inference happens, shared by the batch path and the live
 /// one. If the two filtered differently, a meeting would read one way on
 /// screen and another way in `transcript.md`.
