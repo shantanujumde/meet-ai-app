@@ -72,6 +72,8 @@ export const ipc = {
   })),
   revealMeeting: vi.fn<typeof Client.revealMeeting>(async () => {}),
 
+  search: vi.fn<typeof Client.search>(async () => []),
+
   listTickets: vi.fn<typeof Client.listTickets>(async () => []),
   createTicket: vi.fn<typeof Client.createTicket>(async (title, body) => ({
     id: "TUR-1",

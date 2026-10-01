@@ -41,6 +41,7 @@ use std::time::Duration;
 
 pub mod folder;
 pub mod frontmatter;
+pub mod index;
 pub mod meeting;
 pub mod notes;
 pub mod ticket;

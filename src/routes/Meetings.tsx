@@ -7,6 +7,7 @@
  * it has to say what this app is for and how to start.
  */
 
+import { useState } from "react";
 import { useNavigate } from "react-router";
 import { cn } from "@/lib/cn";
 import { DEFAULT_ROOT_LABEL, SHORTCUT_LABEL } from "@/lib/constants";
@@ -24,10 +25,13 @@ import {
   RowValue,
   rowVariants,
 } from "@/ui/primitives";
+import { SearchBox } from "@/ui/SearchBox";
+import { SearchResults } from "@/ui/SearchResults";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
 export function Meetings() {
   const navigate = useNavigate();
+  const [query, setQuery] = useState("");
   const list = useAppStore((state) => state.meetings);
   const loading = useAppStore((state) => state.meetingsLoading);
   const error = useAppStore((state) => state.meetingsError);
@@ -96,33 +100,39 @@ export function Meetings() {
         </p>
       </header>
 
-      <section className={cardVariants({ flush: true })}>
-        {meetings.map((meeting) => (
-          // The whole row is the button. It draws no hairline between rows —
-          // the list reads as one block, and each row is its own hit target.
-          <button
-            key={meeting.id}
-            type="button"
-            className={cn(rowVariants({ divided: false }), "w-full")}
-            onClick={() => navigate(meetingPath(meeting.id))}
-          >
-            <RowLabel
-              name={meeting.title}
-              detail={`${formatRelativeDate(meeting.date)}${meeting.time ? ` at ${meeting.time}` : ""}`}
-              mono={false}
-            />
-            <RowValue>
-              {meeting.recordingState === "interrupted" ? (
-                <Pill tone="warn" className="me-4">
-                  {INTERRUPTED_LABEL}
-                </Pill>
-              ) : null}
-              {formatLineCount(meeting.lineCount)}
-              {meeting.hasAnalysis ? " · wrapped up" : ""}
-            </RowValue>
-          </button>
-        ))}
-      </section>
+      <SearchBox value={query} onChange={setQuery} />
+
+      {query.trim() ? (
+        <SearchResults query={query} onOpen={(id) => navigate(meetingPath(id))} />
+      ) : (
+        <section className={cardVariants({ flush: true })}>
+          {meetings.map((meeting) => (
+            // The whole row is the button. It draws no hairline between rows —
+            // the list reads as one block, and each row is its own hit target.
+            <button
+              key={meeting.id}
+              type="button"
+              className={cn(rowVariants({ divided: false }), "w-full")}
+              onClick={() => navigate(meetingPath(meeting.id))}
+            >
+              <RowLabel
+                name={meeting.title}
+                detail={`${formatRelativeDate(meeting.date)}${meeting.time ? ` at ${meeting.time}` : ""}`}
+                mono={false}
+              />
+              <RowValue>
+                {meeting.recordingState === "interrupted" ? (
+                  <Pill tone="warn" className="me-4">
+                    {INTERRUPTED_LABEL}
+                  </Pill>
+                ) : null}
+                {formatLineCount(meeting.lineCount)}
+                {meeting.hasAnalysis ? " · wrapped up" : ""}
+              </RowValue>
+            </button>
+          ))}
+        </section>
+      )}
     </div>
   );
 }

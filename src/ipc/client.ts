@@ -29,6 +29,7 @@ import type {
   PermissionStatus,
   PrivacyPane,
   RecordingStatus,
+  SearchHit,
   SelectionView,
   TicketSummary,
   TranscriptStatus,
@@ -92,6 +93,11 @@ export async function listTickets(): Promise<TicketSummary[]> {
 
 export function createTicket(title: string, body: string): Promise<TicketSummary> {
   return call<TicketSummary>("create_ticket", { title, body });
+}
+
+export async function search(query: string): Promise<SearchHit[]> {
+  if (!hasBackend()) return [];
+  return call<SearchHit[]>("search", { query });
 }
 
 export function readMeeting(id: string): Promise<MeetingDetail> {
