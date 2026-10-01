@@ -41,6 +41,9 @@ mod tests {
         let s = sine_i16(480, 48_000, 440.0, 0.5);
         assert_eq!(s.len(), 480);
         assert_eq!(s[0], 0);
-        assert!(s.iter().all(|x| i32::from(*x).abs() <= i32::from(i16::MAX) / 2 + 1));
+        assert!(
+            s.iter()
+                .all(|x| i32::from(*x).abs() <= i32::from(i16::MAX) / 2 + 1)
+        );
     }
 }
