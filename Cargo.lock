@@ -321,6 +321,8 @@ dependencies = [
  "rubato",
  "serde",
  "serde_json",
+ "tempfile",
+ "test-support",
  "thiserror 2.0.20",
  "tracing",
 ]
@@ -2953,6 +2955,7 @@ dependencies = [
  "serde",
  "serde_json",
  "specta",
+ "tempfile",
 ]
 
 [[package]]
@@ -3044,6 +3047,7 @@ dependencies = [
  "reqwest 0.12.28",
  "sha2",
  "stt",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -5083,6 +5087,7 @@ dependencies = [
  "serde_json",
  "specta",
  "stt",
+ "tempfile",
  "thiserror 2.0.20",
  "tracing",
  "yaml-rust2",
@@ -5136,6 +5141,7 @@ dependencies = [
  "serde_json",
  "specta",
  "specta-typescript",
+ "tempfile",
  "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
@@ -5811,6 +5817,10 @@ checksum = "5fed54709c5b3a53d09bb1c113ea4f5ceafd1e772ddcb0030a82e1d56c087b08"
 dependencies = [
  "new_debug_unreachable",
 ]
+
+[[package]]
+name = "test-support"
+version = "0.3.0"
 
 [[package]]
 name = "thiserror"

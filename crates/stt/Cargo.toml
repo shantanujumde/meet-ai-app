@@ -46,6 +46,7 @@ whisper-rs = { workspace = true, features = ["metal", "tracing_backend"] }
 # this is how `segments.rs` proves it does. Dev-only, so it stays out of the
 # shipped graph and out of the `just check-windows` seam.
 tracing-subscriber = { workspace = true, features = ["fmt"] }
+tempfile.workspace = true
 
 # The fixture WAVs are ~3 MB of silence and tone; generating them is instant and
 # keeps them out of git. `just fixtures` writes them; the tests regenerate any

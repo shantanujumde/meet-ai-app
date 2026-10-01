@@ -45,3 +45,8 @@ objc2-core-audio.workspace = true
 objc2-core-audio-types.workspace = true
 objc2-core-foundation.workspace = true
 objc2-foundation.workspace = true
+
+[dev-dependencies]
+# Test-only: temp folders and the shared tone generator.
+tempfile.workspace = true
+test-support.workspace = true
