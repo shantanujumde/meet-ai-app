@@ -30,6 +30,10 @@ use sha2::{Digest, Sha256};
 use stt::model::ModelSpec;
 use tokio::io::AsyncWriteExt;
 
+mod retry;
+
+use retry::RetryPolicy;
+
 /// How long to wait for the server to answer at all.
 ///
 /// Only the *connect* phase is bounded. A slow but live download must not be
@@ -131,18 +135,30 @@ pub async fn ensure(
     dir: &Path,
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<PathBuf, Error> {
+    if !spec.url.starts_with("https://") && !dir.join(spec.filename).is_file() {
+        return Err(Error::Download(format!(
+            "{} is not pinned to an https URL",
+            spec.id
+        )));
+    }
+    ensure_with(spec, dir, &RetryPolicy::default(), on_progress).await
+}
+
+/// [`ensure`] with an injectable retry policy and no https check.
+///
+/// The https pin is enforced by the public [`ensure`]; this split lets the
+/// tests point at a local plain-HTTP server with millisecond backoff.
+async fn ensure_with(
+    spec: &ModelSpec,
+    dir: &Path,
+    policy: &RetryPolicy,
+    on_progress: &mut dyn FnMut(Progress),
+) -> Result<PathBuf, Error> {
     let final_path = dir.join(spec.filename);
     if final_path.is_file() {
         // Present means verified: nothing reaches this name without passing
         // the digest check below.
         return Ok(final_path);
-    }
-
-    if !spec.url.starts_with("https://") {
-        return Err(Error::Download(format!(
-            "{} is not pinned to an https URL",
-            spec.id
-        )));
     }
 
     tokio::fs::create_dir_all(dir)
@@ -177,7 +193,7 @@ pub async fn ensure(
     });
 
     if resumed < spec.bytes {
-        resumed = download(spec, &part_path, resumed, on_progress).await?;
+        resumed = retry::download_with_retry(spec, &part_path, policy, on_progress).await?;
     }
 
     on_progress(Progress {
@@ -209,7 +225,7 @@ pub async fn ensure(
 }
 
 /// Stream the remaining bytes into `part_path`, returning the new total.
-async fn download(
+pub(crate) async fn download(
     spec: &ModelSpec,
     part_path: &Path,
     resumed: u64,
@@ -323,14 +339,14 @@ fn hex(bytes: &[u8]) -> String {
         })
 }
 
-async fn part_size(path: &Path) -> u64 {
+pub(crate) async fn part_size(path: &Path) -> u64 {
     tokio::fs::metadata(path)
         .await
         .map(|meta| meta.len())
         .unwrap_or(0)
 }
 
-async fn remove_if_present(path: &Path) {
+pub(crate) async fn remove_if_present(path: &Path) {
     if let Err(error) = tokio::fs::remove_file(path).await
         && error.kind() != std::io::ErrorKind::NotFound
     {
@@ -474,7 +490,15 @@ mod tests {
         let mut first: Option<Progress> = None;
         // The download then fails for lack of a network, which is fine — the
         // assertion is about what was reported before the request went out.
-        let _ = ensure(&TINY, &dir, &mut |progress| {
+        let dead = ModelSpec {
+            url: "http://127.0.0.1:1/x",
+            ..TINY
+        };
+        let fast = RetryPolicy {
+            max_retries: 0,
+            base_delay: Duration::ZERO,
+        };
+        let _ = ensure_with(&dead, &dir, &fast, &mut |progress| {
             first.get_or_insert(progress);
         })
         .await;
