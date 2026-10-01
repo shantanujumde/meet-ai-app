@@ -15,7 +15,15 @@
 
 import { type Event, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
-import { commands } from "./bindings";
+import {
+  commands,
+  MEETINGS_CHANGED_EVENT,
+  MODEL_PROGRESS_EVENT,
+  PERMISSION_STATUS_EVENT,
+  RECORDING_STATE_EVENT,
+  TRANSCRIPT_STATUS_EVENT,
+  TRANSCRIPT_UPDATE_EVENT,
+} from "./bindings";
 import { NO_BACKEND } from "./errors";
 import type {
   EnvironmentView,
@@ -38,19 +46,22 @@ import type {
 import { toUiError } from "./types";
 
 /**
- * Tauri event names. These are string literals shared with Rust.
+ * Tauri event names. They are generated from `src-tauri/src/events.rs` into
+ * `bindings.ts` (rule R2), and re-exported here so callers keep one import.
  *
  * `RECORDING_STATE_EVENT` carries every recorder transition. A recording Rust
  * ended on its own (TUR-97), or a ⌘⇧R or menu-bar press it refused (TUR-127),
  * arrives on it too, as an idle status with `error` set — there is no separate
  * error event.
  */
-export const RECORDING_STATE_EVENT = "recording://state";
-export const MODEL_PROGRESS_EVENT = "model://progress";
-export const PERMISSION_STATUS_EVENT = "permission://status";
-export const TRANSCRIPT_UPDATE_EVENT = "transcript://update";
-export const TRANSCRIPT_STATUS_EVENT = "transcript://status";
-export const MEETINGS_CHANGED_EVENT = "meetings-changed";
+export {
+  MEETINGS_CHANGED_EVENT,
+  MODEL_PROGRESS_EVENT,
+  PERMISSION_STATUS_EVENT,
+  RECORDING_STATE_EVENT,
+  TRANSCRIPT_STATUS_EVENT,
+  TRANSCRIPT_UPDATE_EVENT,
+};
 
 /**
  * Is there a Rust side to talk to?
@@ -165,9 +176,9 @@ const NO_BACKEND_PERMISSION: PermissionStatus = {
   denied: [],
 };
 
-export async function permissionStatus(): Promise<PermissionStatus> {
+export async function measurePermission(): Promise<PermissionStatus> {
   if (!hasBackend()) return NO_BACKEND_PERMISSION;
-  return call(() => commands.permissionStatus());
+  return call(() => commands.measurePermission());
 }
 
 /**

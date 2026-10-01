@@ -18,6 +18,8 @@
 //!
 //! The fixtures are generated, not committed: `just fixtures` first.
 
+#![cfg(test)]
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

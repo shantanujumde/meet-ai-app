@@ -13,9 +13,12 @@ mod commands;
 mod config;
 mod engine;
 mod error;
+mod events;
 mod folder_move;
 mod live_transcript;
+mod lock;
 mod meetings;
+mod notify;
 mod onboarding;
 mod permission;
 mod recording;
@@ -194,7 +197,7 @@ pub(crate) fn spawn_toggle(app: &tauri::AppHandle, source: &'static str) {
                     // may be nothing on screen to put an error next to. A
                     // notification is the one surface guaranteed visible.
                     tracing::warn!(source, message = %error.message, "recording toggle refused");
-                    notify_refusal(&app, stopping, &error);
+                    notify::refusal(&app, stopping, &error);
                 }
             }
         })
@@ -219,56 +222,5 @@ fn register_record_shortcut<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             shortcut = RECORD_SHORTCUT,
             "could not register the recording shortcut; another app may already own it"
         ),
-    }
-}
-
-/// Tell the user why a ⌘⇧R or menu-bar toggle failed — a start refused, or a
-/// stop that could not close cleanly (`stopping`) — on a surface that does not
-/// need the window to be open. The window hears it too, from the idle status
-/// on `recording://state` that carries the refusal (`recording::Status::error`,
-/// set by the recorder or, for a folder-move refusal, by `folder_move`) — the
-/// notification alone is silent whenever meet-ai may not post them, which made
-/// a refused ⌘⇧R look like it had done nothing at all.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn notify_refusal<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    stopping: bool,
-    error: &error::UiError,
-) {
-    use tauri_plugin_notification::NotificationExt as _;
-
-    if let Err(notify_error) = app
-        .notification()
-        .builder()
-        .title(refusal_title(stopping))
-        .body(&error.message)
-        .show()
-    {
-        tracing::warn!(%notify_error, "could not show the refusal notification either");
-    }
-}
-
-/// The notification title for a toggle that failed, by which way it was going.
-/// A failed stop still ends the recording — the recorder is back at `Idle`
-/// with the reason on its status — it just could not close the files cleanly,
-/// so "did not start recording" there was simply wrong.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn refusal_title(stopping: bool) -> &'static str {
-    if stopping {
-        "meet-ai had a problem stopping the recording"
-    } else {
-        "meet-ai did not start recording"
-    }
-}
-
-#[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
-mod tests {
-    use super::refusal_title;
-
-    #[test]
-    fn a_failed_stop_is_not_titled_as_a_failed_start() {
-        assert_eq!(refusal_title(false), "meet-ai did not start recording");
-        assert!(refusal_title(true).contains("stopping"));
-        assert!(!refusal_title(true).contains("start"));
     }
 }
