@@ -37,6 +37,7 @@ pub mod replay;
 pub mod segments;
 pub mod session;
 pub mod sink;
+mod span_assembler;
 mod transcribe;
 pub mod vad;
 

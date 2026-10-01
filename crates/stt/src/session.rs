@@ -69,9 +69,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::sink::TranscriptSink;
-use crate::vad::{
-    EarshotVad, FRAME_SAMPLES, SAMPLE_RATE, SegmentConfig, Segmenter, SpeechSpan, Vad, pad_span,
-};
+pub use crate::span_assembler::{ReadySpan, SpanAssembler};
 use crate::{Error, Speaker, Utterance, collapse_whitespace};
 
 /// A monotonic counter shared by every session in one meeting.
@@ -586,178 +584,10 @@ impl LiveEmitter {
     }
 }
 
-/// A chunk of audio the VAD has decided is worth transcribing.
-///
-/// Already padded, already cut out of the stream, and positioned on the
-/// recording's timeline rather than the chunk's.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ReadySpan {
-    /// Seconds from the start of the recording to the first sample.
-    pub start_sec: f64,
-    pub samples: Vec<i16>,
-}
-
-impl ReadySpan {
-    pub fn duration_sec(&self) -> f64 {
-        self.samples.len() as f64 / SAMPLE_RATE as f64
-    }
-}
-
-/// Turns a live sample stream into the spans an engine is allowed to see.
-///
-/// This is [`crate::vad::detect_speech`] for audio that has not finished
-/// arriving: the same [`Segmenter`], the same [`SegmentConfig`], the same
-/// hallucination guard — silence yields no spans, so a live engine is no more
-/// able to invent a line than a batch one is. What it adds is a buffer that
-/// remembers only as much audio as a span could still need, so a four-hour
-/// meeting does not sit in RAM.
-///
-/// Every streaming engine drives one. Sharing it is what makes the silence
-/// gate a property of the crate rather than of each engine's own care.
-pub struct SpanAssembler {
-    config: SegmentConfig,
-    vad: Box<dyn Vad>,
-    segmenter: Segmenter,
-    /// Audio still in reach of a span. `start` is `buffer[0]`'s absolute
-    /// sample index in the recording.
-    buffer: Vec<i16>,
-    start: usize,
-    /// Absolute end of the last span handed out. Padding may not reach back
-    /// past it: that audio is already in a finalized line, and repeating it
-    /// would repeat the words.
-    released: usize,
-    /// Absolute count of samples fed so far.
-    fed: usize,
-}
-
-impl SpanAssembler {
-    pub fn new(config: SegmentConfig, vad: Box<dyn Vad>) -> Self {
-        Self {
-            config,
-            vad,
-            segmenter: Segmenter::new(config),
-            buffer: Vec::new(),
-            start: 0,
-            released: 0,
-            fed: 0,
-        }
-    }
-
-    /// The default detector, which is what every engine actually uses.
-    pub fn with_default_vad(config: SegmentConfig) -> Self {
-        Self::new(config, Box::new(EarshotVad::new()))
-    }
-
-    /// Add the next block of 16 kHz mono PCM; get back any spans it settled.
-    ///
-    /// Usually empty — a span only settles when the speaker stops, or when a
-    /// monologue hits [`SegmentConfig::max_speech_frames`].
-    pub fn push(&mut self, samples: &[i16]) -> Vec<ReadySpan> {
-        self.buffer.extend_from_slice(samples);
-        self.fed += samples.len();
-
-        let mut ready = Vec::new();
-        loop {
-            let frame_start = self.segmenter.frames_scored() * FRAME_SAMPLES;
-            // Frames are scored in stream order and never re-scored, so the
-            // next one is always at or after the front of the buffer.
-            let Some(offset) = frame_start.checked_sub(self.start) else {
-                break;
-            };
-            if offset + FRAME_SAMPLES > self.buffer.len() {
-                break;
-            }
-
-            let frame = &self.buffer[offset..offset + FRAME_SAMPLES];
-            let is_speech = self.vad.score(frame) >= self.config.threshold;
-            if let Some(raw) = self.segmenter.push(is_speech) {
-                ready.push(self.release(raw));
-            }
-        }
-
-        self.trim();
-        ready
-    }
-
-    /// The utterance in progress, if someone is mid-sentence.
-    ///
-    /// This is what a volatile hypothesis is made of. It is *not* released:
-    /// the same audio comes back in the settled span later, because a
-    /// hypothesis is a guess and the final pass has to see the whole thing.
-    pub fn open(&self) -> Option<ReadySpan> {
-        let raw = self.segmenter.open_span()?;
-        Some(self.cut(pad_span(raw, &self.config, self.released, self.fed)))
-    }
-
-    pub fn has_open(&self) -> bool {
-        self.segmenter.open_span().is_some()
-    }
-
-    /// End of stream: settle whatever was still open.
-    pub fn finish(&mut self) -> Option<ReadySpan> {
-        let raw = self.segmenter.finish()?;
-        Some(self.release(raw))
-    }
-
-    /// Whole seconds of audio fed in.
-    pub fn fed_sec(&self) -> u64 {
-        self.fed as u64 / SAMPLE_RATE as u64
-    }
-
-    /// How much audio is being held. The live-memory assertion reads this.
-    pub fn buffered_samples(&self) -> usize {
-        self.buffer.len()
-    }
-
-    /// Pad a raw span, mark its audio spent, and cut it out.
-    fn release(&mut self, raw: SpeechSpan) -> ReadySpan {
-        let floor = self.released.max(self.start);
-        let span = pad_span(raw, &self.config, floor, self.fed);
-        self.released = span.end_sample;
-        self.cut(span)
-    }
-
-    fn cut(&self, span: SpeechSpan) -> ReadySpan {
-        let from = span
-            .start_sample
-            .saturating_sub(self.start)
-            .min(self.buffer.len());
-        let to = span
-            .end_sample
-            .saturating_sub(self.start)
-            .clamp(from, self.buffer.len());
-        ReadySpan {
-            start_sec: span.start_sample as f64 / SAMPLE_RATE as f64,
-            samples: self.buffer[from..to].to_vec(),
-        }
-    }
-
-    /// Drop audio no span can reach any more.
-    ///
-    /// The earliest sample still in play is the open span's start, or — if
-    /// nothing is open — the next frame to be scored, since a span could open
-    /// there. Either way it is the context pad that decides how far back the
-    /// engine may still look.
-    fn trim(&mut self) {
-        let pad = self.config.pad_frames * FRAME_SAMPLES;
-        let earliest = match self.segmenter.open_span() {
-            Some(open) => open.start_sample,
-            None => self.segmenter.frames_scored() * FRAME_SAMPLES,
-        }
-        .saturating_sub(pad);
-
-        let keep_from = earliest.clamp(self.start, self.start + self.buffer.len());
-        let drop = keep_from - self.start;
-        if drop > 0 {
-            self.buffer.drain(..drop);
-            self.start = keep_from;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vad::{FRAME_SAMPLES, SAMPLE_RATE, SegmentConfig, Vad};
 
     /// No rate cap at all: `1.0 / INFINITY` is a zero minimum interval, so
     /// every hypothesis is delivered. Tests that are about the *tail* rule use
@@ -952,5 +782,130 @@ mod tests {
         })
         .unwrap();
         assert_eq!(json, r#"{"kind":"dropped","speaker":"you","seq":3}"#);
+    }
+
+    struct Scripted {
+        scores: Vec<f32>,
+        next: usize,
+    }
+
+    impl Vad for Scripted {
+        fn score(&mut self, _frame: &[i16]) -> f32 {
+            let score = self.scores.get(self.next).copied().unwrap_or(0.0);
+            self.next += 1;
+            score
+        }
+
+        fn reset(&mut self) {
+            self.next = 0;
+        }
+    }
+
+    fn assembler_config() -> SegmentConfig {
+        SegmentConfig {
+            threshold: 0.5,
+            onset_frames: 2,
+            hangover_frames: 3,
+            pad_frames: 2,
+            min_speech_frames: 2,
+            max_speech_frames: 1_000,
+        }
+    }
+
+    /// 40 frames, speech on 4..=9 and 20..=25. The ramp makes every sample
+    /// unique, so a span's content can be checked against its position.
+    fn scripted_assembler() -> (SpanAssembler, Vec<i16>) {
+        let mut scores = vec![0.0; 40];
+        for frame in (4..=9).chain(20..=25) {
+            scores[frame] = 0.9;
+        }
+        let vad = Box::new(Scripted { scores, next: 0 });
+        let pcm = (0..40 * FRAME_SAMPLES)
+            .map(|i| (i % 30_000) as i16)
+            .collect();
+        (SpanAssembler::new(assembler_config(), vad), pcm)
+    }
+
+    #[test]
+    fn the_assembler_hands_out_pinned_spans_whatever_the_block_size() {
+        // (start_sample, len) of each span, pinned from the current output.
+        // Small blocks lose one frame of lead padding: the buffer has already
+        // trimmed it by the time the onset opens the span. Big blocks open the
+        // span before any trim runs. Existing behaviour, pinned as it is.
+        let small = [
+            (3 * FRAME_SAMPLES, 9 * FRAME_SAMPLES),
+            (19 * FRAME_SAMPLES, 9 * FRAME_SAMPLES),
+        ];
+        let big = [
+            (2 * FRAME_SAMPLES, 10 * FRAME_SAMPLES),
+            (18 * FRAME_SAMPLES, 10 * FRAME_SAMPLES),
+        ];
+        for (block, expected) in [
+            (1, small),
+            (97, small),
+            (256, small),
+            (300, small),
+            (1_600, big),
+            (40 * FRAME_SAMPLES, big),
+        ] {
+            let (mut assembler, pcm) = scripted_assembler();
+            let mut got = Vec::new();
+            for chunk in pcm.chunks(block) {
+                got.extend(assembler.push(chunk));
+            }
+            got.extend(assembler.finish());
+
+            let shape: Vec<_> = got
+                .iter()
+                .map(|s| ((s.start_sec * SAMPLE_RATE as f64) as usize, s.samples.len()))
+                .collect();
+            assert_eq!(shape, expected, "block size {block}");
+            for (span, (start, len)) in got.iter().zip(expected) {
+                assert_eq!(span.samples, pcm[start..start + len], "block size {block}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_open_span_is_the_padded_audio_heard_so_far() {
+        let (mut assembler, pcm) = scripted_assembler();
+        assert!(assembler.push(&pcm[..8 * FRAME_SAMPLES]).is_empty());
+        let open = assembler.open().expect("speech is open at frame 8");
+        assert_eq!(
+            open.start_sec,
+            (2 * FRAME_SAMPLES) as f64 / SAMPLE_RATE as f64
+        );
+        assert_eq!(open.samples, pcm[2 * FRAME_SAMPLES..8 * FRAME_SAMPLES]);
+    }
+
+    #[test]
+    fn the_open_view_matches_the_owned_open_span() {
+        let (mut assembler, pcm) = scripted_assembler();
+        assembler.push(&pcm[..8 * FRAME_SAMPLES]);
+        let owned = assembler.open().expect("open");
+        let (start_sec, samples) = assembler.open_view().expect("open");
+        assert_eq!(start_sec, owned.start_sec);
+        assert_eq!(samples, owned.samples);
+    }
+
+    #[test]
+    fn the_assembler_buffer_capacity_settles_instead_of_growing() {
+        let mut assembler = SpanAssembler::new(
+            assembler_config(),
+            Box::new(Scripted {
+                scores: vec![],
+                next: 0,
+            }),
+        );
+        let block = vec![0i16; 1_600];
+        for _ in 0..50 {
+            assembler.push(&block);
+        }
+        let settled = assembler.buffer_capacity();
+        for _ in 0..5_000 {
+            assembler.push(&block);
+        }
+        assert_eq!(assembler.buffer_capacity(), settled);
+        assert!(assembler.buffered_samples() < 4 * FRAME_SAMPLES + 1_600);
     }
 }
