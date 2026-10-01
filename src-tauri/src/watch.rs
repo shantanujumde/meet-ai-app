@@ -18,7 +18,7 @@ use serde::Serialize;
 use store::watcher::{SelfWrites, Watcher};
 use tauri::{AppHandle, Emitter as _, Manager as _};
 
-use crate::meetings;
+use crate::{meetings, search};
 
 /// The Tauri event the window listens for. Must match `MEETINGS_CHANGED_EVENT`
 /// in `src/ipc/client.ts`.
@@ -74,6 +74,8 @@ impl MeetingsWatch {
         }
         let handle = app.clone();
         let started = Watcher::start(&root, self.own_writes.clone(), move |paths| {
+            // TUR-101: keep the search index current before the window refreshes.
+            search::state(&handle).update(&paths);
             if let Err(error) = handle.emit(CHANGED_EVENT, Changed::new(&paths)) {
                 tracing::warn!(%error, "could not tell the window the meetings folder changed");
             }

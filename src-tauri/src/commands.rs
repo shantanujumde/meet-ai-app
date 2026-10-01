@@ -22,6 +22,7 @@ use crate::meetings::{self, Live, MeetingDetail, MeetingList};
 use crate::onboarding;
 use crate::permission;
 use crate::recording::{Phase, Recorder, Status};
+use crate::search;
 use crate::tickets::{self, TicketSummary};
 use crate::watch;
 
@@ -122,6 +123,8 @@ pub async fn change_meetings_folder(
         let moved = meetings::change_root(PathBuf::from(new_root))?;
         // Watch the new folder instead of the old one (TUR-100).
         watch::state(&app).restart(&app);
+        // ...and index it (TUR-101).
+        search::state(&app).warm();
         Ok(moved)
     })
     .await?

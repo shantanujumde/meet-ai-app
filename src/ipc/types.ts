@@ -246,6 +246,16 @@ export interface MeetingsChanged {
   paths: string[];
 }
 
+/** One meeting-search result. `snippet` is plain text with matches wrapped in « and ». */
+export type SearchHit = {
+  meetingId: string;
+  title: string;
+  date: string | null;
+  snippet: string;
+  /** Like "00:12:03"; null when the hit is a title or notes match. */
+  timestamp: string | null;
+};
+
 export type TicketStatus = "open" | "in_progress" | "done" | "dropped";
 
 export type TicketSummary = {
