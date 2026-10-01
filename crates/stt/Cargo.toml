@@ -37,7 +37,6 @@ tracing.workspace = true
 whisper-rs = { workspace = true, features = ["metal", "tracing_backend"] }
 
 [dev-dependencies]
-insta.workspace = true
 # Test-only. Contract §7 says a frame past the declared total means meet-rec's
 # frame-count invariant broke, so `frame_to_sec` warns rather than quietly
 # extrapolating. A warning nobody captured is a warning nobody knows fires —

@@ -79,7 +79,7 @@ pub const MEETINGS_ROOT_ENV: &str = "MEET_AI_MEETINGS_ROOT";
 /// (`meetings::root()`); only tools with no app to ask use
 /// [`default_model_dir`].
 pub fn model_dir(meetings_root: &Path) -> PathBuf {
-    meetings_root.join(".app").join("models")
+    meeting_format::layout::models_dir(meetings_root)
 }
 
 /// [`model_dir`] under the fallback root, for callers that have no app to ask.
@@ -110,7 +110,7 @@ fn fallback_meetings_root(
     }
     let home =
         home.ok_or_else(|| Error::Engine("could not determine the home directory".into()))?;
-    Ok(home.join("Meetings"))
+    Ok(meeting_format::layout::default_root(&home))
 }
 
 /// Is this model already present and verified?
