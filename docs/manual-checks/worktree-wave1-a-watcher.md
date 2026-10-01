@@ -21,6 +21,7 @@ None of these ran headless: they need the running app and a real meetings folder
 6. **During a recording** the recorder writes many files in the folder, so the list
    refreshes now and then (silent, no spinner). Expect: no selection or cursor
    movement. Why skipped: needs mic and system audio.
+   **Passed 2026-10-01** over 4 recordings: the list never jumped, flickered or lost the selection.
 
 Decision taken without an answer from Shann: kept the existing constant name
 `SELF_WRITE_SUPPRESSION` (750 ms) rather than renaming it to `SELF_WRITE_PAUSE`.

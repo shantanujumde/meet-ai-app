@@ -10,6 +10,11 @@ Everything below needs the real running app, so it was not run here.
   show their usual messages (the client now reads the generated result object
   and throws the same `UiError`).
 - Why skipped: needs a window, a mic and system audio.
+- **Partly run 2026-10-01** on a signed bundle. Meetings list, a meeting,
+  onboarding, Settings, model download, and start/stop recording all work,
+  and the "config asked for whisper but no model" error showed as a normal
+  `UiError` banner. Still open: a ticket and changing the meetings folder
+  (Flow 4).
 
 ## Decision taken without an answer from Shann
 
