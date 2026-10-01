@@ -7,9 +7,7 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
-chrono.workspace = true
 dirs.workspace = true
-jsonc-parser.workspace = true
 # The §3.1 file names, `Speaker`, the transcript line and the atomic write,
 # shared with `stt` (the transcript's writer) without depending on it.
 meeting-format.workspace = true
