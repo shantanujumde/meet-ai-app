@@ -37,7 +37,7 @@ pub mod replay;
 pub mod segments;
 pub mod session;
 pub mod sink;
-pub mod transcribe;
+mod transcribe;
 pub mod vad;
 
 #[cfg(target_os = "macos")]
