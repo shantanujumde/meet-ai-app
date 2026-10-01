@@ -12,7 +12,7 @@
 //! and the thing `cargo test` calls, so a test run never touches real audio
 //! hardware. [`measure`] is the real, on-demand check: it takes real
 //! wall-clock time and must be run off the UI thread (see
-//! `commands::permission_status`). Neither reports `Granted`
+//! `commands::measure_permission`). Neither reports `Granted`
 //! optimistically: an onboarding screen that claims permission it has not
 //! measured is worse than one that admits it does not know, because the user
 //! only finds out when a real meeting records silence.
@@ -51,12 +51,6 @@ pub struct Status {
     /// Empty unless `state` is `Denied`.
     pub denied: Vec<Pane>,
 }
-
-/// The Tauri event carrying a [`Status`] measured outside a command call —
-/// the check that runs when a recording starts, however it was started. The
-/// window's permission state follows it, so a refusal disables Record and a
-/// grant restored in System Settings re-enables it without a relaunch.
-pub const STATUS_EVENT: &str = "permission://status";
 
 impl Status {
     /// Why a recording was refused, naming the switch that is off.
@@ -107,7 +101,7 @@ pub fn status() -> Status {
 ///
 /// Takes real wall-clock time — at least
 /// [`audio::chime::ONSET_TIMEOUT_MILLIS`] for the system-audio half alone —
-/// and must be run off the UI thread. See `commands::permission_status`.
+/// and must be run off the UI thread. See `commands::measure_permission`.
 pub fn measure() -> Status {
     #[cfg(debug_assertions)]
     if let Some(forced) = forced_status() {

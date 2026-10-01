@@ -81,7 +81,7 @@ fn build(app: &AppHandle) -> tauri::Result<()> {
 /// an event is missed.
 fn watch_recording_state(app: &AppHandle, toggle: MenuItem<tauri::Wry>) {
     let handle = app.clone();
-    app.listen(recording::STATE_EVENT, move |_event| {
+    app.listen(crate::events::RECORDING_STATE_EVENT, move |_event| {
         let Some(recorder) = handle.try_state::<recording::Recorder>() else {
             return;
         };

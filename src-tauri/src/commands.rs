@@ -164,7 +164,7 @@ pub async fn reveal_meeting(app: AppHandle, id: String) -> Result<(), UiError> {
 /// one.
 #[tauri::command]
 #[specta::specta]
-pub async fn permission_status() -> permission::Status {
+pub async fn measure_permission() -> permission::Status {
     tauri::async_runtime::spawn_blocking(permission::measure)
         .await
         .unwrap_or_else(|error| {
@@ -296,7 +296,7 @@ pub fn recording_status(recorder: State<'_, Recorder>) -> Status {
 /// Starting or stopping blocks on real wall-clock time — SPEC §8.1's
 /// positive-control permission measurement on start, Core Audio warming up or
 /// winding down either side — so both run on a blocking thread rather than
-/// parking a tokio worker, the same reason `permission_status` does.
+/// parking a tokio worker, the same reason `measure_permission` does.
 ///
 /// The toggle goes through the [`FolderGate`], the same as ⌘⇧R and the menu
 /// bar, so the button cannot start a recording while the folder is moving.

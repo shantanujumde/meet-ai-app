@@ -84,7 +84,7 @@ export const ipc = {
     hasProblems: false,
   })),
 
-  permissionStatus: vi.fn<typeof Client.permissionStatus>(async () => NOT_CHECKED),
+  measurePermission: vi.fn<typeof Client.measurePermission>(async () => NOT_CHECKED),
   permissionQuick: vi.fn<typeof Client.permissionQuick>(async () => NOT_CHECKED),
   openPrivacySettings: vi.fn<typeof Client.openPrivacySettings>(async () => {}),
 
