@@ -19,7 +19,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 
 use crate::folder::{self, MeetingFolder};
 use crate::{Error, TICKETS_DIR, is_plain_name};
-use meeting_format::layout::{MEETING_FILE, NOTES_FILE, TRANSCRIPT_FILE};
+use meeting_format::layout::{MEETING_FILE, NOTES_FILE, TRANSCRIPT_FILE, app_dir};
 
 /// Bump when the tables below change. A file with another number is dropped
 /// and rebuilt, never migrated: the markdown is the truth, so rebuilding is
@@ -33,8 +33,6 @@ pub const MATCH_END: char = '\u{bb}';
 /// The most hits one search returns.
 const MAX_HITS: i64 = 50;
 
-/// Folder inside the meetings root that holds the index (and config, models).
-const APP_DIR: &str = ".app";
 const INDEX_FILE: &str = "index.db";
 
 /// Rows for the tables in SPEC §3.6, minus `transcript_vec` (v1.1).
@@ -85,7 +83,7 @@ pub struct Index {
 
 /// Where the index for the meetings folder `root` lives.
 pub fn index_path(root: &Path) -> PathBuf {
-    root.join(APP_DIR).join(INDEX_FILE)
+    app_dir(root).join(INDEX_FILE)
 }
 
 impl Index {
