@@ -68,7 +68,7 @@ pub mod wav_writer;
 /// and the Core Audio tap both hand back PCM at whatever rate the device
 /// negotiated, and this is the one place that brings it to the rate every WAV
 /// and every anchor formula assumes.
-pub mod resample;
+pub(crate) mod resample;
 
 /// The microphone [`AudioSource`], via `cpal`. Cross-platform on purpose —
 /// unlike the process tap, `cpal` already runs on Windows, so this is not

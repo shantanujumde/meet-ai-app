@@ -303,10 +303,7 @@ version = "0.3.0"
 dependencies = [
  "block2",
  "cpal",
- "dirs",
- "earshot",
  "hound",
- "insta",
  "meeting-format",
  "objc2",
  "objc2-av-foundation",
@@ -5034,7 +5031,6 @@ dependencies = [
  "dirs",
  "earshot",
  "hound",
- "insta",
  "meeting-format",
  "serde",
  "serde_json",
