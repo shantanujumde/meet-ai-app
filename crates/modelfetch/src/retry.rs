@@ -1,0 +1,298 @@
+//! Retry with backoff around a single download attempt.
+//!
+//! A failed attempt leaves its bytes in the `.part` file, so each retry
+//! re-measures the file and `download` resumes with a `Range` request (or
+//! restarts from zero if the server ignores ranges).
+
+use std::path::Path;
+use std::time::Duration;
+
+use stt::model::ModelSpec;
+
+use crate::{Error, Progress, download, part_size, remove_if_present};
+
+/// How many times to retry after the first failure.
+const MAX_RETRIES: u32 = 3;
+
+/// First backoff delay; doubles each retry (1s, 2s, 4s).
+const BASE_DELAY: Duration = Duration::from_secs(1);
+
+/// Retry count and backoff, injectable so tests do not sleep for seconds.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RetryPolicy {
+    pub max_retries: u32,
+    pub base_delay: Duration,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_retries: MAX_RETRIES,
+            base_delay: BASE_DELAY,
+        }
+    }
+}
+
+impl RetryPolicy {
+    /// Delay before retry number `retry` (0-based): base, 2x, 4x...
+    fn delay(&self, retry: u32) -> Duration {
+        self.base_delay.saturating_mul(1u32 << retry.min(16))
+    }
+}
+
+/// Run [`download`] until it succeeds or the retries are used up.
+pub(crate) async fn download_with_retry(
+    spec: &ModelSpec,
+    part_path: &Path,
+    policy: &RetryPolicy,
+    on_progress: &mut dyn FnMut(Progress),
+) -> Result<u64, Error> {
+    let mut retry = 0;
+    loop {
+        let mut have = part_size(part_path).await;
+        if have > spec.bytes {
+            remove_if_present(part_path).await;
+            have = 0;
+        }
+        if have == spec.bytes {
+            // A previous attempt got every byte before failing; verification
+            // decides whether they are good.
+            return Ok(have);
+        }
+
+        match download(spec, part_path, have, on_progress).await {
+            Ok(total) => return Ok(total),
+            Err(error) if retry < policy.max_retries => {
+                let delay = policy.delay(retry);
+                tracing::warn!(%error, retry = retry + 1, ?delay, "download failed; retrying");
+                tokio::time::sleep(delay).await;
+                retry += 1;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    use sha2::{Digest, Sha256};
+
+    use super::*;
+    use crate::{ensure_with, hex};
+
+    const FAST: RetryPolicy = RetryPolicy {
+        max_retries: 3,
+        base_delay: Duration::from_millis(1),
+    };
+
+    #[derive(Clone, Copy)]
+    struct Script {
+        /// Connections that send only `partial` bytes and then hang up.
+        fail_first: usize,
+        partial: usize,
+        ranges: bool,
+    }
+
+    struct Server {
+        url: String,
+        /// The `Range` header of every request, in order.
+        seen: Arc<Mutex<Vec<Option<String>>>>,
+    }
+
+    fn body() -> Vec<u8> {
+        (0u8..16).collect()
+    }
+
+    fn serve(body: Vec<u8>, script: Script) -> Server {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/model.bin", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for (index, stream) in listener.incoming().enumerate() {
+                let Ok(mut stream) = stream else { return };
+                let mut request = Vec::new();
+                let mut buf = [0u8; 512];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => request.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let text = String::from_utf8_lossy(&request).to_string();
+                let range = text
+                    .lines()
+                    .find_map(|l| l.strip_prefix("range: ").or(l.strip_prefix("Range: ")))
+                    .map(str::to_string);
+                log.lock().unwrap().push(range.clone());
+
+                let start = range
+                    .as_deref()
+                    .filter(|_| script.ranges)
+                    .and_then(|r| r.strip_prefix("bytes="))
+                    .and_then(|r| r.strip_suffix('-'))
+                    .and_then(|r| r.parse::<usize>().ok());
+                let tail = &body[start.unwrap_or(0)..];
+                let head = match start {
+                    Some(s) => format!(
+                        "HTTP/1.1 206 Partial Content\r\nAccept-Ranges: bytes\r\n\
+                         Content-Range: bytes {s}-{}/{}\r\nContent-Length: {}\r\n\
+                         Connection: close\r\n\r\n",
+                        body.len() - 1,
+                        body.len(),
+                        tail.len()
+                    ),
+                    None => format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        tail.len()
+                    ),
+                };
+                let send = if index < script.fail_first {
+                    &tail[..script.partial.min(tail.len())]
+                } else {
+                    tail
+                };
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(send);
+                let _ = stream.flush();
+            }
+        });
+        Server { url, seen }
+    }
+
+    fn spec(url: &str, bytes: &[u8], digest_of: &[u8]) -> ModelSpec {
+        let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+        ModelSpec {
+            id: "test-retry",
+            filename: "retry.bin",
+            url: leak(url.to_string()),
+            sha256: leak(hex(&Sha256::digest(digest_of))),
+            bytes: bytes.len() as u64,
+        }
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("meet-ai-retry-{}-{name}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn fails_twice_then_succeeds() {
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                fail_first: 2,
+                partial: 3,
+                ranges: true,
+            },
+        );
+        let dir = temp_dir("twice");
+        let s = spec(&server.url, &data, &data);
+        let path = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), data);
+        assert_eq!(server.seen.lock().unwrap().len(), 3);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn resume_sends_range_and_bytes_match() {
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                fail_first: 1,
+                partial: 5,
+                ranges: true,
+            },
+        );
+        let dir = temp_dir("resume");
+        let s = spec(&server.url, &data, &data);
+        let path = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), data);
+        let seen = server.seen.lock().unwrap().clone();
+        assert_eq!(seen, vec![None, Some("bytes=5-".to_string())]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn server_without_ranges_restarts_cleanly() {
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                fail_first: 1,
+                partial: 5,
+                ranges: false,
+            },
+        );
+        let dir = temp_dir("norange");
+        let s = spec(&server.url, &data, &data);
+        let path = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), data);
+        assert_eq!(server.seen.lock().unwrap().len(), 2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn gives_up_after_three_retries() {
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                fail_first: 100,
+                partial: 2,
+                ranges: true,
+            },
+        );
+        let dir = temp_dir("giveup");
+        let s = spec(&server.url, &data, &data);
+        let error = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap_err();
+        assert!(matches!(error, Error::Download(_)), "got {error:?}");
+        assert_eq!(server.seen.lock().unwrap().len(), 4, "1 try + 3 retries");
+        assert!(!dir.join("retry.bin").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn checksum_mismatch_still_errors_without_retrying() {
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                fail_first: 0,
+                partial: 0,
+                ranges: true,
+            },
+        );
+        let dir = temp_dir("checksum");
+        let s = spec(&server.url, &data, b"some other bytes");
+        let error = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap_err();
+        assert!(matches!(error, Error::Checksum { .. }), "got {error:?}");
+        assert_eq!(server.seen.lock().unwrap().len(), 1);
+        assert!(!dir.join("retry.bin").exists());
+        assert!(!dir.join("retry.bin.part").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn default_backoff_is_1_2_4_seconds() {
+        let p = RetryPolicy::default();
+        assert_eq!(p.max_retries, 3);
+        assert_eq!(
+            [p.delay(0), p.delay(1), p.delay(2)],
+            [
+                Duration::from_secs(1),
+                Duration::from_secs(2),
+                Duration::from_secs(4)
+            ]
+        );
+    }
+}

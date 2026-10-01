@@ -81,10 +81,12 @@ impl SpeechTimeline {
             if self.carry.len() < FRAME_SAMPLES {
                 return;
             }
-            let mut frame = [0i16; FRAME_SAMPLES];
-            frame.copy_from_slice(&self.carry);
-            self.carry.clear();
-            self.score(&frame);
+            // Taken out so `score` can borrow `self`; put back with its
+            // capacity, so the carry never reallocates.
+            let mut carry = std::mem::take(&mut self.carry);
+            self.score(&carry);
+            carry.clear();
+            self.carry = carry;
         }
 
         let (frames, remainder) = rest.as_chunks::<FRAME_SAMPLES>();
@@ -145,6 +147,12 @@ impl SpeechTimeline {
     /// the gate is deciding against.
     pub fn spans(&self) -> &[SpeechSpan] {
         &self.spans
+    }
+
+    /// Capacity of the carry buffer, for the no-reallocation test.
+    #[cfg(test)]
+    pub(super) fn carry_capacity(&self) -> usize {
+        self.carry.capacity()
     }
 
     fn score(&mut self, frame: &[i16]) {

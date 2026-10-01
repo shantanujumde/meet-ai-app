@@ -90,17 +90,34 @@ impl Resampler {
     ///
     /// Returns the 16 kHz output for this chunk — empty while still inside
     /// the resampler's own startup delay, and never longer than
-    /// `output_frames_max()`.
+    /// `output_frames_max()`. Allocates; the per-chunk worker loops call
+    /// [`Resampler::process_into`] instead, so this is test-only.
     ///
     /// # Panics
     ///
     /// If `input.len() != self.input_chunk_frames()`.
+    #[cfg(test)]
     pub fn process(&mut self, input: &[f32]) -> Vec<f32> {
+        let mut out = Vec::new();
+        self.process_into(input, &mut out);
+        out
+    }
+
+    /// Same as [`Resampler::process`], but writes the output into `out`
+    /// (cleared first), so a caller that keeps `out` across calls allocates
+    /// nothing per chunk once its capacity reaches
+    /// [`Resampler::output_frames_max`].
+    ///
+    /// # Panics
+    ///
+    /// If `input.len() != self.input_chunk_frames()`.
+    pub fn process_into(&mut self, input: &[f32], out: &mut Vec<f32>) {
         assert_eq!(
             input.len(),
             self.input_chunk_frames(),
             "must feed exactly one resampler chunk at a time"
         );
+        out.clear();
         let in_adapter = InterleavedSlice::new(input, 1, input.len())
             .expect("mono slice matches its own length");
         let out_len = self.out_buf.len();
@@ -114,11 +131,16 @@ impl Resampler {
         let produced = &self.out_buf[..written];
         if self.delay_remaining >= produced.len() {
             self.delay_remaining -= produced.len();
-            Vec::new()
         } else {
             let skip = std::mem::take(&mut self.delay_remaining);
-            produced[skip..].to_vec()
+            out.extend_from_slice(&produced[skip..]);
         }
+    }
+
+    /// Capacity a caller's `out` needs so [`Resampler::process_into`] never
+    /// grows it: the most frames one chunk can produce.
+    pub fn output_frames_max(&self) -> usize {
+        self.out_buf.len()
     }
 }
 
@@ -302,4 +324,67 @@ mod tests {
             "RMS {rms} over the first 20ms reads as still-trimming delay, not real tone"
         );
     }
+
+    /// FNV-1a over little-endian f32 bits; golden values below were computed
+    /// from the pre-Phase-5 implementation.
+    fn fnv1a_f32(samples: &[f32]) -> u64 {
+        let mut h = 0xcbf2_9ce4_8422_2325_u64;
+        for s in samples {
+            for b in s.to_bits().to_le_bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    fn noisy_signal(frames: usize, rate: u32) -> Vec<f32> {
+        let mut state = 0x2545_F491_4F6C_DD1D_u64;
+        (0..frames)
+            .map(|n| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let noise = (state % 2001) as f32 / 1000.0 - 1.0;
+                let t = n as f32 / rate as f32;
+                0.4 * (2.0 * std::f32::consts::PI * 440.0 * t).sin()
+                    + 0.2 * (2.0 * std::f32::consts::PI * 3_100.0 * t).sin()
+                    + 0.05 * noise
+            })
+            .collect()
+    }
+
+    #[test]
+    fn golden_output_bytes_at_48k_and_44k1() {
+        for (rate, golden) in [(48_000u32, GOLDEN_48K), (44_100, GOLDEN_44K1)] {
+            let out = resample_all(rate, &noisy_signal(rate as usize * 3, rate));
+            assert_eq!((out.len(), fnv1a_f32(&out)), golden, "rate {rate}");
+        }
+    }
+
+    #[test]
+    fn golden_downmix_stereo_bytes() {
+        let mut out = Vec::new();
+        downmix_to_mono(&noisy_signal(2 * 4096, 48_000), 2, &mut out);
+        assert_eq!((out.len(), fnv1a_f32(&out)), GOLDEN_DOWNMIX);
+    }
+
+    #[test]
+    fn process_into_matches_process_and_never_grows_a_presized_buffer() {
+        let input = noisy_signal(48_000, 48_000);
+        let mut a = Resampler::new(48_000);
+        let mut b = Resampler::new(48_000);
+        let chunk = a.input_chunk_frames();
+        let mut out = Vec::with_capacity(b.output_frames_max());
+        let cap = out.capacity();
+        for block in input.chunks_exact(chunk) {
+            b.process_into(block, &mut out);
+            assert_eq!(out, a.process(block));
+            assert_eq!(out.capacity(), cap, "steady state must not reallocate");
+        }
+    }
+
+    const GOLDEN_48K: (usize, u64) = (47744, 18202244382786285904);
+    const GOLDEN_44K1: (usize, u64) = (47879, 13416374915378001272);
+    const GOLDEN_DOWNMIX: (usize, u64) = (4096, 3792743920406672200);
 }

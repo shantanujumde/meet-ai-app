@@ -258,6 +258,23 @@ fn params(config: &WhisperConfig) -> FullParams<'_, '_> {
     params
 }
 
+/// Fill `audio` with `samples` as `f32` in `[-1, 1]`, replacing what was there.
+///
+/// whisper.cpp refuses anything under ~1 s of audio, so shorter input is padded
+/// with silence rather than skipped, or short real words get dropped. `audio`
+/// is the caller's scratch, so repeated calls reuse its capacity.
+fn to_whisper_audio(samples: &[i16], audio: &mut Vec<f32>) {
+    audio.clear();
+    audio.extend(
+        samples
+            .iter()
+            .map(|sample| *sample as f32 / i16::MAX as f32),
+    );
+    if audio.len() < SAMPLE_RATE as usize {
+        audio.resize(SAMPLE_RATE as usize, 0.0);
+    }
+}
+
 /// Run one VAD-approved span through whisper and return what survives layers
 /// 2 and 3 of the hallucination guard.
 ///
@@ -272,20 +289,12 @@ fn decode(
     config: &WhisperConfig,
     samples: &[i16],
     span_start_sec: f64,
+    audio: &mut Vec<f32>,
 ) -> Result<Vec<(f64, String)>, Error> {
-    let mut audio: Vec<f32> = samples
-        .iter()
-        .map(|sample| *sample as f32 / i16::MAX as f32)
-        .collect();
-
-    // whisper.cpp refuses anything under ~1 s of audio. Pad with silence
-    // rather than skipping, or short real words get dropped.
-    if audio.len() < SAMPLE_RATE as usize {
-        audio.resize(SAMPLE_RATE as usize, 0.0);
-    }
+    to_whisper_audio(samples, audio);
 
     state
-        .full(params(config), &audio)
+        .full(params(config), audio)
         .map_err(|e| Error::Engine(format!("whisper inference failed: {e}")))?;
 
     let mut lines = Vec::new();
@@ -349,6 +358,7 @@ impl crate::SttEngine for WhisperEngine {
         }
 
         let mut state = self.new_state()?;
+        let mut audio = Vec::new();
 
         for span in spans {
             for (start_sec, text) in decode(
@@ -356,6 +366,7 @@ impl crate::SttEngine for WhisperEngine {
                 &self.config,
                 span.samples(&pcm),
                 span.start_sec(),
+                &mut audio,
             )? {
                 sink.write(&Utterance {
                     start_sec: start_sec as u64,
@@ -384,6 +395,7 @@ impl crate::SttEngine for WhisperEngine {
             assembler: SpanAssembler::with_default_vad(self.config.segmentation),
             emitter: LiveEmitter::new(&options, listener),
             sink,
+            audio: Vec::new(),
         }))
     }
 }
@@ -405,14 +417,20 @@ pub struct WhisperSession {
     assembler: SpanAssembler,
     emitter: LiveEmitter,
     sink: Box<dyn TranscriptSink + Send>,
+    /// Scratch for the `f32` copy whisper takes, reused by every decode.
+    audio: Vec<f32>,
 }
 
 impl WhisperSession {
     /// Settle a span into transcript lines.
     fn settle(&mut self, span: &crate::session::ReadySpan) -> Result<(), Error> {
-        for (start_sec, text) in
-            decode(&mut self.state, &self.config, &span.samples, span.start_sec)?
-        {
+        for (start_sec, text) in decode(
+            &mut self.state,
+            &self.config,
+            &span.samples,
+            span.start_sec,
+            &mut self.audio,
+        )? {
             self.emitter
                 .finalize(start_sec, &text, self.sink.as_mut())?;
         }
@@ -424,14 +442,14 @@ impl WhisperSession {
         if !self.config.live_partials || !self.emitter.wants_volatile() {
             return Ok(());
         }
-        let Some(open) = self.assembler.open() else {
+        let Some((start_sec, samples)) = self.assembler.open_view() else {
             return Ok(());
         };
-        if open.duration_sec() < self.config.partial_min_sec {
+        if (samples.len() as f64 / SAMPLE_RATE as f64) < self.config.partial_min_sec {
             return Ok(());
         }
 
-        let guessed = decode(&mut self.state, &self.config, &open.samples, 0.0)?;
+        let guessed = decode(&mut self.state, &self.config, samples, 0.0, &mut self.audio)?;
         // One tail per speaker, so several segments over one open span are one
         // hypothesis. An empty result withdraws the tail rather than freezing
         // the last guess on screen — whisper deciding the span is not speech
@@ -441,7 +459,7 @@ impl WhisperSession {
             .map(|(_, line)| line.as_str())
             .collect::<Vec<_>>()
             .join(" ");
-        self.emitter.volatile(open.start_sec, &text);
+        self.emitter.volatile(start_sec, &text);
         Ok(())
     }
 }
@@ -484,6 +502,31 @@ impl SttSession for WhisperSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audio_conversion_is_pinned_and_padded_to_one_second() {
+        let mut audio = Vec::new();
+        to_whisper_audio(&[0, i16::MAX, i16::MIN, 16_384], &mut audio);
+        assert_eq!(audio.len(), SAMPLE_RATE as usize);
+        assert_eq!(audio[0], 0.0);
+        assert_eq!(audio[1], 1.0);
+        assert_eq!(audio[2], i16::MIN as f32 / i16::MAX as f32);
+        assert_eq!(audio[3], 16_384.0 / i16::MAX as f32);
+        assert!(audio[4..].iter().all(|s| *s == 0.0));
+    }
+
+    #[test]
+    fn the_audio_scratch_is_reused_and_never_leaks_old_samples() {
+        let mut audio = Vec::new();
+        let long = vec![1_000i16; 5 * SAMPLE_RATE as usize];
+        to_whisper_audio(&long, &mut audio);
+        let capacity = audio.capacity();
+        to_whisper_audio(&long, &mut audio);
+        to_whisper_audio(&[7; 10], &mut audio);
+        assert_eq!(audio.len(), SAMPLE_RATE as usize);
+        assert!(audio[10..].iter().all(|s| *s == 0.0), "stale audio leaked");
+        assert_eq!(audio.capacity(), capacity);
+    }
 
     #[test]
     fn the_canonical_hallucinations_are_caught() {

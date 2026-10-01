@@ -75,6 +75,9 @@ pub struct WavWriter {
     synced_frames: u64,
     /// Frames the on-disk header currently declares. Only ever grows.
     header_frames: u64,
+    /// Little-endian bytes of the chunk being appended, reused across calls so
+    /// the per-chunk path allocates nothing once it has grown to chunk size.
+    byte_scratch: Vec<u8>,
 }
 
 impl WavWriter {
@@ -94,6 +97,7 @@ impl WavWriter {
             appended_frames: 0,
             synced_frames: 0,
             header_frames: 0,
+            byte_scratch: Vec::new(),
         })
     }
 
@@ -103,11 +107,11 @@ impl WavWriter {
     pub fn append(&mut self, samples: &[i16]) -> io::Result<()> {
         self.file.seek(SeekFrom::End(0))?;
         // WAV is little-endian regardless of host order (SPEC §3.2: s16le).
-        let mut bytes = Vec::with_capacity(samples.len() * 2);
+        self.byte_scratch.clear();
         for sample in samples {
-            bytes.extend_from_slice(&sample.to_le_bytes());
+            self.byte_scratch.extend_from_slice(&sample.to_le_bytes());
         }
-        self.file.write_all(&bytes)?;
+        self.file.write_all(&self.byte_scratch)?;
         self.appended_frames += samples.len() as u64;
         Ok(())
     }
@@ -220,6 +224,7 @@ impl WavWriter {
             appended_frames: existing_frames,
             synced_frames: existing_frames,
             header_frames: existing_frames,
+            byte_scratch: Vec::new(),
         })
     }
 }
@@ -309,6 +314,19 @@ mod tests {
             std::env::temp_dir().join(format!("meet-ai-wav-writer-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join(name)
+    }
+
+    #[test]
+    fn append_reuses_its_byte_buffer_in_steady_state() {
+        let path = temp_path("scratch-capacity.wav");
+        let _ = std::fs::remove_file(&path);
+        let mut w = WavWriter::create(&path).unwrap();
+        w.append(&tone(400, 440.0)).unwrap();
+        let cap = w.byte_scratch.capacity();
+        for len in [341, 342, 400, 17, 399] {
+            w.append(&tone(len, 440.0)).unwrap();
+            assert_eq!(w.byte_scratch.capacity(), cap);
+        }
     }
 
     #[test]
