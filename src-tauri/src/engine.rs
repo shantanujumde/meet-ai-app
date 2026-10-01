@@ -40,7 +40,7 @@ pub const DEFAULT_MODEL: &str = "large-v3-turbo-q5_0";
 pub const MODEL_PROGRESS_EVENT: &str = "model://progress";
 
 /// What the filesystem says, with no subprocess involved.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentView {
     /// Absolute path to the `meet-stt` sidecar, if it was found. `None` means
@@ -56,7 +56,7 @@ pub struct EnvironmentView {
 }
 
 /// Which engine this Mac will actually use, and why.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectionView {
     /// `apple-speech` or `whisper`. The canonical names from `stt::registry`.
@@ -66,7 +66,7 @@ pub struct SelectionView {
 }
 
 /// One row on the model download screen.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelView {
     pub id: &'static str,
@@ -74,6 +74,7 @@ pub struct ModelView {
     /// The pinned size. SPEC §2.4's "~1.6 GB" is stale — amendment A4 corrects
     /// it to 574 MB for turbo and 190 MB for small.en — so the screen reads
     /// `spec.bytes` rather than quoting either document.
+    #[specta(type = specta_typescript::Number)]
     pub bytes: u64,
     pub installed: bool,
 }

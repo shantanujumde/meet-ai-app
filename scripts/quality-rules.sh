@@ -51,8 +51,7 @@ R3_LEVEL=warn
 R5_LEVEL=warn
 
 RULES="rule_r1 rule_r2 rule_r3 rule_r4 rule_r5 rule_r6 rule_r8"
-# R7 (bindings drift) joins this list once a `just bindings` recipe exists.
-RUN_ONCE=""
+RUN_ONCE="rule_r7"
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "quality-rules: not inside a git repository" >&2
@@ -370,11 +369,29 @@ rule_r6() {
 }
 
 # R7: src/ipc/bindings.ts must match what `just bindings` generates.
-# Disabled until a `bindings` recipe exists, so the gate never rewrites a file.
-# When it lands: regenerate into a temp copy (not in place), compare with
-# src/ipc/bindings.ts, report error R7 on a difference, and add rule_r7 to
-# RUN_ONCE.
-# rule_r7() { ...; }
+# Runs once, and only when a changed file can change the output (command files,
+# the types they send, the generator itself, or bindings.ts). It generates into
+# a temp copy through BINDINGS_OUT, so the gate never rewrites a working-tree
+# file. Takes the whole changed-file list.
+rule_r7() {
+  local f touched=0
+  for f in "$@"; do
+    case $f in
+      src/ipc/bindings.ts | src-tauri/src/*.rs | src-tauri/Cargo.toml | Cargo.toml | crates/stt/src/*.rs | crates/meeting-format/src/*.rs) touched=1 ;;
+    esac
+  done
+  [ "$touched" = 1 ] || return
+  [ -f src/ipc/bindings.ts ] || return
+  command -v cargo >/dev/null || return
+  local out="$tmp/bindings.ts"
+  if ! BINDINGS_OUT="$out" cargo test -p meet-ai --lib export_bindings >"$tmp/bindings.log" 2>&1; then
+    report error R7 src/ipc/bindings.ts 1 "could not generate the bindings (cargo test -p meet-ai --lib export_bindings failed); run \`just bindings\` to see why"
+    return
+  fi
+  if ! cmp -s "$out" src/ipc/bindings.ts; then
+    report error R7 src/ipc/bindings.ts 1 "generated bindings are out of date; run \`just bindings\` and commit src/ipc/bindings.ts"
+  fi
+}
 
 # R8: src/app.css is being emptied into Tailwind; no new CSS rules in it.
 rule_r8() {

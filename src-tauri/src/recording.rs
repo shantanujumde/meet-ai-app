@@ -40,6 +40,7 @@
 //! arrive apart or out of order, and the interrupted-recording notification
 //! is built from that status too.
 
+mod phase;
 mod ticker;
 
 use std::sync::{Arc, Mutex};
@@ -50,6 +51,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter as _, Manager as _};
 use {meeting_format::layout, stt::Speaker};
 
+pub use self::phase::Phase;
 use self::ticker::Ticker;
 
 use crate::error::UiError;
@@ -65,23 +67,8 @@ pub const STATE_EVENT: &str = "recording://state";
 /// report next to `meet-ai-record-shortcut`.
 const TICKER_THREAD_NAME: &str = "meet-ai-recording-ticker";
 
-/// Where the recorder is right now.
-///
-/// `Starting` and `Stopping` are not decoration: opening the tap (and, on
-/// start, the SPEC §8.1 permission measurement ahead of it) and flushing the
-/// last WAV header both take long enough to see, and a shortcut pressed twice
-/// in that window must be ignored rather than queued.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Phase {
-    Idle,
-    Starting,
-    Recording,
-    Stopping,
-}
-
 /// The recorder's state as the webview sees it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub phase: Phase,
@@ -89,6 +76,7 @@ pub struct Status {
     pub meeting_id: Option<String>,
     /// Unix epoch milliseconds the recording started, so the UI can run its own
     /// timer instead of being fed a tick per second over IPC.
+    #[specta(type = Option<specta_typescript::Number>)]
     pub started_at_ms: Option<i64>,
     /// Why the last recording ended badly, or the last start was refused: it
     /// stopped on its own because a tick failed (TUR-97), it did not close

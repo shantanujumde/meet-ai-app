@@ -13,9 +13,9 @@
  * what you want when iterating on them.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import { type Event, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
+import { commands } from "./bindings";
 import { NO_BACKEND } from "./errors";
 import type {
   EnvironmentView,
@@ -63,14 +63,49 @@ export function hasBackend(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-/** Call a Rust command, normalising whatever it throws into a `UiError`. */
-async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+/** What the generated bindings return for a command that can fail. */
+type Result<G> = { status: "ok"; data: G } | { status: "error"; error: unknown };
+
+/**
+ * Call a generated command, normalising whatever it throws into a `UiError`.
+ *
+ * The generated functions (`./bindings`) fix each command's name and argument
+ * names, and their return types are checked against the hand-written ones in
+ * `./types` at every call site below, so a Rust change that is not mirrored
+ * here fails `pnpm typecheck`. Commands that return `Result<_, UiError>` on the
+ * Rust side come back as a result object; the rest resolve to the bare value.
+ */
+async function call<G>(run: () => Promise<G | Result<G>>): Promise<G> {
   if (!hasBackend()) throw NO_BACKEND;
   try {
-    return await invoke<T>(command, args);
+    const answer = await run();
+    if (isResult<G>(answer)) {
+      if (answer.status === "error") throw answer.error;
+      return answer.data;
+    }
+    return answer;
   } catch (thrown) {
     throw toUiError(thrown);
   }
+}
+
+function isResult<G>(value: G | Result<G>): value is Result<G> {
+  if (typeof value !== "object" || value === null) return false;
+  const status = (value as { status?: unknown }).status;
+  return (status === "ok" && "data" in value) || (status === "error" && "error" in value);
+}
+
+/**
+ * `call` for commands whose generated type is wider than the hand-written one.
+ *
+ * Rust sends these fields as plain `String`s (`UiError.domain`,
+ * `TicketSummary.status`, `TranscriptLine.speaker`), so the generated type says
+ * `string` where `./types` narrows to the values Rust actually writes. The
+ * hand-written type stays the one callers see; everything else about the shape
+ * is still the generated contract's.
+ */
+function narrow<T>(run: () => Promise<unknown>): Promise<T> {
+  return call(run as () => Promise<T | Result<T>>);
 }
 
 // --- meetings -------------------------------------------------------------
@@ -81,31 +116,31 @@ export async function listMeetings(): Promise<MeetingList> {
     // the empty state is a designed screen rather than a failure.
     return { root: DEFAULT_ROOT_LABEL, rootExists: false, meetings: [] };
   }
-  return call<MeetingList>("list_meetings");
+  return call(() => commands.listMeetings());
 }
 
 // --- tickets --------------------------------------------------------------
 
 export async function listTickets(): Promise<TicketSummary[]> {
   if (!hasBackend()) return [];
-  return call<TicketSummary[]>("list_tickets");
+  return narrow(() => commands.listTickets());
 }
 
 export function createTicket(title: string, body: string): Promise<TicketSummary> {
-  return call<TicketSummary>("create_ticket", { title, body });
+  return narrow(() => commands.createTicket(title, body));
 }
 
 export async function search(query: string): Promise<SearchHit[]> {
   if (!hasBackend()) return [];
-  return call<SearchHit[]>("search", { query });
+  return call(() => commands.search(query));
 }
 
 export function readMeeting(id: string): Promise<MeetingDetail> {
-  return call<MeetingDetail>("read_meeting", { id });
+  return narrow(() => commands.readMeeting(id));
 }
 
-export function saveNotes(id: string, body: string): Promise<void> {
-  return call<void>("save_notes", { id, body });
+export async function saveNotes(id: string, body: string): Promise<void> {
+  await call(() => commands.saveNotes(id, body));
 }
 
 /**
@@ -113,11 +148,11 @@ export function saveNotes(id: string, body: string): Promise<void> {
  * it — nothing is left behind at the old location.
  */
 export function changeMeetingsFolder(newRoot: string): Promise<MeetingList> {
-  return call<MeetingList>("change_meetings_folder", { newRoot });
+  return call(() => commands.changeMeetingsFolder(newRoot));
 }
 
-export function revealMeeting(id: string): Promise<void> {
-  return call<void>("reveal_meeting", { id });
+export async function revealMeeting(id: string): Promise<void> {
+  await call(() => commands.revealMeeting(id));
 }
 
 // --- permission and onboarding -------------------------------------------
@@ -132,7 +167,7 @@ const NO_BACKEND_PERMISSION: PermissionStatus = {
 
 export async function permissionStatus(): Promise<PermissionStatus> {
   if (!hasBackend()) return NO_BACKEND_PERMISSION;
-  return call<PermissionStatus>("permission_status");
+  return call(() => commands.permissionStatus());
 }
 
 /**
@@ -141,7 +176,7 @@ export async function permissionStatus(): Promise<PermissionStatus> {
  */
 export async function permissionQuick(): Promise<PermissionStatus> {
   if (!hasBackend()) return NO_BACKEND_PERMISSION;
-  return call<PermissionStatus>("permission_quick");
+  return call(() => commands.permissionQuick());
 }
 
 /**
@@ -152,21 +187,21 @@ export function onPermissionStatus(handler: (status: PermissionStatus) => void):
   return subscribe<PermissionStatus>(PERMISSION_STATUS_EVENT, handler);
 }
 
-export function openPrivacySettings(pane: PrivacyPane): Promise<void> {
-  return call<void>("open_privacy_settings", { pane });
+export async function openPrivacySettings(pane: PrivacyPane): Promise<void> {
+  await call(() => commands.openPrivacySettings(pane));
 }
 
 export async function onboardingState(): Promise<OnboardingState> {
   if (!hasBackend()) return { completedAt: null };
-  return call<OnboardingState>("onboarding_state");
+  return call(() => commands.onboardingState());
 }
 
 export function completeOnboarding(): Promise<OnboardingState> {
-  return call<OnboardingState>("complete_onboarding");
+  return call(() => commands.completeOnboarding());
 }
 
 export function resetOnboarding(): Promise<OnboardingState> {
-  return call<OnboardingState>("reset_onboarding");
+  return call(() => commands.resetOnboarding());
 }
 
 // --- engine and models ----------------------------------------------------
@@ -182,7 +217,7 @@ export async function engineEnvironment(): Promise<EnvironmentView> {
       modelsDir: null,
     };
   }
-  return call<EnvironmentView>("engine_environment");
+  return call(() => commands.engineEnvironment());
 }
 
 /**
@@ -192,16 +227,16 @@ export async function engineEnvironment(): Promise<EnvironmentView> {
  * reason it is a separate command from {@link engineEnvironment}.
  */
 export function engineSelection(): Promise<SelectionView> {
-  return call<SelectionView>("engine_selection");
+  return narrow(() => commands.engineSelection());
 }
 
 export async function modelCatalogue(): Promise<ModelView[]> {
   if (!hasBackend()) return [];
-  return call<ModelView[]>("model_catalogue");
+  return call(() => commands.modelCatalogue());
 }
 
 export function downloadModel(id: string): Promise<string> {
-  return call<string>("download_model", { id });
+  return call(() => commands.downloadModel(id));
 }
 
 // --- recording ------------------------------------------------------------
@@ -210,15 +245,15 @@ export async function recordingStatus(): Promise<RecordingStatus> {
   if (!hasBackend()) {
     return { phase: "idle", meetingId: null, startedAtMs: null, error: null };
   }
-  return call<RecordingStatus>("recording_status");
+  return narrow(() => commands.recordingStatus());
 }
 
 export function toggleRecording(): Promise<RecordingStatus> {
-  return call<RecordingStatus>("toggle_recording");
+  return narrow(() => commands.toggleRecording());
 }
 
 export function stopRecording(): Promise<RecordingStatus> {
-  return call<RecordingStatus>("stop_recording");
+  return narrow(() => commands.stopRecording());
 }
 
 // --- live transcript ------------------------------------------------------
@@ -232,7 +267,7 @@ export async function liveTranscript(): Promise<LiveTranscriptSnapshot> {
   if (!hasBackend()) {
     return { status: { state: "idle", engine: null, detail: null }, finals: [], volatile: [] };
   }
-  return call<LiveTranscriptSnapshot>("live_transcript");
+  return call(() => commands.liveTranscript());
 }
 
 // --- events ---------------------------------------------------------------

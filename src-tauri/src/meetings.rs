@@ -39,6 +39,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::UiError;
 use crate::recording::{Phase, Status};
 
+pub use crate::recording_state::RecordingState;
+
 /// Files inside a meeting folder (SPEC §3.1).
 const AUDIO: &str = meeting_format::layout::AUDIO_DIR;
 const SEGMENTS: &str = meeting_format::layout::SEGMENTS_FILE;
@@ -247,7 +249,7 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), UiError> {
 }
 
 /// One row in the meeting list.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MeetingSummary {
     /// The folder name, e.g. `2026-09-01-1430-standup`. Also the route param.
@@ -259,6 +261,7 @@ pub struct MeetingSummary {
     /// `HH:MM`, parsed from the folder name.
     pub time: Option<String>,
     /// How many §3.4 lines parsed. 0 is a real, displayable answer.
+    #[specta(type = specta_typescript::Number)]
     pub line_count: usize,
     /// The timestamp on the last parsed line — the meeting's readable length.
     pub last_timestamp: Option<String>,
@@ -273,39 +276,8 @@ pub struct MeetingSummary {
     /// the only true duration). `None` when the folder holds no audio at all,
     /// which is also what a meeting looks like after the retention job (L16)
     /// has deleted its WAVs.
+    #[specta(type = Option<specta_typescript::Number>)]
     pub audio_ms: Option<u64>,
-}
-
-/// How a meeting's recording ended, as the UI names it (TUR-97).
-///
-/// **The name for a partly written meeting is "Interrupted".** Chosen over the
-/// alternatives because it says what happened and nothing more:
-///
-/// * not *failed*, *corrupt* or *error* — the audio and transcript up to the
-///   cut are good, and opening the meeting is not a failure;
-/// * not *incomplete* or *partial* — those suggest the rest might still turn
-///   up, or that the user should go and find it;
-/// * not *recovered* — that implies a repair step the user took part in, and
-///   TUR-97 says there is none;
-/// * and not *finished*, because it is not one: the recording ended because
-///   the app or the Mac stopped, not because someone pressed Stop.
-///
-/// The list shows the word as a label; the meeting itself says in one line
-/// how much audio was kept.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RecordingState {
-    /// Stopped on purpose, or there is no audio to judge by (a folder from
-    /// before recording existed, or one whose WAVs retention has deleted).
-    Finished,
-    /// The recording was cut short — force quit, `kill -9`, a crash, the
-    /// battery. Opened exactly like any other meeting.
-    Interrupted,
-    /// This app is writing to it right now. Its files look the way an
-    /// interrupted meeting's do — the headers are behind the samples and the
-    /// last segment has not been closed — because it has not been stopped
-    /// *yet*, so it must never be labelled interrupted.
-    Recording,
 }
 
 /// Which meeting, if any, the running app is recording into.
@@ -332,10 +304,11 @@ impl<'a> Live<'a> {
 }
 
 /// One parsed transcript line.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptLine {
     /// 0-based line number within `transcript.md`, per the Phase 2a contract.
+    #[specta(type = specta_typescript::Number)]
     pub seq: usize,
     /// `HH:MM:SS`, the utterance *start* (SPEC §3.4).
     pub time: String,
@@ -345,7 +318,7 @@ pub struct TranscriptLine {
 }
 
 /// A finished meeting, opened for review.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MeetingDetail {
     pub summary: MeetingSummary,
@@ -355,12 +328,13 @@ pub struct MeetingDetail {
     /// `transcript.md` is missing entirely — a different state from "empty".
     pub transcript_missing: bool,
     /// Lines that did not match §3.4 and were skipped. Surfaced, not hidden.
+    #[specta(type = specta_typescript::Number)]
     pub unparsed_line_count: usize,
     pub notes: String,
 }
 
 /// The meeting list plus enough context to write honest empty-state copy.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MeetingList {
     pub root: String,

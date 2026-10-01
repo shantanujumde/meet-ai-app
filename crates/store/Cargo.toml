@@ -7,6 +7,8 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
+# Optional: only the app shell turns it on, to generate TypeScript bindings.
+specta = { workspace = true, optional = true }
 dirs.workspace = true
 # The §3.1 file names, `Speaker`, the transcript line and the atomic write,
 # shared with `stt` (the transcript's writer) without depending on it.
@@ -34,3 +36,6 @@ insta.workspace = true
 # writes (SPEC §3.4: the sink is the file's only writer, this crate its reader).
 # Dev-only, so store's normal dependency graph stays light.
 stt.workspace = true
+
+[features]
+specta = ["dep:specta"]
