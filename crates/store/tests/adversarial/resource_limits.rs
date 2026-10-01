@@ -82,10 +82,11 @@ fn flow_nesting_up_to_the_loaders_own_limit_does_not_crash() {
     }
 }
 
-#[test]
-fn a_very_long_line_parses_in_reasonable_time() {
+/// Parse, render and re-parse one very long line of `repeats` units. Returns
+/// how long the whole round trip took.
+fn long_line_round_trip(repeats: usize) -> std::time::Duration {
     let start = std::time::Instant::now();
-    let long = "é🎉 [x]: ".repeat(100_000);
+    let long = "é🎉 [x]: ".repeat(repeats);
     let raw = format!("---\nid: m1\ntitle: \"{long}\"\n---\n## Summary\n{long}\n");
     let meeting = Meeting::parse(&raw);
     assert_eq!(meeting.title().as_deref(), Some(long.as_str()));
@@ -93,5 +94,21 @@ fn a_very_long_line_parses_in_reasonable_time() {
     assert_eq!(Meeting::parse(&text).sections, meeting.sections);
     let line = transcript::format_line(1, Speaker::You, &long).unwrap();
     assert!(transcript::parse_line(&line).is_some());
-    assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
+    start.elapsed()
+}
+
+/// A wall-clock limit is flaky on a shared debug-build runner, so this checks
+/// the shape instead: 4x the input must not cost much more than 4x the time.
+/// Linear parsing gives a ratio near 4; quadratic parsing gives about 16.
+#[test]
+fn a_very_long_line_parses_in_reasonable_time() {
+    const SMALL: usize = 25_000;
+    let small = (0..3).map(|_| long_line_round_trip(SMALL)).min().unwrap();
+    let big = long_line_round_trip(SMALL * 4);
+    // Allow 10x (linear is 4x, quadratic 16x) plus a flat 1 s for timer noise.
+    let limit = small * 10 + std::time::Duration::from_secs(1);
+    assert!(
+        big < limit,
+        "4x input took {big:?}, 1x took {small:?}: parsing is no longer linear"
+    );
 }
