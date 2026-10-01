@@ -6,7 +6,14 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!.claude", "!design-system", "!spikes", "!crates/audio/fixtures/segments"]
+    "includes": [
+      "**",
+      "!.claude",
+      "!design-system",
+      "!spikes",
+      "!src/ipc/bindings.ts",
+      "!crates/audio/fixtures/segments"
+    ]
   },
   "css": {
     "parser": {
