@@ -273,16 +273,26 @@ mod tests {
             tx.send(paths).ok();
         })
         .unwrap();
-        std::thread::sleep(Duration::from_millis(200));
 
+        // FSEvents can deliver the setup write late. Drain until the watcher
+        // has been quiet for a full debounce plus a margin, so that noise
+        // cannot be mistaken for the self-write.
+        let quiet = WATCH_DEBOUNCE + Duration::from_millis(500);
+        while rx.recv_timeout(quiet).is_ok() {}
+
+        let expected = std::fs::canonicalize(&file).unwrap();
         writes.note(&file);
         std::fs::write(&file, "typed by the user").unwrap();
 
-        let wait = WATCH_DEBOUNCE + Duration::from_secs(1);
-        assert!(
-            rx.recv_timeout(wait).is_err(),
-            "a self-write must not reach on_change"
-        );
+        let deadline = Instant::now() + WATCH_DEBOUNCE + Duration::from_secs(1);
+        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            if let Ok(paths) = rx.recv_timeout(left) {
+                assert!(
+                    !paths.contains(&expected),
+                    "a self-write must not reach on_change: {paths:?}"
+                );
+            }
+        }
     }
 
     fn scratch_dir(name: &str) -> tempfile::TempDir {
