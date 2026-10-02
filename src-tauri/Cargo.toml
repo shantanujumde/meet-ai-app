@@ -100,7 +100,8 @@ tauri-plugin-single-instance.workspace = true
 tauri-plugin-updater.workspace = true
 
 [dev-dependencies]
-# The notes-run tests drive the fake agent CLI (TUR-10).
+# The notes-run tests drive the fake agent CLI (TUR-10), and so do
+# the Sync tests, with fake `claude` / `codex` scripts too (TUR-11).
 agent = { workspace = true, features = ["test-support"] }
 # A throwaway meetings folder for each notes-run test.
 tempfile.workspace = true

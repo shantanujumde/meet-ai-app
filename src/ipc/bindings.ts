@@ -162,6 +162,37 @@ export const commands = {
 	cancelNotesRun: (meetingId: string) => typedError<meet_ai_lib_agent_run_Status, meet_ai_lib_error_UiError>(__TAURI_INVOKE("cancel_notes_run", { meetingId })),
 	/**  The agent-written sections of this meeting's `meeting.md`. */
 	meetingNotes: (meetingId: string) => typedError<meet_ai_lib_agent_run_MeetingNotes, meet_ai_lib_error_UiError>(__TAURI_INVOKE("meeting_notes", { meetingId })),
+	/**
+	 *  Sync one task: one agent run that creates the issue, then the issue's key
+	 *  and address written to the ticket. Takes as long as the agent does (up to
+	 *  `agent.timeout_sec`), so it runs on the blocking pool.
+	 */
+	syncTask: (ticketId: string, meetingId: string | null) => typedError<meet_ai_lib_tickets_TicketSummary, meet_ai_lib_error_UiError>(__TAURI_INVOKE("sync_task", { ticketId, meetingId })),
+	/**  Stop a running Sync; its `sync_task` then fails with `agent-cancelled`. */
+	cancelSync: (ticketId: string) => __TAURI_INVOKE<void>("cancel_sync", { ticketId }),
+	/**
+	 *  A meeting's tasks: the ones in its own `tickets/` folder, where the notes
+	 *  run writes them, and shared ones that name it. Sorted by id.
+	 */
+	meetingTasks: (meetingId: string) => typedError<meet_ai_lib_tickets_TicketSummary[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("meeting_tasks", { meetingId })),
+	/**
+	 *  Open a synced task's issue in the browser. The address comes from the
+	 *  ticket file and must be `https://`; the webview never opens a URL itself.
+	 */
+	openSyncedIssue: (ticketId: string, meetingId: string | null) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("open_synced_issue", { ticketId, meetingId })),
+	/**  The current tracker settings. */
+	trackerSettings: () => typedError<meet_ai_lib_sync_tracker_TrackerSettings, meet_ai_lib_error_UiError>(__TAURI_INVOKE("tracker_settings")),
+	/**
+	 *  Save the tracker and its MCP server. Through the [`FolderGate`]: the
+	 *  config file lives in the meetings folder.
+	 */
+	setTracker: (tracker: string, trackerMcp: string) => typedError<meet_ai_lib_sync_tracker_TrackerSettings, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_tracker", { tracker, trackerMcp })),
+	/**
+	 *  The MCP servers the chosen agent's CLI can see. Claude Code checks each
+	 *  server's health, so this can take most of a minute. Empty when no agent
+	 *  is chosen.
+	 */
+	trackerServers: () => typedError<meet_ai_lib_sync_tracker_TrackerServer[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("tracker_servers")),
 };
 
 /* Constants */
@@ -438,6 +469,12 @@ export type meet_ai_lib_engine_SelectionView = {
 };
 
 /**
+ *  What the CLI says about a server. Claude Code checks each one; Codex only
+ *  reports it as set up.
+ */
+export type meet_ai_lib_sync_tracker_ServerStatus = "connected" | "needs_auth" | "failed" | "pending" | "disabled" | "configured" | "unknown";
+
+/**
  *  What the `live_transcript` command returns: enough for a window opened
  *  mid-meeting to draw exactly what an always-open one shows.
  */
@@ -594,6 +631,31 @@ export type meet_ai_lib_tickets_TicketSummary = {
 	body: string,
 	/**  The file needs attention (bad YAML, missing id, odd status, ...). */
 	hasProblems: boolean,
+	/**
+	 *  The tracker it was synced to (`linear`, `jira`, `github`); `None`
+	 *  until a Sync run created the issue (TUR-11).
+	 */
+	syncedTo: string | null,
+	/**  The issue key the tracker gave it, e.g. `ENG-42`. */
+	externalId: string | null,
+	/**  The issue's web address. */
+	externalUrl: string | null,
+};
+
+/**  One MCP server the agent's CLI lists. */
+export type meet_ai_lib_sync_tracker_TrackerServer = {
+	name: string,
+	status: meet_ai_lib_sync_tracker_ServerStatus,
+};
+
+/**  The tracker settings as the window sees them. */
+export type meet_ai_lib_sync_tracker_TrackerSettings = {
+	/**  `linear`, `jira` or `github`. */
+	tracker: string,
+	/**  The MCP server name as the agent's CLI lists it. */
+	trackerMcp: string,
+	/**  `agent.harness`: `claude-code`, `codex` or `none`. */
+	harness: string,
 };
 
 /**  One parsed transcript line. */

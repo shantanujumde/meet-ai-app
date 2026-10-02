@@ -13,6 +13,7 @@ use crate::events::{
     MEETINGS_CHANGED_EVENT, MODEL_PROGRESS_EVENT, PERMISSION_STATUS_EVENT, RECORDING_STATE_EVENT,
     TRANSCRIPT_STATUS_EVENT, TRANSCRIPT_UPDATE_EVENT,
 };
+use crate::sync::{self, tracker};
 use crate::{commands, search};
 
 pub fn builder() -> Builder<tauri::Wry> {
@@ -47,6 +48,13 @@ pub fn builder() -> Builder<tauri::Wry> {
             agent_run::start_notes_run,
             agent_run::cancel_notes_run,
             agent_run::meeting_notes,
+            sync::sync_task,
+            sync::cancel_sync,
+            sync::meeting_tasks,
+            sync::open_synced_issue,
+            tracker::tracker_settings,
+            tracker::set_tracker,
+            tracker::tracker_servers,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)

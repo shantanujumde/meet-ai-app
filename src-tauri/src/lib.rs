@@ -26,6 +26,7 @@ mod permission;
 mod recording;
 mod recording_state;
 mod search;
+mod sync;
 mod tickets;
 mod watch;
 // The menu bar is a desktop surface; the mobile targets have nothing to put an
@@ -90,6 +91,7 @@ pub fn run() {
         .manage(watch::MeetingsWatch::default())
         .manage(search::SearchIndex::default())
         .manage(agent_run::AgentRuns::default())
+        .manage(sync::SyncRuns::default())
         .setup(|_app| {
             // TUR-97: before the record shortcut exists, so nothing can be
             // mid-recording while this rewrites a header. Fast — two 44-byte

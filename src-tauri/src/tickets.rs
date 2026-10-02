@@ -30,6 +30,13 @@ pub struct TicketSummary {
     pub body: String,
     /// The file needs attention (bad YAML, missing id, odd status, ...).
     pub has_problems: bool,
+    /// The tracker it was synced to (`linear`, `jira`, `github`); `None`
+    /// until a Sync run created the issue (TUR-11).
+    pub synced_to: Option<String>,
+    /// The issue key the tracker gave it, e.g. `ENG-42`.
+    pub external_id: Option<String>,
+    /// The issue's web address.
+    pub external_url: Option<String>,
 }
 
 /// Every ticket under the meetings root, newest first.
@@ -54,7 +61,21 @@ fn summarize(stem: &str, ticket: &Ticket) -> TicketSummary {
         meeting: ticket.meeting().filter(|m| !m.is_empty()),
         body: ticket.body.clone(),
         has_problems: !ticket.problems.is_empty(),
+        synced_to: ticket.synced_to(),
+        external_id: ticket.frontmatter.get_str("external_id"),
+        external_url: ticket.frontmatter.get_str("external_url"),
     }
+}
+
+/// [`summarize`] for the Sync commands, which list and update a meeting's
+/// own tickets (TUR-11).
+pub(crate) fn summary_of(stem: &str, ticket: &Ticket) -> TicketSummary {
+    summarize(stem, ticket)
+}
+
+/// [`list`] under `root`, for the Sync commands.
+pub(crate) fn list_under(root: &Path) -> Result<Vec<TicketSummary>, UiError> {
+    list_in(root)
 }
 
 /// The `.md` files in the tickets folder as `(file stem, path)`. A missing
@@ -91,6 +112,9 @@ fn list_in(root: &Path) -> Result<Vec<TicketSummary>, UiError> {
                 meeting: None,
                 body: String::new(),
                 has_problems: true,
+                synced_to: None,
+                external_id: None,
+                external_url: None,
             },
         };
         rows.push((ticket::parse_id(&summary.id), summary));
