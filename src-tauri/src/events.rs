@@ -24,3 +24,6 @@ pub const TRANSCRIPT_STATUS_EVENT: &str = "transcript://status";
 
 /// The meetings folder changed on disk.
 pub const MEETINGS_CHANGED_EVENT: &str = "meetings-changed";
+
+/// A meeting's notes run changed state (TUR-10): `agent_run::Status`.
+pub const AGENT_RUN_STATUS_EVENT: &str = "agent-run://status";

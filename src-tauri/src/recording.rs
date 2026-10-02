@@ -428,7 +428,7 @@ impl Recorder {
         // error from Stop: a short transcript is not a failed recording.
         let finish_transcription = move || {
             if let Some(transcription) = transcription {
-                transcription.finish(live_transcript::STOP_TIMEOUT);
+                crate::agent_run::finish_then_run(app, transcription);
             }
         };
 

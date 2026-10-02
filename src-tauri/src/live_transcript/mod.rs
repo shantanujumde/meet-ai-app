@@ -52,6 +52,7 @@ mod supervise;
 #[cfg(test)]
 mod tests;
 
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -214,6 +215,7 @@ impl LiveTranscript {
         scope.notify.status(&Status::idle());
 
         let stopping = Arc::new(AtomicBool::new(false));
+        let transcript_path = transcript.clone();
         let (done_tx, done) = mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("meet-ai-live-transcript".to_string())
@@ -238,6 +240,7 @@ impl LiveTranscript {
             scope,
             stopping,
             done,
+            transcript: transcript_path,
         }
     }
 }
@@ -252,9 +255,17 @@ pub struct Transcription {
     scope: Scope,
     stopping: Arc<AtomicBool>,
     done: mpsc::Receiver<()>,
+    /// The meeting's `transcript.md`, inside its meeting folder.
+    transcript: PathBuf,
 }
 
 impl Transcription {
+    /// The meeting's `transcript.md`. Its folder is the meeting's, so this
+    /// also names the meeting (TUR-10's notes run).
+    pub fn transcript(&self) -> &Path {
+        &self.transcript
+    }
+
     /// Finish the meeting's transcription and report where it ended up.
     ///
     /// Call after the recording itself has stopped, so every frame is already

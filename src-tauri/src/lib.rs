@@ -8,6 +8,7 @@
 // `tracing`; only the plugin's own level filters need `log` types.
 use tauri_plugin_log::log;
 
+mod agent_run;
 mod bindings;
 mod commands;
 mod config;
@@ -88,6 +89,7 @@ pub fn run() {
         .manage(folder_move::FolderGate::default())
         .manage(watch::MeetingsWatch::default())
         .manage(search::SearchIndex::default())
+        .manage(agent_run::AgentRuns::default())
         .setup(|_app| {
             // TUR-97: before the record shortcut exists, so nothing can be
             // mid-recording while this rewrites a header. Fast — two 44-byte
@@ -129,6 +131,9 @@ pub fn run() {
             // kill never reaches this, which is what the checkpoints are for.
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager as _;
+                // TUR-10: first, so the stop below starts no notes run, and a
+                // run already going has its agent stopped before it answers.
+                agent_run::shutdown(app);
                 if let Err(error) = app.state::<recording::Recorder>().stop(app) {
                     tracing::error!(message = %error.message, "could not finish the recording on quit");
                 }

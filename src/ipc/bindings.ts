@@ -151,9 +151,22 @@ export const commands = {
 	 *  rebuilding the index, and SQLite is disk work.
 	 */
 	search: (query: string) => typedError<store_index_Hit[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("search", { query })),
+	/**  Where this meeting's notes run stands. */
+	notesRunStatus: (meetingId: string) => typedError<meet_ai_lib_agent_run_Status, meet_ai_lib_error_UiError>(__TAURI_INVOKE("notes_run_status", { meetingId })),
+	/**
+	 *  Start the notes run by hand: Retry, or the first run on a meeting that
+	 *  has none. Ignored while one is running; the answer is then that run.
+	 */
+	startNotesRun: (meetingId: string) => typedError<meet_ai_lib_agent_run_Status, meet_ai_lib_error_UiError>(__TAURI_INVOKE("start_notes_run", { meetingId })),
+	/**  Cancel this meeting's running notes run. A no-op when none is running. */
+	cancelNotesRun: (meetingId: string) => typedError<meet_ai_lib_agent_run_Status, meet_ai_lib_error_UiError>(__TAURI_INVOKE("cancel_notes_run", { meetingId })),
+	/**  The agent-written sections of this meeting's `meeting.md`. */
+	meetingNotes: (meetingId: string) => typedError<meet_ai_lib_agent_run_MeetingNotes, meet_ai_lib_error_UiError>(__TAURI_INVOKE("meeting_notes", { meetingId })),
 };
 
 /* Constants */
+export const AGENT_RUN_STATUS_EVENT = "agent-run://status" as const;
+
 export const MEETINGS_CHANGED_EVENT = "meetings-changed" as const;
 
 export const MODEL_PROGRESS_EVENT = "model://progress" as const;
@@ -184,6 +197,49 @@ export type meet_ai_lib_engine_EnvironmentView = {
 	 */
 	modelsDir: string | null,
 };
+
+/**  Why a run wrote no notes, in plain words. */
+export type meet_ai_lib_agent_run_Failure = {
+	kind: meet_ai_lib_agent_run_FailureKind,
+	/**  One or two sentences for the meeting view, next to Retry. */
+	message: string,
+	/**
+	 *  A command to type in Terminal that fixes it, when there is one
+	 *  (signing in).
+	 */
+	command: string | null,
+};
+
+/**
+ *  Every way a run can end without notes. One per thing the user can do
+ *  about it.
+ */
+export type meet_ai_lib_agent_run_FailureKind = 
+/**  No agent is set up (`agent.harness` is `none`); Copy prompt instead. */
+"no-agent" | 
+/**  The chosen agent CLI is not on this Mac, or meet-ai cannot find it. */
+"not-installed" | 
+/**  The CLI is there but nobody is signed in to it. */
+"not-signed-in" | 
+/**  The run went past `agent.timeout_sec` and was stopped. */
+"timed-out" | 
+/**  The user pressed Cancel. */
+"cancelled" | 
+/**  The CLI exited with an error. */
+"cli-failed" | 
+/**  The CLI's answer was not JSON, or not in the notes format. */
+"bad-reply" | 
+/**
+ *  The run could not be started (temp folder, launch, prompt template,
+ *  config).
+ */
+"could-not-start" | 
+/**  The meeting has no transcript to write notes from. */
+"no-transcript" | 
+/**  The user switched notes off for this meeting (`agent_notes: off`). */
+"notes-off" | 
+/**  The answer was fine but writing `meeting.md` or the tickets failed. */
+"write-failed";
 
 /**  One search result. */
 export type store_index_Hit = {
@@ -240,6 +296,22 @@ export type meet_ai_lib_meetings_list_MeetingList = {
 	meetings: meet_ai_lib_meetings_view_MeetingSummary[],
 };
 
+/**  The agent-written half of `meeting.md`, for the meeting view. */
+export type meet_ai_lib_agent_run_MeetingNotes = {
+	/**  The meeting is marked `agent_notes: off`. */
+	notesOff: boolean,
+	/**
+	 *  `analyzed_by` (`claude-code`, `codex`, `clipboard`), `None` before any
+	 *  notes were written.
+	 */
+	analyzedBy: string | null,
+	/**
+	 *  The four sections (Summary, Decisions, Action Items, Open Questions)
+	 *  that have text, in that order. Bodies are markdown as written.
+	 */
+	sections: meet_ai_lib_agent_run_NotesSection[],
+};
+
 /**  One row in the meeting list. */
 export type meet_ai_lib_meetings_view_MeetingSummary = {
 	/**  The folder name, e.g. `2026-09-01-1430-standup`. Also the route param. */
@@ -281,6 +353,11 @@ export type meet_ai_lib_engine_ModelView = {
 	 */
 	bytes: number,
 	installed: boolean,
+};
+
+export type meet_ai_lib_agent_run_NotesSection = {
+	heading: string,
+	body: string,
 };
 
 /**
@@ -387,6 +464,21 @@ export type meeting_format_Speaker =
 /**  The system-audio channel — everyone else on the call. */
 "others";
 
+/**
+ *  The run's state. `idle` means no run for this meeting since launch: the
+ *  view then goes by what is on disk (notes there or not).
+ */
+export type meet_ai_lib_agent_run_State = { state: "idle" } | 
+/**  *Writing notes…*, with Cancel. */
+{ state: "running" } | 
+/**
+ *  The notes and tasks are on disk. `tasks` is how many tickets were
+ *  written.
+ */
+{ state: "done"; tasks: number } | 
+/**  No notes were written, and why. Retry starts again. */
+{ state: "failed"; failure: meet_ai_lib_agent_run_Failure };
+
 /**  Where live transcription is. */
 export type meet_ai_lib_live_transcript_State = 
 /**  Not transcribing: no meeting yet, or the engine is still loading. */
@@ -424,6 +516,13 @@ export type meet_ai_lib_permission_State =
 "granted" | 
 /**  The user said No, or the tone did not come back. */
 "denied";
+
+/**  Where one meeting's notes run stands, as the meeting view shows it. */
+export type meet_ai_lib_agent_run_Status = {
+	/**  The meeting folder name. */
+	meetingId: string,
+	state: meet_ai_lib_agent_run_State,
+};
 
 /**  What [`TRANSCRIPT_STATUS_EVENT`] carries. */
 export type meet_ai_lib_live_transcript_Status = {

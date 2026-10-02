@@ -67,3 +67,28 @@ pub fn interrupted(app: &tauri::AppHandle, message: &str) {
         tracing::warn!(%error, "could not show the interrupted-recording notification");
     }
 }
+
+/// Tell the user a meeting's notes are written, when the window is not in
+/// front to show it (TUR-10).
+pub fn notes_ready(app: &tauri::AppHandle, title: &str, tasks: u32) {
+    use tauri_plugin_notification::NotificationExt as _;
+
+    if let Err(error) = app
+        .notification()
+        .builder()
+        .title("Notes are ready")
+        .body(notes_ready_body(title, tasks))
+        .show()
+    {
+        tracing::warn!(%error, "could not show the notes-ready notification");
+    }
+}
+
+/// "Standup: the notes and 2 tasks are written."
+fn notes_ready_body(title: &str, tasks: u32) -> String {
+    match tasks {
+        0 => format!("{title}: the notes are written."),
+        1 => format!("{title}: the notes and 1 task are written."),
+        n => format!("{title}: the notes and {n} tasks are written."),
+    }
+}

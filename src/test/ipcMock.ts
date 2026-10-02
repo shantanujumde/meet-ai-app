@@ -18,7 +18,8 @@
  * ```
  *
  * then `ipc.listMeetings.mockResolvedValue(…)` to change an answer, and
- * `emit(RECORDING_STATE_EVENT, status)` to push an event the way Rust would.
+ * `emit(RECORDING_STATE_EVENT, status)` to push an event the way Rust would
+ * (`emit(AGENT_RUN_STATUS_EVENT, status)` for a notes run).
  * `setup.ts` resets every default and drops every listener before each test.
  *
  * The event names are the real ones from `client.ts` (the module's own
@@ -31,6 +32,8 @@ import type * as Client from "@/ipc/client";
 import type {
   LiveTranscriptSnapshot,
   MeetingList,
+  MeetingNotes,
+  NotesRunFailure,
   PermissionStatus,
   RecordingStatus,
 } from "@/ipc/types";
@@ -46,6 +49,14 @@ const NOT_CHECKED: PermissionStatus = {
 };
 
 const EMPTY_LIST: MeetingList = { root: "/Users/test/Meetings", rootExists: false, meetings: [] };
+
+const NO_NOTES: MeetingNotes = { notesOff: false, analyzedBy: null, sections: [] };
+
+const CANCELLED: NotesRunFailure = {
+  kind: "cancelled",
+  message: "You cancelled the notes run. Retry to start it again.",
+  command: null,
+};
 
 const EMPTY_SNAPSHOT: LiveTranscriptSnapshot = {
   status: { state: "idle", engine: null, detail: null },
@@ -73,6 +84,22 @@ export const ipc = {
   revealMeeting: vi.fn<typeof Client.revealMeeting>(async () => {}),
   wrapUpPrompt: vi.fn<typeof Client.wrapUpPrompt>(async (id) => `Wrap up ${id}`),
   copyPromptFallback: vi.fn<typeof Client.copyPromptFallback>(async () => false),
+
+  // No run since launch and nothing written yet: the state a meeting opened
+  // after a relaunch is in. A test of a run pushes its statuses with `emit`.
+  notesRunStatus: vi.fn<typeof Client.notesRunStatus>(async (meetingId) => ({
+    meetingId,
+    state: { state: "idle" },
+  })),
+  startNotesRun: vi.fn<typeof Client.startNotesRun>(async (meetingId) => ({
+    meetingId,
+    state: { state: "running" },
+  })),
+  cancelNotesRun: vi.fn<typeof Client.cancelNotesRun>(async (meetingId) => ({
+    meetingId,
+    state: { state: "failed", failure: CANCELLED },
+  })),
+  meetingNotes: vi.fn<typeof Client.meetingNotes>(async () => NO_NOTES),
 
   search: vi.fn<typeof Client.search>(async () => []),
 
@@ -160,6 +187,7 @@ export function mockClient(actual: typeof Client): typeof Client {
     onTranscriptUpdate: subscriber(actual.TRANSCRIPT_UPDATE_EVENT),
     onTranscriptStatus: subscriber(actual.TRANSCRIPT_STATUS_EVENT),
     onMeetingsChanged: subscriber(actual.MEETINGS_CHANGED_EVENT),
+    onNotesRunStatus: subscriber(actual.AGENT_RUN_STATUS_EVENT),
   };
 }
 
