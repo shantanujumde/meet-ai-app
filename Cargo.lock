@@ -3063,6 +3063,7 @@ dependencies = [
 name = "meet-ai"
 version = "0.3.0"
 dependencies = [
+ "agent",
  "anyhow",
  "audio",
  "calendar",

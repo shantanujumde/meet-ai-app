@@ -16,6 +16,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { workspace = true, features = [] }
 
 [dependencies]
+# Runs the user's agent CLI for the notes run when a call ends (TUR-10, A11).
+agent.workspace = true
 anyhow.workspace = true
 # The recording state machine stamps meeting folder names from local time
 # (SPEC §3.1), and the onboarding flag records when it was completed.
@@ -96,3 +98,7 @@ stt = { workspace = true, features = ["specta"] }
 tauri-plugin-global-shortcut.workspace = true
 tauri-plugin-single-instance.workspace = true
 tauri-plugin-updater.workspace = true
+
+[dev-dependencies]
+# The notes-run tests drive the fake agent CLI (TUR-10).
+agent = { workspace = true, features = ["test-support"] }

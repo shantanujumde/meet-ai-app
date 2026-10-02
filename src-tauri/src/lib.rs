@@ -8,6 +8,7 @@
 // `tracing`; only the plugin's own level filters need `log` types.
 use tauri_plugin_log::log;
 
+mod agent_run;
 mod bindings;
 mod commands;
 mod config;
