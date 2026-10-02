@@ -152,3 +152,50 @@ describe("Review's Copy prompt", () => {
     expect(screen.queryByRole("button", { name: "Copy prompt" })).toBeNull();
   });
 });
+
+/**
+ * TUR-10: the agent's notes sit under the header once the meeting is not
+ * recording, and the start button follows the same rule as Copy prompt.
+ */
+describe("Review's meeting notes", () => {
+  test("offers to write notes for a finished meeting with a transcript", async () => {
+    readMeeting.mockResolvedValue(detail([transcriptLine()]));
+    renderReview();
+
+    expect(await screen.findByRole("heading", { name: "Meeting notes" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Write notes" })).toBeTruthy();
+  });
+
+  test("is hidden while this meeting records, and shows the run once it stops", async () => {
+    recording({ phase: "recording", meetingId: ID, startedAtMs: 0 });
+    readMeeting.mockResolvedValue(detail([transcriptLine()]));
+    ipc.notesRunStatus.mockResolvedValue({ meetingId: ID, state: { state: "running" } });
+    renderReview();
+
+    expect(await screen.findByRole("heading", { name: "Live transcript" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Meeting notes" })).toBeNull();
+
+    act(() => recording({ phase: "idle" }));
+    expect(await screen.findByText("Writing notes…")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  test("does not offer to start notes when Copy prompt stands in for the agent", async () => {
+    copyPromptFallback.mockResolvedValue(true);
+    readMeeting.mockResolvedValue(detail([transcriptLine()]));
+    renderReview();
+
+    expect(await screen.findByRole("button", { name: "Copy prompt" })).toBeTruthy();
+    await waitFor(() => expect(ipc.meetingNotes).toHaveBeenCalledWith(ID));
+    expect(screen.queryByRole("button", { name: "Write notes" })).toBeNull();
+  });
+
+  test("does not offer to start notes for a meeting with nothing transcribed", async () => {
+    readMeeting.mockResolvedValue(detail([]));
+    renderReview();
+
+    expect(await screen.findByText("Nothing was transcribed")).toBeTruthy();
+    await waitFor(() => expect(ipc.meetingNotes).toHaveBeenCalledWith(ID));
+    expect(screen.queryByRole("button", { name: "Write notes" })).toBeNull();
+  });
+});

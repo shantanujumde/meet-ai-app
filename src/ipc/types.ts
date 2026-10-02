@@ -268,3 +268,62 @@ export type TicketSummary = {
   body: string;
   hasProblems: boolean;
 };
+
+/**
+ * Every way a notes run can end without notes (TUR-10). One per thing the user
+ * can do about it. Branch on this, never on `NotesRunFailure.message`.
+ */
+export type NotesRunFailureKind =
+  | "no-agent"
+  | "not-installed"
+  | "not-signed-in"
+  | "timed-out"
+  | "cancelled"
+  | "cli-failed"
+  | "bad-reply"
+  | "could-not-start"
+  | "no-transcript"
+  | "notes-off"
+  | "write-failed";
+
+/** Why a run wrote no notes, in plain words. */
+export type NotesRunFailure = {
+  kind: NotesRunFailureKind;
+  /** One or two sentences for the meeting view, next to Retry. Shown as is. */
+  message: string;
+  /** Something to type in Terminal that fixes it (signing in), when there is one. */
+  command: string | null;
+};
+
+/**
+ * Where a meeting's notes run is. `idle` means no run for this meeting since
+ * launch, so the view goes by what is on disk.
+ */
+export type NotesRunState =
+  | { state: "idle" }
+  | { state: "running" }
+  /** `tasks` is how many tickets were written. */
+  | { state: "done"; tasks: number }
+  | { state: "failed"; failure: NotesRunFailure };
+
+/** What `notes_run_status` and the agent-run status event carry. */
+export type NotesRunStatus = {
+  meetingId: string;
+  state: NotesRunState;
+};
+
+/** One agent-written section of `meeting.md`. `body` is markdown as written. */
+export type NotesSection = {
+  heading: string;
+  body: string;
+};
+
+/** The agent-written half of `meeting.md`, for the meeting view. */
+export type MeetingNotes = {
+  /** The meeting is marked `agent_notes: off`. */
+  notesOff: boolean;
+  /** `claude-code`, `codex`, `clipboard`; null before any notes were written. */
+  analyzedBy: string | null;
+  /** Summary, Decisions, Action Items, Open Questions — the ones with text. */
+  sections: NotesSection[];
+};

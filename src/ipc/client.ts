@@ -16,6 +16,7 @@
 import { type Event, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
 import {
+  AGENT_RUN_STATUS_EVENT,
   commands,
   MEETINGS_CHANGED_EVENT,
   MODEL_PROGRESS_EVENT,
@@ -30,9 +31,11 @@ import type {
   LiveTranscriptSnapshot,
   MeetingDetail,
   MeetingList,
+  MeetingNotes,
   MeetingsChanged,
   ModelProgress,
   ModelView,
+  NotesRunStatus,
   OnboardingState,
   PermissionStatus,
   PrivacyPane,
@@ -55,6 +58,7 @@ import { toUiError } from "./types";
  * error event.
  */
 export {
+  AGENT_RUN_STATUS_EVENT,
   MEETINGS_CHANGED_EVENT,
   MODEL_PROGRESS_EVENT,
   PERMISSION_STATUS_EVENT,
@@ -194,6 +198,37 @@ export function wrapUpPrompt(meetingId: string): Promise<string> {
 export async function copyPromptFallback(): Promise<boolean> {
   if (!hasBackend()) return false;
   return call(() => commands.copyPromptFallback());
+}
+
+// --- notes run (TUR-10) ---------------------------------------------------
+
+/**
+ * Where this meeting's notes run is. Rust starts one on its own when a
+ * recording stops; `idle` means none since launch. Without a backend nothing
+ * ever runs, so the answer is idle.
+ */
+export async function notesRunStatus(meetingId: string): Promise<NotesRunStatus> {
+  if (!hasBackend()) return { meetingId, state: { state: "idle" } };
+  return call(() => commands.notesRunStatus(meetingId));
+}
+
+/**
+ * Start the notes run by hand: Retry, or the first run on a meeting with none.
+ * Rust ignores it while one is running and answers with that run.
+ */
+export function startNotesRun(meetingId: string): Promise<NotesRunStatus> {
+  return call(() => commands.startNotesRun(meetingId));
+}
+
+/** Cancel this meeting's running notes run. A no-op when none is running. */
+export function cancelNotesRun(meetingId: string): Promise<NotesRunStatus> {
+  return call(() => commands.cancelNotesRun(meetingId));
+}
+
+/** The agent-written sections of this meeting's `meeting.md`. */
+export async function meetingNotes(meetingId: string): Promise<MeetingNotes> {
+  if (!hasBackend()) return { notesOff: false, analyzedBy: null, sections: [] };
+  return call(() => commands.meetingNotes(meetingId));
 }
 
 // --- permission and onboarding -------------------------------------------
@@ -360,4 +395,9 @@ export function onTranscriptStatus(handler: (status: TranscriptStatus) => void):
 
 export function onMeetingsChanged(handler: (change: MeetingsChanged) => void): () => void {
   return subscribe<MeetingsChanged>(MEETINGS_CHANGED_EVENT, handler);
+}
+
+/** Every notes-run change, for every meeting — filter by `meetingId`. */
+export function onNotesRunStatus(handler: (status: NotesRunStatus) => void): () => void {
+  return subscribe<NotesRunStatus>(AGENT_RUN_STATUS_EVENT, handler);
 }

@@ -25,6 +25,7 @@ import { useTranscriptStore } from "@/state/transcript";
 import { CopyPromptButton } from "@/ui/CopyPromptButton";
 import { LiveTranscript } from "@/ui/LiveTranscript";
 import { NotesPane } from "@/ui/NotesPane";
+import { NotesRun } from "@/ui/NotesRun";
 import { Button, ButtonRow, rowDetailVariants } from "@/ui/primitives";
 import { SpeakerLabel } from "@/ui/SpeakerLabel";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
@@ -54,14 +55,18 @@ export function Review() {
   // A11's fallback: with no agent to run, a meeting is wrapped up by copying
   // its prompt. Asked once; a failed answer counts as "no", since the button
   // is an extra and the meeting reads fine without it.
-  const [harnessIsNone, setHarnessIsNone] = useState(false);
+  // Null until asked, so the notes' start button does not flash up before
+  // the answer says Copy prompt stands in for it.
+  const [harnessIsNone, setHarnessIsNone] = useState<boolean | null>(null);
   useEffect(() => {
     let current = true;
     copyPromptFallback().then(
       (answer) => {
         if (current) setHarnessIsNone(answer);
       },
-      () => {},
+      () => {
+        if (current) setHarnessIsNone(false);
+      },
     );
     return () => {
       current = false;
@@ -69,7 +74,7 @@ export function Review() {
   }, []);
   // `cliFound` stays at its default until agent CLI detection (TUR-6, TUR-10)
   // can say whether the chosen agent is installed.
-  const copyPrompt = showsCopyPrompt({ harnessIsNone });
+  const copyPrompt = showsCopyPrompt({ harnessIsNone: harnessIsNone === true });
 
   const load = useCallback(async (meetingId: string) => {
     setLoading(true);
@@ -175,6 +180,16 @@ export function Review() {
           />
         ) : null}
       </header>
+
+      {/* TUR-10: the agent's notes. Not while recording — the run starts on
+          its own when this recording stops, and its status event arrives. */}
+      {isLive ? null : (
+        <NotesRun
+          meetingId={summary.id}
+          canStart={harnessIsNone !== null && !copyPrompt && lines.length > 0}
+          onDone={() => void reloadMeetings()}
+        />
+      )}
 
       {isLive ? (
         <LiveTranscript live={live} />
