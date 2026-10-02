@@ -165,6 +165,9 @@ crates/modelfetch/ 🟡 whisper model download. Has bin/meet-stt-model. The only
 crates/store/      🟢 meeting-folder read/write + frontmatter (Phase 3a); watcher and
                       derived SQLite index still to come (3b, 3c)
 crates/prompts/    🟢 minijinja templates + assembly
+crates/agent/      🟡 Harness trait: runs the user's agent CLI as a child process (fresh temp
+                      folder, prompt on stdin, time limit, cancel) and checks its JSON (A11).
+                      The only crate allowed to hand a transcript to an agent.
 crates/calendar/   🟡 CalendarProvider trait: eventkit | google | microsoft | ics
 crates/detect/     🟢 process + audio-activity heuristics
 sidecar/meet-stt/  🟡 Swift CLI: SpeechTranscriber. JSON lines on stdout.
