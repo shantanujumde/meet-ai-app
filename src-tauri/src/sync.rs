@@ -44,7 +44,7 @@ use crate::config::{self, AgentConfig, Harness as HarnessChoice, TicketsConfig};
 use crate::error::UiError;
 use crate::folder_move::FolderGate;
 use crate::meetings;
-use crate::sync::save::{Created, Unsaved};
+use crate::sync::save::{Created, Fingerprint, Unsaved};
 use crate::tickets::{self, TicketSummary};
 
 /// The Sync runs in flight, by ticket id, so the window can cancel one and a
@@ -240,7 +240,8 @@ pub(crate) fn find_binary(agent: &AgentConfig) -> Result<PathBuf, UiError> {
 /// save, so a folder moved during the run gets the link in its new place.
 /// Only the save goes through `gate`: holding it for the whole run would
 /// refuse a folder move for minutes. An issue an earlier run created but
-/// could not save is saved without running the agent again.
+/// could not save is saved without running the agent again, as long as the
+/// ticket is still the task it was made for (`save.rs`).
 pub(crate) fn sync_in(
     runs: &SyncRuns,
     gate: Option<&FolderGate>,
@@ -250,12 +251,14 @@ pub(crate) fn sync_in(
     agent: impl FnOnce() -> Result<(Box<dyn Harness>, RunSettings), UiError>,
 ) -> Result<TicketSummary, UiError> {
     let claim = runs.claim(ticket_id)?;
-    let created = match runs.unsaved.get(ticket_id, meeting_id) {
+    let start = root()?;
+    let created = match runs.unsaved.matching(&start, ticket_id, meeting_id)? {
         Some(created) => created,
         None => {
             let (harness, settings) = agent()?;
+            let ticket = Fingerprint::of(&find_ticket(&start, ticket_id, meeting_id)?)?;
             let synced = run(
-                &root()?,
+                &start,
                 ticket_id,
                 meeting_id,
                 harness.as_ref(),
@@ -265,6 +268,7 @@ pub(crate) fn sync_in(
             Created {
                 tracker: settings.tickets.tracker,
                 synced,
+                ticket,
             }
         }
     };

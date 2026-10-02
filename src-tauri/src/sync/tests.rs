@@ -701,8 +701,11 @@ fn a_kept_issue_never_overwrites_a_ticket_synced_meanwhile() {
     assert_eq!(harness.runs(), 1);
 }
 
+/// A notes re-run ("Make notes now") rewrites the meeting's tickets and can
+/// give an untouched number to a different task. Written here the way the
+/// notes run writes a ticket.
 #[test]
-fn a_kept_issue_whose_ticket_is_gone_is_dropped_and_shown() {
+fn a_number_given_to_another_task_does_not_reuse_the_kept_issue() {
     let meetings = meetings_root();
     let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
     let harness = MovingHarness::new(&root, None);
@@ -710,7 +713,57 @@ fn a_kept_issue_whose_ticket_is_gone_is_dropped_and_shown() {
     let gate = FolderGate::default();
     sync_during_a_move(&runs, &gate, &root, &harness, MEETING);
 
-    fs::remove_file(ticket_path(meetings.path())).unwrap();
+    Ticket::new("TICK-0001", "Book the offsite", MEETING)
+        .write(&ticket_path(meetings.path()))
+        .unwrap();
+    let summary = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap();
+    assert_eq!(harness.runs(), 2, "the new task gets its own run");
+    assert_eq!(summary.external_id.as_deref(), Some("ENG-43"));
+    let back = ticket_in(meetings.path(), MEETING);
+    assert_eq!(back.title().as_deref(), Some("Book the offsite"));
+    assert_eq!(
+        back.frontmatter.get_str("external_id").as_deref(),
+        Some("ENG-43")
+    );
+    assert_eq!(runs.unsaved.get("TICK-0001", Some(MEETING)), None);
+}
+
+#[test]
+fn a_kept_issue_waits_while_its_ticket_is_missing() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let runs = SyncRuns::default();
+    let gate = FolderGate::default();
+    sync_during_a_move(&runs, &gate, &root, &harness, MEETING);
+
+    let path = ticket_path(meetings.path());
+    let aside = meetings.path().join("TICK-0001.md.aside");
+    fs::rename(&path, &aside).unwrap();
+    let err = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
+    assert_eq!(err.kind, "sync-not-saved", "{}", err.message);
+    assert!(err.message.contains(URL), "{}", err.message);
+    assert!(err.message.contains("Retry"), "{}", err.message);
+    assert!(runs.unsaved.get("TICK-0001", Some(MEETING)).is_some());
+    assert_eq!(harness.runs(), 1);
+
+    // The file is back as it was: Retry saves the kept issue.
+    fs::rename(&aside, &path).unwrap();
+    let summary = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap();
+    assert_eq!(summary.external_id.as_deref(), Some("ENG-42"));
+    assert_eq!(harness.runs(), 1);
+}
+
+#[test]
+fn a_kept_issue_is_dropped_and_shown_when_its_meeting_is_deleted() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let runs = SyncRuns::default();
+    let gate = FolderGate::default();
+    sync_during_a_move(&runs, &gate, &root, &harness, MEETING);
+
+    fs::remove_dir_all(meetings.path().join(MEETING)).unwrap();
     let err = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
     assert_eq!(err.kind, "ticket-missing", "{}", err.message);
     assert!(err.message.contains("ENG-42"), "{}", err.message);
