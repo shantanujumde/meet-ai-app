@@ -82,3 +82,11 @@ seconds".
 Two, both read-only listings with no model call and no prompt:
 `codex mcp list --json` and `claude mcp list`, each in an empty temp folder,
 to record the output formats the parsers read.
+
+## Test failing outside this ticket
+
+`live_transcript::tests::an_engine_that_comes_back_after_stop_gave_up_cannot_reach_the_next_meeting`
+(`src-tauri/src/live_transcript/tests.rs:571`) failed once in the quality
+gate after rebasing on TUR-10 ("left: 3, right: 2") and passed on the next
+two runs. It is timing-based and this branch does not touch
+`live_transcript`. Not fixed here.
