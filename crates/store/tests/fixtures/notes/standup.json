@@ -1,0 +1,31 @@
+{
+  "summary": "Sessions still live in memory, which blocks the second API instance. The team agreed to move them to Redis and load test the login path first.",
+  "decisions": ["Move sessions to Redis.", "Keep the old login path until the load test passes."],
+  "open_questions": [
+    "Do we need sticky sessions during the cutover?",
+    "Who owns the Redis cluster after launch?"
+  ],
+  "tasks": [
+    {
+      "title": "Redis session store",
+      "details": "Replace the in-memory session map with a store backed by Redis.",
+      "owner": "Shantanu",
+      "due": "Friday",
+      "transcript_ref": "00:14:22"
+    },
+    {
+      "title": "Load test the login path",
+      "details": "Run the login load test against two API instances behind the balancer.",
+      "owner": "Priya",
+      "due": null,
+      "transcript_ref": "00:21:05"
+    },
+    {
+      "title": "Write the cutover runbook",
+      "details": "Someone should write down the cutover steps before the switch.",
+      "owner": null,
+      "due": null,
+      "transcript_ref": "00:30:47"
+    }
+  ]
+}
