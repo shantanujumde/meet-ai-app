@@ -23,10 +23,20 @@ so they were not run here. The headless parts are covered by tests in
 3. After the move ends, press **Retry**. Expected: the task shows **Synced**
    at once (no agent run), and the tracker still has one issue.
 
-Known limit: the not-yet-saved issue is kept in memory only. If the app quits
-between the failed save and Retry, Retry runs the agent again and can make a
-second issue. The error text holds the issue's address, so the user can still
-find it.
+4. Variant: after step 2, delete the task's file (or sync it by hand) before
+   pressing Retry. Expected: an error that says the task is gone (or already
+   synced), names the issue this sync made and its address, and does not run
+   the agent. A later Sync does not reuse that issue.
+5. Variant: with two meetings that both have a `TICK-0001`, make the first
+   one's save fail, then Sync the second one. Expected: the second gets its
+   own new issue; the first's Retry still saves the first issue.
+
+Known limit (follow-up): the not-yet-saved issue is kept in memory only. If
+the app quits between the failed save and Retry, Retry runs the agent again
+and can make a second issue. The error text holds the issue's address, so the
+user can still find it. A follow-up could keep it in a small file in the app
+data folder (outside the meetings root). Also a follow-up: the address in the
+`sync-not-saved` error is plain text, not a clickable Open button.
 
 ## 3. No local path in the issue
 
