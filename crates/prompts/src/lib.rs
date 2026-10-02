@@ -1,6 +1,7 @@
 //! Prompt assembly for meet-ai.
 //!
 //! Phase 4 (SPEC §5): the wrap-up prompt, the notes schema and the Start Work prompt.
+//! Also the Push Ticket prompt for the Sync run, and the check on its reply.
 //!
 //! L9 and L10 are the whole design: this app makes **no AI calls**. It renders a
 //! self-contained prompt from a user-editable `minijinja` template in
@@ -12,11 +13,13 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 pub mod notes;
+pub mod push_ticket;
 pub mod start_work;
 mod template;
 pub mod wrap_up;
 
 pub use notes::{NOTES_SCHEMA, Notes, Task, notes_schema};
+pub use push_ticket::{PushTicketInput, SYNC_SCHEMA, Synced, parse_sync_reply, sync_schema};
 pub use start_work::{StartWorkInput, transcript_excerpt};
 pub use wrap_up::{Target, WrapUpInput};
 
