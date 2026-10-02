@@ -7,12 +7,11 @@
  * skipped one is visible by its absence.
  */
 
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { hasBackend } from "@/ipc/client";
 import { copyFor, detailsFor } from "@/ipc/errors";
 import type { UiError } from "@/ipc/types";
+import { copyText } from "@/lib/clipboard";
 import { COPIED_RESET_MS } from "@/lib/constants";
 import { Button, ButtonRow } from "./primitives";
 
@@ -82,11 +81,7 @@ export function ErrorState({
   async function handleCopy() {
     const details = detailsFor(error);
     try {
-      if (hasBackend()) {
-        await writeText(details);
-      } else {
-        await navigator.clipboard.writeText(details);
-      }
+      await copyText(details);
       setCopied(true);
       window.setTimeout(() => setCopied(false), COPIED_RESET_MS);
     } catch {

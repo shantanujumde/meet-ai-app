@@ -71,6 +71,8 @@ export const ipc = {
     root,
   })),
   revealMeeting: vi.fn<typeof Client.revealMeeting>(async () => {}),
+  wrapUpPrompt: vi.fn<typeof Client.wrapUpPrompt>(async (id) => `Wrap up ${id}`),
+  copyPromptFallback: vi.fn<typeof Client.copyPromptFallback>(async () => false),
 
   search: vi.fn<typeof Client.search>(async () => []),
 
@@ -83,6 +85,7 @@ export const ipc = {
     body,
     hasProblems: false,
   })),
+  startWorkPrompt: vi.fn<typeof Client.startWorkPrompt>(async (id) => `Start work on ${id}`),
 
   measurePermission: vi.fn<typeof Client.measurePermission>(async () => NOT_CHECKED),
   permissionQuick: vi.fn<typeof Client.permissionQuick>(async () => NOT_CHECKED),

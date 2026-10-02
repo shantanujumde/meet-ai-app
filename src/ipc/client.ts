@@ -141,6 +141,16 @@ export function createTicket(title: string, body: string): Promise<TicketSummary
   return narrow(() => commands.createTicket(title, body));
 }
 
+/**
+ * The Start Work prompt for one ticket (L14), rendered by Rust from the user's
+ * template. The window only copies it: work starts in the user's own agent
+ * session in their repo, which the app does not run. `meetingId` is the
+ * meeting the ticket came from, or null for one made by hand.
+ */
+export function startWorkPrompt(ticketId: string, meetingId: string | null): Promise<string> {
+  return call(() => commands.startWorkPrompt(ticketId, meetingId));
+}
+
 export async function search(query: string): Promise<SearchHit[]> {
   if (!hasBackend()) return [];
   return call(() => commands.search(query));
@@ -164,6 +174,26 @@ export function changeMeetingsFolder(newRoot: string): Promise<MeetingList> {
 
 export async function revealMeeting(id: string): Promise<void> {
   await call(() => commands.revealMeeting(id));
+}
+
+/**
+ * The wrap-up prompt for one meeting, in its clipboard form (A11's fallback):
+ * the agent it is pasted into writes `meeting.md` and the tickets itself, and
+ * the folder watcher picks them up.
+ */
+export function wrapUpPrompt(meetingId: string): Promise<string> {
+  return call(() => commands.wrapUpPrompt(meetingId));
+}
+
+/**
+ * Whether the user chose no agent (`agent.harness` is `none`), so a meeting is
+ * wrapped up by copying its prompt. Whether a chosen agent's CLI can be found
+ * is a separate question this does not answer — see `showsCopyPrompt`.
+ * Without a backend there is nothing to copy a prompt for, so the answer is no.
+ */
+export async function copyPromptFallback(): Promise<boolean> {
+  if (!hasBackend()) return false;
+  return call(() => commands.copyPromptFallback());
 }
 
 // --- permission and onboarding -------------------------------------------

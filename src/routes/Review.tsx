@@ -13,14 +13,16 @@
 
 import { memo, useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { readMeeting, revealMeeting } from "@/ipc/client";
+import { copyPromptFallback, readMeeting, revealMeeting, wrapUpPrompt } from "@/ipc/client";
 import type { MeetingDetail, TranscriptLine, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
+import { showsCopyPrompt } from "@/lib/copyPrompt";
 import { describeInterruption, formatRelativeDate, INTERRUPTED_LABEL } from "@/lib/format";
 import { MEETINGS } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
 import { useTranscriptStore } from "@/state/transcript";
+import { CopyPromptButton } from "@/ui/CopyPromptButton";
 import { LiveTranscript } from "@/ui/LiveTranscript";
 import { NotesPane } from "@/ui/NotesPane";
 import { Button, ButtonRow, rowDetailVariants } from "@/ui/primitives";
@@ -48,6 +50,26 @@ export function Review() {
       setRevealError(toUiError(thrown));
     }
   }, []);
+
+  // A11's fallback: with no agent to run, a meeting is wrapped up by copying
+  // its prompt. Asked once; a failed answer counts as "no", since the button
+  // is an extra and the meeting reads fine without it.
+  const [harnessIsNone, setHarnessIsNone] = useState(false);
+  useEffect(() => {
+    let current = true;
+    copyPromptFallback().then(
+      (answer) => {
+        if (current) setHarnessIsNone(answer);
+      },
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
+  // `cliFound` stays at its default until agent CLI detection (TUR-6, TUR-10)
+  // can say whether the chosen agent is installed.
+  const copyPrompt = showsCopyPrompt({ harnessIsNone });
 
   const load = useCallback(async (meetingId: string) => {
     setLoading(true);
@@ -142,6 +164,16 @@ export function Review() {
           <span className={rowDetailVariants()}>{path}</span>
         </ButtonRow>
         {revealError ? <ErrorState error={revealError} /> : null}
+        {/* Not while recording: the transcript is not finished, so the
+            prompt would wrap up half a meeting. */}
+        {copyPrompt && !isLive ? (
+          <CopyPromptButton
+            label="Copy prompt"
+            size="small"
+            hint="No agent set up — paste this into Claude Code or Codex and it will write the notes."
+            render={() => wrapUpPrompt(summary.id)}
+          />
+        ) : null}
       </header>
 
       {isLive ? (
