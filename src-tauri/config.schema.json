@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "meet-ai config",
+  "description": "Settings for meet-ai, stored in ~/Meetings/.app/config.jsonc. Every key is optional; a missing key uses its default. Unknown keys are allowed and kept.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path to this schema, so editors can autocomplete and check the file.",
+      "default": "./config.schema.json"
+    },
+    "meetings_root": {
+      "type": "string",
+      "description": "Folder where meetings are stored. A leading ~ means your home folder.",
+      "default": "~/Meetings"
+    },
+    "transcription": {
+      "type": "object",
+      "description": "How speech is turned into text.",
+      "properties": {
+        "engine": {
+          "enum": ["auto", "apple-speech", "whisper"],
+          "description": "Which speech-to-text engine to use. \"auto\" picks the best one for this Mac. Forcing an engine this Mac cannot run is an error, not a silent fallback.",
+          "default": "auto"
+        },
+        "model": {
+          "type": "string",
+          "description": "Whisper model name, used when the whisper engine runs.",
+          "default": "large-v3-turbo-q5_0",
+          "examples": ["large-v3-turbo-q5_0", "small.en-q5_1"]
+        },
+        "language": {
+          "type": "string",
+          "description": "Spoken language of the meeting, as a language code.",
+          "default": "en"
+        },
+        "live": {
+          "type": "boolean",
+          "description": "Transcribe while the call is running. false = transcribe only after recording stops.",
+          "default": true
+        }
+      }
+    },
+    "audio": {
+      "type": "object",
+      "description": "What happens to recorded audio.",
+      "properties": {
+        "retention_days": {
+          "type": "integer",
+          "minimum": -1,
+          "description": "Days to keep audio files after a meeting. 0 = delete immediately, -1 = keep forever.",
+          "default": 7
+        },
+        "warn_no_headphones": {
+          "type": "boolean",
+          "description": "Warn when recording without headphones, since speakers can echo into the mic.",
+          "default": true
+        }
+      }
+    },
+    "calendar": {
+      "type": "object",
+      "description": "Where upcoming meetings are read from.",
+      "properties": {
+        "providers": {
+          "type": "array",
+          "description": "Calendar sources to read. \"eventkit\" is the macOS Calendar app.",
+          "items": {
+            "enum": ["eventkit", "google", "microsoft", "ics"]
+          },
+          "uniqueItems": true,
+          "default": ["eventkit"]
+        },
+        "ics_urls": {
+          "type": "array",
+          "description": "Calendar feed links (.ics), used by the \"ics\" provider.",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "refresh_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How often, in minutes, to re-read the calendars.",
+          "default": 15
+        }
+      }
+    },
+    "detection": {
+      "type": "object",
+      "description": "Signals used to notice that a meeting has started.",
+      "properties": {
+        "calendar": {
+          "type": "boolean",
+          "description": "Use calendar events to spot meetings.",
+          "default": true
+        },
+        "processes": {
+          "type": "boolean",
+          "description": "Watch for running meeting apps, such as Zoom or Teams.",
+          "default": true
+        },
+        "audio_activity": {
+          "type": "boolean",
+          "description": "Watch for the mic and speakers being used at the same time.",
+          "default": true
+        },
+        "min_attendees": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Only treat a calendar event as a meeting if it has at least this many attendees.",
+          "default": 2
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "description": "The agent CLI the app runs to write notes and tasks when a call ends.",
+      "properties": {
+        "harness": {
+          "enum": ["claude-code", "codex", "none"],
+          "description": "Which agent CLI to run. \"none\" = copy-prompt fallback: the prompt is put on the clipboard for you to paste into an agent yourself.",
+          "default": "claude-code"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model to use. Any model name the chosen CLI accepts.",
+          "default": "opus"
+        },
+        "binary_path": {
+          "type": ["string", "null"],
+          "description": "Full path to the agent CLI. Set this when auto-detect cannot find it; null = find it automatically.",
+          "default": null
+        },
+        "auto_run": {
+          "type": "boolean",
+          "description": "Start writing notes on their own when a call ends.",
+          "default": true
+        },
+        "timeout_sec": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Longest time, in seconds, one agent run may take before it is stopped.",
+          "default": 300
+        }
+      }
+    },
+    "tickets": {
+      "type": "object",
+      "description": "Where tasks are synced to. The agent does the syncing through its own connections.",
+      "properties": {
+        "tracker": {
+          "type": "string",
+          "description": "Issue tracker that tasks are synced to.",
+          "default": "linear",
+          "examples": ["linear", "jira", "github"]
+        },
+        "tracker_mcp": {
+          "type": "string",
+          "description": "Name of the tracker's MCP server, exactly as the chosen CLI lists it. It is named in the Sync prompt; the app never calls it itself.",
+          "default": "claude.ai Linear"
+        }
+      }
+    },
+    "repos": {
+      "type": "object",
+      "description": "Code repositories that tasks relate to.",
+      "properties": {
+        "default": {
+          "type": "string",
+          "description": "Repository folder used for Start Work when a task names no other. A leading ~ means your home folder.",
+          "examples": ["~/apps/api"]
+        }
+      }
+    }
+  }
+}
