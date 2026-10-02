@@ -273,8 +273,19 @@ impl Transcription {
     /// its finals and dropping any unsettled guess), and the final status goes
     /// out. Returns within `timeout` even if an engine never does.
     pub fn finish(self, timeout: Duration) -> Status {
+        self.finish_final(timeout).0
+    }
+
+    /// [`Self::finish`], plus a way to learn when `transcript.md` is final.
+    ///
+    /// Stop gives up after `timeout`, but an engine it gave up on can still be
+    /// writing its last lines. Anything that reads the file afterwards — the
+    /// notes run (TUR-17) — waits on the [`TranscriptFinal`] instead of
+    /// assuming Stop's timeout means the file is complete.
+    pub fn finish_final(self, timeout: Duration) -> (Status, TranscriptFinal) {
         self.stopping.store(true, Ordering::Release);
-        match self.done.recv_timeout(timeout) {
+        let waited = self.done.recv_timeout(timeout);
+        match waited {
             Ok(()) => {}
             Err(RecvTimeoutError::Timeout) => {
                 tracing::warn!(
@@ -298,6 +309,41 @@ impl Transcription {
                 }
             }
         }
-        self.scope.seal()
+        // Only a timeout leaves the supervisor running; it still says when it
+        // ends, on the same channel, so hand that on.
+        let pending = matches!(waited, Err(RecvTimeoutError::Timeout)).then_some(self.done);
+        (self.scope.seal(), TranscriptFinal { pending })
+    }
+}
+
+/// Tells when `transcript.md` is final: every engine has finished, and nothing
+/// more will be written to it.
+///
+/// Usually that is already true when Stop returns. It is not when Stop gave up
+/// on a slow engine, which may still settle a line or two afterwards.
+pub struct TranscriptFinal {
+    /// The supervisor's "I have ended" channel, while it has not yet said so.
+    /// `None` once the file is final.
+    pending: Option<mpsc::Receiver<()>>,
+}
+
+impl TranscriptFinal {
+    /// Whether `transcript.md` is final, waiting up to `timeout` for it.
+    ///
+    /// True at once when it already is. A `false` can be followed by a later
+    /// wait that succeeds: a slow engine is still worth waiting for.
+    pub fn wait(&mut self, timeout: Duration) -> bool {
+        let Some(done) = &self.pending else {
+            return true;
+        };
+        match done.recv_timeout(timeout) {
+            // A supervisor that went away without saying so — it panicked —
+            // will not write anything more either.
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => {
+                self.pending = None;
+                true
+            }
+            Err(RecvTimeoutError::Timeout) => false,
+        }
     }
 }
