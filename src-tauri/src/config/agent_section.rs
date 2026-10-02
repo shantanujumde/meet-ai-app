@@ -216,3 +216,15 @@ pub fn parse_tickets(raw: &str) -> Result<TicketsConfig, ConfigError> {
         tracker_mcp: tickets.tracker_mcp.unwrap_or(defaults.tracker_mcp),
     })
 }
+
+#[derive(Debug, Default, Deserialize)]
+struct RawRepos {
+    default: Option<String>,
+}
+
+/// `repos.default` from the text of `config.jsonc`: the repo Start Work names
+/// when a meeting links none (TUR-8). `None` when unset or blank.
+pub fn parse_default_repo(raw: &str) -> Result<Option<String>, ConfigError> {
+    let repos: RawRepos = section(raw, "repos")?;
+    Ok(repos.default.filter(|path| !path.trim().is_empty()))
+}

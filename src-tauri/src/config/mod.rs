@@ -47,6 +47,7 @@ pub use agent_section::ConfigError;
 // TUR-9 (Setup screens) adds the IPC commands that use these.
 #[allow(unused_imports)]
 pub use agent_section::{AgentConfig, Harness, TicketsConfig};
+pub use file::default_repo;
 #[allow(unused_imports)] // TUR-9, same
 pub use file::{agent, set_agent, set_tickets, tickets};
 

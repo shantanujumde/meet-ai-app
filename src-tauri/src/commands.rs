@@ -367,3 +367,10 @@ pub async fn start_work_prompt(
 pub async fn wrap_up_prompt(meeting_id: String) -> Result<String, UiError> {
     on_blocking_pool(move || copy_prompt::wrap_up(&meeting_id)).await?
 }
+
+/// Whether the meeting view offers Copy prompt: `agent.harness` is `none`.
+#[tauri::command]
+#[specta::specta]
+pub async fn copy_prompt_fallback() -> Result<bool, UiError> {
+    on_blocking_pool(copy_prompt::fallback).await?
+}

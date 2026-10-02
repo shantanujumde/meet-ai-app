@@ -23,6 +23,7 @@ use store::folder_name::{prettify_slug, split_folder_name};
 use store::meeting::Meeting;
 use store::ticket::{self, Ticket};
 
+use crate::config::{self, Harness};
 use crate::error::UiError;
 use crate::meetings;
 
@@ -41,7 +42,19 @@ impl From<prompts::Error> for UiError {
 /// window listed it under, if any; the ticket's own `meeting` key is used
 /// otherwise.
 pub fn start_work(ticket_id: &str, meeting_id: Option<&str>) -> Result<String, UiError> {
-    start_work_in(&meetings::root()?, ticket_id, meeting_id, None)
+    start_work_in(
+        &meetings::root()?,
+        ticket_id,
+        meeting_id,
+        config::default_repo()?,
+    )
+}
+
+/// Should the meeting view offer Copy prompt? True when `agent.harness` is
+/// `none` (A11). Whether the chosen CLI is installed is the window's other
+/// half of the rule, filled in once agent CLI detection lands (TUR-6).
+pub fn fallback() -> Result<bool, UiError> {
+    Ok(config::agent()?.harness == Harness::None)
 }
 
 /// The clipboard wrap-up prompt for one meeting.

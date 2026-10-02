@@ -142,6 +142,8 @@ export const commands = {
 	 *  (SPEC A11).
 	 */
 	wrapUpPrompt: (meetingId: string) => typedError<string, meet_ai_lib_error_UiError>(__TAURI_INVOKE("wrap_up_prompt", { meetingId })),
+	/**  Whether the meeting view offers Copy prompt: `agent.harness` is `none`. */
+	copyPromptFallback: () => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("copy_prompt_fallback")),
 	/**
 	 *  Search every meeting's transcript, notes, summary and tickets.
 	 * 
