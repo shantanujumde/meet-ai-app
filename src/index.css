@@ -33,11 +33,17 @@
   }
 }
 
+/* The shell is a fixed frame; only the panes inside it scroll (TUR-15).
+   Without this, anything one pixel taller than the window, or a focus or
+   restored scroll position, scrolls the whole page and nothing scrolls it
+   back. src/lib/documentScroll.ts pins it for the scrolls CSS cannot stop. */
 html,
 body,
 #root {
   height: 100%;
   margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {
