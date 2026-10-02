@@ -2,9 +2,10 @@
 //! `~/Meetings/.app/config.jsonc`.
 //!
 //! This is deliberately not a config system. Phase 6 (SPEC §5) owns the rest of
-//! §3.5 — `audio`, `calendar`, `detection`, `tickets`, `repos`, and even
-//! `transcription.language`/`transcription.live` — plus the JSON schema and the
-//! settings UI to edit it. This module exists only to make the Phase 1 exit
+//! §3.5 — `audio`, `calendar`, `detection`, `repos`, and even
+//! `transcription.language`/`transcription.live` — plus the settings UI to edit
+//! it. (A11's `agent` and `tickets`, and `config.schema.json`, came early; see
+//! below.) This module exists only to make the Phase 1 exit
 //! gate true: **"engine switch is a config change only."** Before this,
 //! `src-tauri/src/engine.rs` hardcoded the engine to
 //! [`stt::registry::Preference::Auto`][crate::engine], so trying whisper meant
@@ -20,26 +21,33 @@
 //!
 //! A11 added the `agent` and `tickets` sections ([`agent_section`]) ahead of
 //! Phase 6 too, because the Setup screens and the notes run need them now.
-//! They share this file's path and its JSONC reader, and add the one thing
+//! All three sections go through the one reader here, [`read_section`], which
+//! decodes each section on its own so a typo in one never breaks another. What
+//! differs is what a bad value does: `transcription` logs it and uses the
+//! defaults (startup must not fail), while `agent` and `tickets` return it as
+//! a [`ConfigError`] for the Setup screen to show. They also add the one thing
 //! `transcription` never needed: writing back ([`file`]), with the user's
 //! comments and unknown keys kept.
 
 use std::path::PathBuf;
 
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use stt::registry::Preference;
 
 use crate::engine::DEFAULT_MODEL;
+use crate::error::UiError;
 
 mod agent_section;
 #[cfg(test)]
 mod agent_tests;
 mod file;
 
-// TUR-9 (Setup screens) adds the IPC commands that call these.
+pub use agent_section::ConfigError;
+// TUR-9 (Setup screens) adds the IPC commands that use these.
 #[allow(unused_imports)]
-pub use agent_section::{AgentConfig, ConfigError, Harness, TicketsConfig};
-#[allow(unused_imports)]
+pub use agent_section::{AgentConfig, Harness, TicketsConfig};
+#[allow(unused_imports)] // TUR-9, same
 pub use file::{agent, set_agent, set_tickets, tickets};
 
 const FILE: &str = "config.jsonc";
@@ -67,16 +75,28 @@ fn default_model() -> String {
     DEFAULT_MODEL.to_string()
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct Config {
-    #[serde(default)]
-    transcription: Transcription,
+/// `~/Meetings/.app`, the folder `config.jsonc` lives in.
+fn app_dir() -> Result<PathBuf, UiError> {
+    crate::meetings::root().map(|root| meeting_format::layout::app_dir(&root))
 }
 
 fn path() -> Option<PathBuf> {
-    crate::meetings::root()
-        .ok()
-        .map(|root| meeting_format::layout::app_dir(&root).join(FILE))
+    app_dir().ok().map(|dir| dir.join(FILE))
+}
+
+/// The one JSONC reader for `config.jsonc`: the top-level section `name`,
+/// decoded on its own. `Ok(None)` when the file is empty, is not an object,
+/// or has no such key. `Err` is the parse or decode message, ready to show.
+fn read_section<T: DeserializeOwned>(raw: &str, name: &str) -> Result<Option<T>, String> {
+    let file =
+        jsonc_parser::parse_to_serde_value::<Option<serde_json::Value>>(raw, &Default::default())
+            .map_err(|error| error.to_string())?;
+    match file.as_ref().and_then(|file| file.get(name)) {
+        None => Ok(None),
+        Some(section) => T::deserialize(section)
+            .map(Some)
+            .map_err(|error| format!("{name}: {error}")),
+    }
 }
 
 /// Read `transcription.engine`/`transcription.model`, or the SPEC §3.5
@@ -98,8 +118,8 @@ pub fn transcription() -> Transcription {
 }
 
 fn parse(raw: &str) -> Transcription {
-    match jsonc_parser::parse_to_serde_value::<Config>(raw, &Default::default()) {
-        Ok(config) => config.transcription,
+    match read_section::<Transcription>(raw, "transcription") {
+        Ok(transcription) => transcription.unwrap_or_default(),
         Err(error) => {
             tracing::warn!(%error, "config.jsonc's transcription block did not parse; using defaults");
             Transcription::default()

@@ -106,7 +106,12 @@ impl From<crate::config::ConfigError> for UiError {
             ConfigError::UnknownHarness(_) => "unknown-harness",
             ConfigError::Invalid(_) => "invalid-config",
             ConfigError::Io(_) => "io",
+            ConfigError::Root(_) => "root",
         };
+        // Already a UI error (no meetings folder, say): keep its own kind.
+        if let ConfigError::Root(error) = error {
+            return error;
+        }
         Self::app(kind, error.to_string())
     }
 }

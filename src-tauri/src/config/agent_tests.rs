@@ -2,10 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
+use super::FILE;
 use super::agent_section::{
     AgentConfig, ConfigError, Harness, TicketsConfig, parse_agent, parse_tickets,
 };
-use super::file::{SCHEMA, with_agent, with_tickets};
+use super::file::{SCHEMA, SCHEMA_FILE, with_agent, with_tickets};
 
 fn every_field_set() -> AgentConfig {
     AgentConfig {
@@ -102,6 +103,8 @@ fn an_unknown_harness_is_an_error_not_a_silent_default() {
 fn wrong_types_and_a_zero_timeout_are_errors() {
     for raw in [
         r#"{ "agent": { "timeout_sec": 0 } }"#,
+        r#"{ "agent": { "timeout_sec": -5 } }"#,
+        r#"{ "agent": { "timeout_sec": 300.5 } }"#,
         r#"{ "agent": { "timeout_sec": "five minutes" } }"#,
         r#"{ "agent": { "auto_run": "yes" } }"#,
         r#"{ "agent": { "harness": 1 } }"#,
@@ -112,6 +115,72 @@ fn wrong_types_and_a_zero_timeout_are_errors() {
             "{raw}"
         );
     }
+}
+
+#[test]
+fn a_whole_float_timeout_and_an_empty_binary_path_read_like_the_schema_allows() {
+    let agent = parse_agent(r#"{ "agent": { "timeout_sec": 300.0, "binary_path": "" } }"#).unwrap();
+    assert_eq!(agent.timeout_sec, 300);
+    assert_eq!(agent.binary_path, None);
+
+    let written = with_agent(
+        "{}",
+        &AgentConfig {
+            binary_path: Some(PathBuf::new()),
+            ..AgentConfig::default()
+        },
+    )
+    .unwrap();
+    assert!(written.contains(r#""binary_path": null"#), "{written}");
+}
+
+#[test]
+fn a_bad_value_in_one_section_never_breaks_reading_the_other() {
+    let raw = r#"{ "agent": { "harness": "codex" }, "tickets": { "tracker": 5 } }"#;
+    assert_eq!(parse_agent(raw).unwrap().harness, Harness::Codex);
+    assert!(matches!(parse_tickets(raw), Err(ConfigError::Invalid(_))));
+
+    let raw = r#"{ "agent": { "harness": "codx" }, "tickets": { "tracker": "jira" },
+                   "transcription": { "engine": "whisper" } }"#;
+    assert!(matches!(
+        parse_agent(raw),
+        Err(ConfigError::UnknownHarness(_))
+    ));
+    assert_eq!(parse_tickets(raw).unwrap().tracker, "jira");
+    assert_eq!(super::parse(raw).engine, stt::registry::Preference::Whisper);
+}
+
+#[test]
+fn a_section_that_is_not_an_object_is_invalid_and_a_save_replaces_it() {
+    for raw in [
+        r#"{ "agent": null }"#,
+        r#"{ "agent": "x" }"#,
+        r#"{ "agent": [1] }"#,
+    ] {
+        assert!(
+            matches!(parse_agent(raw), Err(ConfigError::Invalid(_))),
+            "{raw}"
+        );
+        let written = with_agent(raw, &every_field_set()).unwrap();
+        assert_eq!(parse_agent(&written).unwrap(), every_field_set(), "{raw}");
+    }
+}
+
+#[test]
+fn a_top_level_null_reads_as_defaults_but_is_never_overwritten() {
+    assert_eq!(parse_agent("null").unwrap(), AgentConfig::default());
+    assert!(matches!(
+        with_agent("null", &AgentConfig::default()),
+        Err(ConfigError::Invalid(_))
+    ));
+}
+
+#[test]
+fn a_missing_meetings_folder_keeps_its_own_ui_error_kind() {
+    let error = ConfigError::Root(crate::error::UiError::app("no-home-dir", "no home folder"));
+    let ui: crate::error::UiError = error.into();
+    assert_eq!((ui.domain, ui.kind), ("app", "no-home-dir"));
+    assert_eq!(ui.message, "no home folder");
 }
 
 #[test]
@@ -213,16 +282,22 @@ fn saving_to_disk_round_trips_and_writes_the_schema_beside_it() {
     assert_eq!(parse_agent(&raw).unwrap(), every_field_set());
     assert_eq!(parse_tickets(&raw).unwrap(), TicketsConfig::default());
     assert_eq!(
-        std::fs::read_to_string(dir.join("config.schema.json")).unwrap(),
+        std::fs::read_to_string(dir.join(SCHEMA_FILE)).unwrap(),
         SCHEMA
     );
-    assert!(!dir.join("config.jsonc.tmp").exists());
+    // No temp file left behind: only the two files the save is for.
+    let mut names: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    names.sort();
+    assert_eq!(names, [FILE, SCHEMA_FILE]);
 }
 
 #[test]
 fn a_refused_write_leaves_the_file_alone() {
     let temp = TempDir::new("refused");
-    let path = temp.path().join(super::FILE);
+    let path = temp.path().join(FILE);
     std::fs::write(&path, "{ not json").unwrap();
     let result = super::file::write_in(temp.path(), |raw| with_agent(raw, &every_field_set()));
     assert!(matches!(result, Err(ConfigError::Invalid(_))));
@@ -251,6 +326,26 @@ fn the_schema_defaults_match_the_code_defaults() {
     assert_eq!(agent["binary_path"]["default"], serde_json::Value::Null);
     assert_eq!(agent["auto_run"]["default"], defaults.auto_run);
     assert_eq!(agent["timeout_sec"]["default"], defaults.timeout_sec);
+
+    let transcription = &schema["properties"]["transcription"]["properties"];
+    assert_eq!(
+        transcription["model"]["default"],
+        crate::engine::DEFAULT_MODEL
+    );
+    assert_eq!(
+        serde_json::from_value::<stt::registry::Preference>(
+            transcription["engine"]["default"].clone()
+        )
+        .unwrap(),
+        stt::registry::Preference::default()
+    );
+    assert_eq!(
+        schema["properties"]["$schema"]["default"],
+        format!("./{SCHEMA_FILE}")
+    );
+    // The root is found before this file can be (it lives under the root),
+    // so offering the key would only mislead.
+    assert!(schema["properties"].get("meetings_root").is_none());
 
     let tickets = &schema["properties"]["tickets"]["properties"];
     let defaults = TicketsConfig::default();

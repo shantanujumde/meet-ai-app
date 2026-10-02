@@ -8,13 +8,13 @@
 //! find your notes quietly ran through Claude Code. A *missing* section or key
 //! is still the default.
 
-// TUR-9 (Setup screens) adds the IPC commands that call into this module.
-#![allow(dead_code)]
-
 use std::fmt;
 use std::path::PathBuf;
 
 use serde::Deserialize;
+
+use super::read_section;
+use crate::error::UiError;
 
 /// Which agent CLI runs the notes and Sync jobs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -101,8 +101,11 @@ pub enum ConfigError {
     UnknownHarness(String),
     /// The file is not valid JSONC, or a key has the wrong type or range.
     Invalid(String),
-    /// The file or the meetings folder could not be read or written.
+    /// The file could not be read or written.
     Io(std::io::Error),
+    /// The meetings folder itself could not be found. Kept as the original
+    /// `UiError` so its own kind (say `no-home-dir`) reaches the UI.
+    Root(UiError),
 }
 
 impl fmt::Display for ConfigError {
@@ -118,6 +121,7 @@ impl fmt::Display for ConfigError {
             }
             Self::Invalid(detail) => write!(f, "config.jsonc: {detail}"),
             Self::Io(error) => write!(f, "config.jsonc: {error}"),
+            Self::Root(error) => write!(f, "config.jsonc: {}", error.message),
         }
     }
 }
@@ -137,16 +141,8 @@ impl From<std::io::Error> for ConfigError {
     }
 }
 
-/// The file as written. Every key optional, so a missing one is the default;
+/// `agent` as written. Every key optional, so a missing one is the default;
 /// unknown keys are ignored here and kept by the writer.
-#[derive(Debug, Default, Deserialize)]
-struct RawFile {
-    #[serde(default)]
-    agent: RawAgent,
-    #[serde(default)]
-    tickets: RawTickets,
-}
-
 #[derive(Debug, Default, Deserialize)]
 struct RawAgent {
     // A string, not `Harness`, so an unknown name becomes `UnknownHarness`
@@ -155,46 +151,65 @@ struct RawAgent {
     model: Option<String>,
     binary_path: Option<PathBuf>,
     auto_run: Option<bool>,
-    timeout_sec: Option<u64>,
+    // A float, so `300.0` reads like the schema's `integer` allows; checked
+    // to be whole below.
+    timeout_sec: Option<f64>,
 }
 
+/// `tickets` as written, same rules as [`RawAgent`].
 #[derive(Debug, Default, Deserialize)]
 struct RawTickets {
     tracker: Option<String>,
     tracker_mcp: Option<String>,
 }
 
-fn parse_raw(raw: &str) -> Result<RawFile, ConfigError> {
-    jsonc_parser::parse_to_serde_value::<Option<RawFile>>(raw, &Default::default())
+/// One section, decoded on its own: a typo in `tickets` never fails reading
+/// `agent`, or the other way round.
+fn section<T: serde::de::DeserializeOwned + Default>(
+    raw: &str,
+    name: &str,
+) -> Result<T, ConfigError> {
+    read_section(raw, name)
         .map(Option::unwrap_or_default)
-        .map_err(|error| ConfigError::Invalid(error.to_string()))
+        .map_err(ConfigError::Invalid)
+}
+
+fn timeout_sec(value: Option<f64>) -> Result<u64, ConfigError> {
+    let Some(value) = value else {
+        return Ok(AgentConfig::default().timeout_sec);
+    };
+    if value.fract() != 0.0 || !(1.0..=f64::from(u32::MAX)).contains(&value) {
+        return Err(ConfigError::Invalid(format!(
+            "agent.timeout_sec must be a whole number of seconds, at least 1 (got {value})"
+        )));
+    }
+    // Whole and in range, checked above, so the cast loses nothing.
+    Ok(value as u64)
 }
 
 /// `agent` from the text of `config.jsonc`. Empty text is all defaults.
 pub fn parse_agent(raw: &str) -> Result<AgentConfig, ConfigError> {
-    let agent = parse_raw(raw)?.agent;
+    let agent: RawAgent = section(raw, "agent")?;
     let defaults = AgentConfig::default();
-    let timeout_sec = agent.timeout_sec.unwrap_or(defaults.timeout_sec);
-    if timeout_sec == 0 {
-        return Err(ConfigError::Invalid(
-            "agent.timeout_sec must be at least 1".into(),
-        ));
-    }
     Ok(AgentConfig {
         harness: match agent.harness {
             Some(name) => Harness::from_config(&name)?,
             None => defaults.harness,
         },
         model: agent.model.unwrap_or(defaults.model),
-        binary_path: agent.binary_path,
+        // `""` is "not set", like `null`: the schema asks for at least one
+        // character, and an empty path would only fail later, at spawn time.
+        binary_path: agent
+            .binary_path
+            .filter(|path| !path.as_os_str().is_empty()),
         auto_run: agent.auto_run.unwrap_or(defaults.auto_run),
-        timeout_sec,
+        timeout_sec: timeout_sec(agent.timeout_sec)?,
     })
 }
 
 /// `tickets` from the text of `config.jsonc`. Empty text is all defaults.
 pub fn parse_tickets(raw: &str) -> Result<TicketsConfig, ConfigError> {
-    let tickets = parse_raw(raw)?.tickets;
+    let tickets: RawTickets = section(raw, "tickets")?;
     let defaults = TicketsConfig::default();
     Ok(TicketsConfig {
         tracker: tickets.tracker.unwrap_or(defaults.tracker),
