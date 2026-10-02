@@ -8,13 +8,14 @@
 //! 1. `agent.binary_path` from the config. When it is set, nothing else is
 //!    tried: a wrong path shows up as "not found", not as some other copy.
 //! 2. The login shell: `$SHELL -lc 'command -v claude'`.
-//! 3. Folders installers use: `~/.local/bin`, `~/.claude/local`, Homebrew.
+//! 3. Folders installers use: `~/.local/bin`, Homebrew, and the CLI's own
+//!    (`~/.claude/local` for Claude Code).
 //! 4. Copies inside app bundles: Codex inside `ChatGPT.app` or `Codex.app`,
 //!    Claude Code inside the Claude desktop app's support folder.
 //!
 //! Then `--version`, and the CLI's own sign-in check: `claude auth status`,
 //! `codex login status`. A Claude Code too old for `auth status` gets a tiny
-//! `-p` run instead, with no tools, no MCP servers and no hooks.
+//! notes run instead, with no tools, no MCP servers and no hooks.
 //!
 //! Setup is never a side effect of a health check: nothing here starts an MCP
 //! server, runs a hook, or opens a sign-in browser. Every command runs with an
@@ -24,14 +25,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use crate::process::{self, CliOutput};
-use crate::{AgentError, Install, Job};
+use crate::claude::ClaudeHarness;
+use crate::process::{self, CliOutput, cli_command};
+use crate::{AgentError, Harness, Install, Job};
 
 /// Time limit for the shell lookup, `--version` and the sign-in checks.
 const QUICK_LIMIT: Duration = Duration::from_secs(15);
 
-/// Time limit for the `-p` sign-in run on an old Claude Code. It is a real
-/// model call, so it gets longer.
+/// Time limit for the sample run on an old Claude Code. It is a real model
+/// call, so it gets longer.
 const SAMPLE_RUN_LIMIT: Duration = Duration::from_secs(60);
 
 /// Longest `--version` line kept. Anything longer is not a version.
@@ -40,9 +42,12 @@ const MAX_VERSION_CHARS: usize = 100;
 /// The shell used when `$SHELL` is unset or not absolute: the macOS default.
 const DEFAULT_SHELL: &str = "/bin/zsh";
 
-/// Prompt for the `-p` sign-in run. It only has to come back without an
-/// auth error.
-const SAMPLE_PROMPT: &str = "Reply with the single word OK.";
+/// Model for the sample run: the cheapest the CLI accepts by alias.
+const SAMPLE_MODEL: &str = "haiku";
+
+/// Prompt for the sample run. It only has to come back without an auth
+/// error.
+const SAMPLE_PROMPT: &str = "Set ok to true.";
 
 /// One agent CLI to look for.
 #[derive(Debug, Clone, Copy)]
@@ -51,17 +56,29 @@ pub struct Cli {
     name: &'static str,
     /// Name the user knows, for errors and logs.
     display_name: &'static str,
+    /// Install folders only this CLI uses, relative to home. Checked with
+    /// [`Lookup::bin_dirs`].
+    own_dirs: &'static [&'static str],
     /// Copies inside app bundles, relative to each of [`Lookup::app_dirs`].
     ///
     /// Only `Contents/Resources` paths: APFS is case-insensitive, so a
     /// `Contents/MacOS/codex` would match the app's own `Codex` executable,
     /// and running that with `--version` would open a window.
     bundled: &'static [&'static str],
-    /// A folder under home with one subfolder per version, and the binary's
-    /// path inside each. The highest version wins.
-    versioned: Option<(&'static str, &'static str)>,
+    /// A copy kept in one folder per version.
+    versioned: Option<Versioned>,
     /// The CLI's sign-in check.
     sign_in: fn(&Path, &Lookup) -> bool,
+}
+
+/// A folder under home with one subfolder per version (`2.1.284/`), each
+/// holding the binary at the same path. The highest version wins.
+#[derive(Debug, Clone, Copy)]
+struct Versioned {
+    /// The folder holding the version subfolders, relative to home.
+    root: &'static str,
+    /// The binary's path inside each version subfolder.
+    binary: &'static str,
 }
 
 /// Claude Code. The Claude desktop app keeps its own copy, one folder per
@@ -69,11 +86,12 @@ pub struct Cli {
 pub const CLAUDE: Cli = Cli {
     name: "claude",
     display_name: "Claude Code",
+    own_dirs: &[".claude/local"],
     bundled: &[],
-    versioned: Some((
-        "Library/Application Support/Claude/claude-code",
-        "claude.app/Contents/MacOS/claude",
-    )),
+    versioned: Some(Versioned {
+        root: "Library/Application Support/Claude/claude-code",
+        binary: "claude.app/Contents/MacOS/claude",
+    }),
     sign_in: claude_signed_in,
 };
 
@@ -82,6 +100,7 @@ pub const CLAUDE: Cli = Cli {
 pub const CODEX: Cli = Cli {
     name: "codex",
     display_name: "Codex",
+    own_dirs: &[],
     bundled: &[
         "ChatGPT.app/Contents/Resources/codex",
         "Codex.app/Contents/Resources/codex",
@@ -100,7 +119,7 @@ pub struct Lookup {
     pub shell: PathBuf,
     /// The user's home folder.
     pub home: Option<PathBuf>,
-    /// Folders installers put the CLI in, checked after the shell.
+    /// Install folders any CLI may be in, checked after the shell.
     pub bin_dirs: Vec<PathBuf>,
     /// Folders holding `.app` bundles.
     pub app_dirs: Vec<PathBuf>,
@@ -108,7 +127,7 @@ pub struct Lookup {
     pub work_root: PathBuf,
     /// Time limit for the shell lookup, `--version` and sign-in checks.
     pub quick_limit: Duration,
-    /// Time limit for the `-p` sign-in run.
+    /// Time limit for the sample run.
     pub sample_run_limit: Duration,
 }
 
@@ -127,7 +146,6 @@ impl Lookup {
         let mut app_dirs = vec![PathBuf::from("/Applications")];
         if let Some(home) = &home {
             bin_dirs.push(home.join(".local/bin"));
-            bin_dirs.push(home.join(".claude/local"));
             app_dirs.push(home.join("Applications"));
         }
         bin_dirs.push("/opt/homebrew/bin".into());
@@ -145,12 +163,19 @@ impl Lookup {
     }
 }
 
-/// Finds Claude Code on this Mac. `binary_path` is `agent.binary_path`.
+/// Finds Claude Code on this Mac.
+///
+/// `binary_path` is `agent.binary_path`. That one config key belongs to the
+/// harness the user picked, so pass it only to that harness's detect, and
+/// `None` to the other one; otherwise both report the same binary.
 pub fn claude(binary_path: Option<&Path>) -> Option<Install> {
     detect(&CLAUDE, &Lookup::system(binary_path))
 }
 
-/// Finds Codex on this Mac. `binary_path` is `agent.binary_path`.
+/// Finds Codex on this Mac.
+///
+/// `binary_path` is `agent.binary_path`: pass it only when Codex is the
+/// harness the user picked, as for [`claude`].
 pub fn codex(binary_path: Option<&Path>) -> Option<Install> {
     detect(&CODEX, &Lookup::system(binary_path))
 }
@@ -179,11 +204,17 @@ pub fn find(cli: &Cli, lookup: &Lookup) -> Option<PathBuf> {
         tracing::warn!(cli = cli.name, path = %configured.display(), "agent.binary_path is not an executable file");
         return None;
     }
+    let own_dirs = lookup
+        .home
+        .iter()
+        .flat_map(|home| cli.own_dirs.iter().map(move |rel| home.join(rel)));
     from_login_shell(cli, lookup)
         .or_else(|| {
             lookup
                 .bin_dirs
                 .iter()
+                .cloned()
+                .chain(own_dirs)
                 .map(|dir| dir.join(cli.name))
                 .find(|p| is_executable(p))
         })
@@ -197,29 +228,20 @@ pub fn find(cli: &Cli, lookup: &Lookup) -> Option<PathBuf> {
         .or_else(|| newest_versioned(cli, lookup))
 }
 
-/// A `Command` for the CLI at `path`, with the CLI's own folder put first on
-/// `PATH`. An npm install is a `#!/usr/bin/env node` script, and `node` sits
-/// next to it, but a Finder-launched app's `PATH` does not have that folder.
-pub fn cli_command(path: &Path) -> Command {
-    let mut command = Command::new(path);
-    if let Some(dir) = path.parent() {
-        let old = std::env::var_os("PATH").unwrap_or_default();
-        let dirs = std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&old));
-        if let Ok(joined) = std::env::join_paths(dirs) {
-            command.env("PATH", joined);
-        }
-    }
-    command
-}
-
 /// `$SHELL -lc 'command -v <name>'`. The shell's startup files may print
 /// other lines, so the last absolute path that is executable wins.
 fn from_login_shell(cli: &Cli, lookup: &Lookup) -> Option<PathBuf> {
     let mut command = Command::new(&lookup.shell);
     // `cli.name` is one of this module's constants, never user input.
     command.arg("-lc").arg(format!("command -v {}", cli.name));
-    let out = run_quiet(lookup, "login shell", command, lookup.quick_limit, "")
-        .inspect_err(|e| tracing::debug!(cli = cli.name, "login shell lookup failed: {e}"))
+    let out = probe(lookup, "login shell", command)
+        .inspect_err(|e| match e {
+            // Its stderr can hold anything the user's startup files print.
+            AgentError::CliFailed { status, .. } => {
+                tracing::debug!(cli = cli.name, ?status, "login shell lookup failed");
+            }
+            e => tracing::debug!(cli = cli.name, "login shell lookup failed: {e}"),
+        })
         .ok()?;
     out.stdout
         .lines()
@@ -231,13 +253,13 @@ fn from_login_shell(cli: &Cli, lookup: &Lookup) -> Option<PathBuf> {
 
 /// The highest-numbered copy in `cli.versioned`, if there is one.
 fn newest_versioned(cli: &Cli, lookup: &Lookup) -> Option<PathBuf> {
-    let (folder, inner) = cli.versioned?;
-    let entries = std::fs::read_dir(lookup.home.as_ref()?.join(folder)).ok()?;
+    let versioned = cli.versioned?;
+    let entries = std::fs::read_dir(lookup.home.as_ref()?.join(versioned.root)).ok()?;
     entries
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let number = version_number(&entry.file_name().to_string_lossy())?;
-            let path = entry.path().join(inner);
+            let path = entry.path().join(versioned.binary);
             is_executable(&path).then_some((number, path))
         })
         .max_by(|a, b| a.0.cmp(&b.0))
@@ -254,7 +276,7 @@ fn version_number(name: &str) -> Option<Vec<u64>> {
 fn version(cli: &Cli, path: &Path, lookup: &Lookup) -> Option<String> {
     let mut command = cli_command(path);
     command.arg("--version");
-    let out = run_quiet(lookup, cli.display_name, command, lookup.quick_limit, "")
+    let out = probe(lookup, cli.display_name, command)
         .inspect_err(|e| tracing::debug!(cli = cli.name, "--version failed: {e}"))
         .ok()?;
     first_line(&out.stdout).or_else(|| first_line(&out.stderr))
@@ -269,31 +291,42 @@ fn first_line(text: &str) -> Option<String> {
 }
 
 /// `claude auth status` prints JSON with `loggedIn`, and exits non-zero when
-/// nobody is signed in. A Claude Code that has no `auth status` gets the
-/// `-p` run instead.
+/// nobody is signed in. A Claude Code whose `auth --help` works but lists no
+/// `status` command gets the sample run instead.
 ///
 /// `auth --help` is asked first because an old CLI with no `auth` command
-/// would take `auth status` as a prompt. `--help` is safe on any version.
+/// would take `auth status` as a prompt. `--help` is safe on any version. If
+/// `auth --help` itself fails, the answer is "signed out": the sample run is
+/// a real model call, too costly to make on a guess.
 fn claude_signed_in(path: &Path, lookup: &Lookup) -> bool {
-    if has_auth_status(path, lookup) {
-        let mut command = cli_command(path);
-        command.args(["auth", "status"]);
-        return match run_quiet(lookup, CLAUDE.display_name, command, lookup.quick_limit, "") {
-            Ok(out) => logged_in_json(&out.stdout),
-            Err(e) => {
-                tracing::debug!("claude auth status: {e}");
-                false
-            }
-        };
+    let mut help = cli_command(path);
+    help.args(["auth", "--help"]);
+    let help = match probe(lookup, CLAUDE.display_name, help) {
+        Ok(out) => out.stdout,
+        Err(e) => {
+            tracing::debug!("claude auth --help: {e}");
+            return false;
+        }
+    };
+    if !lists_status_command(&help) {
+        return claude_sample_run(path, lookup);
     }
-    claude_sample_run(path, lookup)
+    let mut command = cli_command(path);
+    command.args(["auth", "status"]);
+    match probe(lookup, CLAUDE.display_name, command) {
+        Ok(out) => logged_in_json(&out.stdout),
+        Err(e) => {
+            tracing::debug!("claude auth status: {e}");
+            false
+        }
+    }
 }
 
-fn has_auth_status(path: &Path, lookup: &Lookup) -> bool {
-    let mut command = cli_command(path);
-    command.args(["auth", "--help"]);
-    run_quiet(lookup, CLAUDE.display_name, command, lookup.quick_limit, "")
-        .is_ok_and(|out| out.stdout.contains("status"))
+/// Whether help text lists a `status` command: a line whose first word is
+/// `status`, as in `  status [options]  Show authentication status`.
+fn lists_status_command(help: &str) -> bool {
+    help.lines()
+        .any(|line| line.split_whitespace().next() == Some("status"))
 }
 
 /// Reads only `loggedIn`: the rest of the reply names the account, and none
@@ -305,43 +338,31 @@ fn logged_in_json(stdout: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// A tiny print-mode run: no tools, no MCP servers, no hooks. Signed in when
-/// it comes back without an error.
+/// A tiny notes run through [`ClaudeHarness`] itself, so it has exactly the
+/// notes run's flags (SPEC A11): no tools, no MCP servers, no hooks. Signed
+/// in when it comes back with a reply.
 ///
-/// The flags are the notes run's own (SPEC A11). A CLI too old to know them
-/// fails here and reads as signed out, which is right: it could not run the
-/// notes either.
+/// A CLI too old to know those flags fails here and reads as signed out,
+/// which is right: it could not run the notes either.
 fn claude_sample_run(path: &Path, lookup: &Lookup) -> bool {
-    let mut command = cli_command(path);
-    command.args([
-        "-p",
-        "--output-format",
-        "json",
-        "--model",
-        "haiku",
-        "--tools",
-        "",
-        "--strict-mcp-config",
-        "--permission-mode",
-        "dontAsk",
-        "--settings",
-        r#"{"disableAllHooks":true}"#,
-    ]);
-    match run_quiet(
-        lookup,
-        CLAUDE.display_name,
-        command,
-        lookup.sample_run_limit,
-        SAMPLE_PROMPT,
-    ) {
-        Ok(out) => serde_json::from_str::<serde_json::Value>(&out.stdout)
-            .ok()
-            .is_some_and(|v| v.get("is_error").and_then(serde_json::Value::as_bool) == Some(false)),
-        Err(e) => {
-            tracing::debug!("claude sign-in run: {e}");
-            false
-        }
+    let mut harness = ClaudeHarness::new().with_binary(path);
+    if let Some(search_path) = path.parent().and_then(process::search_path_with) {
+        harness = harness.with_search_path(search_path);
     }
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "ok": { "type": "boolean" } },
+        "required": ["ok"],
+        "additionalProperties": false,
+    });
+    let mut job = Job::notes(SAMPLE_PROMPT, schema);
+    job.model = Some(SAMPLE_MODEL.to_owned());
+    job.timeout = lookup.sample_run_limit;
+    job.work_root = lookup.work_root.clone();
+    harness
+        .run(&job)
+        .inspect_err(|e| tracing::debug!("claude sign-in run: {e}"))
+        .is_ok()
 }
 
 /// `codex login status` prints "Logged in using ChatGPT" (on stderr) and
@@ -349,7 +370,7 @@ fn claude_sample_run(path: &Path, lookup: &Lookup) -> bool {
 fn codex_signed_in(path: &Path, lookup: &Lookup) -> bool {
     let mut command = cli_command(path);
     command.args(["login", "status"]);
-    match run_quiet(lookup, CODEX.display_name, command, lookup.quick_limit, "") {
+    match probe(lookup, CODEX.display_name, command) {
         Ok(out) => [&out.stdout, &out.stderr].iter().any(|text| {
             text.lines()
                 .any(|line| line.trim_start().starts_with("Logged in"))
@@ -361,23 +382,9 @@ fn codex_signed_in(path: &Path, lookup: &Lookup) -> bool {
     }
 }
 
-/// Runs `command` through [`process::run_cli`], so it gets the same fresh
-/// folder, process group and kill-on-time-limit as a real run, with `stdin`
-/// as its input.
-fn run_quiet(
-    lookup: &Lookup,
-    display_name: &str,
-    command: Command,
-    limit: Duration,
-    stdin: &str,
-) -> Result<CliOutput, AgentError> {
-    // `run_cli` takes a job for its stdin, time limit and Cancel. The kind
-    // and schema are not used: nothing here goes through the output check.
-    let mut job = Job::notes(stdin, serde_json::Value::Null);
-    job.timeout = limit;
-    job.work_root = lookup.work_root.clone();
-    let dir = process::fresh_work_dir(&job)?;
-    process::run_cli(display_name, command, &job, dir.path())
+/// [`process::run_probe`] with this lookup's work root and quick limit.
+fn probe(lookup: &Lookup, display_name: &str, command: Command) -> Result<CliOutput, AgentError> {
+    process::run_probe(display_name, command, lookup.quick_limit, &lookup.work_root)
 }
 
 /// `~/x` as `<home>/x`. Anything still relative is refused.
@@ -465,7 +472,7 @@ mod tests {
 
     const CLAUDE_NEW: &str = r#"case "$1 $2" in
   "--version ") echo "2.1.286 (Claude Code)" ;;
-  "auth --help") echo "Commands: login logout status" ;;
+  "auth --help") printf 'Commands:\n  login [options]  Sign in\n  status [options]  Show authentication status\n' ;;
   "auth status") echo '{"loggedIn": true, "email": "a@b.c"}' ;;
   *) exit 7 ;;
 esac"#;
@@ -635,7 +642,7 @@ esac"#,
             "bin/claude",
             r#"case "$1 $2" in
   "--version ") echo "2.1.286 (Claude Code)" ;;
-  "auth --help") echo "Commands: login logout status" ;;
+  "auth --help") printf 'Commands:\n  login [options]  Sign in\n  status [options]  Show authentication status\n' ;;
   "auth status") echo '{"loggedIn": false}'; exit 1 ;;
   *) exit 7 ;;
 esac"#,
@@ -653,8 +660,8 @@ esac"#,
             "bin/claude",
             r#"case "$1" in
   --version) echo "1.0.0 (Claude Code)" ;;
-  auth) echo "Usage: claude [options] [prompt]" ;;
-  -p) cat >/dev/null; echo '{"type":"result","is_error":false,"result":"OK"}' ;;
+  auth) printf 'Usage: claude [options] [prompt]\n  Check your status with /status\n' ;;
+  -p) cat >/dev/null; echo '{"type":"result","subtype":"success","is_error":false,"structured_output":{"ok":true}}' ;;
   *) exit 7 ;;
 esac"#,
         );
@@ -686,6 +693,45 @@ esac"#,
         );
 
         assert!(!detect(&CLAUDE, &mac.lookup()).unwrap().signed_in);
+    }
+
+    #[test]
+    fn a_failing_auth_help_is_signed_out_without_a_model_run() {
+        let mac = FakeMac::new();
+        mac.fake_claude(
+            "bin/claude",
+            r#"case "$1 $2" in
+  "--version ") echo "2.1.286 (Claude Code)" ;;
+  "auth --help") exit 1 ;;
+  *) cat >/dev/null; echo '{"type":"result","is_error":false,"structured_output":{"ok":true}}' ;;
+esac"#,
+        );
+
+        assert!(!detect(&CLAUDE, &mac.lookup()).unwrap().signed_in);
+        let log = mac.log("bin/claude");
+        assert!(!log.contains("-p"), "{log}");
+        assert!(!log.contains("auth status"), "{log}");
+    }
+
+    #[test]
+    fn a_cli_only_folder_is_searched_for_that_cli_only() {
+        let mac = FakeMac::new();
+        let claude = mac.fake_claude("home/.claude/local/claude", CLAUDE_NEW);
+        mac.script("home/.claude/local/codex", "exit 0");
+
+        assert_eq!(find(&CLAUDE, &mac.lookup()), Some(claude));
+        assert_eq!(find(&CODEX, &mac.lookup()), None);
+    }
+
+    #[test]
+    fn only_a_status_command_line_counts() {
+        assert!(lists_status_command(
+            "Commands:\n  login  Sign in\n  status [options]  Show status\n"
+        ));
+        assert!(!lists_status_command(
+            "Usage: claude [prompt]\n  Check your status with /status\n"
+        ));
+        assert!(!lists_status_command(""));
     }
 
     #[test]

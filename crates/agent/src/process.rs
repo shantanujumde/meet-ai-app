@@ -145,6 +145,45 @@ pub fn run_cli(
     })
 }
 
+/// Runs a short health check (`--version`, a sign-in status) the way a real
+/// run goes: a fresh, empty folder inside `work_root`, empty stdin, its own
+/// process group, killed at `timeout`. The folder is deleted before this
+/// returns.
+pub fn run_probe(
+    display_name: &str,
+    command: Command,
+    timeout: Duration,
+    work_root: &Path,
+) -> Result<CliOutput, AgentError> {
+    // `run_cli` reads only the prompt, time limit, Cancel and work root of a
+    // job. A probe's output never goes through a schema check, so the kind and
+    // schema here are not used.
+    let mut job = Job::notes(String::new(), serde_json::Value::Null);
+    job.timeout = timeout;
+    job.work_root = work_root.to_path_buf();
+    let dir = fresh_work_dir(&job)?;
+    run_cli(display_name, command, &job, dir.path())
+}
+
+/// A `Command` for the CLI at `path`, with `PATH` from [`search_path_with`].
+pub fn cli_command(path: &Path) -> Command {
+    let mut command = Command::new(path);
+    if let Some(search_path) = path.parent().and_then(search_path_with) {
+        command.env("PATH", search_path);
+    }
+    command
+}
+
+/// The app's `PATH` with `dir` put first. An npm install is a
+/// `#!/usr/bin/env node` script with `node` next to it, but a Finder-launched
+/// app's `PATH` does not have that folder. `None` when `dir` cannot go on a
+/// `PATH` (it holds a `:`).
+pub fn search_path_with(dir: &Path) -> Option<std::ffi::OsString> {
+    let old = std::env::var_os("PATH").unwrap_or_default();
+    let dirs = std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&old));
+    std::env::join_paths(dirs).ok()
+}
+
 /// Like [`run_cli`], but a non-zero exit is not an error: the exit code and
 /// what the CLI printed come back, so the caller can read a failure the CLI
 /// reports on stdout. Not starting, the time limit and Cancel are still
