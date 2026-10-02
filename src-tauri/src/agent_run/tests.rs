@@ -14,10 +14,11 @@ use store::agent_notes::AGENT_NOTES_KEY;
 use store::meeting::Meeting;
 use store::watcher::SelfWrites;
 
-use super::notes::{self, Agent};
+use super::notes::{self, Agent, SaveWrite};
 use super::runs::{AgentRuns, Sink, Work};
 use super::{
-    Failure, FailureKind, State, Status, failure, meeting_of, read_meeting_notes, switch_notes,
+    Failure, FailureKind, State, Status, after_stop, failure, meeting_of, read_meeting_notes,
+    switch_notes,
 };
 
 const STANDUP: &str = "2026-09-01-1430-standup";
@@ -136,7 +137,13 @@ fn run(root: &Root, behavior: FakeBehavior, timeout: Duration) -> Result<u32, Fa
         fake(behavior, timeout),
         &CancelHandle::new(),
         &SelfWrites::default(),
+        in_root(&root.path),
     )
+}
+
+/// Saves into `root`, as a run does when the folder has not moved.
+fn in_root(root: &Path) -> impl FnOnce(SaveWrite<'_>) -> Result<u32, Failure> + '_ {
+    move |write| write(root)
 }
 
 /// The same run as [`Work`] for [`AgentRuns::start`].
@@ -149,6 +156,7 @@ fn work(root: &Root, behavior: FakeBehavior, timeout: Duration) -> Work {
             fake(behavior, timeout),
             cancel,
             &SelfWrites::default(),
+            in_root(&path),
         )
     })
 }
@@ -413,6 +421,7 @@ fn a_meeting_with_no_transcript_is_not_sent() {
         fake(FakeBehavior::Reply(standup_reply()), LONG),
         &CancelHandle::new(),
         &SelfWrites::default(),
+        in_root(&root.path),
     );
     assert_eq!(missing.unwrap_err().kind, FailureKind::NoTranscript);
 }
@@ -434,6 +443,7 @@ fn a_meeting_with_notes_off_is_never_sent() {
         },
         &CancelHandle::new(),
         &SelfWrites::default(),
+        in_root(&root.path),
     );
 
     assert_eq!(result.unwrap_err().kind, FailureKind::NotesOff);
@@ -637,6 +647,7 @@ fn switched_off_before_stop_the_meeting_is_never_sent() {
         },
         &CancelHandle::new(),
         &SelfWrites::default(),
+        in_root(&root.path),
     );
 
     assert_eq!(result.unwrap_err().kind, FailureKind::NotesOff);
@@ -684,6 +695,7 @@ fn switched_off_while_the_agent_works_nothing_is_written() {
         },
         &CancelHandle::new(),
         &SelfWrites::default(),
+        in_root(&root.path),
     );
 
     assert_eq!(result.unwrap_err().kind, FailureKind::NotesOff);
@@ -747,4 +759,380 @@ fn the_switch_refuses_a_bad_meeting_id() {
     let root = Root::new();
     let result = switch_notes(&root.path, None, "../escape", false, &SelfWrites::default());
     assert!(result.is_err());
+}
+
+// ---------------------------------------------------------------------------
+// After Stop: a final transcript, no run when notes are off, a folder move
+// (TUR-17)
+// ---------------------------------------------------------------------------
+
+/// `agent` as `config.jsonc` would give it, with `auto_run` and `harness` as
+/// asked.
+fn settings(auto_run: bool, harness: crate::config::Harness) -> crate::config::AgentConfig {
+    crate::config::AgentConfig {
+        harness,
+        model: "fake-small".into(),
+        binary_path: None,
+        auto_run,
+        timeout_sec: 30,
+    }
+}
+
+fn auto_run_on() -> Result<crate::config::AgentConfig, crate::config::ConfigError> {
+    Ok(settings(true, crate::config::Harness::ClaudeCode))
+}
+
+/// A transcript that is final at once.
+fn already_final(_: Duration) -> bool {
+    true
+}
+
+#[test]
+fn a_slow_transcript_save_makes_the_run_wait_for_the_last_line() {
+    let root = Root::new();
+    let dir = root.meeting(STANDUP, Some("[00:00:04] Others: Morning everyone.\n"), &[]);
+    let runs = AgentRuns::default();
+    let sink = Arc::new(Recorded::default());
+    let last_line = "[00:21:05] Others: Then Redis it is: I'll take the load test.";
+    let transcript = dir.join(store::TRANSCRIPT_FILE);
+
+    let started_with = Mutex::new(None);
+    after_stop(
+        &runs,
+        &root.path,
+        STANDUP,
+        &auto_run_on(),
+        |_| {
+            // The engine is still saving: its last line lands, then it is done.
+            std::thread::sleep(Duration::from_millis(200));
+            let mut text = fs::read_to_string(&transcript).unwrap();
+            text.push_str(last_line);
+            text.push('\n');
+            fs::write(&transcript, text).unwrap();
+            true
+        },
+        sink.as_ref(),
+        || {
+            *started_with.lock().unwrap() = Some(fs::read_to_string(&transcript).unwrap());
+            runs.start(
+                STANDUP,
+                work(&root, FakeBehavior::Reply(standup_reply()), LONG),
+                sink.clone(),
+            );
+        },
+    );
+
+    let seen = started_with
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the run started");
+    assert!(
+        seen.contains(last_line),
+        "the run started before the last line: {seen}"
+    );
+    assert_eq!(sink.wait_for_end(), State::Done { tasks: 2 });
+}
+
+#[test]
+fn a_transcript_that_never_becomes_final_starts_no_run_and_offers_retry() {
+    let root = Root::new();
+    let dir = root.standup();
+    let before = snapshot(&dir);
+    let runs = AgentRuns::default();
+    let sink = Arc::new(Recorded::default());
+    let started = AtomicBool::new(false);
+
+    after_stop(
+        &runs,
+        &root.path,
+        STANDUP,
+        &auto_run_on(),
+        |wait| {
+            assert_eq!(wait, super::FINAL_WAIT);
+            false
+        },
+        sink.as_ref(),
+        || started.store(true, Ordering::SeqCst),
+    );
+
+    assert!(
+        !started.load(Ordering::SeqCst),
+        "no run on half a transcript"
+    );
+    let states = sink.states();
+    assert_eq!(states.len(), 1, "one status, no Writing notes…: {states:?}");
+    assert!(failed(FailureKind::CouldNotStart)(&states[0]), "{states:?}");
+    let State::Failed { failure } = &states[0] else {
+        unreachable!()
+    };
+    assert!(failure.message.contains("Retry"), "{}", failure.message);
+    assert_eq!(runs.status(STANDUP).state, states[0]);
+    assert_eq!(snapshot(&dir), before, "nothing written");
+
+    // Retry, once the transcript is there, runs as usual.
+    runs.start(
+        STANDUP,
+        work(&root, FakeBehavior::Reply(standup_reply()), LONG),
+        sink.clone(),
+    );
+    assert_eq!(sink.wait_for_end(), State::Done { tasks: 2 });
+}
+
+#[test]
+fn notes_off_at_stop_creates_no_run_at_all() {
+    let root = Root::new();
+    let dir = root.meeting(STANDUP, Some(TRANSCRIPT), &[(AGENT_NOTES_KEY, "off")]);
+    let before = snapshot(&dir);
+    let runs = AgentRuns::default();
+    let sink = Arc::new(Recorded::default());
+    let started = AtomicBool::new(false);
+
+    after_stop(
+        &runs,
+        &root.path,
+        STANDUP,
+        &auto_run_on(),
+        |_| panic!("nothing waits for a meeting whose notes are off"),
+        sink.as_ref(),
+        || started.store(true, Ordering::SeqCst),
+    );
+
+    assert!(!started.load(Ordering::SeqCst));
+    assert!(sink.states().is_empty(), "no status at all");
+    assert_eq!(runs.status(STANDUP).state, State::Idle);
+    assert_eq!(snapshot(&dir), before);
+}
+
+#[test]
+fn notes_switched_off_while_the_transcript_saves_creates_no_run() {
+    let root = Root::new();
+    root.standup();
+    let runs = AgentRuns::default();
+    let sink = Arc::new(Recorded::default());
+    let started = AtomicBool::new(false);
+
+    after_stop(
+        &runs,
+        &root.path,
+        STANDUP,
+        &auto_run_on(),
+        |_| {
+            notes_switch_off(&root.path);
+            false
+        },
+        sink.as_ref(),
+        || started.store(true, Ordering::SeqCst),
+    );
+
+    assert!(!started.load(Ordering::SeqCst));
+    assert!(sink.states().is_empty(), "not even the not-final failure");
+}
+
+#[test]
+fn auto_run_off_or_no_agent_starts_nothing_and_on_writes_the_notes() {
+    use crate::config::{ConfigError, Harness};
+
+    let root = Root::new();
+    let dir = root.standup();
+    let before = snapshot(&dir);
+    let runs = AgentRuns::default();
+    let sink = Arc::new(Recorded::default());
+    let start = || {
+        runs.start(
+            STANDUP,
+            work(&root, FakeBehavior::Reply(standup_reply()), LONG),
+            sink.clone(),
+        );
+    };
+
+    for off in [
+        settings(false, Harness::ClaudeCode),
+        settings(true, Harness::None),
+    ] {
+        after_stop(
+            &runs,
+            &root.path,
+            STANDUP,
+            &Ok(off.clone()),
+            already_final,
+            sink.as_ref(),
+            start,
+        );
+        assert!(sink.states().is_empty(), "{off:?} started a run");
+    }
+    assert_eq!(snapshot(&dir), before);
+
+    // A config that cannot be read still starts, so the view says why.
+    let unreadable: Result<_, ConfigError> = Err(ConfigError::Invalid("broken".into()));
+    assert!(super::auto_runs(&unreadable));
+
+    after_stop(
+        &runs,
+        &root.path,
+        STANDUP,
+        &auto_run_on(),
+        already_final,
+        sink.as_ref(),
+        start,
+    );
+    assert_eq!(sink.wait_for_end(), State::Done { tasks: 2 });
+    assert_eq!(
+        read_meeting_notes(&root.path, STANDUP)
+            .unwrap()
+            .analyzed_by
+            .as_deref(),
+        Some("claude-code")
+    );
+}
+
+#[test]
+fn a_folder_moved_mid_run_gets_the_notes_in_its_new_place() {
+    let parent = Root::new();
+    let old_root = parent.path.join("Meetings");
+    let new_root = parent.path.join("Moved");
+    let root = Root {
+        _guard: tempfile::tempdir().unwrap(),
+        path: old_root.clone(),
+    };
+    root.standup();
+
+    let gate = crate::folder_move::FolderGate::default();
+    let looked_up = AtomicBool::new(false);
+    let result = notes::run_notes(
+        &old_root,
+        STANDUP,
+        || {
+            // The user moves the meetings folder while the agent works.
+            let moving = gate.begin_move().unwrap();
+            fs::rename(&old_root, &new_root).unwrap();
+            drop(moving);
+            fake(FakeBehavior::Reply(standup_reply()), LONG)()
+        },
+        &CancelHandle::new(),
+        &SelfWrites::default(),
+        |write| {
+            crate::folder_move::writing_in(
+                Some(&gate),
+                || {
+                    looked_up.store(true, Ordering::SeqCst);
+                    Ok(new_root.clone())
+                },
+                write,
+            )
+        },
+    );
+
+    assert_eq!(result, Ok(2));
+    assert!(
+        looked_up.load(Ordering::SeqCst),
+        "the root was looked up at save time"
+    );
+    assert!(
+        !old_root.exists(),
+        "nothing written back under the old root"
+    );
+    let notes = read_meeting_notes(&new_root, STANDUP).unwrap();
+    assert!(!notes.sections.is_empty(), "the notes are in the new place");
+    assert!(new_root.join(STANDUP).join(store::TICKETS_DIR).is_dir());
+}
+
+#[test]
+fn a_save_during_a_folder_move_is_refused_and_writes_nothing() {
+    let root = Root::new();
+    let dir = root.standup();
+    let before = snapshot(&dir);
+    let gate = crate::folder_move::FolderGate::default();
+    let _moving = gate.begin_move().unwrap();
+
+    let result = notes::run_notes(
+        &root.path,
+        STANDUP,
+        fake(FakeBehavior::Reply(standup_reply()), LONG),
+        &CancelHandle::new(),
+        &SelfWrites::default(),
+        |write| crate::folder_move::writing_in(Some(&gate), || Ok(root.path.clone()), write),
+    );
+
+    assert_eq!(result.unwrap_err().kind, FailureKind::WriteFailed);
+    assert_eq!(snapshot(&dir), before);
+}
+
+// ---------------------------------------------------------------------------
+// The failures the TUR-10 review found untested
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_run_that_cannot_start_writes_nothing_and_says_why() {
+    let root = Root::new();
+    let dir = root.standup();
+    let before = snapshot(&dir);
+    let missing = root.path.join("no-such-folder");
+
+    let result = notes::run_notes(
+        &root.path,
+        STANDUP,
+        move || {
+            let mut agent = fake(FakeBehavior::Reply(standup_reply()), LONG)()?;
+            // The working folder the CLI would run in is not there.
+            agent.work_root = missing;
+            Ok(agent)
+        },
+        &CancelHandle::new(),
+        &SelfWrites::default(),
+        in_root(&root.path),
+    );
+
+    let failure = result.unwrap_err();
+    assert_eq!(failure.kind, FailureKind::CouldNotStart);
+    assert!(
+        failure.message.contains("working folder"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(snapshot(&dir), before);
+}
+
+#[test]
+fn notes_that_cannot_be_saved_say_so() {
+    let root = Root::new();
+    let dir = root.standup();
+    // The tickets folder is a file, so no task can be written into it.
+    fs::write(dir.join(store::TICKETS_DIR), "not a folder").unwrap();
+
+    let failure = run(&root, FakeBehavior::Reply(standup_reply()), LONG).unwrap_err();
+
+    assert_eq!(failure.kind, FailureKind::WriteFailed);
+    assert!(
+        failure
+            .message
+            .starts_with("The notes came back but could not be saved"),
+        "{}",
+        failure.message
+    );
+}
+
+#[test]
+fn no_agent_set_up_is_said_before_anything_is_sent() {
+    let root = Root::new();
+    let dir = root.standup();
+    let before = snapshot(&dir);
+
+    let result = notes::run_notes(
+        &root.path,
+        STANDUP,
+        || notes::from_settings(&settings(true, crate::config::Harness::None)),
+        &CancelHandle::new(),
+        &SelfWrites::default(),
+        in_root(&root.path),
+    );
+
+    let failure = result.unwrap_err();
+    assert_eq!(failure.kind, FailureKind::NoAgent);
+    assert!(
+        failure.message.contains("Copy prompt"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(snapshot(&dir), before);
 }

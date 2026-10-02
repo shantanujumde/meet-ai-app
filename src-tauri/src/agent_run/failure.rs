@@ -4,6 +4,7 @@
 use agent::AgentError;
 
 use super::{Failure, FailureKind};
+use crate::error::UiError;
 
 /// The most of the CLI's error text shown in the meeting view.
 const STDERR_LIMIT: usize = 400;
@@ -12,14 +13,14 @@ const STDERR_LIMIT: usize = 400;
 pub fn display_name(harness_id: &str) -> &str {
     match harness_id {
         agent::claude::ID => agent::claude::DISPLAY_NAME,
-        "codex" => "Codex",
+        agent::codex::ID => "Codex",
         other => other,
     }
 }
 
 /// What to type in Terminal to sign in to this harness.
 fn sign_in_command(harness_id: &str) -> &'static str {
-    if harness_id == "codex" {
+    if harness_id == agent::codex::ID {
         "codex login"
     } else {
         "claude"
@@ -134,6 +135,24 @@ pub fn write_failed(error: impl std::fmt::Display) -> Failure {
         FailureKind::WriteFailed,
         format!("The notes came back but could not be saved: {error}"),
     )
+}
+
+/// `transcript.md` was still being written long after Stop, so no run was
+/// started on half a transcript (TUR-17).
+pub fn not_final() -> Failure {
+    failure(
+        FailureKind::CouldNotStart,
+        "The transcript was still being saved, so no notes were written from part of it. \
+         Press Retry once the transcript is complete.",
+    )
+}
+
+/// A save refused before it ran (the meetings folder is moving) or with no
+/// meetings root to save into.
+impl From<UiError> for Failure {
+    fn from(error: UiError) -> Self {
+        write_failed(error.message)
+    }
 }
 
 /// The worker thread died part-way.
