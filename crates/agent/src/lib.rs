@@ -19,6 +19,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod claude;
 mod error;
 mod job;
 mod output;
@@ -29,6 +30,7 @@ pub mod fake;
 
 use std::path::PathBuf;
 
+pub use claude::ClaudeHarness;
 pub use error::AgentError;
 pub use job::{CancelHandle, DEFAULT_TIMEOUT_SECS, Job, JobKind};
 pub use output::{OutputCheck, parse_json};
