@@ -48,7 +48,7 @@ export function MeetingTasks({ meetingId }: { meetingId: string }) {
     );
   }, []);
 
-  const { stateOf, sync, cancel, anyBusy } = useTicketSync(replace);
+  const { stateOf, sync, cancel, dismiss, anyBusy } = useTicketSync(replace);
   const canSync = useCanSync();
 
   async function syncAll(list: TicketSummary[]) {
@@ -117,6 +117,7 @@ export function MeetingTasks({ meetingId }: { meetingId: string }) {
                 disabled={busy}
                 onSync={() => void sync(task, meetingId)}
                 onCancel={() => cancelTask(task.id)}
+                onDismiss={() => void dismiss(task.id, meetingId)}
               />
             </li>
           ))}

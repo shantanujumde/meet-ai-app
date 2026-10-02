@@ -21,7 +21,7 @@ import { toUiError } from "@/ipc/types";
 import { cn } from "@/lib/cn";
 import { Button, ButtonRow, Pill } from "./primitives";
 import { InlineError } from "./states";
-import { type SyncState, useTicketSync } from "./useTicketSync";
+import { isKeptIssue, type SyncState, useTicketSync } from "./useTicketSync";
 
 const TRACKER_NAME: Record<string, string> = {
   linear: "Linear",
@@ -40,6 +40,7 @@ export function SyncControls({
   state,
   onSync,
   onCancel,
+  onDismiss,
   meetingId = ticket.meeting,
   canSync = true,
   disabled = false,
@@ -49,6 +50,11 @@ export function SyncControls({
   state: SyncState;
   onSync: () => void;
   onCancel: () => void;
+  /**
+   * Forget the issue Rust kept after a sync that could not attach it. The
+   * Dismiss button shows only when this is given and the error is such a kept issue.
+   */
+  onDismiss?: () => void;
   /** The meeting whose folder holds the ticket. Defaults to `ticket.meeting`. */
   meetingId?: string | null;
   /** False when there is no agent to run: the Sync button is left out. */
@@ -64,6 +70,7 @@ export function SyncControls({
 
   const busy = state.kind === "busy";
   const failed = state.kind === "failed";
+  const canDismiss = failed && onDismiss !== undefined && isKeptIssue(state.error);
 
   return (
     <div className={cn("flex flex-col gap-3", className)} aria-busy={busy}>
@@ -93,6 +100,16 @@ export function SyncControls({
             {failed ? "Retry" : "Sync"}
           </Button>
         )}
+        {canDismiss ? (
+          <Button
+            size="small"
+            tone="quiet"
+            aria-label={`Dismiss the unsaved issue of ${ticket.id}`}
+            onClick={onDismiss}
+          >
+            Dismiss
+          </Button>
+        ) : null}
         <span className="sr-only" role="status" aria-live="polite">
           {busy ? `Syncing ${ticket.id}` : ""}
         </span>
@@ -156,13 +173,14 @@ export function SyncButton({
   disabled?: boolean;
   className?: string;
 }) {
-  const { stateOf, sync, cancel } = useTicketSync(onSynced);
+  const { stateOf, sync, cancel, dismiss } = useTicketSync(onSynced);
   return (
     <SyncControls
       ticket={ticket}
       state={stateOf(ticket.id)}
       onSync={() => void sync(ticket)}
       onCancel={() => void cancel(ticket.id)}
+      onDismiss={() => void dismiss(ticket.id, ticket.meeting)}
       canSync={canSync}
       disabled={disabled}
       className={className}

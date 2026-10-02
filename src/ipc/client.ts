@@ -190,6 +190,14 @@ export async function cancelSync(ticketId: string): Promise<void> {
   await call(() => commands.cancelSync(ticketId));
 }
 
+/** Forget the issue a Sync created but could not attach, so the next Sync runs afresh. */
+export async function dismissUnsavedSync(
+  ticketId: string,
+  meetingId: string | null,
+): Promise<void> {
+  await call(() => commands.dismissUnsavedSync(ticketId, meetingId));
+}
+
 /** Open a synced ticket's issue in the browser. Rust opens it; the window never opens URLs. */
 export async function openSyncedIssue(ticketId: string, meetingId: string | null): Promise<void> {
   await call(() => commands.openSyncedIssue(ticketId, meetingId));
