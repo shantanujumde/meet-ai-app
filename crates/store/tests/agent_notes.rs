@@ -563,13 +563,14 @@ fn a_rerun_keeps_a_ticket_whose_body_was_edited_by_hand() {
     });
     assert_tick_2_kept(&root, &outcome, &touched);
 
-    // Kept tickets are listed after the new ones, title and assignee only.
+    // Every ticket in the folder is listed, in number order; the kept one is
+    // read back from its file, due date included.
     let meeting = root.read_meeting(STANDUP);
     assert_eq!(
         section(&meeting, "Action Items"),
         "- TICK-0001: Ship the Redis session store (Dev, due Thursday)\n\
-         - TICK-0003: Load test with two instances\n\
-         - TICK-0002: Load test the login path (Priya)"
+         - TICK-0002: Load test the login path (Priya)\n\
+         - TICK-0003: Load test with two instances"
     );
 }
 
@@ -918,5 +919,410 @@ fn a_yaml_hostile_title_round_trips_through_the_ticket_file() {
     assert_eq!(
         section(&meeting, "Action Items"),
         format!("- TICK-0001: {hostile} (O'Brien: lead, due Friday)")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 11. A meeting the user keeps away from the agent
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_meeting_marked_agent_notes_off_is_left_alone() {
+    for value in ["off", "false"] {
+        let root = Root::new("notes-off");
+        let dir = root.meeting(STANDUP);
+        let raw = format!(
+            "---\nid: {STANDUP}\ntitle: Private\nagent_notes: {value}\n---\n\n\
+             ## Summary\n\nMine.\n\n## Decisions\n\n## Action Items\n\n## Open Questions\n"
+        );
+        fs::write(dir.join(MEETING_FILE), &raw).unwrap();
+        let writes = SelfWrites::default();
+
+        let outcome =
+            agent_notes::write(&root.path, STANDUP, &notes("standup"), &first(), &writes).unwrap();
+
+        assert!(outcome.notes_off, "agent_notes: {value}");
+        assert!(outcome.written.is_empty());
+        assert!(outcome.kept.is_empty() && outcome.removed.is_empty());
+        assert_eq!(fs::read_to_string(dir.join(MEETING_FILE)).unwrap(), raw);
+        assert!(!dir.join(TICKETS_DIR).exists());
+        let meeting_md = fs::canonicalize(dir.join(MEETING_FILE)).unwrap();
+        assert!(!writes.is_suppressed(&meeting_md, Instant::now()));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 12. Retrying a run that stopped part-way
+// ---------------------------------------------------------------------------
+
+/// The `agent_tickets` entry for `id`, as written.
+fn recorded(meeting: &Meeting, id: &str) -> Option<Yaml> {
+    match meeting.frontmatter.get(AGENT_TICKETS_KEY) {
+        Some(Yaml::Hash(map)) => map.get(&Yaml::String(id.to_owned())).cloned(),
+        _ => None,
+    }
+}
+
+fn recorded_hash(meeting: &Meeting, id: &str) -> String {
+    match recorded(meeting, id) {
+        Some(Yaml::String(hash)) => hash,
+        other => panic!("{id} should be recorded as one hash, got {other:?}"),
+    }
+}
+
+fn set_recorded(meeting: &mut Meeting, entries: &[(&str, Yaml)]) {
+    let mut map = yaml_rust2::yaml::Hash::new();
+    for (id, value) in entries {
+        map.insert(Yaml::String((*id).to_owned()), value.clone());
+    }
+    meeting.frontmatter.set(AGENT_TICKETS_KEY, Yaml::Hash(map));
+}
+
+fn hashes(list: &[&str]) -> Yaml {
+    Yaml::Array(list.iter().map(|h| Yaml::String((*h).to_owned())).collect())
+}
+
+#[test]
+fn a_ticket_recorded_with_a_list_of_hashes_is_untouched_if_any_matches() {
+    let root = Root::new("retry-list");
+    let dir = root.meeting(STANDUP);
+    root.write(STANDUP, &notes("standup"), &first());
+    let mut meeting = root.read_meeting(STANDUP);
+    let real = recorded_hash(&meeting, "TICK-0001");
+    let two = recorded(&meeting, "TICK-0002").unwrap();
+    let three = recorded(&meeting, "TICK-0003").unwrap();
+    set_recorded(
+        &mut meeting,
+        &[
+            ("TICK-0001", hashes(&["deadbeef", &real])),
+            ("TICK-0002", two),
+            ("TICK-0003", three),
+        ],
+    );
+    meeting.write(&dir.join(MEETING_FILE)).unwrap();
+
+    let outcome = root.write(STANDUP, &notes("standup"), &second());
+
+    assert_eq!(
+        outcome.written,
+        ids(&["TICK-0001", "TICK-0002", "TICK-0003"])
+    );
+    assert!(outcome.kept.is_empty(), "{outcome:?}");
+    // Once the run is through, each entry is one hash again.
+    let after = root.read_meeting(STANDUP);
+    for id in &outcome.written {
+        recorded_hash(&after, id);
+    }
+}
+
+/// Rebuild the state a crash between step 1 (the record lists old and new
+/// hashes) and step 3 (the new sections) leaves behind, then retry.
+///
+/// `tickets_written` says whether the crash came after the tickets landed
+/// (they hold the new text) or before (they still hold the old).
+fn retry_after_a_crash(name: &str, tickets_written: bool) {
+    let root = Root::new(name);
+    let dir = root.meeting(STANDUP);
+    root.write(STANDUP, &notes("standup"), &first());
+    let old_meeting = root.read_meeting(STANDUP);
+    let old_tickets: Vec<(String, Vec<u8>)> = ["TICK-0001", "TICK-0002", "TICK-0003"]
+        .iter()
+        .map(|id| {
+            let bytes = fs::read(root.ticket_path(STANDUP, id)).unwrap();
+            ((*id).to_owned(), bytes)
+        })
+        .collect();
+
+    // The run that "crashes": done in full, to learn the new hashes and text.
+    root.write(STANDUP, &notes("standup-rerun"), &second());
+    let new_meeting = root.read_meeting(STANDUP);
+    let new_tickets: Vec<Vec<u8>> = ["TICK-0001", "TICK-0002"]
+        .iter()
+        .map(|id| fs::read(root.ticket_path(STANDUP, id)).unwrap())
+        .collect();
+
+    let old = |id| recorded_hash(&old_meeting, id);
+    let new = |id| recorded_hash(&new_meeting, id);
+    let mut staged = old_meeting.clone();
+    set_recorded(
+        &mut staged,
+        &[
+            ("TICK-0001", hashes(&[&old("TICK-0001"), &new("TICK-0001")])),
+            ("TICK-0002", hashes(&[&old("TICK-0002"), &new("TICK-0002")])),
+            ("TICK-0003", hashes(&[&old("TICK-0003")])),
+        ],
+    );
+    staged.write(&dir.join(MEETING_FILE)).unwrap();
+    if !tickets_written {
+        for (id, bytes) in &old_tickets {
+            fs::write(root.ticket_path(STANDUP, id), bytes).unwrap();
+        }
+    }
+
+    let outcome = root.write(STANDUP, &notes("standup-rerun"), &second());
+
+    assert_eq!(outcome.written, ids(&["TICK-0001", "TICK-0002"]));
+    assert!(outcome.kept.is_empty(), "{outcome:?}");
+    if tickets_written {
+        // TICK-0003 was already removed before the crash.
+        assert!(outcome.removed.is_empty(), "{outcome:?}");
+    } else {
+        assert_eq!(outcome.removed, ids(&["TICK-0003"]));
+    }
+    assert_eq!(root.ticket_files(STANDUP), ["TICK-0001.md", "TICK-0002.md"]);
+    for (id, bytes) in ["TICK-0001", "TICK-0002"].iter().zip(&new_tickets) {
+        assert_eq!(&fs::read(root.ticket_path(STANDUP, id)).unwrap(), bytes);
+    }
+    let after = root.read_meeting(STANDUP);
+    assert_eq!(recorded_hash(&after, "TICK-0001"), new("TICK-0001"));
+    assert_eq!(recorded_hash(&after, "TICK-0002"), new("TICK-0002"));
+    assert_eq!(recorded(&after, "TICK-0003"), None);
+    assert_eq!(
+        section(&after, "Summary"),
+        "Second pass: sessions move to Redis this week, and the load test gates the switch."
+    );
+}
+
+#[test]
+fn a_retry_after_a_crash_once_the_tickets_landed_claims_them_all() {
+    retry_after_a_crash("retry-after-tickets", true);
+}
+
+#[test]
+fn a_retry_after_a_crash_before_the_tickets_landed_claims_them_all() {
+    retry_after_a_crash("retry-before-tickets", false);
+}
+
+// ---------------------------------------------------------------------------
+// 13. Line endings
+// ---------------------------------------------------------------------------
+
+/// Every `\n` after the closing `---` has a `\r` before it.
+fn assert_crlf_body(raw: &str) {
+    let close = raw[3..].find("\n---").expect("a closing ---") + 3 + 1;
+    let body_start = raw[close..].find('\n').unwrap() + close + 1;
+    let body = &raw[body_start..];
+    for (i, _) in body.match_indices('\n') {
+        assert!(
+            i > 0 && body.as_bytes()[i - 1] == b'\r',
+            "bare \\n at body byte {i}: {body:?}"
+        );
+    }
+}
+
+#[test]
+fn a_crlf_meeting_md_stays_crlf_in_the_body() {
+    let root = Root::new("crlf");
+    let dir = root.meeting(STANDUP);
+    fs::write(
+        dir.join(MEETING_FILE),
+        format!(
+            "---\r\nid: {STANDUP}\r\ntitle: Standup\r\n---\r\n\r\n## Summary\r\n\r\n\
+             ## Decisions\r\n\r\n## Action Items\r\n\r\n## Open Questions\r\n\r\n\
+             ## Links\r\n\r\n- https://example.com\r\n"
+        ),
+    )
+    .unwrap();
+    let mut notes = notes("standup");
+    notes.summary = "Line one.\nLine two.".to_owned();
+
+    root.write(STANDUP, &notes, &first());
+    // And a re-run over the file the first run wrote.
+    root.write(STANDUP, &notes, &second());
+
+    let raw = fs::read_to_string(dir.join(MEETING_FILE)).unwrap();
+    assert_crlf_body(&raw);
+    let meeting = Meeting::parse(&raw);
+    assert_eq!(section(&meeting, "Summary"), "Line one.\r\nLine two.");
+    assert!(section(&meeting, "Action Items").starts_with("- TICK-0001: Redis session store"));
+    assert_eq!(section(&meeting, "Links"), "- https://example.com");
+}
+
+// ---------------------------------------------------------------------------
+// 14. Matching tasks to earlier tickets by title
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_rerun_gives_a_task_back_the_number_of_the_ticket_with_its_title() {
+    let root = Root::new("match-title");
+    root.meeting(STANDUP);
+    let abc = notes("standup");
+    root.write(STANDUP, &abc, &first());
+    let mut ca = abc.clone();
+    ca.tasks = vec![abc.tasks[2].clone(), abc.tasks[0].clone()];
+    // Case and stray spaces do not stop a match.
+    ca.tasks[1].title = "  redis SESSION store ".to_owned();
+
+    let outcome = root.write(STANDUP, &ca, &second());
+
+    assert_eq!(outcome.written, ids(&["TICK-0003", "TICK-0001"]));
+    assert_eq!(outcome.removed, ids(&["TICK-0002"]));
+    assert!(outcome.kept.is_empty());
+    assert_eq!(
+        root.ticket(STANDUP, "TICK-0003").title().as_deref(),
+        Some("Write the cutover runbook")
+    );
+    assert_eq!(
+        root.ticket(STANDUP, "TICK-0001").title().as_deref(),
+        Some("redis SESSION store")
+    );
+    let meeting = root.read_meeting(STANDUP);
+    assert_eq!(
+        section(&meeting, "Action Items"),
+        "- TICK-0001: redis SESSION store (Shantanu, due Friday)\n\
+         - TICK-0003: Write the cutover runbook"
+    );
+}
+
+/// A task with a blank title gets one from its details, and a re-run finds
+/// the ticket by that title like any other: matching uses the title as it was
+/// written to the file, not the raw `""`.
+#[test]
+fn a_rerun_matches_a_blank_titled_task_by_the_title_it_was_given() {
+    let root = Root::new("match-blank-title");
+    root.meeting(STANDUP);
+    let mut first_run = notes("standup");
+    first_run.tasks[1].title = String::new();
+    first_run.tasks[1].details = "Fix the login page\nIt times out under load.".to_owned();
+    root.write(STANDUP, &first_run, &first());
+    assert_eq!(
+        root.ticket(STANDUP, "TICK-0002").title().as_deref(),
+        Some("Fix the login page")
+    );
+    let mut rerun = first_run.clone();
+    rerun.tasks = vec![first_run.tasks[1].clone(), first_run.tasks[2].clone()];
+
+    let outcome = root.write(STANDUP, &rerun, &second());
+
+    assert_eq!(
+        outcome.written,
+        ids(&["TICK-0002", "TICK-0003"]),
+        "the blank-titled task should keep TICK-0002: {outcome:?}"
+    );
+    assert_eq!(outcome.removed, ids(&["TICK-0001"]));
+}
+
+// ---------------------------------------------------------------------------
+// 15. A kept ticket over several runs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_edited_ticket_stays_listed_after_two_more_reruns() {
+    let root = Root::new("kept-listed");
+    let (_, touched) = rerun_after_touching_tick_2(&root, |path| {
+        let mut raw = fs::read_to_string(path).unwrap();
+        raw.push_str("\nMy own note.\n");
+        fs::write(path, raw).unwrap();
+    });
+
+    for at in ["2026-09-03T10:00:00+05:30", "2026-09-04T10:00:00+05:30"] {
+        let outcome = root.write(
+            STANDUP,
+            &notes("standup-rerun"),
+            &analysis(AnalyzedBy::ClaudeCode, at),
+        );
+        assert_eq!(outcome.written, ids(&["TICK-0001", "TICK-0003"]));
+        assert!(!outcome.removed.contains(&"TICK-0002".to_owned()));
+        assert_eq!(
+            fs::read(root.ticket_path(STANDUP, "TICK-0002")).unwrap(),
+            touched
+        );
+        let meeting = root.read_meeting(STANDUP);
+        assert_eq!(
+            section(&meeting, "Action Items"),
+            "- TICK-0001: Ship the Redis session store (Dev, due Thursday)\n\
+             - TICK-0002: Load test the login path (Priya)\n\
+             - TICK-0003: Load test with two instances",
+            "after the run at {at}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 16. The tickets folder itself is a self-write
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_tickets_folder_the_run_creates_is_noted_as_a_self_write() {
+    let root = Root::new("self-writes-dir");
+    let dir = root.meeting(STANDUP);
+    assert!(!dir.join(TICKETS_DIR).exists());
+    let writes = SelfWrites::default();
+
+    agent_notes::write(&root.path, STANDUP, &notes("standup"), &first(), &writes).unwrap();
+
+    let tickets_dir = fs::canonicalize(dir.join(TICKETS_DIR)).unwrap();
+    assert!(writes.is_suppressed(&tickets_dir, Instant::now()));
+}
+
+// ---------------------------------------------------------------------------
+// 17. Blank fields from the agent
+// ---------------------------------------------------------------------------
+
+#[test]
+fn blank_owner_due_and_title_read_as_not_said() {
+    let root = Root::new("blanks");
+    root.meeting(STANDUP);
+    let mut notes = notes("standup");
+    notes.tasks.truncate(2);
+    notes.tasks[0].title = "   ".to_owned();
+    notes.tasks[0].details = "Fix the login page\nIt times out under load.".to_owned();
+    notes.tasks[0].owner = Some(String::new());
+    notes.tasks[0].due = Some("  ".to_owned());
+    notes.tasks[1].title = String::new();
+    notes.tasks[1].details = String::new();
+
+    root.write(STANDUP, &notes, &first());
+
+    let ticket = root.ticket(STANDUP, "TICK-0001");
+    assert_eq!(ticket.title().as_deref(), Some("Fix the login page"));
+    assert_eq!(ticket.frontmatter.get("assignee"), Some(&Yaml::Null));
+    assert!(!ticket.body.contains("Due:"), "{:?}", ticket.body);
+    assert_eq!(
+        ticket.body,
+        "\nFix the login page\nIt times out under load.\n"
+    );
+    assert_eq!(
+        root.ticket(STANDUP, "TICK-0002").title().as_deref(),
+        Some("Untitled task")
+    );
+    let meeting = root.read_meeting(STANDUP);
+    assert_eq!(
+        section(&meeting, "Action Items"),
+        "- TICK-0001: Fix the login page\n- TICK-0002: Untitled task (Priya)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 18. A hand-written ticket inside the meeting's own folder
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_hand_written_ticket_in_the_meeting_holds_its_number_and_is_left_alone() {
+    let root = Root::new("hand-written-in-meeting");
+    root.meeting(STANDUP);
+    let path = root.ticket_path(STANDUP, "TICK-0004");
+    Ticket::new("TICK-0004", "Rotate the API keys", STANDUP)
+        .write(&path)
+        .unwrap();
+    let before = fs::read(&path).unwrap();
+
+    let outcome = root.write(STANDUP, &notes("standup"), &first());
+    assert_eq!(
+        outcome.written,
+        ids(&["TICK-0005", "TICK-0006", "TICK-0007"])
+    );
+    let rerun = root.write(STANDUP, &notes("standup-rerun"), &second());
+
+    assert_eq!(rerun.written, ids(&["TICK-0005", "TICK-0006"]));
+    assert_eq!(rerun.removed, ids(&["TICK-0007"]));
+    assert!(rerun.kept.is_empty(), "{rerun:?}");
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let meeting = root.read_meeting(STANDUP);
+    assert_eq!(
+        section(&meeting, "Action Items"),
+        "- TICK-0004: Rotate the API keys\n\
+         - TICK-0005: Ship the Redis session store (Dev, due Thursday)\n\
+         - TICK-0006: Load test with two instances"
     );
 }
