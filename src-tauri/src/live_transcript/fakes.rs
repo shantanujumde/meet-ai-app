@@ -3,6 +3,7 @@
 #![cfg(test)]
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -48,6 +49,21 @@ impl Notify for CollectingNotify {
     }
 }
 
+/// Passes everything on to a shared collector. Handing one meeting its own
+/// `Arc` of this lets a test see, through a `Weak`, when every thread of
+/// that meeting has let go of the window: each write goes through a scope
+/// that holds it, so once it is gone nothing of that meeting can write.
+pub(super) struct Forward(pub(super) Arc<CollectingNotify>);
+
+impl Notify for Forward {
+    fn update(&self, update: &LiveUpdate) {
+        self.0.update(update);
+    }
+    fn status(&self, status: &Status) {
+        self.0.status(status);
+    }
+}
+
 #[derive(Clone)]
 pub(super) enum Mode {
     /// A guess, then a settled line, for every chunk fed.
@@ -65,8 +81,21 @@ pub(super) enum Mode {
     /// then settles a line — an engine that comes back far too late.
     WedgeOnFeed(Gate),
     /// One guess on the first feed, then nothing ever again: Apple's
-    /// model guessing at room tone and never taking it back.
-    GuessOnce,
+    /// model guessing at room tone and never taking it back. Counts the
+    /// feed calls it gets.
+    GuessOnce(Feeds),
+}
+
+/// How many feed calls a fake session has started. One thread feeds a
+/// track and checks its guess for staleness, in that order, so call `n`
+/// starting means everything chunk `n - 1` set off has finished.
+#[derive(Clone, Default)]
+pub(super) struct Feeds(Arc<AtomicUsize>);
+
+impl Feeds {
+    pub(super) fn started(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
 }
 
 /// A latch a test opens to let a wedged fake engine carry on.
@@ -154,7 +183,8 @@ impl SttSession for FakeSession {
             }
             Mode::PanicOnFeed(n) if *n == self.fed => panic!("the fake engine has a bug"),
             Mode::WedgeOnFeed(gate) if self.fed == 1 => gate.wait(),
-            Mode::GuessOnce => {
+            Mode::GuessOnce(feeds) => {
+                feeds.0.fetch_add(1, Ordering::SeqCst);
                 if self.fed == 1 {
                     self.emitter.volatile(0.0, "I");
                 }

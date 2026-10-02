@@ -535,8 +535,12 @@ fn an_engine_that_comes_back_after_stop_gave_up_cannot_reach_the_next_meeting() 
     let gate = Gate::default();
     let (mic_tee, mic_feed) = audio::tee::tee();
 
+    // The first meeting writes to the same window, through a handle of its
+    // own, so the test can tell when it has let go of it.
+    let first_window: Arc<dyn Notify> = Arc::new(Forward(notify.clone()));
+    let first_alive = Arc::downgrade(&first_window);
     let first = live.start(
-        notify.clone(),
+        first_window,
         first_path.clone(),
         vec![(Speaker::You, mic_feed)],
         fake(Mode::WedgeOnFeed(gate.clone())),
@@ -558,14 +562,28 @@ fn an_engine_that_comes_back_after_stop_gave_up_cannot_reach_the_next_meeting() 
         fake(Mode::Echo),
     );
     mic_tee.offer(&chunk());
-    wait_for("the second meeting's line", || {
-        live.snapshot().finals.len() == 1
+    // The echo answers with a guess, the line and a trailing guess. Wait
+    // for all three, not just the line, so none of the second meeting's own
+    // updates is still on its way when the count is taken.
+    wait_for("the second meeting's line and trailing guess", || {
+        matches!(
+            notify.updates.lock().unwrap().as_slice(),
+            [
+                LiveUpdate::Volatile(_),
+                LiveUpdate::Final(_),
+                LiveUpdate::Volatile(_)
+            ]
+        )
     });
     let updates_before = notify.updates.lock().unwrap().len();
 
     gate.open();
-    // Give the woken engine every chance to misbehave.
-    std::thread::sleep(Duration::from_millis(300));
+    // Let the woken engine run to the end: settle its line, finish, and
+    // have its threads exit. Once the last of them has dropped its handle
+    // on the window, nothing of the first meeting can write any more.
+    wait_for("the first meeting's threads to end", || {
+        first_alive.strong_count() == 0
+    });
 
     assert_eq!(final_texts(&live), ["You line 1."]);
     assert_eq!(
@@ -702,44 +720,51 @@ fn a_guess_that_is_never_settled_or_withdrawn_does_not_stay_on_screen() {
     let path = temp_transcript("stale-guess");
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
+    let feeds = Feeds::default();
     let (mic_tee, mic_feed) = audio::tee::tee();
     let transcription = live.start(
         notify.clone(),
         path.clone(),
         vec![(Speaker::You, mic_feed)],
-        fake(Mode::GuessOnce),
+        fake(Mode::GuessOnce(feeds.clone())),
     );
     let second = vec![0; 16_000];
     mic_tee.offer(&second);
     wait_for("the guess", || !live.snapshot().volatile.is_empty());
 
-    // Still up a few seconds of audio later: a guess may be a guess.
-    for _ in 0..3 {
+    // Still up three seconds of audio later: a guess may be a guess. The
+    // fifth second reaching the engine means the fourth has been fed and
+    // checked; the fifth's own check cannot withdraw it either.
+    for _ in 0..4 {
         mic_tee.offer(&second);
     }
-    std::thread::sleep(Duration::from_millis(100));
+    wait_for("the fifth second to reach the engine", || {
+        feeds.started() == 5
+    });
     assert!(
         !live.snapshot().volatile.is_empty(),
         "withdrawn too eagerly"
     );
 
-    for _ in 0..STALE_GUESS.as_secs() {
+    for _ in 1..STALE_GUESS.as_secs() {
         mic_tee.offer(&second);
     }
-    wait_for("the stale guess to be withdrawn", || {
-        live.snapshot().volatile.is_empty()
-    });
-    let updates = notify.updates.lock().unwrap().clone();
-    assert!(
+    // The board is cleared under its lock and the window told just after,
+    // so wait on the window: once it has the `Dropped`, the board is clear.
+    wait_for("the window to be told to clear the stale guess", || {
         matches!(
-            updates.last(),
+            notify.updates.lock().unwrap().last(),
             Some(LiveUpdate::Dropped {
                 speaker: Speaker::You,
                 ..
             })
-        ),
-        "the window was told to clear it: {updates:?}"
+        )
+    });
+    assert!(
+        live.snapshot().volatile.is_empty(),
+        "the stale guess is off the board too"
     );
+    let updates = notify.updates.lock().unwrap().clone();
     let seqs: Vec<u64> = updates.iter().map(LiveUpdate::seq).collect();
     assert!(seqs.windows(2).all(|w| w[0] < w[1]), "{seqs:?}");
 
