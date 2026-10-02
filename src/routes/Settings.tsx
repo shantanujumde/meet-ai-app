@@ -1,6 +1,8 @@
 /**
  * Settings: which speech engine this Mac will use, the models it can
- * download, and where meetings are written.
+ * download, which agent writes the notes, and where meetings are written.
+ *
+ * The agent card is {@link AgentSetup}, shared with onboarding's last step.
  *
  * The engine card is {@link EngineSummary}, shared with onboarding's speech
  * step. It never waits on the ~160 ms engine probe before painting — see its
@@ -9,6 +11,7 @@
  */
 
 import { useAppStore } from "@/state/app";
+import { AgentSetup } from "@/ui/agent/AgentSetup";
 import { EngineSummary } from "@/ui/engine/EngineSummary";
 import { FolderRow } from "@/ui/FolderRow";
 import { Button, Card, Row, RowLabel } from "@/ui/primitives";
@@ -27,6 +30,8 @@ export function Settings() {
 
       <EngineSummary />
 
+      <AgentSetup />
+
       <section className="section" aria-labelledby="files-heading">
         <h2 className="section__title" id="files-heading">
           Files
@@ -36,7 +41,7 @@ export function Settings() {
           <Row>
             <RowLabel
               name="Setup"
-              detail="Walk through permission and speech setup again"
+              detail="Walk through permission, speech and agent setup again"
               mono={false}
             />
             <Button size="small" onClick={() => void restartOnboarding()}>

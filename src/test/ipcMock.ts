@@ -30,6 +30,7 @@
 import { vi } from "vitest";
 import type * as Client from "@/ipc/client";
 import type {
+  AgentCli,
   LiveTranscriptSnapshot,
   MeetingList,
   MeetingNotes,
@@ -63,6 +64,34 @@ const EMPTY_SNAPSHOT: LiveTranscriptSnapshot = {
   finals: [],
   volatile: [],
 };
+
+/** What agent detection finds by default: Claude Code signed in, Codex not installed. */
+const DETECTED_AGENTS: AgentCli[] = [
+  {
+    id: "claude-code",
+    name: "Claude Code",
+    provider: "Anthropic",
+    state: "ready",
+    path: "/usr/local/bin/claude",
+    version: "2.1.286",
+    signInCommand: "claude auth login",
+    models: ["opus", "sonnet", "haiku"],
+    defaultModel: "opus",
+    canTest: true,
+  },
+  {
+    id: "codex",
+    name: "Codex",
+    provider: "OpenAI",
+    state: "missing",
+    path: null,
+    version: null,
+    signInCommand: "codex login",
+    models: [],
+    defaultModel: null,
+    canTest: false,
+  },
+];
 
 /**
  * Every command, as a `vi.fn` whose own implementation is the default answer.
@@ -143,6 +172,21 @@ export const ipc = {
   stopRecording: vi.fn<typeof Client.stopRecording>(async () => IDLE),
 
   liveTranscript: vi.fn<typeof Client.liveTranscript>(async () => EMPTY_SNAPSHOT),
+
+  agentChoice: vi.fn<typeof Client.agentChoice>(async () => ({
+    harness: "claude-code",
+    model: "opus",
+    binaryPath: null,
+  })),
+  detectAgents: vi.fn<typeof Client.detectAgents>(async () => DETECTED_AGENTS),
+  saveAgentChoice: vi.fn<typeof Client.saveAgentChoice>(async (choice) => choice),
+  testAgent: vi.fn<typeof Client.testAgent>(async () => ({
+    summary: "The beta ships Friday.",
+    decisions: ["Ship the beta Friday"],
+    openQuestions: ["Do we need legal sign-off?"],
+    tasks: [{ title: "Write the release notes", owner: "Ben", due: "Thursday" }],
+    seconds: 9.6,
+  })),
 };
 
 type Handler = (payload: never) => void;

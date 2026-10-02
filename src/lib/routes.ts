@@ -18,7 +18,7 @@ export const TICKETS = "/tickets";
 export const ONBOARDING = "/onboarding";
 
 /** The wizard's steps, in order. The route's `:step` is one of these. */
-export const ONBOARDING_STEPS = ["welcome", "permission", "speech", "folder"] as const;
+export const ONBOARDING_STEPS = ["welcome", "permission", "speech", "folder", "agent"] as const;
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
 
 /** Whether a `:step` param names a real step, rather than a typo or a stale URL. */

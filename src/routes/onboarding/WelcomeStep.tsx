@@ -17,7 +17,7 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
         files you can open in any editor. The only thing meet-ai ever downloads is a speech model,
         and only if this Mac needs one.
       </Prose>
-      <Prose>Two things to set up, then you are done.</Prose>
+      <Prose>Four things to set up, then you are done.</Prose>
       <ButtonRow>
         <Button tone="primary" onClick={onNext}>
           Get started
