@@ -71,19 +71,23 @@ SPEC note leaves the choice to whoever wires Sync.
 
 - **A failed tool call is not a failed run.** Probe 2 exited 0. The sync run's
   caller has to treat a reply without a key as "not synced".
-- **Codex prints the prompt on stderr.** A failed run's `CliFailed` text (last
-  4 KiB of stderr) can contain transcript lines.
+- **Codex prints the prompt on stderr.** Before a failed run's stderr goes
+  into `CliFailed`, every line that also appears in the prompt is dropped. A
+  line that holds a prompt line plus other text is kept, so check by hand
+  once: make a real run fail (a signed-out Codex, say) and read the error in
+  the meeting view. Expect: Codex's own error line, no transcript text. Why
+  skipped: needs the real CLI in a failing state; the fake-script test
+  `a_failed_run_does_not_pass_on_the_prompt_codex_echoes` covers the filter.
 - **`enabled_tools` narrows only the servers named in `allowed_tools`.** Other
   MCP servers in the user's config stay available to a sync run. ChatGPT
   connectors ("apps") are not `mcp_servers` and are not narrowed at all.
-- **Server names with a `.` (or other non-bare TOML characters)** are written
-  quoted, `-c mcp_servers."my.server".enabled_tools=[...]`. Whether Codex's
-  `-c` parser honours a quoted dotted-key segment was not checked; if it
-  splits on every `.`, such a server is not narrowed. Check with
-  `codex exec ... -c 'mcp_servers."my.server".enabled_tools=["x"]'` against a
-  server named that way, once Sync is wired.
-- **`detect()` returns `None`.** Detection belongs to TUR-6 (`detect::codex`),
-  which replaces the stub. Nothing calls `detect()` before wave C.
+- **Server names with a `.` (or other non-bare TOML characters)** are skipped
+  (logged at debug level), so such a server is not narrowed. Whether Codex's
+  `-c` reads a quoted segment (`mcp_servers."my.server"`) is unchecked; that
+  and closing off the user's other MCP servers are TUR-16.
+- **`detect()` is TUR-6's `detect::codex`**, given `agent.binary_path`. A
+  configured binary runs through `process::cli_command`, so its own folder is
+  first on the child's `PATH`.
 - **Not signed in** shows as `CliFailed` with Codex's own stderr, not as
   `NotSignedIn`; the exact text Codex prints when logged out was not probed.
 
@@ -92,8 +96,8 @@ SPEC note leaves the choice to whoever wires Sync.
 - **Notes run adds `--ignore-user-config --ignore-rules`** beyond the SPEC
   command. Asked Shann; answer: yes, notes only, sync keeps the user's config.
   Both flags are in `codex exec --help` for 0.152.1.
-- **`detect()` is a stub.** Asked Shann; answer: no detection logic here,
-  TUR-6 fills it in.
+- **`detect()` has no logic of its own.** Asked Shann; answer: use TUR-6's
+  `detect::codex` once it is on main (it was, by the review round).
 - **Schema and reply go through a separate temp folder** next to the empty
   working folder, so the folder Codex runs in stays empty. Both are deleted
   when the run ends.
