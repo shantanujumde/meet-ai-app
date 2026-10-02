@@ -25,10 +25,9 @@ vitest against a mocked IPC.
    Questions show and `tickets/TICK-NNNN.md` files exist.
    Why skipped: needs the mic, system audio, the signed bundle and a
    signed-in CLI.
-   **Note:** until PR #45 (TUR-6, agent CLI detection) merges,
-   `ClaudeHarness::detect()` on `main` is a stub that returns nothing, so
-   this run ends with "not installed". That is expected; re-check once #45
-   is in.
+   Also check from a Finder launch with an npm-installed `claude`: the run
+   gets the CLI's own folder first on `PATH` (TUR-6's `search_path_with`),
+   so `#!/usr/bin/env node` finds `node`.
 2. **Notification.** Same as 1, but switch to another app before the run
    ends.
    Expect: a macOS notification that the notes are ready. With the meet-ai
@@ -60,8 +59,8 @@ vitest against a mocked IPC.
 ## Decisions taken without an answer
 
 - Finding the CLI: only through `Harness::detect()`, per Shann (no PATH or
-  login-shell lookup in `agent_run`). Until PR #45 merges, `detect()` on
-  `main` is a stub, so the real app says "not installed".
+  login-shell lookup in `agent_run`). TUR-6 (#45) merged before this
+  branch's rebase, so `detect()` is real.
 - The auto run starts only after a user Stop (button, ⌘⇧R, menu bar). A
   recording that stops on its own because of an error (`fail_mid_recording`)
   does not start one; Retry / "Write notes" in the meeting view does.

@@ -88,7 +88,18 @@ pub fn configured() -> Result<Agent, Failure> {
                 finder = finder.with_binary(path);
             }
             Box::new(detected(finder, |install| {
-                ClaudeHarness::new().with_binary(install.path)
+                // The CLI's own folder first on `PATH`: an npm install is a
+                // `#!/usr/bin/env node` script, and an app opened from
+                // Finder does not have that folder on its `PATH`.
+                let search_path = install
+                    .path
+                    .parent()
+                    .and_then(agent::process::search_path_with);
+                let harness = ClaudeHarness::new().with_binary(install.path);
+                match search_path {
+                    Some(path) => harness.with_search_path(path),
+                    None => harness,
+                }
             })?)
         }
     };
