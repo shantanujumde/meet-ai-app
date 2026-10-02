@@ -157,6 +157,34 @@ pub async fn meeting_notes(meeting_id: String) -> Result<MeetingNotes, UiError> 
     blocking(move || read_meeting_notes(&crate::meetings::root()?, &meeting_id)).await
 }
 
+/// Switch "Make notes for this meeting" on or off (SPEC A11, "Skip one
+/// meeting", TUR-12), and answer with the meeting's notes as they now stand.
+///
+/// Off writes `agent_notes: off` into `meeting.md` and cancels this
+/// meeting's notes run if one is going, so nothing more is sent or written.
+/// On removes the key; the view then offers *Make notes now*, which is
+/// [`start_notes_run`].
+#[tauri::command]
+#[specta::specta]
+pub async fn set_meeting_notes(
+    app: AppHandle,
+    meeting_id: String,
+    on: bool,
+) -> Result<MeetingNotes, UiError> {
+    blocking(move || {
+        let root = crate::meetings::root()?;
+        let agent_runs = app.try_state::<AgentRuns>();
+        switch_notes(
+            &root,
+            agent_runs.as_deref(),
+            &meeting_id,
+            on,
+            &own_writes(&app),
+        )
+    })
+    .await
+}
+
 /// Finish the meeting's transcription, then start its notes run if
 /// `agent.auto_run` is on. The recorder's Stop calls this in place of
 /// `Transcription::finish`; `transcript.md` is final once that returns.
@@ -199,10 +227,7 @@ pub fn shutdown(app: &AppHandle) {
 /// Start (or, while one is going, report) the notes run for `meeting_id`
 /// under `root`.
 fn start(app: &AppHandle, root: PathBuf, meeting_id: &str) -> Result<Status, UiError> {
-    let self_writes = app
-        .try_state::<crate::watch::MeetingsWatch>()
-        .map(|watch| watch.own_writes().clone())
-        .unwrap_or_default();
+    let self_writes = own_writes(app);
     let sink: Arc<dyn Sink> = Arc::new(AppSink {
         app: app.clone(),
         root: root.clone(),
@@ -212,6 +237,35 @@ fn start(app: &AppHandle, root: PathBuf, meeting_id: &str) -> Result<Status, UiE
         notes::run_notes(&root, &id, notes::configured, cancel, &self_writes)
     });
     Ok(runs(app)?.start(meeting_id, work, sink))
+}
+
+/// The watcher's record of this process's own writes, so the files a run or
+/// the switch writes do not come back as outside changes (SPEC §4).
+fn own_writes(app: &AppHandle) -> store::watcher::SelfWrites {
+    app.try_state::<crate::watch::MeetingsWatch>()
+        .map(|watch| watch.own_writes().clone())
+        .unwrap_or_default()
+}
+
+/// [`set_meeting_notes`] without Tauri: write the switch, cancel the running
+/// notes run when it went off, and read the notes back.
+///
+/// The run is cancelled even when the switch could not be written: the user
+/// asked for no notes. It is cancelled after the write, so the run sees the
+/// switch and ends as notes-off rather than as cancelled.
+fn switch_notes(
+    root: &Path,
+    agent_runs: Option<&AgentRuns>,
+    meeting_id: &str,
+    on: bool,
+    self_writes: &store::watcher::SelfWrites,
+) -> Result<MeetingNotes, UiError> {
+    let switched = store::notes_switch::set(root, meeting_id, on, self_writes);
+    if !on && let Some(agent_runs) = agent_runs {
+        agent_runs.cancel(meeting_id);
+    }
+    switched?;
+    read_meeting_notes(root, meeting_id)
 }
 
 fn runs(app: &AppHandle) -> Result<tauri::State<'_, AgentRuns>, UiError> {
@@ -246,15 +300,8 @@ fn read_meeting_notes(root: &Path, meeting_id: &str) -> Result<MeetingNotes, UiE
             })
         })
         .collect();
-    let notes_off = matches!(
-        meeting
-            .frontmatter
-            .get_str(store::agent_notes::AGENT_NOTES_KEY)
-            .as_deref(),
-        Some("off" | "false")
-    );
     Ok(MeetingNotes {
-        notes_off,
+        notes_off: store::notes_switch::is_off(&meeting),
         analyzed_by: meeting.frontmatter.get_str("analyzed_by"),
         sections,
     })

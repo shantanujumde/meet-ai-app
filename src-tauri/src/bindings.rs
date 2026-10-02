@@ -60,6 +60,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             tracker::tracker_settings,
             tracker::set_tracker,
             tracker::tracker_servers,
+            agent_run::set_meeting_notes,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)

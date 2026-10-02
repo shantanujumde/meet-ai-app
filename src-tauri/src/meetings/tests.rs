@@ -67,7 +67,7 @@ fn the_agent_written_title_wins_over_the_folder_slug() {
         "title",
         &[(
             "meeting.md",
-            b"---\nid: 2026-09-01-1430-standup\ntitle: Platform Standup\n---\n\n## Summary\n",
+            b"---\nid: 2026-09-01-1430-standup\ntitle: Platform Standup\n---\n\n## Summary\n\nShipped.\n",
         )],
     );
     let summary = summarize(&folder, false);
@@ -597,4 +597,43 @@ fn launch_recovery_leaves_everything_else_exactly_as_it_was() {
 
     assert_eq!(before, snapshot());
     fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn a_meeting_with_notes_switched_off_is_marked_and_not_wrapped_up() {
+    // SPEC A11, TUR-12: off writes a meeting.md holding only the switch.
+    // That is not a wrapped-up meeting.
+    let root = meetings_root("notes-off");
+    let id = "2026-09-30-1129-private";
+    meeting(&root, id);
+    let writes = store::watcher::SelfWrites::default();
+
+    store::notes_switch::set(&root, id, false, &writes).unwrap();
+    let off = summary_of(&root, id, Live::Nothing);
+    assert!(off.notes_off);
+    assert!(!off.has_analysis);
+    assert_eq!(off.title, "Private");
+
+    store::notes_switch::set(&root, id, true, &writes).unwrap();
+    let on = summary_of(&root, id, Live::Nothing);
+    assert!(!on.notes_off);
+    assert!(!on.has_analysis);
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn notes_written_without_analyzed_by_still_count_as_wrapped_up() {
+    // The copy-prompt path: the agent writes the sections and may leave
+    // `analyzed_by` out.
+    let folder = load_fixture(
+        "sections-only",
+        &[(
+            "meeting.md",
+            b"---\nid: 2026-09-01-1430-standup\ntitle: Standup\nagent_notes: off\n---\n\n\
+              ## Summary\n\n## Decisions\n\n- Redis.\n\n## Action Items\n\n## Open Questions\n",
+        )],
+    );
+    let summary = summarize(&folder, false);
+    assert!(summary.has_analysis);
+    assert!(summary.notes_off);
 }

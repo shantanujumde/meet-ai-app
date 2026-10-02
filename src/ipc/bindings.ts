@@ -214,6 +214,16 @@ export const commands = {
 	 *  is chosen.
 	 */
 	trackerServers: () => typedError<meet_ai_lib_sync_tracker_TrackerServer[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("tracker_servers")),
+	/**
+	 *  Switch "Make notes for this meeting" on or off (SPEC A11, "Skip one
+	 *  meeting", TUR-12), and answer with the meeting's notes as they now stand.
+	 * 
+	 *  Off writes `agent_notes: off` into `meeting.md` and cancels this
+	 *  meeting's notes run if one is going, so nothing more is sent or written.
+	 *  On removes the key; the view then offers *Make notes now*, which is
+	 *  [`start_notes_run`].
+	 */
+	setMeetingNotes: (meetingId: string, on: boolean) => typedError<meet_ai_lib_agent_run_MeetingNotes, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_meeting_notes", { meetingId, on })),
 };
 
 /* Constants */
@@ -461,8 +471,17 @@ export type meet_ai_lib_meetings_view_MeetingSummary = {
 	lastTimestamp: string | null,
 	/**  `notes.md` exists and has something in it. */
 	hasNotes: boolean,
-	/**  `meeting.md` exists, i.e. an agent has wrapped this meeting up. */
+	/**
+	 *  The meeting has been wrapped up: `meeting.md` exists and its notes are
+	 *  written (`analyzed_by` is set, or one of the four sections has text).
+	 *  A `meeting.md` that holds only the notes switch does not count.
+	 */
 	hasAnalysis: boolean,
+	/**
+	 *  `meeting.md` says `agent_notes: off`: the user switched notes off for
+	 *  this meeting (SPEC A11, TUR-12), so no notes run sends it.
+	 */
+	notesOff: boolean,
 	/**  Whether the recording ended on purpose. See [`RecordingState`]. */
 	recordingState: meet_ai_lib_recording_state_RecordingState,
 	/**
