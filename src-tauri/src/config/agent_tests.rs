@@ -1,0 +1,274 @@
+//! Round trips for the `agent` and `tickets` sections (TUR-3).
+
+use std::path::{Path, PathBuf};
+
+use super::agent_section::{
+    AgentConfig, ConfigError, Harness, TicketsConfig, parse_agent, parse_tickets,
+};
+use super::file::{SCHEMA, with_agent, with_tickets};
+
+fn every_field_set() -> AgentConfig {
+    AgentConfig {
+        harness: Harness::Codex,
+        model: "gpt-5-codex".into(),
+        binary_path: Some(PathBuf::from("/opt/homebrew/bin/codex")),
+        auto_run: false,
+        timeout_sec: 120,
+    }
+}
+
+#[test]
+fn a_missing_file_or_section_is_the_a11_defaults() {
+    let defaults = AgentConfig {
+        harness: Harness::ClaudeCode,
+        model: "opus".into(),
+        binary_path: None,
+        auto_run: true,
+        timeout_sec: 300,
+    };
+    assert_eq!(AgentConfig::default(), defaults);
+    for raw in ["", "// only a comment\n", "{}", r#"{ "agent": {} }"#] {
+        assert_eq!(parse_agent(raw).unwrap(), defaults, "{raw:?}");
+        assert_eq!(parse_tickets(raw).unwrap(), TicketsConfig::default());
+    }
+    assert_eq!(TicketsConfig::default().tracker, "linear");
+    assert_eq!(TicketsConfig::default().tracker_mcp, "claude.ai Linear");
+}
+
+#[test]
+fn the_defaults_round_trip_through_an_empty_file() {
+    let written = with_agent("", &AgentConfig::default()).unwrap();
+    assert_eq!(parse_agent(&written).unwrap(), AgentConfig::default());
+    assert!(written.contains(r#""$schema": "./config.schema.json""#));
+    // `null`, not a missing key, so the file shows the user the key exists.
+    assert!(written.contains(r#""binary_path": null"#));
+}
+
+#[test]
+fn every_field_set_round_trips() {
+    let agent = every_field_set();
+    let tickets = TicketsConfig {
+        tracker: "jira".into(),
+        tracker_mcp: "claude.ai Atlassian".into(),
+    };
+    let written = with_tickets(&with_agent("{}", &agent).unwrap(), &tickets).unwrap();
+    assert_eq!(parse_agent(&written).unwrap(), agent);
+    assert_eq!(parse_tickets(&written).unwrap(), tickets);
+}
+
+#[test]
+fn every_harness_round_trips() {
+    for harness in Harness::ALL {
+        let agent = AgentConfig {
+            harness,
+            ..AgentConfig::default()
+        };
+        let written = with_agent("{}", &agent).unwrap();
+        assert_eq!(parse_agent(&written).unwrap().harness, harness);
+    }
+}
+
+#[test]
+fn the_spec_3_5_example_parses() {
+    let raw = r#"{
+        "$schema": "./config.schema.json",
+        "agent": {                          // A11
+          "harness": "claude-code",         // "codex" | "none" (= copy-prompt fallback)
+          "model": "opus",
+          "binary_path": null,
+          "auto_run": true,
+          "timeout_sec": 300
+        },
+        "tickets": { "tracker": "linear", "tracker_mcp": "claude.ai Linear" },  // named in the Sync prompt
+        "repos": { "default": "~/apps/api" }
+    }"#;
+    assert_eq!(parse_agent(raw).unwrap(), AgentConfig::default());
+    assert_eq!(parse_tickets(raw).unwrap(), TicketsConfig::default());
+}
+
+#[test]
+fn an_unknown_harness_is_an_error_not_a_silent_default() {
+    let error = parse_agent(r#"{ "agent": { "harness": "codx" } }"#).unwrap_err();
+    assert!(
+        matches!(&error, ConfigError::UnknownHarness(name) if name == "codx"),
+        "{error:?}"
+    );
+    let ui: crate::error::UiError = error.into();
+    assert_eq!((ui.domain, ui.kind), ("app", "unknown-harness"));
+    assert!(ui.message.contains("codx"), "{}", ui.message);
+}
+
+#[test]
+fn wrong_types_and_a_zero_timeout_are_errors() {
+    for raw in [
+        r#"{ "agent": { "timeout_sec": 0 } }"#,
+        r#"{ "agent": { "timeout_sec": "five minutes" } }"#,
+        r#"{ "agent": { "auto_run": "yes" } }"#,
+        r#"{ "agent": { "harness": 1 } }"#,
+        "{ not json",
+    ] {
+        assert!(
+            matches!(parse_agent(raw), Err(ConfigError::Invalid(_))),
+            "{raw}"
+        );
+    }
+}
+
+#[test]
+fn a_write_keeps_comments_unknown_keys_and_other_sections() {
+    let raw = r#"// my meet-ai settings
+{
+  "$schema": "./config.schema.json",
+  "transcription": { "engine": "whisper" }, // faster on this Mac
+  "agent": {
+    "harness": "claude-code", // the one I pay for
+    "future_key": [1, 2]
+  },
+  "something_new": { "kept": true }
+}
+"#;
+    let written = with_agent(raw, &every_field_set()).unwrap();
+    for kept in [
+        "// my meet-ai settings",
+        "// faster on this Mac",
+        "// the one I pay for",
+        r#""future_key": [1, 2]"#,
+        r#""something_new": { "kept": true }"#,
+        r#""transcription": { "engine": "whisper" }"#,
+    ] {
+        assert!(written.contains(kept), "lost {kept:?} in:\n{written}");
+    }
+    assert_eq!(parse_agent(&written).unwrap(), every_field_set());
+    assert_eq!(
+        super::parse(&written).engine,
+        stt::registry::Preference::Whisper
+    );
+}
+
+#[test]
+fn a_write_fixes_an_unknown_harness() {
+    let written = with_agent(
+        r#"{ "agent": { "harness": "codx" } }"#,
+        &AgentConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(parse_agent(&written).unwrap(), AgentConfig::default());
+}
+
+#[test]
+fn a_file_that_does_not_parse_is_refused_not_overwritten() {
+    for raw in ["{ not json", "[1, 2]"] {
+        assert!(
+            matches!(
+                with_agent(raw, &AgentConfig::default()),
+                Err(ConfigError::Invalid(_))
+            ),
+            "{raw}"
+        );
+    }
+}
+
+/// A fresh folder under the system temp dir, removed on drop.
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new(name: &str) -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "meet-ai-config-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn saving_to_disk_round_trips_and_writes_the_schema_beside_it() {
+    let temp = TempDir::new("disk");
+    let dir = temp.path().join(".app");
+    assert_eq!(
+        super::file::read_in(&dir).unwrap(),
+        "",
+        "no file reads as empty"
+    );
+
+    super::file::write_in(&dir, |raw| with_agent(raw, &every_field_set())).unwrap();
+    super::file::write_in(&dir, |raw| with_tickets(raw, &TicketsConfig::default())).unwrap();
+
+    let raw = super::file::read_in(&dir).unwrap();
+    assert_eq!(parse_agent(&raw).unwrap(), every_field_set());
+    assert_eq!(parse_tickets(&raw).unwrap(), TicketsConfig::default());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("config.schema.json")).unwrap(),
+        SCHEMA
+    );
+    assert!(!dir.join("config.jsonc.tmp").exists());
+}
+
+#[test]
+fn a_refused_write_leaves_the_file_alone() {
+    let temp = TempDir::new("refused");
+    let path = temp.path().join(super::FILE);
+    std::fs::write(&path, "{ not json").unwrap();
+    let result = super::file::write_in(temp.path(), |raw| with_agent(raw, &every_field_set()));
+    assert!(matches!(result, Err(ConfigError::Invalid(_))));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
+}
+
+fn schema() -> serde_json::Value {
+    serde_json::from_str(SCHEMA).unwrap()
+}
+
+#[test]
+fn the_schema_lists_exactly_the_harnesses_the_code_knows() {
+    let schema = schema();
+    let listed = &schema["properties"]["agent"]["properties"]["harness"]["enum"];
+    let known: Vec<_> = Harness::ALL.iter().map(|h| h.as_str()).collect();
+    assert_eq!(listed, &serde_json::json!(known));
+}
+
+#[test]
+fn the_schema_defaults_match_the_code_defaults() {
+    let schema = schema();
+    let agent = &schema["properties"]["agent"]["properties"];
+    let defaults = AgentConfig::default();
+    assert_eq!(agent["harness"]["default"], defaults.harness.as_str());
+    assert_eq!(agent["model"]["default"], defaults.model.as_str());
+    assert_eq!(agent["binary_path"]["default"], serde_json::Value::Null);
+    assert_eq!(agent["auto_run"]["default"], defaults.auto_run);
+    assert_eq!(agent["timeout_sec"]["default"], defaults.timeout_sec);
+
+    let tickets = &schema["properties"]["tickets"]["properties"];
+    let defaults = TicketsConfig::default();
+    assert_eq!(tickets["tracker"]["default"], defaults.tracker.as_str());
+    assert_eq!(
+        tickets["tracker_mcp"]["default"],
+        defaults.tracker_mcp.as_str()
+    );
+}
+
+#[test]
+fn the_schema_never_rejects_unknown_keys() {
+    // The app keeps keys it does not know, so the schema must not flag them.
+    fn walk(value: &serde_json::Value) {
+        if let Some(object) = value.as_object() {
+            assert_ne!(object.get("additionalProperties"), Some(&false.into()));
+            object.values().for_each(walk);
+        }
+    }
+    walk(&schema());
+}

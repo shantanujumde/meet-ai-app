@@ -17,6 +17,12 @@
 //!
 //! When Phase 6 lands, delete this file and fold [`Transcription`] into
 //! whatever struct replaces it — do not build a second reader beside it.
+//!
+//! A11 added the `agent` and `tickets` sections ([`agent_section`]) ahead of
+//! Phase 6 too, because the Setup screens and the notes run need them now.
+//! They share this file's path and its JSONC reader, and add the one thing
+//! `transcription` never needed: writing back ([`file`]), with the user's
+//! comments and unknown keys kept.
 
 use std::path::PathBuf;
 
@@ -24,6 +30,17 @@ use serde::Deserialize;
 use stt::registry::Preference;
 
 use crate::engine::DEFAULT_MODEL;
+
+mod agent_section;
+#[cfg(test)]
+mod agent_tests;
+mod file;
+
+// TUR-9 (Setup screens) adds the IPC commands that call these.
+#[allow(unused_imports)]
+pub use agent_section::{AgentConfig, ConfigError, Harness, TicketsConfig};
+#[allow(unused_imports)]
+pub use file::{agent, set_agent, set_tickets, tickets};
 
 const FILE: &str = "config.jsonc";
 
