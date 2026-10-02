@@ -145,6 +145,27 @@ export const commands = {
 	/**  Whether the meeting view offers Copy prompt: `agent.harness` is `none`. */
 	copyPromptFallback: () => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("copy_prompt_fallback")),
 	/**
+	 *  The agent pick in `config.jsonc`. An `agent.harness` the app does not know
+	 *  is an `unknown-harness` error, so the screen can point at the picker.
+	 */
+	agentChoice: () => typedError<meet_ai_lib_agent_setup_AgentChoice, meet_ai_lib_error_UiError>(__TAURI_INVOKE("agent_choice")),
+	/**
+	 *  Claude Code, then Codex: found or not, signed in or not. Each check can
+	 *  take seconds (a login shell, `--version`, the sign-in check), so the two
+	 *  run side by side.
+	 */
+	detectAgents: (choice: meet_ai_lib_agent_setup_AgentChoice) => typedError<meet_ai_lib_agent_setup_AgentCli[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("detect_agents", { choice })),
+	/**
+	 *  Save the pick into `config.jsonc` and return it as saved. Writes under the
+	 *  meetings root, so through the [`FolderGate`] like every other writer.
+	 */
+	saveAgentChoice: (choice: meet_ai_lib_agent_setup_AgentChoice) => typedError<meet_ai_lib_agent_setup_AgentChoice, meet_ai_lib_error_UiError>(__TAURI_INVOKE("save_agent_choice", { choice })),
+	/**
+	 *  Run the sample meeting through the picked CLI, the same way the notes run
+	 *  after a call does, and return what came back.
+	 */
+	testAgent: (choice: meet_ai_lib_agent_setup_AgentChoice) => typedError<meet_ai_lib_agent_setup_AgentTestResult, meet_ai_lib_error_UiError>(__TAURI_INVOKE("test_agent", { choice })),
+	/**
 	 *  Search every meeting's transcript, notes, summary and tickets.
 	 * 
 	 *  Runs on the blocking pool: the first call after launch can still be
@@ -180,6 +201,87 @@ export const TRANSCRIPT_STATUS_EVENT = "transcript://status" as const;
 export const TRANSCRIPT_UPDATE_EVENT = "transcript://update" as const;
 
 /* Types */
+/**
+ *  The pick the Setup screen shows and saves: `agent.harness`, `agent.model`
+ *  and `agent.binary_path`.
+ */
+export type meet_ai_lib_agent_setup_AgentChoice = {
+	harness: meet_ai_lib_agent_setup_AgentHarness,
+	/**
+	 *  Any model name the CLI accepts. Blank for Codex means "Codex's own
+	 *  default".
+	 */
+	model: string,
+	/**
+	 *  Where the CLI is, when the app cannot find it by itself. `null` (or
+	 *  blank) means "look for it".
+	 */
+	binaryPath: string | null,
+};
+
+/**  One agent CLI as the Setup screen lists it. */
+export type meet_ai_lib_agent_setup_AgentCli = {
+	id: meet_ai_lib_agent_setup_AgentCliId,
+	/**  "Claude Code" or "Codex". */
+	name: string,
+	/**
+	 *  The company the transcript goes to, for the privacy sentence:
+	 *  "Anthropic" or "OpenAI".
+	 */
+	provider: string,
+	state: meet_ai_lib_agent_setup_AgentCliState,
+	/**  Where it was found. `null` when it was not. */
+	path: string | null,
+	/**  What `--version` printed, if anything usable. */
+	version: string | null,
+	/**  What to type in Terminal to sign in. */
+	signInCommand: string,
+	/**  Model names for the picker. The user can still type any other. */
+	models: string[],
+	/**
+	 *  The model picked when the user picks none. `null` for Codex, which
+	 *  then uses its own default.
+	 */
+	defaultModel: string | null,
+	/**  Whether the Test button can run. False only when the CLI is missing. */
+	canTest: boolean,
+};
+
+/**  One of the agent CLIs the app knows how to run. */
+export type meet_ai_lib_agent_setup_AgentCliId = "claude-code" | "codex";
+
+/**  Whether a CLI can run right now. */
+export type meet_ai_lib_agent_setup_AgentCliState = 
+/**  Found, and signed in. */
+"ready" | 
+/**  Found, but nobody is signed in. */
+"signed-out" | 
+/**  Not found on this Mac. */
+"missing";
+
+/**  `agent.harness`: which CLI runs the notes, or none (copy prompt instead). */
+export type meet_ai_lib_agent_setup_AgentHarness = "claude-code" | "codex" | "none";
+
+/**  What the test run wrote from the sample meeting. */
+export type meet_ai_lib_agent_setup_AgentTestResult = {
+	summary: string,
+	decisions: string[],
+	openQuestions: string[],
+	tasks: meet_ai_lib_agent_setup_AgentTestTask[],
+	/**
+	 *  How long the run took, in whole seconds (rounded). A whole number so
+	 *  the wire type is a plain `number`; an `f64` would be `number | null`.
+	 */
+	seconds: number,
+};
+
+/**  One task from the test run. */
+export type meet_ai_lib_agent_setup_AgentTestTask = {
+	title: string,
+	owner: string | null,
+	due: string | null,
+};
+
 /**  What the filesystem says, with no subprocess involved. */
 export type meet_ai_lib_engine_EnvironmentView = {
 	/**

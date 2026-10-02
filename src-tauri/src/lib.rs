@@ -9,6 +9,7 @@
 use tauri_plugin_log::log;
 
 mod agent_run;
+mod agent_setup;
 mod bindings;
 mod commands;
 mod config;

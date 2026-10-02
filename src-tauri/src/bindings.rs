@@ -8,6 +8,7 @@
 use tauri_specta::{Builder, collect_commands};
 
 use crate::agent_run;
+use crate::agent_setup;
 use crate::events::AGENT_RUN_STATUS_EVENT;
 use crate::events::{
     MEETINGS_CHANGED_EVENT, MODEL_PROGRESS_EVENT, PERMISSION_STATUS_EVENT, RECORDING_STATE_EVENT,
@@ -42,6 +43,10 @@ pub fn builder() -> Builder<tauri::Wry> {
             commands::start_work_prompt,
             commands::wrap_up_prompt,
             commands::copy_prompt_fallback,
+            agent_setup::agent_choice,
+            agent_setup::detect_agents,
+            agent_setup::save_agent_choice,
+            agent_setup::test_agent,
             search::search,
             agent_run::notes_run_status,
             agent_run::start_notes_run,
