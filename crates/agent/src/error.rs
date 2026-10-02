@@ -6,8 +6,10 @@ use std::time::Duration;
 ///
 /// One variant per thing the user can act on: install the CLI, sign in,
 /// raise the time limit, retry, or read what the CLI printed. The `Display`
-/// text is shown in the meeting view next to the Retry button, so it never
-/// contains the prompt or the transcript.
+/// text is shown in the meeting view next to the Retry button. This crate
+/// never puts the prompt or reply text in it, with one exception:
+/// [`AgentError::CliFailed`] passes the CLI's own stderr through as is, and a
+/// CLI can echo part of its input there.
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     /// The CLI is not on this Mac, or not where the config says it is.

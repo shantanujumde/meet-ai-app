@@ -12,7 +12,7 @@
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -28,12 +28,22 @@ const OUTPUT_GRACE: Duration = Duration::from_secs(2);
 /// How long to wait for the output once those grandchildren are killed.
 const AFTER_KILL_GRACE: Duration = Duration::from_millis(500);
 
+/// Most of stdout kept. A notes reply is a few KiB; past this the reply is
+/// rejected rather than held in memory.
+const MAX_STDOUT_BYTES: usize = 8 * 1024 * 1024;
+
 /// Most of stderr kept for [`AgentError::CliFailed`]. The end is kept, since
 /// that is where a CLI says what went wrong.
 const MAX_STDERR_BYTES: usize = 4 * 1024;
 
-/// Where a reader thread sends everything it read from one pipe.
-type Drained = Receiver<Vec<u8>>;
+/// Files that make a folder a project an agent CLI would read instructions or
+/// settings from. Claude Code and Codex look for these in the working folder
+/// and every folder above it.
+const PROJECT_MARKERS: &[&str] = &[".git", "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md"];
+
+/// The system `kill`, by full path so `PATH` cannot swap it out.
+#[cfg(unix)]
+const KILL: &str = "/bin/kill";
 
 /// What a CLI printed when it exited with status 0.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -44,14 +54,35 @@ pub struct CliOutput {
 
 /// Makes the run's new, empty working folder inside `job.work_root`.
 ///
+/// Refuses a `work_root` that is inside a project: the CLI would find that
+/// project's `CLAUDE.md`, `AGENTS.md` or git repo by looking upwards, which is
+/// what the fresh folder is there to prevent. The system temp folder (the
+/// default) is never inside one.
+///
 /// The folder is deleted when the returned [`tempfile::TempDir`] is dropped.
 pub fn fresh_work_dir(job: &Job) -> Result<tempfile::TempDir, AgentError> {
+    let root = job
+        .work_root
+        .canonicalize()
+        .map_err(|e| could_not_start(format!("could not use the working folder: {e}")))?;
+    if let Some(found) = project_marker_above(&root) {
+        return Err(could_not_start(format!(
+            "the working folder is inside a project ({} found); use a folder outside any project",
+            found.display()
+        )));
+    }
     tempfile::Builder::new()
         .prefix("meet-ai-agent-")
-        .tempdir_in(&job.work_root)
-        .map_err(|e| AgentError::CouldNotStart {
-            reason: format!("could not make a working folder: {e}"),
-        })
+        .tempdir_in(&root)
+        .map_err(|e| could_not_start(format!("could not make a working folder: {e}")))
+}
+
+/// The first project marker in `folder` or any folder above it.
+fn project_marker_above(folder: &Path) -> Option<std::path::PathBuf> {
+    folder
+        .ancestors()
+        .flat_map(|dir| PROJECT_MARKERS.iter().map(move |name| dir.join(name)))
+        .find(|path| path.exists())
 }
 
 /// Runs `command` in `work_dir` with `job.prompt` on stdin, and blocks until it
@@ -59,9 +90,12 @@ pub fn fresh_work_dir(job: &Job) -> Result<tempfile::TempDir, AgentError> {
 ///
 /// The child is killed, together with anything it started, when `job.cancel`
 /// is set or `job.timeout` runs out. Cancel wins if both happen at once.
-/// `harness` is the name used in [`AgentError::NotInstalled`] and in logs.
+///
+/// `display_name` is the CLI's name as the user knows it ("Claude Code"). It
+/// goes into user-facing errors such as "Claude Code is not installed", and
+/// into logs.
 pub fn run_cli(
-    harness: &str,
+    display_name: &str,
     mut command: Command,
     job: &Job,
     work_dir: &Path,
@@ -72,9 +106,7 @@ pub fn run_cli(
     // A missing folder would make the spawn fail with "not found", which would
     // wrongly read as "the CLI is not installed".
     if !work_dir.is_dir() {
-        return Err(AgentError::CouldNotStart {
-            reason: "the working folder is missing".to_owned(),
-        });
+        return Err(could_not_start("the working folder is missing"));
     }
 
     command
@@ -85,38 +117,56 @@ pub fn run_cli(
     own_process_group(&mut command);
 
     let started = Instant::now();
-    let mut child = command.spawn().map_err(|e| spawn_error(harness, &e))?;
+    let mut child = command.spawn().map_err(|e| spawn_error(display_name, &e))?;
     let (stdout, stderr) = match start_pipes(&mut child, &job.prompt) {
         Ok(pipes) => pipes,
         Err(e) => {
             stop(&mut child);
-            return Err(AgentError::CouldNotStart {
-                reason: format!("could not start a helper thread: {e}"),
-            });
+            return Err(could_not_start(format!(
+                "could not start a helper thread: {e}"
+            )));
         }
     };
 
-    let status = wait_for_exit(&mut child, job, started).inspect_err(|e| {
+    let log_stop = |e: &AgentError| {
         tracing::debug!(
-            harness,
+            display_name,
             elapsed_ms = started.elapsed().as_millis(),
             "agent CLI stopped: {e}"
         );
-    })?;
-    let (stdout, stderr) = collect_output(child.id(), &stdout, &stderr);
-    tracing::debug!(harness, %status, elapsed_ms = started.elapsed().as_millis(), "agent CLI exited");
+    };
+    let status = wait_for_exit(&mut child, job, started).inspect_err(log_stop)?;
+    let (stdout, stderr) =
+        collect_output(child.id(), job, started, &stdout, &stderr).inspect_err(log_stop)?;
+    tracing::debug!(display_name, %status, elapsed_ms = started.elapsed().as_millis(), "agent CLI exited");
 
-    let stdout = String::from_utf8_lossy(&stdout).into_owned();
-    let stderr = tail(String::from_utf8_lossy(&stderr).trim(), MAX_STDERR_BYTES)
-        .trim_start()
-        .to_owned();
-    if status.success() {
-        Ok(CliOutput { stdout, stderr })
-    } else {
-        Err(AgentError::CliFailed {
+    let stderr = tail(
+        String::from_utf8_lossy(&stderr.bytes).trim(),
+        MAX_STDERR_BYTES,
+    )
+    .trim_start()
+    .to_owned();
+    if !status.success() {
+        return Err(AgentError::CliFailed {
             status: status.code(),
             stderr,
-        })
+        });
+    }
+    if stdout.overflowed {
+        return Err(AgentError::InvalidJson {
+            reason: format!(
+                "the reply was larger than {} MiB",
+                MAX_STDOUT_BYTES / (1024 * 1024)
+            ),
+        });
+    }
+    let stdout = String::from_utf8_lossy(&stdout.bytes).into_owned();
+    Ok(CliOutput { stdout, stderr })
+}
+
+fn could_not_start(reason: impl Into<String>) -> AgentError {
+    AgentError::CouldNotStart {
+        reason: reason.into(),
     }
 }
 
@@ -132,14 +182,49 @@ fn own_process_group(command: &mut Command) {
 fn own_process_group(_command: &mut Command) {}
 
 /// "Not found" means the CLI is not installed; anything else is reported as is.
-fn spawn_error(harness: &str, error: &io::Error) -> AgentError {
+fn spawn_error(display_name: &str, error: &io::Error) -> AgentError {
     if error.kind() == io::ErrorKind::NotFound {
         AgentError::NotInstalled {
-            harness: harness.to_owned(),
+            harness: display_name.to_owned(),
         }
     } else {
-        AgentError::CouldNotStart {
-            reason: format!("could not launch {harness}: {error}"),
+        could_not_start(format!("could not launch {display_name}: {error}"))
+    }
+}
+
+/// Which part of a pipe's bytes a reader keeps.
+#[derive(Debug, Clone, Copy)]
+enum Keep {
+    /// The first `n` bytes. Anything after is read and dropped, and marked.
+    Head(usize),
+    /// The last `n` bytes, at most twice that held at any time.
+    Tail(usize),
+}
+
+/// What a reader kept from one pipe.
+#[derive(Debug, Default)]
+struct Drained {
+    bytes: Vec<u8>,
+    /// More arrived than [`Keep::Head`] allows.
+    overflowed: bool,
+}
+
+impl Drained {
+    fn push(&mut self, chunk: &[u8], keep: Keep) {
+        match keep {
+            Keep::Head(max) => {
+                let room = max.saturating_sub(self.bytes.len());
+                self.bytes
+                    .extend_from_slice(&chunk[..chunk.len().min(room)]);
+                self.overflowed |= chunk.len() > room;
+            }
+            Keep::Tail(max) => {
+                self.bytes.extend_from_slice(chunk);
+                if self.bytes.len() > 2 * max {
+                    let excess = self.bytes.len() - max;
+                    self.bytes.drain(..excess);
+                }
+            }
         }
     }
 }
@@ -150,14 +235,25 @@ fn spawn_error(harness: &str, error: &io::Error) -> AgentError {
 /// All three run off the calling thread: a prompt can be megabytes, and a
 /// child that fills its stdout pipe stops reading stdin until someone drains
 /// it.
-fn start_pipes(child: &mut Child, prompt: &str) -> io::Result<(Drained, Drained)> {
+fn start_pipes(
+    child: &mut Child,
+    prompt: &str,
+) -> io::Result<(Receiver<Drained>, Receiver<Drained>)> {
     let stdin = child.stdin.take();
     let prompt = prompt.to_owned();
     thread::Builder::new()
         .name("agent-stdin".to_owned())
         .spawn(move || write_prompt(stdin, &prompt))?;
-    let stdout = read_in_background("agent-stdout", child.stdout.take())?;
-    let stderr = read_in_background("agent-stderr", child.stderr.take())?;
+    let stdout = read_in_background(
+        "agent-stdout",
+        child.stdout.take(),
+        Keep::Head(MAX_STDOUT_BYTES),
+    )?;
+    let stderr = read_in_background(
+        "agent-stderr",
+        child.stderr.take(),
+        Keep::Tail(MAX_STDERR_BYTES),
+    )?;
     Ok((stdout, stderr))
 }
 
@@ -173,24 +269,45 @@ fn write_prompt(stdin: Option<ChildStdin>, prompt: &str) {
     // `stdin` is dropped here, which closes the pipe.
 }
 
-/// Reads `pipe` to its end on a new thread and sends everything it read.
+/// Reads `pipe` to its end on a new thread, keeping what `keep` says, and
+/// sends what it kept.
 fn read_in_background<R: Read + Send + 'static>(
     name: &str,
     pipe: Option<R>,
-) -> io::Result<Drained> {
+    keep: Keep,
+) -> io::Result<Receiver<Drained>> {
     let (tx, rx) = mpsc::channel();
     thread::Builder::new()
         .name(name.to_owned())
         .spawn(move || {
-            let mut bytes = Vec::new();
+            let mut drained = Drained::default();
             if let Some(mut pipe) = pipe {
-                // On a read error, what was read so far is still in `bytes`.
-                let _ = pipe.read_to_end(&mut bytes);
+                let mut chunk = [0_u8; 64 * 1024];
+                loop {
+                    match pipe.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => drained.push(&chunk[..n], keep),
+                        Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                        // What was read so far is still in `drained`.
+                        Err(_) => break,
+                    }
+                }
             }
             // The run may have stopped listening already; that is fine.
-            let _ = tx.send(bytes);
+            let _ = tx.send(drained);
         })?;
     Ok(rx)
+}
+
+/// Why a run stopped early, if it did: Cancel first, then the time limit.
+fn stop_reason(job: &Job, started: Instant) -> Option<AgentError> {
+    if job.cancel.is_cancelled() {
+        Some(AgentError::Cancelled)
+    } else if started.elapsed() >= job.timeout {
+        Some(AgentError::TimedOut { after: job.timeout })
+    } else {
+        None
+    }
 }
 
 /// Waits for the child to exit, killing it on Cancel or when the time runs
@@ -200,22 +317,16 @@ fn read_in_background<R: Read + Send + 'static>(
 /// always killed before it is reaped and its id cannot belong to anyone else.
 fn wait_for_exit(child: &mut Child, job: &Job, started: Instant) -> Result<ExitStatus, AgentError> {
     loop {
-        if job.cancel.is_cancelled() {
+        if let Some(reason) = stop_reason(job, started) {
             stop(child);
-            return Err(AgentError::Cancelled);
-        }
-        if started.elapsed() >= job.timeout {
-            stop(child);
-            return Err(AgentError::TimedOut { after: job.timeout });
+            return Err(reason);
         }
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
             Ok(None) => thread::sleep(POLL_EVERY),
             Err(e) => {
                 stop(child);
-                return Err(AgentError::CouldNotStart {
-                    reason: format!("lost track of the agent CLI: {e}"),
-                });
+                return Err(could_not_start(format!("lost track of the agent CLI: {e}")));
             }
         }
     }
@@ -225,37 +336,62 @@ fn wait_for_exit(child: &mut Child, job: &Job, started: Instant) -> Result<ExitS
 ///
 /// Something the child started may still hold the pipes open. After
 /// [`OUTPUT_GRACE`] its process group is killed, and whatever arrives in the
-/// next [`AFTER_KILL_GRACE`] is used. This never waits longer than that, and a
-/// reader that is still stuck is left behind rather than joined.
-fn collect_output(pid: u32, stdout: &Drained, stderr: &Drained) -> (Vec<u8>, Vec<u8>) {
-    let deadline = Instant::now() + OUTPUT_GRACE;
-    let mut out = receive_by(stdout, deadline);
-    let mut err = receive_by(stderr, deadline);
-    if out.is_none() || err.is_none() {
-        // Safe even though the child is reaped: the group still has a live
-        // member holding the pipe, so its id cannot have been reused.
-        kill_group(pid);
-        let deadline = Instant::now() + AFTER_KILL_GRACE;
-        if out.is_none() {
-            out = receive_by(stdout, deadline);
+/// next [`AFTER_KILL_GRACE`] is used. Cancel and the time limit still apply
+/// while waiting. A reader that is still stuck is left behind, not joined.
+fn collect_output(
+    pid: u32,
+    job: &Job,
+    started: Instant,
+    stdout: &Receiver<Drained>,
+    stderr: &Receiver<Drained>,
+) -> Result<(Drained, Drained), AgentError> {
+    let mut out = None;
+    let mut err = None;
+    let mut deadline = Instant::now() + OUTPUT_GRACE;
+    let mut killed = false;
+    loop {
+        if let Some(reason) = stop_reason(job, started) {
+            kill_group(pid);
+            return Err(reason);
         }
-        if err.is_none() {
-            err = receive_by(stderr, deadline);
+        receive_into(&mut out, stdout);
+        receive_into(&mut err, stderr);
+        if out.is_some() && err.is_some() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            if killed {
+                break;
+            }
+            // The child is reaped, but a live process is holding the pipe. If
+            // it is still in the child's group, the group's id cannot have
+            // been reused. If it left the group (`setsid`), this kill misses
+            // it and its output is cut off.
+            kill_group(pid);
+            killed = true;
+            deadline = Instant::now() + AFTER_KILL_GRACE;
         }
     }
-    (out.unwrap_or_default(), err.unwrap_or_default())
+    Ok((out.unwrap_or_default(), err.unwrap_or_default()))
 }
 
-/// What `from` sends before `deadline`, if anything.
-fn receive_by(from: &Drained, deadline: Instant) -> Option<Vec<u8>> {
-    from.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .ok()
+/// Takes what `from` sent if `slot` is still empty, waiting at most one poll.
+fn receive_into(slot: &mut Option<Drained>, from: &Receiver<Drained>) {
+    if slot.is_some() {
+        return;
+    }
+    match from.recv_timeout(POLL_EVERY / 2) {
+        Ok(drained) => *slot = Some(drained),
+        // A reader that died without sending has nothing more to give.
+        Err(RecvTimeoutError::Disconnected) => *slot = Some(Drained::default()),
+        Err(RecvTimeoutError::Timeout) => {}
+    }
 }
 
 /// Kills the child and everything it started, then reaps it.
 fn stop(child: &mut Child) {
     kill_group(child.id());
-    // In case the group kill did not work (no `kill` on the PATH, say).
+    // In case the group kill did not work.
     let _ = child.kill();
     let _ = child.wait();
 }
@@ -264,7 +400,7 @@ fn stop(child: &mut Child) {
 /// so no `unsafe` and no extra crate is needed.
 #[cfg(unix)]
 fn kill_group(pid: u32) {
-    let _ = Command::new("kill")
+    let _ = Command::new(KILL)
         .args(["-KILL", "--", &format!("-{pid}")])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -306,7 +442,7 @@ mod tests {
         use super::super::*;
         use std::path::PathBuf;
 
-        const HARNESS: &str = "test-cli";
+        const NAME: &str = "Test CLI";
 
         fn sh(script: &str) -> Command {
             let mut command = Command::new("sh");
@@ -323,14 +459,14 @@ mod tests {
 
         fn run(script: &str, job: &Job) -> Result<CliOutput, AgentError> {
             let dir = fresh_work_dir(job).unwrap();
-            run_cli(HARNESS, sh(script), job, dir.path())
+            run_cli(NAME, sh(script), job, dir.path())
         }
 
         /// Waits up to two seconds for the process with `pid` to be gone.
         fn is_gone(pid: &str) -> bool {
             let deadline = Instant::now() + Duration::from_secs(2);
             while Instant::now() < deadline {
-                let alive = Command::new("kill")
+                let alive = Command::new(KILL)
                     .args(["-0", pid])
                     .stderr(Stdio::null())
                     .status()
@@ -374,7 +510,7 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let job = job_in(root.path(), "");
             let dir = fresh_work_dir(&job).unwrap();
-            let out = run_cli(HARNESS, sh("pwd -P; ls -A | wc -l"), &job, dir.path()).unwrap();
+            let out = run_cli(NAME, sh("pwd -P; ls -A | wc -l"), &job, dir.path()).unwrap();
             let mut lines = out.stdout.lines();
             let cwd = PathBuf::from(lines.next().unwrap()).canonicalize().unwrap();
             assert_eq!(cwd, dir.path().canonicalize().unwrap());
@@ -388,7 +524,11 @@ mod tests {
             let first = fresh_work_dir(&job).unwrap();
             let second = fresh_work_dir(&job).unwrap();
             assert_ne!(first.path(), second.path());
-            assert!(first.path().starts_with(root.path()));
+            assert!(
+                first
+                    .path()
+                    .starts_with(root.path().canonicalize().unwrap())
+            );
             let name = first
                 .path()
                 .file_name()
@@ -510,7 +650,7 @@ mod tests {
             let out = run("echo hi; sleep 30 &", &job_in(root.path(), "")).unwrap();
             assert_eq!(out.stdout, "hi\n");
             assert!(
-                started.elapsed() < Duration::from_secs(4),
+                started.elapsed() < OUTPUT_GRACE + AFTER_KILL_GRACE + Duration::from_secs(1),
                 "{:?}",
                 started.elapsed()
             );
@@ -534,5 +674,80 @@ mod tests {
                 other => panic!("expected CliFailed, got {other:?}"),
             }
         }
+
+        #[test]
+        fn cancel_still_works_while_waiting_for_output() {
+            let root = tempfile::tempdir().unwrap();
+            let job = job_in(root.path(), "");
+            let handle = job.cancel.clone();
+            let canceller = thread::spawn(move || {
+                thread::sleep(Duration::from_millis(300));
+                handle.cancel();
+            });
+            let started = Instant::now();
+            // The shell exits at once; `sleep` keeps stdout open for 30 s.
+            let err = run("echo hi; sleep 30 &", &job).unwrap_err();
+            canceller.join().unwrap();
+            assert!(matches!(err, AgentError::Cancelled), "{err:?}");
+            assert!(started.elapsed() < OUTPUT_GRACE, "{:?}", started.elapsed());
+        }
+
+        #[test]
+        fn a_reply_over_the_stdout_limit_is_rejected() {
+            let root = tempfile::tempdir().unwrap();
+            let script = format!("head -c {} /dev/zero", MAX_STDOUT_BYTES + 1);
+            let err = run(&script, &job_in(root.path(), "")).unwrap_err();
+            match err {
+                AgentError::InvalidJson { reason } => assert!(reason.contains("8 MiB"), "{reason}"),
+                other => panic!("expected InvalidJson, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn a_work_root_inside_a_project_is_refused() {
+            for marker in PROJECT_MARKERS {
+                let project = tempfile::tempdir().unwrap();
+                std::fs::write(project.path().join(marker), "").unwrap();
+                let nested = project.path().join("a").join("b");
+                std::fs::create_dir_all(&nested).unwrap();
+
+                let err = fresh_work_dir(&job_in(&nested, "")).unwrap_err();
+                match err {
+                    AgentError::CouldNotStart { reason } => {
+                        assert!(reason.contains(marker), "{marker}: {reason}")
+                    }
+                    other => panic!("{marker}: expected CouldNotStart, got {other:?}"),
+                }
+                assert_eq!(std::fs::read_dir(&nested).unwrap().count(), 0, "{marker}");
+            }
+        }
+
+        #[test]
+        fn the_default_work_root_is_not_inside_a_project() {
+            let job = Job::notes("", serde_json::json!({}));
+            let dir = fresh_work_dir(&job).unwrap();
+            assert!(dir.path().is_dir());
+        }
+    }
+
+    #[test]
+    fn stdout_keeps_its_head_and_marks_the_rest() {
+        let mut drained = Drained::default();
+        drained.push(b"abc", Keep::Head(5));
+        assert!(!drained.overflowed);
+        drained.push(b"defg", Keep::Head(5));
+        assert_eq!(drained.bytes, b"abcde");
+        assert!(drained.overflowed);
+    }
+
+    #[test]
+    fn stderr_keeps_its_tail_and_never_holds_much_more() {
+        let mut drained = Drained::default();
+        for i in 0..1000_u32 {
+            drained.push(format!("{i:04}").as_bytes(), Keep::Tail(8));
+            assert!(drained.bytes.len() <= 16, "{}", drained.bytes.len());
+        }
+        assert!(drained.bytes.ends_with(b"09980999"));
+        assert!(!drained.overflowed);
     }
 }

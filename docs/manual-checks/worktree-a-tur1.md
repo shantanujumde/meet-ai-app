@@ -35,6 +35,19 @@ tickets.
 - If a grandchild keeps stdin open without reading it, the thread that writes
   the prompt stays blocked and is leaked. It holds no lock and does not hold up
   the run.
+- **If the app crashes or is force-quit mid-run**, nothing kills the child:
+  the `claude` / `codex` process (and what it started) runs on until it
+  finishes or hits its own limits, and its `meet-ai-agent-*` folder stays in
+  `$TMPDIR` (macOS clears that folder on its own over time). To check by hand:
+  start a notes run, `kill -9` the app, then `ps -ax | grep claude` and
+  `ls $TMPDIR | grep meet-ai-agent-`.
+- **`agent.timeout_sec` is not read from config yet.** Only the default
+  (`DEFAULT_TIMEOUT_SECS`, 300) exists here. TUR-3 adds the config key, and
+  TUR-10 (the automatic notes run with Cancel) builds each `Job` and has to set
+  `Job.timeout` from it. Check 2 above depends on that.
+- stdout is capped at 8 MiB (past that the run fails as "not valid JSON"), and
+  stderr is held as its last 4 KiB while reading, so a runaway CLI cannot fill
+  the app's memory.
 
 ## Not probed
 
@@ -47,7 +60,12 @@ tickets.
 - **Schema check uses the `jsonschema` crate** (0.58.4, no default features),
   the same pin TUR-2 adds for `crates/prompts`. Asked Shann; answer was
   `jsonschema`, because the notes schema has a `pattern` on `transcript_ref`.
-  Error messages are masked, so a schema failure never quotes transcript text.
+  A schema failure never quotes the reply: values are masked by jsonschema,
+  unexpected key names are counted ("2 unexpected properties") instead of
+  listed, and path segments the schema does not declare show as `*`.
+- **`work_root` inside a project is refused** (`CouldNotStart`): a `.git`,
+  `CLAUDE.md`, `CLAUDE.local.md` or `AGENTS.md` in it or any folder above it.
+  It stays public so tests can point it at their own temp folder.
 - **One extra `AgentError` variant, `CouldNotStart`,** beyond the seven the
   ticket lists. It covers a working folder that cannot be made, a CLI that
   exists but cannot be launched (for example, not executable), and a broken
@@ -59,8 +77,8 @@ tickets.
   temp folder is made in (system temp by default). The temp folder is deleted
   when the run ends.
 - **Kill reaches grandchildren** on macOS/Linux: the child gets its own process
-  group, and the runner sends `kill -KILL -<pgid>` (the `kill` command, so no
-  `unsafe` and no `libc` dependency). On Windows only the direct child is
+  group, and the runner sends `kill -KILL -<pgid>` (`/bin/kill`, so no
+  `unsafe` and no `libc` dependency; the crate has `#![forbid(unsafe_code)]`). On Windows only the direct child is
   killed for now.
 - `just check` picks the crate up through the `crates/*` workspace glob. It is
   not added to `just check-windows`; that would change an existing justfile

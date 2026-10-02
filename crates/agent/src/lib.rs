@@ -17,7 +17,7 @@
 //! A transcript is untrusted text. The app never runs anything a reply asks
 //! for; it only reads the fields the schema allows.
 
-#![forbid(unsafe_op_in_unsafe_fn)]
+#![forbid(unsafe_code)]
 
 mod error;
 mod job;

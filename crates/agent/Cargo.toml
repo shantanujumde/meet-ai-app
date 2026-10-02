@@ -8,7 +8,8 @@ version.workspace = true
 
 [dependencies]
 # Output check against the run's JSON schema (SPEC A11). Same validator as
-# crates/prompts; no default features, so no network client comes with it.
+# crates/prompts, from the one shared pin in the workspace Cargo.toml (no
+# default features, so no network client), so the two cannot drift apart.
 jsonschema.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

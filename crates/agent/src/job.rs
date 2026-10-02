@@ -34,7 +34,10 @@ pub struct Job {
     pub model: Option<String>,
     /// Folder the run's working folder is made in. Each run gets a new, empty
     /// folder inside it, so no `CLAUDE.md`, `AGENTS.md` or project settings
-    /// leak in. It is deleted when the run ends.
+    /// leak in. It is deleted when the run ends. A root inside a project (a
+    /// `.git`, `CLAUDE.md` or `AGENTS.md` in it or above it) is refused, since
+    /// the CLI would find those by looking upwards. Defaults to the system
+    /// temp folder; tests point it at their own.
     pub work_root: PathBuf,
     /// The child is killed when this runs out (`agent.timeout_sec`).
     pub timeout: Duration,
@@ -118,7 +121,7 @@ mod tests {
         let job = Job::notes("hi", serde_json::json!({}));
         assert_eq!(job.kind, JobKind::Notes);
         assert!(job.allowed_tools.is_empty());
-        assert_eq!(job.timeout, Duration::from_secs(300));
+        assert_eq!(job.timeout, Duration::from_secs(DEFAULT_TIMEOUT_SECS));
     }
 
     #[test]
