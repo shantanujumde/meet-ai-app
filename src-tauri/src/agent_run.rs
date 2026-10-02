@@ -1,12 +1,37 @@
 //! The notes run that starts on its own when a call ends (SPEC A11, TUR-10).
 //!
-//! SKELETON: the public types and command signatures below are the contract
-//! the window is built against. The bodies are filled in by the TUR-10 Rust
-//! work; keep the names and shapes.
+//! After Stop, once `transcript.md` is final, [`finish_then_run`] starts the
+//! user's agent CLI on the meeting, if `agent.auto_run` is on. The meeting
+//! view shows *Writing notes…* with Cancel, then the notes, or why there are
+//! none and Retry ([`start_notes_run`]). Each change goes out as
+//! [`crate::events::AGENT_RUN_STATUS_EVENT`].
+//!
+//! - [`notes`]: one run, start to finish, with no Tauri in it.
+//! - [`runs`]: one run per meeting at a time, each on its own thread.
+//! - [`failure`]: every way a run can fail, in plain words.
+//!
+//! Quitting cancels every run ([`shutdown`]): the agent is stopped before it
+//! answers, so the meeting is left as it was and Retry works on next launch.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Serialize;
+use tauri::{AppHandle, Emitter as _, Manager as _};
 
 use crate::error::UiError;
+use crate::live_transcript::{self, Transcription};
+
+mod failure;
+mod notes;
+mod runs;
+
+pub use runs::AgentRuns;
+use runs::{Sink, Work};
+
+/// How long quitting waits for running agents to be stopped.
+const QUIT_WAIT: Duration = Duration::from_secs(3);
 
 /// Where one meeting's notes run stands, as the meeting view shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
@@ -27,9 +52,13 @@ pub enum State {
     Running,
     /// The notes and tasks are on disk. `tasks` is how many tickets were
     /// written.
-    Done { tasks: u32 },
+    Done {
+        tasks: u32,
+    },
     /// No notes were written, and why. Retry starts again.
-    Failed { failure: Failure },
+    Failed {
+        failure: Failure,
+    },
 }
 
 /// Why a run wrote no notes, in plain words.
@@ -98,42 +127,180 @@ pub struct NotesSection {
 /// Where this meeting's notes run stands.
 #[tauri::command]
 #[specta::specta]
-pub async fn notes_run_status(meeting_id: String) -> Result<Status, UiError> {
-    Ok(Status {
-        meeting_id,
-        state: State::Idle,
-    })
+pub async fn notes_run_status(app: AppHandle, meeting_id: String) -> Result<Status, UiError> {
+    Ok(runs(&app)?.status(&meeting_id))
 }
 
 /// Start the notes run by hand: Retry, or the first run on a meeting that
 /// has none. Ignored while one is running; the answer is then that run.
 #[tauri::command]
 #[specta::specta]
-pub async fn start_notes_run(meeting_id: String) -> Result<Status, UiError> {
-    Ok(Status {
-        meeting_id,
-        state: State::Idle,
+pub async fn start_notes_run(app: AppHandle, meeting_id: String) -> Result<Status, UiError> {
+    blocking(move || {
+        let root = crate::meetings::root()?;
+        start(&app, root, &meeting_id)
     })
+    .await
 }
 
 /// Cancel this meeting's running notes run. A no-op when none is running.
 #[tauri::command]
 #[specta::specta]
-pub async fn cancel_notes_run(meeting_id: String) -> Result<Status, UiError> {
-    Ok(Status {
-        meeting_id,
-        state: State::Idle,
-    })
+pub async fn cancel_notes_run(app: AppHandle, meeting_id: String) -> Result<Status, UiError> {
+    Ok(runs(&app)?.cancel(&meeting_id))
 }
 
 /// The agent-written sections of this meeting's `meeting.md`.
 #[tauri::command]
 #[specta::specta]
 pub async fn meeting_notes(meeting_id: String) -> Result<MeetingNotes, UiError> {
-    let _ = meeting_id;
+    blocking(move || read_meeting_notes(&crate::meetings::root()?, &meeting_id)).await
+}
+
+/// Finish the meeting's transcription, then start its notes run if
+/// `agent.auto_run` is on. The recorder's Stop calls this in place of
+/// `Transcription::finish`; `transcript.md` is final once that returns.
+///
+/// The run has a thread of its own, so this returns at once after the
+/// transcript is done and the next recording is never held up by it.
+/// Starts nothing while the app quits.
+pub fn finish_then_run(app: &AppHandle, transcription: Transcription) {
+    let transcript = transcription.transcript().to_path_buf();
+    transcription.finish(live_transcript::STOP_TIMEOUT);
+    let Ok(agent_runs) = runs(app) else {
+        return;
+    };
+    if agent_runs.is_closed() {
+        return;
+    }
+    let Some((root, meeting_id)) = meeting_of(&transcript) else {
+        tracing::warn!(path = %transcript.display(), "no meeting folder around the transcript; no notes run");
+        return;
+    };
+    match crate::config::agent() {
+        Ok(settings) if !settings.auto_run || settings.harness == crate::config::Harness::None => {}
+        // A config that cannot be read still starts, so the meeting view
+        // says why there are no notes.
+        _ => {
+            if let Err(error) = start(app, root, &meeting_id) {
+                tracing::warn!(message = %error.message, "could not start the notes run");
+            }
+        }
+    }
+}
+
+/// The app is quitting: start no more runs and stop the ones going.
+pub fn shutdown(app: &AppHandle) {
+    if let Ok(agent_runs) = runs(app) {
+        agent_runs.shutdown(QUIT_WAIT);
+    }
+}
+
+/// Start (or, while one is going, report) the notes run for `meeting_id`
+/// under `root`.
+fn start(app: &AppHandle, root: PathBuf, meeting_id: &str) -> Result<Status, UiError> {
+    let self_writes = app
+        .try_state::<crate::watch::MeetingsWatch>()
+        .map(|watch| watch.own_writes().clone())
+        .unwrap_or_default();
+    let sink: Arc<dyn Sink> = Arc::new(AppSink {
+        app: app.clone(),
+        root: root.clone(),
+    });
+    let id = meeting_id.to_owned();
+    let work: Work = Box::new(move |cancel| {
+        notes::run_notes(&root, &id, notes::configured, cancel, &self_writes)
+    });
+    Ok(runs(app)?.start(meeting_id, work, sink))
+}
+
+fn runs(app: &AppHandle) -> Result<tauri::State<'_, AgentRuns>, UiError> {
+    app.try_state::<AgentRuns>()
+        .ok_or_else(|| UiError::app("no-agent-runs", "The notes runs are not set up."))
+}
+
+/// The meetings root and meeting id a `transcript.md` path belongs to.
+fn meeting_of(transcript: &Path) -> Option<(PathBuf, String)> {
+    let dir = transcript.parent()?;
+    let id = dir.file_name()?.to_str()?.to_owned();
+    Some((dir.parent()?.to_path_buf(), id))
+}
+
+/// `meeting.md`'s agent half, for [`meeting_notes`].
+fn read_meeting_notes(root: &Path, meeting_id: &str) -> Result<MeetingNotes, UiError> {
+    let dir = store::folder::meeting_dir(root, meeting_id)?;
+    let Some(meeting) = store::meeting::Meeting::read(&dir.join(store::MEETING_FILE))? else {
+        return Ok(MeetingNotes {
+            notes_off: false,
+            analyzed_by: None,
+            sections: Vec::new(),
+        });
+    };
+    let sections = store::meeting::SECTIONS
+        .iter()
+        .filter_map(|&heading| {
+            let body = meeting.section(heading)?.trim_end();
+            (!body.trim().is_empty()).then(|| NotesSection {
+                heading: heading.to_owned(),
+                body: body.to_owned(),
+            })
+        })
+        .collect();
+    let notes_off = matches!(
+        meeting
+            .frontmatter
+            .get_str(store::agent_notes::AGENT_NOTES_KEY)
+            .as_deref(),
+        Some("off" | "false")
+    );
     Ok(MeetingNotes {
-        notes_off: false,
-        analyzed_by: None,
-        sections: Vec::new(),
+        notes_off,
+        analyzed_by: meeting.frontmatter.get_str("analyzed_by"),
+        sections,
     })
 }
+
+/// Runs `work` on the blocking pool, off the thread the window waits on.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, UiError> + Send + 'static,
+) -> Result<T, UiError> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| UiError::app("task-failed", error.to_string()))?
+}
+
+/// The window and the notification, as a [`Sink`].
+struct AppSink {
+    app: AppHandle,
+    root: PathBuf,
+}
+
+impl Sink for AppSink {
+    fn status(&self, status: &Status) {
+        if let Err(error) = self.app.emit(crate::events::AGENT_RUN_STATUS_EVENT, status) {
+            tracing::warn!(%error, "could not tell the window about the notes run");
+        }
+    }
+
+    /// A notification, unless the window is in front and shows it anyway.
+    fn notes_ready(&self, meeting_id: &str, tasks: u32) {
+        let in_front = self
+            .app
+            .webview_windows()
+            .values()
+            .any(|window| window.is_focused().unwrap_or(false));
+        if in_front {
+            return;
+        }
+        let title = store::folder::meeting_dir(&self.root, meeting_id)
+            .ok()
+            .and_then(|dir| store::meeting::Meeting::read(&dir.join(store::MEETING_FILE)).ok())
+            .flatten()
+            .and_then(|meeting| meeting.title())
+            .unwrap_or_else(|| meeting_id.to_owned());
+        crate::notify::notes_ready(&self.app, &title, tasks);
+    }
+}
+
+#[cfg(test)]
+mod tests;

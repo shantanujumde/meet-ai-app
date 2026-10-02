@@ -49,6 +49,12 @@ impl MeetingsWatch {
         self.own_writes.note(path);
     }
 
+    /// The record of this process's own writes, for code that writes several
+    /// files through `store` (the notes run, TUR-10).
+    pub fn own_writes(&self) -> &SelfWrites {
+        &self.own_writes
+    }
+
     /// Watch the current meetings folder, replacing any watcher already
     /// running. Called at launch and after the folder moves.
     ///
