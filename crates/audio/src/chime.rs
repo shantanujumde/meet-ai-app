@@ -52,6 +52,12 @@
 //! capture-layer measurement, tracked separately; until it lands, treat "no
 //! chime" as *needs explaining*, never as a bare "permission denied".
 
+mod attempts;
+
+pub use attempts::{
+    Attempt, LISTEN_TAIL_MILLIS, MAX_PLAYS, SETTLE_MILLIS, play_until_heard, worst_case_millis,
+};
+
 /// One note of the chime.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Note {
@@ -141,9 +147,11 @@ const SEARCH_STEP_MILLIS: u32 = 5;
 /// granted system, which is the common case, not the rare one.
 ///
 /// The fix is the same shape as the finding: poll, don't sample once. This
-/// budget is ~2x the measured worst case, and [`probe`] uses it to decide how
-/// long to keep pulling captured audio and repeating the chime before giving
-/// up.
+/// budget is ~2x the measured worst case. [`play_until_heard`] plays the chime
+/// once after the tap has settled, and if that play goes unheard it uses this
+/// budget to time its single retry: the second play never starts before this
+/// much audio has been captured, so it lands well past any settle time seen
+/// so far. [`probe`] still uses it as its pull budget for the hardware tests.
 pub const ONSET_TIMEOUT_MILLIS: u32 = 2000;
 
 /// Silence between repeats when the chime is replayed across
@@ -176,11 +184,15 @@ pub fn samples(sample_rate: u32) -> Vec<f32> {
 /// The chime repeated back-to-back, with [`REPEAT_GAP_MILLIS`] of silence
 /// between repeats, filling at least `total_millis`.
 ///
-/// Used to play the chime across the whole [`ONSET_TIMEOUT_MILLIS`] settle
-/// window rather than once, so at least one repeat lands after the tap has
-/// settled onto real audio, wherever that boundary actually falls. A single
-/// play timed to start immediately has no such guarantee — it can land
-/// entirely inside the unsettled window the onset finding describes.
+/// Plays the chime across the whole [`ONSET_TIMEOUT_MILLIS`] settle window
+/// rather than once, so at least one repeat lands after the tap has settled
+/// onto real audio, wherever that boundary actually falls.
+///
+/// Kept for the `#[ignore]`d hardware closed-loop tests
+/// (`crates/audio/tests/system_closed_loop.rs`, `mic_closed_loop.rs`). The
+/// app's recording-start check does not use it any more: about eleven chimes
+/// per recording was the TUR-14 bug. The app uses [`play_until_heard`], which
+/// waits for the tap to settle and plays once (twice at most).
 pub fn looped_samples(sample_rate: u32, total_millis: u32) -> Vec<f32> {
     let one = samples(sample_rate);
     let gap = vec![0.0f32; samples_in(REPEAT_GAP_MILLIS, sample_rate)];
@@ -283,6 +295,12 @@ pub fn heard(captured: &[f32], sample_rate: u32) -> Reading {
 /// Pair with [`looped_samples`] on the playback side: a single play timed to
 /// start immediately can land entirely inside the window the onset finding
 /// describes, with nothing this function does compensating for that.
+///
+/// Kept as the listen-only half of the looped approach that the `#[ignore]`d
+/// hardware closed-loop tests (`crates/audio/tests/system_closed_loop.rs`,
+/// `mic_closed_loop.rs`) still play with [`looped_samples`]. The app's check
+/// uses [`play_until_heard`] instead, which owns playback too, plays the
+/// chime once and listens while it plays.
 pub fn probe(sample_rate: u32, mut pull: impl FnMut() -> Option<Vec<f32>>) -> Reading {
     let budget = samples_in(ONSET_TIMEOUT_MILLIS + duration_millis(), sample_rate);
     let mut captured = Vec::new();
