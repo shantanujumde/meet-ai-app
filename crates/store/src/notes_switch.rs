@@ -26,7 +26,7 @@ use crate::{Error, MEETING_FILE};
 /// The value written when the switch is off. The YAML writer quotes it
 /// (`agent_notes: "off"`) so an older YAML reader does not take it for
 /// `false`; read back, both spellings mean off.
-const OFF: &str = "off";
+pub(crate) const OFF: &str = "off";
 
 /// Turn notes for meeting `meeting_id` under `root` on or off.
 ///

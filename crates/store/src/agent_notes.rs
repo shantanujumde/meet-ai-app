@@ -335,7 +335,7 @@ fn save_meeting(
 pub(crate) fn notes_are_off(meeting: &Meeting) -> bool {
     matches!(
         meeting.frontmatter.get_str(AGENT_NOTES_KEY).as_deref(),
-        Some("off" | "false")
+        Some(crate::notes_switch::OFF | "false")
     )
 }
 
