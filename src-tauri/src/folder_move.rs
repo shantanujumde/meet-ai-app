@@ -23,6 +23,7 @@
 //! Both guards release on drop, so a panicking move or write cannot leave the
 //! gate shut until the app is restarted.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use tauri::{AppHandle, Manager as _};
@@ -124,6 +125,35 @@ impl FolderGate {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+/// Run `write` against the meetings root as it is *now*, holding the gate for
+/// as long as it runs (TUR-17).
+///
+/// For work that writes into a meeting folder long after it started — a
+/// notes run, a ticket sync — while the window stays free to move the
+/// meetings folder in between. The root is looked up when the write starts,
+/// not when the work did, so the result lands in the meeting's new place
+/// rather than under a root the move has emptied. A meeting is its folder
+/// name under the root, so `write` finds it from the root and the meeting id.
+/// Refused while a move is running, like every other write.
+pub fn writing_in_root<T, E: From<UiError>>(
+    app: &AppHandle,
+    write: impl FnOnce(&Path) -> Result<T, E>,
+) -> Result<T, E> {
+    let gate = app.try_state::<FolderGate>();
+    writing_in(gate.as_deref(), crate::meetings::root, write)
+}
+
+/// [`writing_in_root`] without the `AppHandle`: `root` looks the root up,
+/// and with no `gate` nothing is held.
+pub fn writing_in<T, E: From<UiError>>(
+    gate: Option<&FolderGate>,
+    root: impl FnOnce() -> Result<PathBuf, UiError>,
+    write: impl FnOnce(&Path) -> Result<T, E>,
+) -> Result<T, E> {
+    let _writing = gate.map(FolderGate::begin_write).transpose()?;
+    write(&root()?)
 }
 
 /// The one refusal every blocked caller gets — a write, a second move — so the
@@ -286,6 +316,38 @@ mod tests {
             gate.begin_write().is_ok(),
             "a crashed move must not block writes until a restart"
         );
+    }
+
+    #[test]
+    fn a_late_write_looks_the_root_up_when_it_runs_and_holds_the_gate() {
+        let gate = FolderGate::default();
+        let looked_up = std::cell::Cell::new(false);
+        let wrote: Result<PathBuf, UiError> = writing_in(
+            Some(&gate),
+            || {
+                looked_up.set(true);
+                Ok(PathBuf::from("/Moved/Meetings"))
+            },
+            |root| {
+                assert!(gate.begin_move().is_err(), "no move under a write");
+                Ok(root.to_path_buf())
+            },
+        );
+        assert!(looked_up.get());
+        assert_eq!(wrote.unwrap(), PathBuf::from("/Moved/Meetings"));
+        assert!(gate.begin_move().is_ok(), "the gate opens after the write");
+    }
+
+    #[test]
+    fn a_late_write_during_a_move_never_runs() {
+        let gate = FolderGate::default();
+        let _moving = gate.begin_move().unwrap();
+        let refused: Result<(), UiError> = writing_in(
+            Some(&gate),
+            || panic!("no root lookup mid-move"),
+            |_| panic!("no write mid-move"),
+        );
+        assert_eq!(refused.unwrap_err().kind, "folder-move-in-progress");
     }
 
     #[test]
