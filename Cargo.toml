@@ -13,6 +13,7 @@ version = "0.3.0"
 # the versions their docs were read against (see CLAUDE.md, the "new major" rule).
 [workspace.dependencies]
 # --- local crates ---
+agent = { path = "crates/agent" }
 audio = { path = "crates/audio" }
 calendar = { path = "crates/calendar" }
 detect = { path = "crates/detect" }
