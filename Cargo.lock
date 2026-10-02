@@ -4204,6 +4204,8 @@ name = "prompts"
 version = "0.3.0"
 dependencies = [
  "insta",
+ "jsonschema",
+ "meeting-format",
  "minijinja",
  "serde",
  "serde_json",

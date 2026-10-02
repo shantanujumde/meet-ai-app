@@ -11,6 +11,12 @@
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+pub mod notes;
+pub mod wrap_up;
+
+pub use notes::{NOTES_SCHEMA, Notes, Task, notes_schema};
+pub use wrap_up::{Target, WrapUpInput};
+
 /// The prompt buttons the UI offers (SPEC §5, Phase 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +54,12 @@ pub enum Error {
     /// The template file could not be read.
     #[error("could not read the prompt template")]
     Io(#[from] std::io::Error),
+
+    /// The agent sent back something that is not valid notes JSON: not JSON at
+    /// all, or JSON that fails [`NOTES_SCHEMA`]. Nothing may be written from it
+    /// (SPEC A11, "Guarding against the meeting itself").
+    #[error("the agent's notes do not match the notes schema: {}", problems.join("; "))]
+    InvalidNotes { problems: Vec<String> },
 }
 
 #[cfg(test)]

@@ -7,6 +7,8 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
+jsonschema.workspace = true
+meeting-format.workspace = true
 minijinja.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
