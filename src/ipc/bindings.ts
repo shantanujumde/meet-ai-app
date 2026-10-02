@@ -196,7 +196,7 @@ export const commands = {
 	 *  (`sync-not-saved`, `sync-not-attached`), so the next Sync runs afresh. The
 	 *  window shows the issue's link until the user dismisses it.
 	 */
-	dismissUnsavedSync: (ticketId: string, meetingId: string | null) => __TAURI_INVOKE<void>("dismiss_unsaved_sync", { ticketId, meetingId }),
+	dismissUnsavedSync: (ticketId: string, meetingId: string | null) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("dismiss_unsaved_sync", { ticketId, meetingId })),
 	/**
 	 *  A meeting's tasks: the ones in its own `tickets/` folder, where the notes
 	 *  run writes them, and shared ones that name it. Sorted by id.

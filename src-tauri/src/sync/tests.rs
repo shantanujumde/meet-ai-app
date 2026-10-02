@@ -778,7 +778,7 @@ fn a_number_given_to_another_task_keeps_the_issue_until_dismissed() {
     assert!(ticket_in(meetings.path(), MEETING).synced_to().is_none());
 
     // Dismissed: the next Sync is a fresh run for the new task.
-    runs.unsaved.dismiss("TICK-0001", Some(MEETING));
+    dismiss(&runs, &gate, &root);
     let summary = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap();
     assert_eq!(harness.runs(), 2);
     assert_eq!(summary.external_id.as_deref(), Some("ENG-43"));
@@ -857,8 +857,15 @@ fn a_kept_issue_is_never_dropped_on_its_own_even_if_the_meeting_is_deleted() {
     assert!(runs.unsaved.get("TICK-0001", Some(MEETING)).is_some());
     assert_eq!(harness.runs(), 1);
 
-    runs.unsaved.dismiss("TICK-0001", Some(MEETING));
+    dismiss(&runs, &gate, &root);
     assert_eq!(runs.unsaved.get("TICK-0001", Some(MEETING)), None);
+}
+
+/// The window's Dismiss on `MEETING`'s `TICK-0001`.
+fn dismiss(runs: &SyncRuns, gate: &FolderGate, root: &Arc<Mutex<PathBuf>>) {
+    let lookup = || Ok(root.lock().unwrap().clone());
+    runs.unsaved
+        .dismiss(Some(gate), &lookup, "TICK-0001", Some(MEETING));
 }
 
 /// The kinds the window switches on (`useTicketSync.ts`), and the ones the
@@ -887,4 +894,150 @@ fn a_run_with_nothing_unsaved_still_needs_an_agent() {
     )
     .unwrap_err();
     assert_eq!(err.kind, "sync-no-agent");
+}
+
+// --- a kept issue across an app restart (TUR-21) ----------------------------
+
+/// A save refused by a folder move, then the end of that move, which writes
+/// the kept issue the move held back. The `SyncRuns` is dropped afterwards,
+/// as when the app quits.
+fn fail_a_save_then_quit(gate: &FolderGate, root: &Arc<Mutex<PathBuf>>, harness: &MovingHarness) {
+    let runs = SyncRuns::default();
+    let err = sync_during_a_move(&runs, gate, root, harness, MEETING);
+    assert_eq!(err.kind, SYNC_NOT_SAVED, "{}", err.message);
+    let refused = kept::path(&root.lock().unwrap());
+    assert!(!refused.exists(), "written into a folder that is moving");
+    runs.unsaved.flush(&|| Ok(root.lock().unwrap().clone()));
+    assert!(refused.is_file(), "the kept issue is not on disk");
+}
+
+#[test]
+fn a_failed_save_survives_a_restart_and_retry_saves_it_without_a_second_run() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let gate = FolderGate::default();
+    fail_a_save_then_quit(&gate, &root, &harness);
+    assert!(ticket_in(meetings.path(), MEETING).synced_to().is_none());
+
+    // The app starts again with nothing in memory; Retry saves the issue.
+    let runs = SyncRuns::default();
+    let summary = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap();
+    assert_eq!(summary.external_id.as_deref(), Some("ENG-42"));
+    assert_eq!(summary.external_url.as_deref(), Some(URL));
+    assert_eq!(harness.runs(), 1, "a second issue");
+    let back = ticket_in(meetings.path(), MEETING);
+    assert_eq!(
+        back.frontmatter.get_str("external_url").as_deref(),
+        Some(URL)
+    );
+    assert!(!kept::path(meetings.path()).exists(), "saved, so forgotten");
+
+    // And after another restart it is the usual "already synced".
+    let again = sync_through(&SyncRuns::default(), &gate, &root, &harness, MEETING).unwrap_err();
+    assert_eq!(again.kind, ALREADY_SYNCED, "{}", again.message);
+    assert_eq!(harness.runs(), 1);
+}
+
+#[test]
+fn a_kept_issue_is_on_disk_at_once_when_only_the_ticket_is_missing() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let gate = FolderGate::default();
+    let path = ticket_path(meetings.path());
+    let aside = meetings.path().join("TICK-0001.md.aside");
+    let moves_it_aside = MovingHarness::changing_the_ticket(&root, |root| {
+        fs::rename(ticket_path(root), root.join("TICK-0001.md.aside")).unwrap();
+    });
+
+    let err =
+        sync_through(&SyncRuns::default(), &gate, &root, &moves_it_aside, MEETING).unwrap_err();
+    assert_eq!(err.kind, SYNC_NOT_SAVED, "{}", err.message);
+    assert!(kept::path(meetings.path()).is_file());
+
+    // Restarted, with the file back as it was: Retry saves without a run.
+    fs::rename(&aside, &path).unwrap();
+    let summary = sync_through(&SyncRuns::default(), &gate, &root, &harness, MEETING).unwrap();
+    assert_eq!(summary.external_id.as_deref(), Some("ENG-42"));
+    assert_eq!(moves_it_aside.runs() + harness.runs(), 1, "a second issue");
+}
+
+#[test]
+fn a_kept_issue_whose_ticket_changed_before_the_restart_is_dropped() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let gate = FolderGate::default();
+    fail_a_save_then_quit(&gate, &root, &harness);
+
+    // While the app was closed, a notes re-run gave the number to another
+    // task: the kept issue is not this task's, so the Sync runs as usual.
+    give_the_number_to_another_task(meetings.path());
+    let runs = SyncRuns::default();
+    let summary = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap();
+    assert_eq!(harness.runs(), 2);
+    assert_eq!(summary.external_id.as_deref(), Some("ENG-43"));
+    let back = ticket_in(meetings.path(), MEETING);
+    assert_eq!(back.title().as_deref(), Some("Book the offsite"));
+    assert_eq!(runs.unsaved.get("TICK-0001", Some(MEETING)), None);
+    assert!(
+        !kept::path(meetings.path()).exists(),
+        "the stale entry stayed"
+    );
+}
+
+/// The link was saved, but the app quit before the file forgot the issue:
+/// the next Sync drops the entry and does not run again.
+#[test]
+fn a_kept_issue_already_saved_before_the_restart_is_dropped() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let gate = FolderGate::default();
+    fail_a_save_then_quit(&gate, &root, &harness);
+    let synced = Synced {
+        external_id: "ENG-42".into(),
+        external_url: URL.into(),
+    };
+    record(&ticket_path(meetings.path()), "linear", &synced).unwrap();
+
+    let err = sync_through(&SyncRuns::default(), &gate, &root, &harness, MEETING).unwrap_err();
+    assert_eq!(err.kind, ALREADY_SYNCED, "{}", err.message);
+    assert_eq!(harness.runs(), 1);
+    assert!(!kept::path(meetings.path()).exists());
+}
+
+#[test]
+fn a_dismissed_issue_stays_dismissed_after_a_restart() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let gate = FolderGate::default();
+    fail_a_save_then_quit(&gate, &root, &harness);
+
+    dismiss(&SyncRuns::default(), &gate, &root);
+    assert!(!kept::path(meetings.path()).exists());
+    let summary = sync_through(&SyncRuns::default(), &gate, &root, &harness, MEETING).unwrap();
+    assert_eq!(harness.runs(), 2, "the dismissed issue was saved");
+    assert_eq!(summary.external_id.as_deref(), Some("ENG-43"));
+}
+
+/// Kept issues are filed by meeting on disk too: the other meeting's
+/// `TICK-0001` never gets this one's link after a restart.
+#[test]
+fn a_kept_issue_read_back_is_only_saved_to_its_own_meetings_ticket() {
+    let meetings = meetings_root();
+    add_meeting(meetings.path(), OTHER_MEETING);
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let gate = FolderGate::default();
+    fail_a_save_then_quit(&gate, &root, &harness);
+
+    let runs = SyncRuns::default();
+    let other = sync_through(&runs, &gate, &root, &harness, OTHER_MEETING).unwrap();
+    assert_eq!(other.external_id.as_deref(), Some("ENG-43"));
+    let first = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap();
+    assert_eq!(first.external_id.as_deref(), Some("ENG-42"));
+    assert_eq!(harness.runs(), 2);
 }
