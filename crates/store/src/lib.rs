@@ -9,6 +9,8 @@
 //!   format is appended by `stt`'s sink and nothing else.
 //! * [`notes`] — `notes.md`: the user's own notes.
 //! * [`ticket`] — `tickets/TICK-NNNN.md` (§3.3).
+//! * [`agent_notes`] — `meeting.md` sections and tickets written from the
+//!   agent's notes JSON (SPEC A11).
 //! * [`folder`] — one meeting folder, or every folder under the root, loaded
 //!   together.
 //!
@@ -39,6 +41,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+pub mod agent_notes;
 pub mod folder;
 pub mod folder_name;
 pub mod frontmatter;
