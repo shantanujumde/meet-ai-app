@@ -127,8 +127,7 @@ impl Harness for ClaudeHarness {
     }
 
     fn detect(&self) -> Option<Install> {
-        // TUR-6 adds the call to `detect::claude` here.
-        None
+        crate::detect::claude(self.binary.as_deref())
     }
 
     fn models(&self) -> Vec<String> {
