@@ -248,39 +248,86 @@ fn a_job_cancelled_before_it_starts_returns_at_once() {
     );
 }
 
+/// One run in the clean-up table: a name for failure messages, what the fake
+/// does, the time limit, and the result the run must give.
+struct CleanupCase {
+    name: &'static str,
+    behavior: FakeBehavior,
+    timeout: Option<Duration>,
+    expect: fn(&Result<Value, AgentError>) -> bool,
+}
+
 #[test]
 fn the_working_folder_is_deleted_after_every_run() {
     let root = tempfile::tempdir().unwrap();
     let mut bad = good_notes();
     bad["summary"] = json!(42);
-    let behaviors = [
-        FakeBehavior::Reply(good_notes()),
-        FakeBehavior::Reply(bad),
-        FakeBehavior::Stdout("not json".into()),
-        FakeBehavior::Fail {
-            code: 1,
-            stderr: "boom".into(),
+    let cases = [
+        CleanupCase {
+            name: "good reply",
+            behavior: FakeBehavior::Reply(good_notes()),
+            timeout: None,
+            expect: |r| matches!(r, Ok(v) if *v == good_notes()),
+        },
+        CleanupCase {
+            name: "reply that breaks the schema",
+            behavior: FakeBehavior::Reply(bad),
+            timeout: None,
+            expect: |r| matches!(r, Err(AgentError::SchemaMismatch { .. })),
+        },
+        CleanupCase {
+            name: "reply that is not JSON",
+            behavior: FakeBehavior::Stdout("not json".into()),
+            timeout: None,
+            expect: |r| matches!(r, Err(AgentError::InvalidJson { .. })),
+        },
+        CleanupCase {
+            name: "CLI that fails",
+            behavior: FakeBehavior::Fail {
+                code: 1,
+                stderr: "boom".into(),
+            },
+            timeout: None,
+            expect: |r| {
+                matches!(
+                    r,
+                    Err(AgentError::CliFailed {
+                        status: Some(1),
+                        ..
+                    })
+                )
+            },
+        },
+        CleanupCase {
+            name: "run past its time limit",
+            behavior: FakeBehavior::Sleep(Duration::from_secs(30)),
+            timeout: Some(Duration::from_millis(200)),
+            expect: |r| matches!(r, Err(AgentError::TimedOut { .. })),
         },
     ];
-    for behavior in behaviors {
-        let result = harness(behavior.clone()).run(&notes_job(root.path()));
-        assert_empty(root.path());
-        if let FakeBehavior::Reply(value) = &behavior
-            && value == &good_notes()
-        {
-            assert!(result.is_ok(), "{result:?}");
-        } else {
-            assert!(result.is_err(), "{behavior:?} -> {result:?}");
+    for case in cases {
+        let mut job = notes_job(root.path());
+        if let Some(timeout) = case.timeout {
+            job.timeout = timeout;
         }
+        let result = harness(case.behavior).run(&job);
+        assert!((case.expect)(&result), "{}: got {result:?}", case.name);
+        assert_empty(root.path());
     }
+}
 
-    let mut job = notes_job(root.path());
-    job.timeout = Duration::from_millis(200);
+#[test]
+fn the_working_folder_is_deleted_after_a_cancel() {
+    let root = tempfile::tempdir().unwrap();
+    let job = notes_job(root.path());
+    let cancel = job.cancel.clone();
+    let canceller = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(200));
+        cancel.cancel();
+    });
     let result = harness(FakeBehavior::Sleep(Duration::from_secs(30))).run(&job);
-    assert!(
-        matches!(result, Err(AgentError::TimedOut { .. })),
-        "{result:?}"
-    );
+    canceller.join().unwrap();
+    assert!(matches!(result, Err(AgentError::Cancelled)), "{result:?}");
     assert_empty(root.path());
 }
 

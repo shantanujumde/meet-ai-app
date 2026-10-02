@@ -2,18 +2,21 @@
 //! `test-support`).
 //!
 //! [`FakeHarness`] does not call any model. It runs a tiny `/bin/sh` script
-//! through the same [`process::run_cli`] path a real CLI goes through, so the
-//! fresh working folder, the prompt on stdin, the time limit and Cancel are
-//! all the real thing: a run that sleeps past its time limit is really killed.
+//! through the same [`run_cli`](crate::process::run_cli) path a real CLI goes
+//! through, so the fresh working folder, the prompt on stdin, the time limit
+//! and Cancel are all the real thing: a run that sleeps past its time limit
+//! is really killed.
 //!
 //! What the script prints is picked by [`FakeBehavior`]. The canned text is
 //! handed to the script in environment variables, never pasted into the
 //! script itself, so quotes or `$` in a reply cannot change what it does.
+//!
+//! The script needs `/bin/sh`, so off Unix every run that would start it
+//! fails with [`AgentError::CouldNotStart`] instead.
 
-use std::process::Command;
 use std::time::Duration;
 
-use crate::{AgentError, Harness, Install, Job, OutputCheck, parse_json, process};
+use crate::{AgentError, Harness, Install, Job, OutputCheck, parse_json};
 
 /// The harness id, as `Harness::id` returns it and as errors name it.
 const ID: &str = "fake";
@@ -23,6 +26,7 @@ const ID: &str = "fake";
 ///
 /// `sleep` gets its own stdin, stdout and stderr, so if the shell is killed
 /// mid-sleep the run's pipes close at once even if `sleep` itself lives on.
+#[cfg(unix)]
 const SCRIPT: &str = r#"cat >/dev/null
 if [ -n "$FAKE_SLEEP" ]; then sleep "$FAKE_SLEEP" </dev/null >/dev/null 2>&1; fi
 printf '%s' "$FAKE_STDOUT"
@@ -74,7 +78,7 @@ impl FakeHarness {
     /// The script's environment for this behavior: stdout, stderr, exit code
     /// and sleep time. The behaviors that never start a process return their
     /// error instead.
-    fn script_env(&self) -> Result<[(&'static str, String); 4], AgentError> {
+    fn script_env(&self) -> Result<ScriptEnv, AgentError> {
         let (stdout, stderr, code, sleep) = match &self.behavior {
             FakeBehavior::Reply(value) => (value.to_string(), String::new(), 0, String::new()),
             FakeBehavior::Stdout(text) => (text.clone(), String::new(), 0, String::new()),
@@ -130,15 +134,34 @@ impl Harness for FakeHarness {
     fn run(&self, job: &Job) -> Result<serde_json::Value, AgentError> {
         let env = self.script_env()?;
         let check = OutputCheck::new(&job.schema)?;
-        let dir = process::fresh_work_dir(job)?;
-
-        let mut command = Command::new("/bin/sh");
-        command.arg("-c").arg(SCRIPT).envs(env);
-        let out = process::run_cli(ID, command, job, dir.path())?;
-        drop(dir);
-
-        check.check(parse_json(&out.stdout)?)
+        let stdout = run_script(env, job)?;
+        check.check(parse_json(&stdout)?)
     }
+}
+
+/// The script's environment, as [`FakeHarness::script_env`] builds it.
+type ScriptEnv = [(&'static str, String); 4];
+
+/// Runs [`SCRIPT`] with `env` in a fresh working folder, which is deleted
+/// before this returns, and hands back what it printed on stdout.
+#[cfg(unix)]
+fn run_script(env: ScriptEnv, job: &Job) -> Result<String, AgentError> {
+    use crate::process;
+
+    let dir = process::fresh_work_dir(job)?;
+    let mut command = std::process::Command::new("/bin/sh");
+    command.arg("-c").arg(SCRIPT).envs(env);
+    let out = process::run_cli(ID, command, job, dir.path())?;
+    drop(dir);
+    Ok(out.stdout)
+}
+
+/// Off Unix there is no `/bin/sh` to run the script with.
+#[cfg(not(unix))]
+fn run_script(_env: ScriptEnv, _job: &Job) -> Result<String, AgentError> {
+    Err(AgentError::CouldNotStart {
+        reason: "the fake harness needs /bin/sh".into(),
+    })
 }
 
 #[cfg(test)]
