@@ -1,7 +1,7 @@
 //! Writing the agent's notes into a meeting folder (SPEC A11, TUR-7).
 //!
 //! After a call the user's own agent CLI answers with one JSON object, checked
-//! against `prompts::notes::NOTES_SCHEMA` before it gets here. [`write`] turns
+//! against `prompts::notes::NOTES_SCHEMA` before it gets here. [`write()`] turns
 //! it into files:
 //!
 //! * the four fixed `meeting.md` sections (§3.2), plus `analyzed_by`,
@@ -12,25 +12,37 @@
 //!
 //! The text matches what the copy-prompt fallback asks the agent to write
 //! (`crates/prompts/templates/wrap-up.md`), so a meeting looks the same
-//! whichever path made its notes.
+//! whichever path made its notes. Action Items lists every ticket in the
+//! meeting's folder, in number order, not only the ones this run wrote.
 //!
 //! Everything goes through [`Meeting`] and [`Ticket`], so the rules those
 //! types keep apply here too: a `meeting.md` with broken frontmatter is
 //! refused rather than overwritten (and then nothing at all is written), and
-//! frontmatter keys this code does not know survive.
+//! frontmatter keys this code does not know survive. A meeting marked
+//! `agent_notes: off` is left alone.
 //!
 //! **Ticket numbers are the app's**, not the prompt's: the highest `TICK-NNNN`
-//! anywhere under the meetings root, plus one. [`write`] holds a process-wide
-//! lock from that scan until its last file lands, so two notes runs finishing
-//! together cannot hand out the same number.
+//! anywhere under the meetings root, plus one. [`write()`] holds
+//! [`lock_ticket_numbers`] from that scan until its last file lands, so two
+//! notes runs finishing together cannot hand out the same number. Anything
+//! else that numbers tickets should take the same lock.
 //!
 //! **Re-running notes** replaces the four sections. A ticket from an earlier
 //! run is replaced only while the user has not touched it: still `open`, not
 //! synced, and byte for byte the file the app wrote. To tell, `meeting.md`
 //! keeps an `agent_tickets` map of ticket id → SHA-256 of the file as written.
-//! A replaced ticket keeps its number. A ticket that fails the test is the
-//! user's from then on: it is kept, and dropped from the map so no later run
-//! claims it back. A ticket the user deleted stays deleted.
+//! A replaced ticket keeps its number, preferring the old ticket with the same
+//! title. A ticket that fails the test is the user's from then on: it is kept,
+//! and dropped from the map so no later run claims it back. A ticket the user
+//! deleted stays deleted, and its number is not handed out again.
+//!
+//! **A run that stops part-way can be retried.** Before touching a ticket,
+//! `meeting.md` is written with the map listing both the old and the new hash
+//! of every ticket about to change, so a retry still recognises each one as
+//! the app's whichever state it was left in. Only after the last ticket is
+//! `meeting.md` written with its new sections. `meeting.md` is compared with
+//! what was read before each write, so an edit made meanwhile is never
+//! overwritten: the run stops instead.
 //!
 //! **These are self-writes.** Every path written or removed is noted in the
 //! [`SelfWrites`] passed in, as `notes.md` saves are, so the watcher does not
@@ -38,6 +50,8 @@
 //!
 //! `notes.md` and `transcript.md` are never opened for writing here.
 
+use std::collections::HashSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -53,9 +67,16 @@ use crate::ticket::{self, Status, Ticket};
 use crate::watcher::SelfWrites;
 use crate::{Error, MEETING_FILE, TICKETS_DIR};
 
+mod text;
+
 /// The `meeting.md` frontmatter key that records which tickets the app wrote,
-/// and what each file held when it did.
+/// and what each file held when it did. Each value is one SHA-256 in hex, or a
+/// list of them while a run is in flight.
 pub const AGENT_TICKETS_KEY: &str = "agent_tickets";
+
+/// The `meeting.md` key (SPEC A11) by which the user keeps a meeting's
+/// transcript from being sent. `off` means no notes run.
+pub const AGENT_NOTES_KEY: &str = "agent_notes";
 
 /// Held from the ticket-number scan to the last write. Process-wide: the
 /// meetings root is one per app, and only this process allocates numbers.
@@ -92,12 +113,14 @@ pub struct Analysis {
     pub at: String,
 }
 
-/// What [`write`] did with the tickets, by id.
+/// What [`write()`] did with the tickets, by id.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Outcome {
     /// `meeting.md`.
     pub meeting: PathBuf,
-    /// One id per task, in task order: reused numbers first, then new ones.
+    /// The meeting is marked `agent_notes: off`, so nothing was written.
+    pub notes_off: bool,
+    /// One id per task, in task order.
     pub written: Vec<String>,
     /// Tickets from an earlier run the user had touched, left as they were.
     pub kept: Vec<String>,
@@ -112,12 +135,12 @@ pub struct Outcome {
 ///
 /// * [`Error::BadId`] for a meeting id that is not a plain folder name.
 /// * [`Error::Io`] of kind `NotFound` when the meeting folder does not exist.
-/// * Whatever [`Meeting::render`] refuses with — broken frontmatter, or a
-///   `meeting.md` that is not UTF-8. Checked before any file is written, so a
-///   refused run leaves the folder exactly as it was.
-/// * [`Error::Io`] when a file cannot be written. Tickets are written before
-///   `meeting.md`, so a failure part-way leaves the old `meeting.md` (and its
-///   record of which tickets are the app's) in place.
+/// * [`Error::Frontmatter`] for a `meeting.md` with broken frontmatter, and
+///   [`Error::Io`] of kind `InvalidData` for one that is not UTF-8. Both are
+///   checked before any file is written, so the folder is left as it was.
+/// * [`Error::Io`] of kind `Other` when `meeting.md` changed on disk while
+///   the run was writing. What was written so far is safe to retry over.
+/// * [`Error::Io`] when a file cannot be read or written.
 pub fn write(
     root: &Path,
     meeting_id: &str,
@@ -125,20 +148,34 @@ pub fn write(
     analysis: &Analysis,
     self_writes: &SelfWrites,
 ) -> Result<Outcome, Error> {
-    let _numbers = lock_numbers();
+    let _numbers = lock_ticket_numbers();
 
     let dir = meeting_dir(root, meeting_id)?;
     if !dir.is_dir() {
-        return Err(Error::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
+        return Err(Error::Io(io::Error::new(
+            io::ErrorKind::NotFound,
             format!("meeting folder {meeting_id} does not exist"),
         )));
     }
     let meeting_path = dir.join(MEETING_FILE);
-    let mut meeting = match Meeting::read(&meeting_path)? {
-        Some(meeting) => meeting,
+    let mut on_disk = read_if_there(&meeting_path)?;
+    let mut meeting = match &on_disk {
+        Some(bytes) => Meeting::parse(std::str::from_utf8(bytes).map_err(|error| {
+            Error::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{MEETING_FILE} is not UTF-8 ({error}); refusing to overwrite it"),
+            ))
+        })?),
         None => Meeting::new(meeting_id, &default_title(meeting_id)),
     };
+    let mut outcome = Outcome {
+        meeting: meeting_path.clone(),
+        ..Outcome::default()
+    };
+    if notes_are_off(&meeting) {
+        outcome.notes_off = true;
+        return Ok(outcome);
+    }
     // Fail before any ticket lands, not at the last step.
     meeting.render()?;
 
@@ -146,74 +183,157 @@ pub fn write(
     let earlier = sort_earlier(&tickets_dir, &meeting);
     // A number the user's deletion freed stays retired: counting the record
     // too keeps a deleted top ticket from coming back under its old name.
-    let mut next = highest_ticket_number(root)?
+    let next = highest_ticket_number(root)?
         .max(earlier.highest)
         .saturating_add(1);
+    let plan = plan(
+        &tickets_dir,
+        meeting_id,
+        &notes.tasks,
+        earlier.replaceable,
+        next,
+    )?;
+    outcome.kept = earlier.kept;
 
-    let mut record = Hash::new();
-    let mut outcome = Outcome {
-        meeting: meeting_path.clone(),
-        kept: earlier.kept,
-        ..Outcome::default()
-    };
-    let mut reusable = earlier.replaceable.into_iter();
-    for task in &notes.tasks {
-        let id = match reusable.next() {
-            Some(id) => id,
-            None => {
-                let id = ticket::format_id(next);
-                next = next.saturating_add(1);
-                id
-            }
-        };
-        let contents = ticket_for(&id, meeting_id, task).render()?;
-        let path = tickets_dir.join(format!("{id}.md"));
-        crate::write_atomic(&path, &contents)?;
-        self_writes.note(&path);
-        record.insert(Yaml::String(id.clone()), Yaml::String(digest(&contents)));
-        outcome.written.push(id);
+    // Step 1: say which tickets are about to change, in both their states.
+    if !plan.writes.is_empty() || !plan.leftovers.is_empty() {
+        let mut intent = earlier.carried.clone();
+        for planned in &plan.writes {
+            let hashes = planned.old_hash.iter().chain([&planned.new_hash]);
+            intent.insert(key(&planned.id), hash_list(hashes));
+        }
+        for leftover in &plan.leftovers {
+            intent.insert(key(&leftover.id), hash_list([&leftover.hash]));
+        }
+        let mut staged = meeting.clone();
+        set_record(&mut staged, intent);
+        on_disk = save_meeting(&meeting_path, &staged, on_disk.as_deref(), self_writes)?;
     }
-    for id in reusable {
-        let path = tickets_dir.join(format!("{id}.md"));
+
+    // Step 2: the tickets.
+    if !plan.writes.is_empty() && !tickets_dir.is_dir() {
+        std::fs::create_dir_all(&tickets_dir)?;
+        self_writes.note(&tickets_dir);
+    }
+    let mut record = earlier.carried;
+    for planned in &plan.writes {
+        crate::write_atomic(&planned.path, &planned.contents)?;
+        self_writes.note(&planned.path);
+        record.insert(key(&planned.id), Yaml::String(planned.new_hash.clone()));
+        outcome.written.push(planned.id.clone());
+    }
+    for leftover in plan.leftovers {
+        let path = ticket_path(&tickets_dir, &leftover.id);
         // Note first: once the file is gone its path no longer resolves.
         self_writes.note(&path);
         match std::fs::remove_file(&path) {
-            Ok(()) => outcome.removed.push(id),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(()) => outcome.removed.push(leftover.id),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
     }
 
-    let mut actions: Vec<String> = outcome
-        .written
-        .iter()
-        .zip(&notes.tasks)
-        .map(|(id, task)| {
-            action_line(
-                id,
-                task.title.trim(),
-                task.owner.as_deref(),
-                task.due.as_deref(),
-            )
-        })
-        .collect();
-    for id in &outcome.kept {
-        let kept = Ticket::read(&tickets_dir.join(format!("{id}.md"))).ok();
-        let title = kept.as_ref().and_then(Ticket::title).unwrap_or_default();
-        let owner = kept.as_ref().and_then(Ticket::assignee);
-        actions.push(action_line(id, &title, owner.as_deref(), None));
+    // Step 3: the sections, and the record as it now stands.
+    for (k, v) in [
+        ("analyzed_by", analysis.by.as_str()),
+        ("analyzed_model", analysis.model.as_str()),
+        ("analyzed_at", analysis.at.as_str()),
+    ] {
+        meeting.frontmatter.set_str(k, Some(v));
     }
-    fill_meeting(&mut meeting, notes, analysis, &actions, record);
-    meeting.write(&meeting_path)?;
-    self_writes.note(&meeting_path);
+    set_record(&mut meeting, record);
+    let actions = action_items(&tickets_dir, &plan.writes);
+    text::fill_sections(&mut meeting, notes, &actions);
+    save_meeting(&meeting_path, &meeting, on_disk.as_deref(), self_writes)?;
     Ok(outcome)
 }
 
-fn lock_numbers() -> MutexGuard<'static, ()> {
-    // The guard protects no data, so a panic elsewhere leaves nothing torn.
+/// The lock every writer of a new ticket number should hold from choosing the
+/// number until the file is on disk.
+///
+/// The guard protects no data, so a panic elsewhere leaves nothing torn and a
+/// poisoned lock is taken as is.
+pub fn lock_ticket_numbers() -> MutexGuard<'static, ()> {
     TICKET_NUMBERS
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The highest ticket number anywhere under `root`: every meeting's
+/// `tickets/` and the root's own `tickets/` (hand-made tickets, TUR-102).
+///
+/// Judged by file name, so a ticket with broken frontmatter still holds its
+/// number. A `tickets/` that cannot be listed is logged and skipped rather
+/// than failing every meeting's notes for one broken folder (SPEC §7); the
+/// writer still refuses to replace a file that exists.
+///
+/// # Errors
+///
+/// [`Error::Io`] when `root` itself cannot be listed.
+pub fn highest_ticket_number(root: &Path) -> Result<u32, Error> {
+    let mut dirs = vec![root.join(TICKETS_DIR)];
+    dirs.extend(
+        folder::meeting_dirs(root)?
+            .into_iter()
+            .map(|dir| dir.join(TICKETS_DIR)),
+    );
+    let mut highest = 0;
+    for dir in dirs {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                tracing::warn!(path = %dir.display(), %error, "skipping a tickets folder that could not be listed");
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if let Some(n) = name
+                .to_string_lossy()
+                .strip_suffix(".md")
+                .and_then(ticket::parse_id)
+            {
+                highest = highest.max(n);
+            }
+        }
+    }
+    Ok(highest)
+}
+
+fn read_if_there(path: &Path) -> Result<Option<Vec<u8>>, Error> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Write `meeting` over `path`, but only if the file still holds `expected`
+/// (`None`: still absent). Returns what is on disk now.
+fn save_meeting(
+    path: &Path,
+    meeting: &Meeting,
+    expected: Option<&[u8]>,
+    self_writes: &SelfWrites,
+) -> Result<Option<Vec<u8>>, Error> {
+    if read_if_there(path)?.as_deref() != expected {
+        return Err(Error::Io(io::Error::other(format!(
+            "{MEETING_FILE} changed while the notes were being written; \
+             it was left as it is. Run the notes again."
+        ))));
+    }
+    let contents = meeting.render()?;
+    crate::write_atomic(path, &contents)?;
+    self_writes.note(path);
+    Ok(Some(contents.into_bytes()))
+}
+
+fn notes_are_off(meeting: &Meeting) -> bool {
+    matches!(
+        meeting.frontmatter.get_str(AGENT_NOTES_KEY).as_deref(),
+        Some("off" | "false")
+    )
 }
 
 /// The title a brand-new `meeting.md` gets: the folder's slug, prettified, or
@@ -225,13 +345,44 @@ fn default_title(meeting_id: &str) -> String {
     }
 }
 
-/// The tickets an earlier run wrote, split by whether this run may replace
-/// them.
+fn ticket_path(tickets_dir: &Path, id: &str) -> PathBuf {
+    tickets_dir.join(format!("{id}.md"))
+}
+
+fn key(id: &str) -> Yaml {
+    Yaml::String(id.to_owned())
+}
+
+fn hash_list<'a>(hashes: impl IntoIterator<Item = &'a String>) -> Yaml {
+    Yaml::Array(hashes.into_iter().cloned().map(Yaml::String).collect())
+}
+
+fn set_record(meeting: &mut Meeting, record: Hash) {
+    if record.is_empty() {
+        meeting.frontmatter.remove(AGENT_TICKETS_KEY);
+    } else {
+        meeting
+            .frontmatter
+            .set(AGENT_TICKETS_KEY, Yaml::Hash(record));
+    }
+}
+
+/// An untouched ticket from an earlier run.
+struct Prior {
+    id: String,
+    title: Option<String>,
+    hash: String,
+}
+
+/// The tickets an earlier run wrote, sorted by what this run may do with them.
 struct Earlier {
     /// Untouched: open, not synced, unchanged. In id order.
-    replaceable: Vec<String>,
+    replaceable: Vec<Prior>,
     /// Touched, so the user's now. In id order.
     kept: Vec<String>,
+    /// Record entries kept as they are: tickets that could not be read just
+    /// now, so neither touched nor deleted can be told.
+    carried: Hash,
     /// The highest number in the record, deleted tickets included.
     highest: u32,
 }
@@ -240,178 +391,171 @@ fn sort_earlier(tickets_dir: &Path, meeting: &Meeting) -> Earlier {
     let mut earlier = Earlier {
         replaceable: Vec::new(),
         kept: Vec::new(),
+        carried: Hash::new(),
         highest: 0,
     };
     let Some(Yaml::Hash(record)) = meeting.frontmatter.get(AGENT_TICKETS_KEY) else {
         return earlier;
     };
-    let mut ids: Vec<(String, String)> = record
+    let mut entries: Vec<(u32, String, &Yaml)> = record
         .iter()
-        .filter_map(|(id, hash)| Some((id.as_str()?.to_owned(), hash.as_str()?.to_owned())))
-        // A hand-edited record must not point outside the tickets folder.
-        .filter(|(id, _)| ticket::parse_id(id).is_some())
+        .filter_map(|(id, hashes)| {
+            let id = id.as_str()?;
+            // A hand-edited record must not point outside the tickets folder.
+            Some((ticket::parse_id(id)?, id.to_owned(), hashes))
+        })
         .collect();
-    ids.sort_by_key(|(id, _)| ticket::parse_id(id));
-    earlier.highest = ids
-        .iter()
-        .filter_map(|(id, _)| ticket::parse_id(id))
-        .max()
-        .unwrap_or(0);
-    for (id, hash) in ids {
-        let path = tickets_dir.join(format!("{id}.md"));
-        match std::fs::read(&path) {
-            Ok(bytes) if is_untouched(&bytes, &hash) => earlier.replaceable.push(id),
-            Ok(_) => earlier.kept.push(id),
-            // Deleted by the user (or unreadable): never recreated.
-            Err(_) => {}
+    entries.sort_by_key(|(n, _, _)| *n);
+    earlier.highest = entries.last().map_or(0, |(n, _, _)| *n);
+    for (_, id, hashes) in entries {
+        let recorded: Vec<&str> = match hashes {
+            Yaml::String(one) => vec![one.as_str()],
+            Yaml::Array(many) => many.iter().filter_map(Yaml::as_str).collect(),
+            _ => Vec::new(),
+        };
+        match std::fs::read(ticket_path(tickets_dir, &id)) {
+            Ok(bytes) => match untouched(&bytes, &recorded) {
+                Some((hash, title)) => earlier.replaceable.push(Prior { id, title, hash }),
+                None => earlier.kept.push(id),
+            },
+            // Deleted by the user: never recreated.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(%id, %error, "could not read a ticket the app wrote; leaving it be");
+                earlier.carried.insert(key(&id), hashes.clone());
+            }
         }
     }
     earlier
 }
 
-/// Still `open`, not synced, and byte for byte what the app wrote.
-fn is_untouched(bytes: &[u8], recorded: &str) -> bool {
-    let Ok(raw) = std::str::from_utf8(bytes) else {
-        return false;
-    };
-    if digest(raw) != recorded {
-        return false;
+/// Still `open`, not synced, and byte for byte what the app wrote: its hash
+/// and title, or `None` if the user has touched it.
+fn untouched(bytes: &[u8], recorded: &[&str]) -> Option<(String, Option<String>)> {
+    let raw = std::str::from_utf8(bytes).ok()?;
+    let hash = digest(raw);
+    if !recorded.contains(&hash.as_str()) {
+        return None;
     }
     let ticket = Ticket::parse(raw);
-    ticket.status() == Some(Status::Open)
-        && ticket.synced_to().is_none()
-        && ticket.frontmatter.get_str("external_id").is_none()
-        && ticket.frontmatter.get_str("external_url").is_none()
+    let unsynced = ["synced_to", "external_id", "external_url"]
+        .iter()
+        .all(|k| ticket.frontmatter.get_str(k).is_none());
+    (ticket.status() == Some(Status::Open) && unsynced).then(|| (hash, ticket.title()))
 }
 
 fn digest(contents: &str) -> String {
     format!("{:x}", Sha256::digest(contents.as_bytes()))
 }
 
-/// The highest ticket number anywhere under `root`: every meeting's
-/// `tickets/` and the root's own `tickets/` (hand-made tickets, TUR-102).
-///
-/// Judged by file name, so a ticket with broken frontmatter still holds its
-/// number.
-fn highest_ticket_number(root: &Path) -> Result<u32, Error> {
-    let mut dirs = vec![root.join(TICKETS_DIR)];
-    dirs.extend(
-        folder::meeting_dirs(root)?
-            .into_iter()
-            .map(|dir| dir.join(TICKETS_DIR)),
-    );
-    let mut highest = 0;
-    for dir in dirs {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.into()),
+/// One ticket this run will write.
+struct Planned<'a> {
+    id: String,
+    path: PathBuf,
+    task: &'a Task,
+    contents: String,
+    new_hash: String,
+    /// The replaced ticket's hash; `None` for a new number.
+    old_hash: Option<String>,
+}
+
+struct Plan<'a> {
+    /// In task order.
+    writes: Vec<Planned<'a>>,
+    /// Untouched tickets no task took: deleted.
+    leftovers: Vec<Prior>,
+}
+
+/// Give every task an id. An untouched ticket with the same title is reused
+/// first, so a ticket people already refer to keeps its number when the task
+/// comes back; then the rest of the untouched ones in id order; then new
+/// numbers from `next`, skipping any file that already exists.
+fn plan<'a>(
+    tickets_dir: &Path,
+    meeting_id: &str,
+    tasks: &'a [Task],
+    mut free: Vec<Prior>,
+    mut next: u32,
+) -> Result<Plan<'a>, Error> {
+    let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+    let mut chosen: Vec<Option<Prior>> = tasks
+        .iter()
+        .map(|task| {
+            let i = free
+                .iter()
+                .position(|p| p.title.as_deref().is_some_and(|t| same(t, &task.title)))?;
+            Some(free.remove(i))
+        })
+        .collect();
+    let mut by_order = free.into_iter();
+    for slot in chosen.iter_mut().filter(|slot| slot.is_none()) {
+        *slot = by_order.next();
+    }
+    let leftovers = by_order.collect();
+
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut writes = Vec::with_capacity(tasks.len());
+    for (task, prior) in tasks.iter().zip(chosen) {
+        let (id, old_hash) = match prior {
+            Some(prior) => (prior.id, Some(prior.hash)),
+            None => loop {
+                let id = ticket::format_id(next);
+                next = next.saturating_add(1);
+                if !ticket_path(tickets_dir, &id).exists() && taken.insert(id.clone()) {
+                    break (id, None);
+                }
+            },
         };
-        for entry in entries {
-            let name = entry?.file_name();
-            let name = name.to_string_lossy();
-            if let Some(n) = name.strip_suffix(".md").and_then(ticket::parse_id) {
-                highest = highest.max(n);
+        let mut made = text::ticket_for(&id, meeting_id, task);
+        made.frontmatter
+            .set_str("transcript_ref", Some(&task.transcript_ref));
+        let contents = made.render()?;
+        writes.push(Planned {
+            path: ticket_path(tickets_dir, &id),
+            new_hash: digest(&contents),
+            id,
+            task,
+            contents,
+            old_hash,
+        });
+    }
+    Ok(Plan { writes, leftovers })
+}
+
+/// One line per ticket in the meeting's folder, in number order. The tickets
+/// this run wrote use the task's words; the rest are read back from disk.
+fn action_items(tickets_dir: &Path, writes: &[Planned<'_>]) -> Vec<String> {
+    let mut ids: Vec<(u32, String)> = std::fs::read_dir(tickets_dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|entry| {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let id = name.strip_suffix(".md")?.to_owned();
+                    Some((ticket::parse_id(&id)?, id))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    ids.sort();
+    ids.into_iter()
+        .map(|(_, id)| {
+            if let Some(planned) = writes.iter().find(|p| p.id == id) {
+                let task = text::clean(planned.task);
+                return text::action_line(
+                    &id,
+                    &task.title,
+                    task.owner.as_deref(),
+                    task.due.as_deref(),
+                );
             }
-        }
-    }
-    Ok(highest)
-}
-
-fn ticket_for(id: &str, meeting_id: &str, task: &Task) -> Ticket {
-    let mut made = Ticket::new(id, task.title.trim(), meeting_id);
-    made.frontmatter.set_str("assignee", task.owner.as_deref());
-    made.frontmatter
-        .set_str("transcript_ref", Some(&task.transcript_ref));
-    let paragraphs: Vec<String> = [
-        Some(task.details.trim().to_owned()),
-        task.due
-            .as_deref()
-            .map(|due| format!("Due: {}.", due.trim())),
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|p| !p.is_empty())
-    .collect();
-    made.body = if paragraphs.is_empty() {
-        String::new()
-    } else {
-        format!("\n{}\n", paragraphs.join("\n\n"))
-    };
-    made
-}
-
-fn fill_meeting(
-    meeting: &mut Meeting,
-    notes: &Notes,
-    analysis: &Analysis,
-    actions: &[String],
-    record: Hash,
-) {
-    let fm = &mut meeting.frontmatter;
-    fm.set_str("analyzed_by", Some(analysis.by.as_str()));
-    fm.set_str("analyzed_model", Some(&analysis.model));
-    fm.set_str("analyzed_at", Some(&analysis.at));
-    if record.is_empty() {
-        fm.remove(AGENT_TICKETS_KEY);
-    } else {
-        fm.set(AGENT_TICKETS_KEY, Yaml::Hash(record));
-    }
-
-    meeting.set_section("Summary", &paragraph(&notes.summary));
-    meeting.set_section("Decisions", &bullets(&notes.decisions));
-    meeting.set_section("Action Items", &bullets(actions));
-    meeting.set_section("Open Questions", &bullets(&notes.open_questions));
-}
-
-/// `TICK-0001: Move sessions to Redis (Priya, due Friday)`.
-fn action_line(id: &str, title: &str, owner: Option<&str>, due: Option<&str>) -> String {
-    let mut line = format!("{id}: {title}");
-    let due = due.map(|d| format!("due {d}"));
-    let extra: Vec<String> = owner.map(str::to_owned).into_iter().chain(due).collect();
-    if !extra.is_empty() {
-        line.push_str(&format!(" ({})", extra.join(", ")));
-    }
-    line
-}
-
-/// What an empty section says, as on the copy-prompt path.
-const NONE: &str = "None.\n";
-
-/// Free text for a section body. A line that starts with `## ` would split
-/// the section on the next read, so its `#` is escaped.
-fn paragraph(text: &str) -> String {
-    let text = text.trim();
-    if text.is_empty() {
-        return NONE.to_owned();
-    }
-    let mut out = String::new();
-    for line in text.lines() {
-        if line.starts_with("## ") {
-            out.push('\\');
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
-/// One `- item` line per non-empty item, each folded onto a single line;
-/// [`NONE`] when there are none.
-fn bullets(items: &[String]) -> String {
-    let mut out = String::new();
-    for item in items {
-        let folded = item.split_whitespace().collect::<Vec<_>>().join(" ");
-        if !folded.is_empty() {
-            out.push_str("- ");
-            out.push_str(&folded);
-            out.push('\n');
-        }
-    }
-    if out.is_empty() {
-        out.push_str(NONE);
-    }
-    out
+            let found = Ticket::read(&ticket_path(tickets_dir, &id)).ok();
+            let title = found.as_ref().and_then(Ticket::title).unwrap_or_default();
+            let owner = found.as_ref().and_then(Ticket::assignee);
+            let due = found.as_ref().and_then(|t| text::due_in(&t.body));
+            text::action_line(&id, &title, owner.as_deref(), due.as_deref())
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -419,33 +563,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_heading_in_the_summary_cannot_start_a_section() {
-        assert_eq!(paragraph("ok\n## Evil\n"), "ok\n\\## Evil\n");
-    }
-
-    #[test]
-    fn bullets_fold_lines_and_skip_blanks() {
-        let items = ["one\ntwo".to_owned(), "  ".to_owned(), "three".to_owned()];
-        assert_eq!(bullets(&items), "- one two\n- three\n");
-        assert_eq!(bullets(&[]), "None.\n");
-        assert_eq!(paragraph(" "), "None.\n");
-    }
-
-    #[test]
-    fn action_lines_leave_out_what_was_not_said() {
-        assert_eq!(
-            action_line("TICK-0001", "Ship it", Some("Priya"), Some("Friday")),
-            "TICK-0001: Ship it (Priya, due Friday)"
-        );
-        assert_eq!(
-            action_line("TICK-0002", "Ship it", None, None),
-            "TICK-0002: Ship it"
-        );
-    }
-
-    #[test]
     fn analyzed_by_literals_match_the_spec() {
         assert_eq!(AnalyzedBy::ClaudeCode.as_str(), "claude-code");
         assert_eq!(AnalyzedBy::Codex.as_str(), "codex");
+    }
+
+    #[test]
+    fn a_ticket_matching_either_recorded_hash_is_untouched() {
+        let raw = Ticket::new("TICK-0001", "Ship", "m").render().unwrap();
+        let hash = digest(&raw);
+        assert!(untouched(raw.as_bytes(), &["old", &hash]).is_some());
+        assert!(untouched(raw.as_bytes(), &["old"]).is_none());
     }
 }

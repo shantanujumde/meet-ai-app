@@ -30,8 +30,10 @@
 //!   [`Error`].
 //! * **SPEC §4 — the watcher must suppress this process's own writes.** The app
 //!   writes `notes.md` while the user types in it. Without suppression the
-//!   watcher fires, the app reloads, and the cursor jumps mid-sentence. Agent
-//!   writes are *not* suppressed. (Phase 3b, TUR-100.)
+//!   watcher fires, the app reloads, and the cursor jumps mid-sentence. Files an
+//!   agent writes itself (the copy-prompt path) are *not* suppressed; the notes
+//!   the app writes from the agent's JSON ([`agent_notes`]) are. (Phase 3b,
+//!   TUR-100; TUR-7.)
 //!
 //! No `#[cfg(target_os)]` anywhere in this crate: `store` must stay free of
 //! mac-only code (SPEC §8.2). Every path is built with `Path::join`.
