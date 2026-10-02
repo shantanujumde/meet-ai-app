@@ -67,7 +67,10 @@ use crate::ticket::{self, Status, Ticket};
 use crate::watcher::SelfWrites;
 use crate::{Error, MEETING_FILE, TICKETS_DIR};
 
+mod retired;
 mod text;
+
+pub use retired::highest_recorded_ticket_number;
 
 /// The `meeting.md` frontmatter key that records which tickets the app wrote,
 /// and what each file held when it did. Each value is one SHA-256 in hex, or a
