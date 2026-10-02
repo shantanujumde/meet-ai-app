@@ -302,6 +302,7 @@ fn a_refused_codex_sync_exits_0_and_is_not_synced() {
     let before = fs::read(ticket_path(root.path())).unwrap();
     let bin = tempfile::tempdir().unwrap();
     let write_reply = r#"out=""; prev=""
+case " $* " in *" mcp list "*) echo '[{"name":"linear"}]'; exit 0;; esac
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
 printf '%s' '{"external_id":null,"external_url":null}' > "$out""#;
     let script = fake_cli(bin.path(), "codex", write_reply);
