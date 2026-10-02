@@ -9,7 +9,7 @@ import { useAppStore } from "@/state/app";
 import { FolderRow } from "@/ui/FolderRow";
 import { Button, ButtonRow, Card, Pill, Prose } from "@/ui/primitives";
 
-export function FolderStep({ onFinish }: { onFinish: () => void }) {
+export function FolderStep({ onNext }: { onNext: () => void }) {
   const rootExists = useAppStore((state) => state.meetings?.rootExists ?? false);
 
   return (
@@ -42,8 +42,8 @@ export function FolderStep({ onFinish }: { onFinish: () => void }) {
         window open, or even visible.
       </Prose>
       <ButtonRow>
-        <Button tone="primary" onClick={onFinish}>
-          Done
+        <Button tone="primary" onClick={onNext}>
+          Continue
         </Button>
       </ButtonRow>
     </>

@@ -327,3 +327,60 @@ export type MeetingNotes = {
   /** Summary, Decisions, Action Items, Open Questions — the ones with text. */
   sections: NotesSection[];
 };
+
+// --- agent setup (SPEC A11, the Setup row) ---------------------------------
+
+/** Which agent writes the notes. `none` is the copy-prompt fallback. */
+export type AgentHarness = "claude-code" | "codex" | "none";
+
+/** `agent` in config.jsonc: the chosen agent, its model, and an optional path to its CLI. */
+export type AgentChoice = {
+  harness: AgentHarness;
+  /** Any model name the chosen CLI accepts. Blank means the CLI's own default. */
+  model: string;
+  /** Set when the automatic lookup cannot find the CLI. Null means look it up. */
+  binaryPath: string | null;
+};
+
+/** The agents meet-ai can run itself. */
+export type AgentCliId = "claude-code" | "codex";
+
+/**
+ * What detection found: `ready` is installed and signed in, `signed-out` is
+ * installed but not signed in, `missing` is not found at all.
+ */
+export type AgentCliState = "ready" | "signed-out" | "missing";
+
+/** One agent CLI, as found on this Mac. */
+export type AgentCli = {
+  id: AgentCliId;
+  /** "Claude Code" or "Codex". */
+  name: string;
+  /** "Anthropic" or "OpenAI": who the transcript is sent to. */
+  provider: string;
+  state: AgentCliState;
+  /** Where it was found. Null when missing. */
+  path: string | null;
+  version: string | null;
+  /** What to run in Terminal to sign in, e.g. `claude auth login`. */
+  signInCommand: string;
+  /** Model names to suggest. Free text is still allowed. */
+  models: string[];
+  /** "opus" for Claude Code. Null means the CLI's own default. */
+  defaultModel: string | null;
+  /** Whether the Test button can run this agent. False when it is missing. */
+  canTest: boolean;
+};
+
+/** One task from a test run. */
+export type AgentTestTask = { title: string; owner: string | null; due: string | null };
+
+/** What the Test button's sample run gave back. */
+export type AgentTestResult = {
+  summary: string;
+  decisions: string[];
+  openQuestions: string[];
+  tasks: AgentTestTask[];
+  /** Wall time of the run, in seconds. */
+  seconds: number;
+};

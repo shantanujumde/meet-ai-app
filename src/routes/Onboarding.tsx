@@ -33,6 +33,7 @@ import {
 } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { Button, ButtonRow } from "@/ui/primitives";
+import { AgentStep } from "./onboarding/AgentStep";
 import { FolderStep } from "./onboarding/FolderStep";
 import { PermissionStep } from "./onboarding/PermissionStep";
 import { SpeechStep } from "./onboarding/SpeechStep";
@@ -94,7 +95,8 @@ export function Onboarding() {
         />
       ) : null}
       {current === "speech" ? <SpeechStep onNext={goNext} /> : null}
-      {current === "folder" ? <FolderStep onFinish={() => void complete()} /> : null}
+      {current === "folder" ? <FolderStep onNext={goNext} /> : null}
+      {current === "agent" ? <AgentStep onFinish={() => void complete()} /> : null}
 
       <ButtonRow>
         {previous ? (

@@ -27,6 +27,9 @@ import {
 } from "./bindings";
 import { NO_BACKEND } from "./errors";
 import type {
+  AgentChoice,
+  AgentCli,
+  AgentTestResult,
   EnvironmentView,
   LiveTranscriptSnapshot,
   MeetingDetail,
@@ -229,6 +232,41 @@ export function cancelNotesRun(meetingId: string): Promise<NotesRunStatus> {
 export async function meetingNotes(meetingId: string): Promise<MeetingNotes> {
   if (!hasBackend()) return { notesOff: false, analyzedBy: null, sections: [] };
   return call(() => commands.meetingNotes(meetingId));
+}
+
+// --- agent setup ----------------------------------------------------------
+
+/**
+ * The agent the user picked to write notes (`agent` in config.jsonc). Rejects
+ * with `app/unknown-harness` when the file names an agent meet-ai does not
+ * know. Without a backend, the default: Claude Code on Opus.
+ */
+export async function agentChoice(): Promise<AgentChoice> {
+  if (!hasBackend()) return { harness: "claude-code", model: "opus", binaryPath: null };
+  return call(() => commands.agentChoice());
+}
+
+/**
+ * Look for Claude Code and Codex: installed, signed in, which version. Always
+ * both, Claude Code first. Takes seconds. `choice.binaryPath` is used only for
+ * the agent `choice` names. Without a backend nothing can be found.
+ */
+export async function detectAgents(choice: AgentChoice): Promise<AgentCli[]> {
+  if (!hasBackend()) return [];
+  return call(() => commands.detectAgents(choice));
+}
+
+/** Save the agent, model and path. Resolves to what was saved, read back from disk. */
+export function saveAgentChoice(choice: AgentChoice): Promise<AgentChoice> {
+  return call(() => commands.saveAgentChoice(choice));
+}
+
+/**
+ * Run a 3-line sample transcript through the real notes run, end to end.
+ * Can take up to a minute.
+ */
+export function testAgent(choice: AgentChoice): Promise<AgentTestResult> {
+  return call(() => commands.testAgent(choice));
 }
 
 // --- permission and onboarding -------------------------------------------
