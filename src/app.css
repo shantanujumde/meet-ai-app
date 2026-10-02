@@ -23,7 +23,9 @@
 
 .shell {
   display: grid;
-  grid-template-rows: var(--titlebar-h) 1fr;
+  /* minmax(0, …), not a bare 1fr: a 1fr row grows to fit its content, and
+     the panes only scroll inside a row that stays the window's height. */
+  grid-template-rows: var(--titlebar-h) minmax(0, 1fr);
   grid-template-columns: var(--sidebar-w) 1fr;
   grid-template-areas:
     "titlebar titlebar"

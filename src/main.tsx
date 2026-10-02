@@ -2,12 +2,16 @@ import { info } from "@tauri-apps/plugin-log";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { lockDocumentScroll } from "./lib/documentScroll";
 import "./index.css";
 
 const container = document.getElementById("root");
 if (!container) {
   throw new Error("index.html is missing its #root element");
 }
+
+// TUR-15: only the panes scroll, never the page.
+lockDocumentScroll();
 
 createRoot(container).render(
   <StrictMode>
