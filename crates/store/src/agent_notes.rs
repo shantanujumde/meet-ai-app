@@ -481,9 +481,11 @@ fn plan<'a>(
     let mut chosen: Vec<Option<Prior>> = tasks
         .iter()
         .map(|task| {
+            // The title as it was written to the file, not as sent.
+            let title = text::clean(task).title;
             let i = free
                 .iter()
-                .position(|p| p.title.as_deref().is_some_and(|t| same(t, &task.title)))?;
+                .position(|p| p.title.as_deref().is_some_and(|t| same(t, &title)))?;
             Some(free.remove(i))
         })
         .collect();
