@@ -9,11 +9,6 @@
       "description": "Path to this schema, so editors can autocomplete and check the file.",
       "default": "./config.schema.json"
     },
-    "meetings_root": {
-      "type": "string",
-      "description": "Folder where meetings are stored. A leading ~ means your home folder.",
-      "default": "~/Meetings"
-    },
     "transcription": {
       "type": "object",
       "description": "How speech is turned into text.",
@@ -31,19 +26,19 @@
         },
         "language": {
           "type": "string",
-          "description": "Spoken language of the meeting, as a language code.",
+          "description": "Spoken language of the meeting, as a language code. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
           "default": "en"
         },
         "live": {
           "type": "boolean",
-          "description": "Transcribe while the call is running. false = transcribe only after recording stops.",
+          "description": "Transcribe while the call is running. false = transcribe only after recording stops. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
           "default": true
         }
       }
     },
     "audio": {
       "type": "object",
-      "description": "What happens to recorded audio.",
+      "description": "What happens to recorded audio. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
       "properties": {
         "retention_days": {
           "type": "integer",
@@ -60,7 +55,7 @@
     },
     "calendar": {
       "type": "object",
-      "description": "Where upcoming meetings are read from.",
+      "description": "Where upcoming meetings are read from. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
       "properties": {
         "providers": {
           "type": "array",
@@ -89,7 +84,7 @@
     },
     "detection": {
       "type": "object",
-      "description": "Signals used to notice that a meeting has started.",
+      "description": "Signals used to notice that a meeting has started. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
       "properties": {
         "calendar": {
           "type": "boolean",
@@ -131,7 +126,8 @@
         "binary_path": {
           "type": ["string", "null"],
           "description": "Full path to the agent CLI. Set this when auto-detect cannot find it; null = find it automatically.",
-          "default": null
+          "default": null,
+          "minLength": 1
         },
         "auto_run": {
           "type": "boolean",
@@ -165,7 +161,7 @@
     },
     "repos": {
       "type": "object",
-      "description": "Code repositories that tasks relate to.",
+      "description": "Code repositories that tasks relate to. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
       "properties": {
         "default": {
           "type": "string",

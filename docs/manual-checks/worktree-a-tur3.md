@@ -19,10 +19,14 @@ Decisions (approved by Shann):
   into the binary with `include_str!` and written next to `config.jsonc` each
   time the app saves the `agent` or `tickets` section. There is no separate
   write at startup.
-- No IPC commands yet; TUR-9 (Setup screens) adds them. Until then the new
-  functions carry `#[allow(dead_code)]` / `#[allow(unused_imports)]`.
+- No IPC commands yet; TUR-9 (Setup screens) adds them. Until then the four
+  entry points (`agent`, `tickets`, `set_agent`, `set_tickets`) carry
+  `#[allow(dead_code)]` and their re-exports `#[allow(unused_imports)]`;
+  TUR-9 removes both.
 - `ConfigError` is new, in `src-tauri/src/config`. It maps to `UiError` domain
-  `app`, kinds `unknown-harness`, `invalid-config` and `io`.
+  `app`, kinds `unknown-harness`, `invalid-config` and `io`. When the
+  meetings folder itself cannot be found, the original `UiError` is passed
+  through with its own kind (for example `no-home-dir`).
 - `transcription` reading is unchanged: it still logs and falls back to the
   defaults. Only `agent` and `tickets` return errors.
 
@@ -31,7 +35,12 @@ Other notes:
 - `src-tauri/Cargo.toml`: one existing line changed. `jsonc-parser` gained the
   `cst` feature (the parser's comment-keeping syntax tree, used for writes).
   `Cargo.lock` is unchanged.
-- `agent.timeout_sec: 0` is rejected as `invalid-config`, to match the
-  schema's `minimum: 1`.
+- `agent.timeout_sec` must be a whole number of at least 1, like the schema
+  says; `300.0` is accepted, `0` and `300.5` are `invalid-config`. An empty
+  `binary_path` reads as unset.
+- After review: `meetings_root` is no longer in the schema (the app never
+  reads it from `config.jsonc`), and the keys the app does not read yet
+  (`audio`, `calendar`, `detection`, `repos`, `transcription.language` and
+  `transcription.live`) say so in their descriptions.
 - A fresh worktree needs `just sidecar` before `cargo check --workspace`
   (tauri-build looks for `target/meet-stt-<triple>`).
