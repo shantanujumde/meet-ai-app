@@ -147,6 +147,7 @@ Features confirmed present on 0.16.0: `metal`, `coreml`, `cuda`, `vulkan`, `hipb
 | `serde_json` | **1.0.151** | |
 | `jsonc-parser` | **0.33.1** | config (§1.3) |
 | `minijinja` | **2.24.0** | prompt templates |
+| `jsonschema` | **0.58.4** | notes-schema check (SPEC A11). `default-features = false`: the defaults pull `reqwest` for remote `$ref`s |
 | `dirs` | **6.0.0** | ⛔ every path via this — Windows seam |
 | `chrono` | **0.4.45** | |
 

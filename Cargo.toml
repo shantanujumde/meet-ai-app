@@ -13,6 +13,7 @@ version = "0.3.0"
 # the versions their docs were read against (see CLAUDE.md, the "new major" rule).
 [workspace.dependencies]
 # --- local crates ---
+agent = { path = "crates/agent" }
 audio = { path = "crates/audio" }
 calendar = { path = "crates/calendar" }
 detect = { path = "crates/detect" }
@@ -55,6 +56,9 @@ tokio-util = "=0.7.19"
 chrono = { version = "=0.4.45", features = ["serde"] }
 dirs = "=6.0.0"
 jsonc-parser = "=0.33.1"
+# Notes-schema check (SPEC A11). No default features: they pull reqwest for
+# remote $refs, and nothing in crates/prompts may grow a network client.
+jsonschema = { version = "=0.58.4", default-features = false }
 minijinja = "=2.24.0"
 notify = "=8.2.0"
 notify-debouncer-full = "=0.7.0"

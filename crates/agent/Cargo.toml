@@ -1,0 +1,26 @@
+[package]
+name = "agent"
+description = "Runs the user's own agent CLI (Claude Code, Codex) as a local child process and checks its JSON (SPEC A11)."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+# Output check against the run's JSON schema (SPEC A11). Same validator as
+# crates/prompts; no default features, so no network client comes with it.
+jsonschema.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+# Every run gets a fresh, empty working folder (SPEC A11), deleted afterwards.
+tempfile.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# The crate's own tests use the fake harness.
+agent = { path = ".", features = ["test-support"] }
+
+[features]
+# `FakeHarness`, for tests in this crate and in the app. Never on in a build.
+test-support = []
