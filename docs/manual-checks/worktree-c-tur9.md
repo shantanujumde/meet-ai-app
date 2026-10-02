@@ -70,3 +70,12 @@ wrong, change `AgentCliId::sign_in_args` in `src-tauri/src/agent_setup/view.rs`.
 - **Agent-specific wording in `src/ipc/errors.ts`.** The `agent-*` and
   `unknown-harness` errors show the generic headline with Rust's own sentence
   under it. Better wording belongs with whichever ticket owns that file.
+
+## Failing test outside this ticket
+
+`live_transcript::tests::a_guess_that_is_never_settled_or_withdrawn_does_not_stay_on_screen`
+(`src-tauri/src/live_transcript/tests.rs:733`) is flaky on this Mac after the
+rebase onto TUR-10: 2 passes in 5 runs of
+`cargo test -p meet-ai --lib a_guess_that_is_never_settled`. It is a timing
+test (fixed sleeps around the stale-guess timer) in a file this ticket does not
+touch, so it was left alone.
