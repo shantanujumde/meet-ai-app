@@ -59,16 +59,29 @@ mod tests {
 
     #[test]
     fn messages_say_what_to_do() {
-        let e = AgentError::NotSignedIn { harness: "Claude Code".into() };
+        let e = AgentError::NotSignedIn {
+            harness: "Claude Code".into(),
+        };
         assert!(e.to_string().contains("sign in"));
 
-        let e = AgentError::TimedOut { after: Duration::from_secs(300) };
+        let e = AgentError::TimedOut {
+            after: Duration::from_secs(300),
+        };
         assert!(e.to_string().contains("300 seconds"));
 
-        let e = AgentError::CliFailed { status: Some(2), stderr: "bad flag".into() };
-        assert_eq!(e.to_string(), "the agent CLI failed (exit code 2): bad flag");
+        let e = AgentError::CliFailed {
+            status: Some(2),
+            stderr: "bad flag".into(),
+        };
+        assert_eq!(
+            e.to_string(),
+            "the agent CLI failed (exit code 2): bad flag"
+        );
 
-        let e = AgentError::CliFailed { status: None, stderr: String::new() };
+        let e = AgentError::CliFailed {
+            status: None,
+            stderr: String::new(),
+        };
         assert!(e.to_string().contains("signal"));
     }
 }

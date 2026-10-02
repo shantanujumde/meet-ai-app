@@ -61,8 +61,16 @@ impl Job {
     }
 
     /// A sync run that may use only `allowed_tools`.
-    pub fn sync(prompt: impl Into<String>, schema: serde_json::Value, allowed_tools: Vec<String>) -> Self {
-        Self { kind: JobKind::Sync, allowed_tools, ..Self::notes(prompt, schema) }
+    pub fn sync(
+        prompt: impl Into<String>,
+        schema: serde_json::Value,
+        allowed_tools: Vec<String>,
+    ) -> Self {
+        Self {
+            kind: JobKind::Sync,
+            allowed_tools,
+            ..Self::notes(prompt, schema)
+        }
     }
 }
 
@@ -115,7 +123,11 @@ mod tests {
 
     #[test]
     fn a_sync_job_keeps_its_tools() {
-        let job = Job::sync("t", serde_json::json!({}), vec!["mcp__linear__create_issue".into()]);
+        let job = Job::sync(
+            "t",
+            serde_json::json!({}),
+            vec!["mcp__linear__create_issue".into()],
+        );
         assert_eq!(job.kind, JobKind::Sync);
         assert_eq!(job.allowed_tools, ["mcp__linear__create_issue"]);
     }

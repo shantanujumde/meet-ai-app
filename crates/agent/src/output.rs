@@ -18,7 +18,9 @@ impl OutputCheck {
     pub fn new(schema: &serde_json::Value) -> Result<Self, AgentError> {
         jsonschema::validator_for(schema)
             .map(|validator| Self { validator })
-            .map_err(|e| AgentError::CouldNotStart { reason: format!("the output schema is invalid: {e}") })
+            .map_err(|e| AgentError::CouldNotStart {
+                reason: format!("the output schema is invalid: {e}"),
+            })
     }
 
     /// Passes `value` through if it matches the schema.
@@ -37,7 +39,11 @@ impl OutputCheck {
                 format!("at {at}: {}", e.masked())
             })
             .collect();
-        if errors.is_empty() { Ok(value) } else { Err(AgentError::SchemaMismatch { errors }) }
+        if errors.is_empty() {
+            Ok(value)
+        } else {
+            Err(AgentError::SchemaMismatch { errors })
+        }
     }
 }
 
@@ -46,9 +52,13 @@ impl OutputCheck {
 pub fn parse_json(text: &str) -> Result<serde_json::Value, AgentError> {
     let text = text.trim();
     if text.is_empty() {
-        return Err(AgentError::InvalidJson { reason: "the reply was empty".to_owned() });
+        return Err(AgentError::InvalidJson {
+            reason: "the reply was empty".to_owned(),
+        });
     }
-    serde_json::from_str(text).map_err(|e| AgentError::InvalidJson { reason: e.to_string() })
+    serde_json::from_str(text).map_err(|e| AgentError::InvalidJson {
+        reason: e.to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -82,7 +92,8 @@ mod tests {
     #[test]
     fn a_matching_reply_passes_unchanged() {
         let check = OutputCheck::new(&schema()).unwrap();
-        let reply = json!({ "summary": "s", "tasks": [{ "title": "t", "transcript_ref": "00:01:02" }] });
+        let reply =
+            json!({ "summary": "s", "tasks": [{ "title": "t", "transcript_ref": "00:01:02" }] });
         assert_eq!(check.check(reply.clone()).unwrap(), reply);
     }
 
@@ -90,7 +101,9 @@ mod tests {
     fn a_wrong_reply_says_where_without_quoting_it() {
         let check = OutputCheck::new(&schema()).unwrap();
         let reply = json!({ "summary": "s", "tasks": [{ "title": "t", "transcript_ref": "PRIVATE WORDS" }] });
-        let Err(AgentError::SchemaMismatch { errors }) = check.check(reply) else { panic!("expected a mismatch") };
+        let Err(AgentError::SchemaMismatch { errors }) = check.check(reply) else {
+            panic!("expected a mismatch")
+        };
         let all = errors.join("\n");
         assert!(all.contains("/tasks/0/transcript_ref"), "{all}");
         assert!(!all.contains("PRIVATE"), "{all}");
@@ -113,9 +126,18 @@ mod tests {
 
     #[test]
     fn replies_that_are_not_json_are_rejected() {
-        assert!(matches!(parse_json("  \n"), Err(AgentError::InvalidJson { .. })));
-        assert!(matches!(parse_json("Sure! Here are your notes"), Err(AgentError::InvalidJson { .. })));
-        assert!(matches!(parse_json("{\"a\":1} trailing"), Err(AgentError::InvalidJson { .. })));
+        assert!(matches!(
+            parse_json("  \n"),
+            Err(AgentError::InvalidJson { .. })
+        ));
+        assert!(matches!(
+            parse_json("Sure! Here are your notes"),
+            Err(AgentError::InvalidJson { .. })
+        ));
+        assert!(matches!(
+            parse_json("{\"a\":1} trailing"),
+            Err(AgentError::InvalidJson { .. })
+        ));
         assert_eq!(parse_json(" {\"a\":1}\n").unwrap(), json!({ "a": 1 }));
     }
 }
