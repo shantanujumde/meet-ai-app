@@ -194,7 +194,14 @@ fn exec_args(job: &Job, schema: &Path, reply: &Path) -> Vec<OsString> {
 /// ([`is_bare_key`]). This only narrows the servers it names. Any other MCP
 /// server in the user's Codex config stays on with all its tools, which is a
 /// limit of this run compared to Claude Code's `--allowedTools`.
+///
+/// A tool of `*` (`mcp__linear__*`, what [`crate::mcp::tracker_tools`] gives)
+/// means all of that server's tools, so that server gets no setting at all,
+/// even when other tools of it are listed too. Codex would read
+/// `enabled_tools=["*"]` as one tool literally named `*`, and turn every real
+/// tool off.
 fn enabled_tools_settings(allowed_tools: &[String]) -> Vec<String> {
+    let mut all_tools: Vec<&str> = Vec::new();
     let mut by_server: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for name in allowed_tools {
         let Some((server, tool)) = mcp_tool(name) else {
@@ -208,6 +215,10 @@ fn enabled_tools_settings(allowed_tools: &[String]) -> Vec<String> {
             );
             continue;
         }
+        if tool == "*" {
+            all_tools.push(server);
+            continue;
+        }
         let tools = by_server.entry(server).or_default();
         if !tools.contains(&tool) {
             tools.push(tool);
@@ -215,6 +226,7 @@ fn enabled_tools_settings(allowed_tools: &[String]) -> Vec<String> {
     }
     by_server
         .into_iter()
+        .filter(|(server, _)| !all_tools.contains(server))
         .map(|(server, tools)| {
             let list: Vec<String> = tools.into_iter().map(toml_string).collect();
             format!("mcp_servers.{server}.enabled_tools=[{}]", list.join(","))
@@ -461,6 +473,26 @@ mod tests {
             ]
         );
         assert!(enabled_tools_settings(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_star_tool_leaves_that_server_with_all_its_tools() {
+        let tools: Vec<String> = [
+            "mcp__linear__create_issue",
+            "mcp__linear__*",
+            "mcp__github__create_issue",
+            "mcp__jira__*",
+        ]
+        .map(String::from)
+        .into();
+        assert_eq!(
+            enabled_tools_settings(&tools),
+            ["mcp_servers.github.enabled_tools=[\"create_issue\"]"]
+        );
+        assert!(enabled_tools_settings(&["mcp__linear__*".to_owned()]).is_empty());
+
+        let job = Job::sync("task", json!({}), vec!["mcp__linear__*".into()]);
+        assert!(!args_of(&job).contains(&"-c".to_owned()));
     }
 
     #[test]
