@@ -42,6 +42,7 @@ if [ -f "$D/sleep.src" ]; then sleep "$(cat "$D/sleep.src")" </dev/null >/dev/nu
 echo "codex: thinking about the meeting..."
 if [ -f "$D/reply.src" ] && [ -n "$reply" ]; then cp "$D/reply.src" "$reply"; fi
 echo "codex: done, tokens used: 1234"
+if [ -f "$D/echo_prompt.src" ]; then cat "$D/stdin.txt" >&2; echo >&2; fi
 if [ -f "$D/stderr.src" ]; then cat "$D/stderr.src" >&2; fi
 exit "$code"
 "#;
@@ -293,6 +294,21 @@ fn a_codex_that_fails_reports_its_exit_code_and_stderr() {
     assert_eq!(*status, Some(3));
     assert_eq!(stderr, "login expired");
     assert_empty(fake.root.path());
+}
+
+#[test]
+fn a_failed_run_does_not_pass_on_the_prompt_codex_echoes() {
+    let fake = Fake::new();
+    fake.give("code.src", "1").give("echo_prompt.src", "").give(
+        "stderr.src",
+        "OpenAI Codex v0.152.1\nERROR: stream disconnected\n",
+    );
+    let err = fake.harness().run(&fake.notes_job()).unwrap_err();
+    let AgentError::CliFailed { stderr, .. } = &err else {
+        panic!("expected CliFailed, got {err:?}")
+    };
+    assert!(!stderr.contains("Priya"), "{stderr}");
+    assert_eq!(stderr, "OpenAI Codex v0.152.1\nERROR: stream disconnected");
 }
 
 #[test]

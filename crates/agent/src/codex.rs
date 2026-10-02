@@ -19,14 +19,15 @@
 //! `docs/manual-checks/worktree-b-tur5.md`. No code here depends on it.
 
 use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use crate::{AgentError, Harness, Install, Job, JobKind, OutputCheck, parse_json, process};
+use crate::process::{self, MAX_STDOUT_BYTES, could_not_start, reply_too_big};
+use crate::{AgentError, Harness, Install, Job, JobKind, OutputCheck, parse_json};
 
 /// The harness id, as written to `agent.harness` and `analyzed_by`.
 const ID: &str = "codex";
@@ -44,8 +45,8 @@ const SCHEMA_FILE: &str = "schema.json";
 /// The file Codex writes its last message to (`-o`).
 const REPLY_FILE: &str = "reply.json";
 
-/// Largest reply file read. Same limit as the stdout of the other CLIs.
-const MAX_REPLY_BYTES: u64 = 8 * 1024 * 1024;
+/// Largest reply file read: the same limit as a reply on stdout.
+const MAX_REPLY_BYTES: u64 = MAX_STDOUT_BYTES as u64;
 
 /// Time limit for `codex debug models`, which makes no model call.
 const MODELS_TIMEOUT: Duration = Duration::from_secs(15);
@@ -70,22 +71,23 @@ impl CodexHarness {
         }
     }
 
-    fn program(&self) -> &OsStr {
-        self.binary_path
-            .as_deref()
-            .map_or(OsStr::new(DEFAULT_PROGRAM), Path::as_os_str)
-    }
-
     /// Asks Codex for its model list, with the same time limit, kill and
     /// clean-up as a real run.
     fn list_models(&self) -> Result<Vec<String>, AgentError> {
-        let mut job = Job::notes(String::new(), serde_json::json!({}));
-        job.timeout = MODELS_TIMEOUT;
-        let work = process::fresh_work_dir(&job)?;
-        let mut command = Command::new(self.program());
+        let mut command = self.command();
         command.args(["debug", "models"]);
-        let out = process::run_cli(DISPLAY_NAME, command, &job, work.path())?;
+        let out = process::run_probe(DISPLAY_NAME, command, MODELS_TIMEOUT, &std::env::temp_dir())?;
         Ok(listed_models(&out.stdout))
+    }
+
+    /// A `Command` for Codex. A configured binary gets its own folder first
+    /// on `PATH` ([`process::cli_command`]), since an app opened from Finder
+    /// has a short one.
+    fn command(&self) -> Command {
+        match &self.binary_path {
+            Some(path) => process::cli_command(path),
+            None => Command::new(DEFAULT_PROGRAM),
+        }
     }
 }
 
@@ -95,15 +97,14 @@ impl Harness for CodexHarness {
     }
 
     fn detect(&self) -> Option<Install> {
-        // Finding Codex (a login-shell `PATH` lookup, `--version`, sign-in) is
-        // TUR-6's `crate::detect::codex`, which replaces this body. Nothing
-        // calls this yet.
-        None
+        crate::detect::codex(self.binary_path.as_deref())
     }
 
     /// Codex's own list, from `codex debug models`, in Codex's order.
     ///
-    /// Empty when Codex cannot be asked; the setup picker then offers only
+    /// Starts Codex and blocks until it answers, for up to 15 s (it makes no
+    /// model call); call it off the UI thread. Empty when Codex cannot be
+    /// asked; the setup picker then offers only
     /// "Codex's default". When [`Job::model`] is `None`, Codex picks its own
     /// default: on 2026-10-01 that was `gpt-5.6-terra` (Codex 0.152.1).
     fn models(&self) -> Vec<String> {
@@ -116,14 +117,20 @@ impl Harness for CodexHarness {
     fn run(&self, job: &Job) -> Result<serde_json::Value, AgentError> {
         let check = OutputCheck::new(&job.schema)?;
         let work = process::fresh_work_dir(job)?;
-        let io = reply_dir(job)?;
+        let io = reply_dir(job, work.path())?;
         let schema = io.path().join(SCHEMA_FILE);
         let reply = io.path().join(REPLY_FILE);
 
-        let mut command = Command::new(self.program());
+        let mut command = self.command();
         command.args(exec_args(job, &schema, &reply));
         // Stdout is Codex's progress; the reply is the `-o` file.
-        process::run_cli(DISPLAY_NAME, command, job, work.path())?;
+        process::run_cli(DISPLAY_NAME, command, job, work.path()).map_err(|e| match e {
+            AgentError::CliFailed { status, stderr } => AgentError::CliFailed {
+                status,
+                stderr: without_prompt(&stderr, &job.prompt),
+            },
+            other => other,
+        })?;
 
         let text = read_reply(&reply)?;
         check.check(parse_json(&text)?)
@@ -131,27 +138,20 @@ impl Harness for CodexHarness {
 }
 
 /// Makes the run's folder for the schema and reply files, next to its working
-/// folder, and writes the schema into it. Deleted when dropped.
-fn reply_dir(job: &Job) -> Result<tempfile::TempDir, AgentError> {
-    let root = job
-        .work_root
-        .canonicalize()
-        .map_err(|e| could_not_start(format!("could not use the working folder: {e}")))?;
+/// folder `work`, and writes the schema into it. Deleted when dropped.
+fn reply_dir(job: &Job, work: &Path) -> Result<tempfile::TempDir, AgentError> {
+    let root = work
+        .parent()
+        .ok_or_else(|| could_not_start("the working folder has no parent folder"))?;
     let dir = tempfile::Builder::new()
         .prefix("meet-ai-codex-io-")
-        .tempdir_in(&root)
+        .tempdir_in(root)
         .map_err(|e| could_not_start(format!("could not make a folder for the reply: {e}")))?;
     let schema = serde_json::to_vec(&job.schema)
         .map_err(|e| could_not_start(format!("could not write the output schema: {e}")))?;
     std::fs::write(dir.path().join(SCHEMA_FILE), schema)
         .map_err(|e| could_not_start(format!("could not write the output schema: {e}")))?;
     Ok(dir)
-}
-
-fn could_not_start(reason: impl Into<String>) -> AgentError {
-    AgentError::CouldNotStart {
-        reason: reason.into(),
-    }
 }
 
 /// The arguments for `codex exec`.
@@ -190,7 +190,8 @@ fn exec_args(job: &Job, schema: &Path, reply: &Path) -> Vec<OsString> {
 /// named in `allowed_tools`, in server-name order.
 ///
 /// `allowed_tools` uses Claude Code's names, `mcp__<server>__<tool>`; anything
-/// else is skipped. This only narrows the servers it names. Any other MCP
+/// else is skipped, and so is a server whose name is not a bare TOML key
+/// ([`is_bare_key`]). This only narrows the servers it names. Any other MCP
 /// server in the user's Codex config stays on with all its tools, which is a
 /// limit of this run compared to Claude Code's `--allowedTools`.
 fn enabled_tools_settings(allowed_tools: &[String]) -> Vec<String> {
@@ -200,6 +201,13 @@ fn enabled_tools_settings(allowed_tools: &[String]) -> Vec<String> {
             tracing::debug!(tool = %name, "not an MCP tool name; Codex is not told about it");
             continue;
         };
+        if !is_bare_key(server) {
+            tracing::debug!(
+                server,
+                "MCP server name needs TOML quoting; not narrowed for Codex"
+            );
+            continue;
+        }
         let tools = by_server.entry(server).or_default();
         if !tools.contains(&tool) {
             tools.push(tool);
@@ -209,11 +217,7 @@ fn enabled_tools_settings(allowed_tools: &[String]) -> Vec<String> {
         .into_iter()
         .map(|(server, tools)| {
             let list: Vec<String> = tools.into_iter().map(toml_string).collect();
-            format!(
-                "mcp_servers.{}.enabled_tools=[{}]",
-                toml_key(server),
-                list.join(",")
-            )
+            format!("mcp_servers.{server}.enabled_tools=[{}]", list.join(","))
         })
         .collect()
 }
@@ -225,18 +229,36 @@ fn mcp_tool(name: &str) -> Option<(&str, &str)> {
     (!server.is_empty() && !tool.is_empty()).then_some((server, tool))
 }
 
-/// `key` as one segment of a TOML dotted key: bare when TOML allows it,
-/// quoted otherwise (a `.` in it would split it into two segments).
-fn toml_key(key: &str) -> String {
-    let bare = !key.is_empty()
+/// Whether `key` can be one segment of a TOML dotted key as it is.
+///
+/// Others would need quoting (`mcp_servers."my.server"`), and whether Codex's
+/// `-c` parser reads a quoted segment is unchecked: if it splits on every
+/// `.`, the setting would land on the wrong key. Such servers are left
+/// un-narrowed rather than risk that.
+fn is_bare_key(key: &str) -> bool {
+    !key.is_empty()
         && key
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
-    if bare {
-        key.to_owned()
-    } else {
-        toml_string(key)
-    }
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// `stderr` without the lines that are also in `prompt`.
+///
+/// Codex's start-up banner on stderr repeats the whole prompt, so a failed
+/// run's stderr can hold transcript lines, and that text is shown in the
+/// meeting view. A line cut short by the stderr cap is part of the prompt
+/// too, so it goes as well. What is left is Codex's own output.
+fn without_prompt(stderr: &str, prompt: &str) -> String {
+    stderr
+        .lines()
+        .filter(|line| {
+            let line = line.trim();
+            line.is_empty() || !prompt.contains(line)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_owned()
 }
 
 /// `text` as a TOML basic string, `"..."`.
@@ -265,18 +287,12 @@ fn read_reply(path: &Path) -> Result<String, AgentError> {
         }
         Err(e) => return Err(invalid(format!("could not read Codex's reply: {e}"))),
     };
-    let too_big = || {
-        invalid(format!(
-            "the reply was larger than {} MiB",
-            MAX_REPLY_BYTES / (1024 * 1024)
-        ))
-    };
     let size = file
         .metadata()
         .map_err(|e| invalid(format!("could not read Codex's reply: {e}")))?
         .len();
     if size > MAX_REPLY_BYTES {
-        return Err(too_big());
+        return Err(reply_too_big());
     }
     // The file could still grow after the size check; never read past the cap.
     let mut bytes = Vec::new();
@@ -284,7 +300,7 @@ fn read_reply(path: &Path) -> Result<String, AgentError> {
         .read_to_end(&mut bytes)
         .map_err(|e| invalid(format!("could not read Codex's reply: {e}")))?;
     if bytes.len() as u64 > MAX_REPLY_BYTES {
-        return Err(too_big());
+        return Err(reply_too_big());
     }
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
@@ -448,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn server_names_toml_cannot_take_bare_are_quoted() {
+    fn server_names_that_need_toml_quoting_are_not_narrowed() {
         let tools: Vec<String> = [
             "mcp__my.server__create_issue",
             "mcp__claude ai Linear__save_issue",
@@ -458,18 +474,31 @@ mod tests {
         .into();
         assert_eq!(
             enabled_tools_settings(&tools),
-            [
-                "mcp_servers.\"claude ai Linear\".enabled_tools=[\"save_issue\"]",
-                "mcp_servers.\"my.server\".enabled_tools=[\"create_issue\"]",
-                "mcp_servers.ok-name_1.enabled_tools=[\"a\\\"b\\\\c\"]",
-            ]
+            ["mcp_servers.ok-name_1.enabled_tools=[\"a\\\"b\\\\c\"]"]
+        );
+    }
+
+    #[test]
+    fn stderr_loses_the_prompt_codex_echoes_but_keeps_its_own_lines() {
+        let prompt = "Summarize this.\n[00:00:05] Priya: layoffs on Friday\n[00:00:12] Sam: ok";
+        let stderr = "OpenAI Codex v0.152.1\nuser\nSummarize this.\n[00:00:05] Priya: layoffs on Friday\n[00:00:12] Sam: ok\n\nERROR: you are not logged in";
+        let left = without_prompt(stderr, prompt);
+        assert!(!left.contains("layoffs"), "{left}");
+        assert!(!left.contains("Sam"), "{left}");
+        assert!(left.starts_with("OpenAI Codex"), "{left}");
+        assert!(left.ends_with("ERROR: you are not logged in"), "{left}");
+
+        // The stderr cap can cut a prompt line in half; that half goes too.
+        assert_eq!(
+            without_prompt("iya: layoffs on Friday\nboom", prompt),
+            "boom"
         );
     }
 
     #[test]
     fn toml_strings_escape_control_characters() {
         assert_eq!(toml_string("a\nb\u{7}"), "\"a\\u000Ab\\u0007\"");
-        assert_eq!(toml_key(""), "\"\"");
+        assert!(!is_bare_key(""));
     }
 
     #[test]
@@ -504,13 +533,20 @@ mod tests {
 
     #[test]
     fn the_binary_path_overrides_codex_from_path() {
-        assert_eq!(CodexHarness::new().program(), OsStr::new("codex"));
-        assert_eq!(
-            CodexHarness::with_binary("/opt/codex/bin/codex").program(),
-            OsStr::new("/opt/codex/bin/codex")
+        assert_eq!(CodexHarness::new().command().get_program(), "codex");
+        let configured = CodexHarness::with_binary("/opt/codex/bin/codex").command();
+        assert_eq!(configured.get_program(), "/opt/codex/bin/codex");
+        // Its own folder goes first on the child's `PATH`.
+        let path = configured
+            .get_envs()
+            .find(|(key, _)| *key == "PATH")
+            .and_then(|(_, value)| value)
+            .unwrap();
+        assert!(
+            std::env::split_paths(path).next().unwrap() == Path::new("/opt/codex/bin"),
+            "{path:?}"
         );
         assert_eq!(CodexHarness::new().id(), "codex");
-        assert!(CodexHarness::new().detect().is_none());
     }
 
     #[test]

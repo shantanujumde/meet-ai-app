@@ -30,7 +30,7 @@ const AFTER_KILL_GRACE: Duration = Duration::from_millis(500);
 
 /// Most of stdout kept. A notes reply is a few KiB; past this the reply is
 /// rejected rather than held in memory.
-const MAX_STDOUT_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_STDOUT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Most of stderr kept for [`AgentError::CliFailed`]. The end is kept, since
 /// that is where a CLI says what went wrong.
@@ -132,12 +132,7 @@ pub fn run_cli(
         });
     }
     if exit.stdout_overflowed {
-        return Err(AgentError::InvalidJson {
-            reason: format!(
-                "the reply was larger than {} MiB",
-                MAX_STDOUT_BYTES / (1024 * 1024)
-            ),
-        });
+        return Err(reply_too_big());
     }
     Ok(CliOutput {
         stdout: exit.stdout,
@@ -254,9 +249,19 @@ pub fn run_cli_exit(
     })
 }
 
-fn could_not_start(reason: impl Into<String>) -> AgentError {
+pub(crate) fn could_not_start(reason: impl Into<String>) -> AgentError {
     AgentError::CouldNotStart {
         reason: reason.into(),
+    }
+}
+
+/// A reply over [`MAX_STDOUT_BYTES`], whether it came on stdout or in a file.
+pub(crate) fn reply_too_big() -> AgentError {
+    AgentError::InvalidJson {
+        reason: format!(
+            "the reply was larger than {} MiB",
+            MAX_STDOUT_BYTES / (1024 * 1024)
+        ),
     }
 }
 
