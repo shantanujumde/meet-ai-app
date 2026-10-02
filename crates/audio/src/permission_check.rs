@@ -27,17 +27,23 @@
 //!   `noErr` and bit-exact zero samples at the normal callback rate, so a
 //!   return code proves nothing. [`check_system`] plays the permission chime
 //!   through the default output device and confirms [`crate::chime::heard`]
-//!   recovers it from a live tap recording.
+//!   recovers it from the tap, listening live. One chime per check (TUR-14:
+//!   it used to loop for ~3 s and sound like ~11 chimes): it waits for the
+//!   tap to settle, plays once, and stops as soon as the chime is heard. Only
+//!   if it is not heard does it play again, and never more than
+//!   [`crate::chime::MAX_PLAYS`] times in all.
 //!
 //! Both functions are on-demand and take real wall-clock time (system audio:
-//! at least [`crate::chime::ONSET_TIMEOUT_MILLIS`] worth; mic: near-instant
-//! unless a dialog is open). Callers must run them off the UI thread — see
+//! the chime starts ~[`crate::chime::SETTLE_MILLIS`] (1.2 s) after the tap on
+//! a normal start, and the whole check is bounded by about
+//! [`crate::chime::worst_case_millis`]; mic: near-instant unless a dialog is
+//! open). Callers must run them off the UI thread — see
 //! `src-tauri/src/commands.rs`'s `permission_status`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
@@ -201,6 +207,15 @@ pub fn check_mic() -> ChannelResult {
 
 /// Play the chime through the default output device and confirm the system
 /// tap recovers it. Mirrors `tests/system_closed_loop.rs`'s closed loop.
+///
+/// One chime per check. The tap's frames are copied live through a
+/// [`crate::tee`], and [`chime::play_until_heard`] drives the timing: it
+/// waits [`chime::SETTLE_MILLIS`] (~1.2 s) of captured audio for the tap to
+/// settle, plays the chime once, listens, and returns as soon as it is
+/// heard. If it is not, it plays once more — at most [`chime::MAX_PLAYS`]
+/// plays in all — so a denied tap costs about [`chime::worst_case_millis`].
+/// A wall-clock deadline a little past that ends the check if the tap stops
+/// delivering audio.
 #[cfg(target_os = "macos")]
 pub fn check_system() -> ChannelResult {
     let host = cpal::default_host();
@@ -232,7 +247,11 @@ pub fn check_system() -> ChannelResult {
         }
     };
 
+    // A live copy of the tap's 16 kHz mono frames, so the check can listen
+    // while it plays instead of reading the WAV back afterwards.
+    let (tee, feed) = crate::tee::tee();
     let mut system = SystemSource::new();
+    system.tee(tee);
     if let Err(error) = system.start(dest.clone()) {
         cleanup(&dir, &dest);
         return ChannelResult {
@@ -241,22 +260,31 @@ pub fn check_system() -> ChannelResult {
         };
     }
 
-    let total_millis = chime::ONSET_TIMEOUT_MILLIS + chime::duration_millis() + 1000;
-    let mono = chime::looped_samples(output_rate, total_millis);
-    let cursor = Arc::new(AtomicUsize::new(0));
-    let play_cursor = Arc::clone(&cursor);
+    // The chime, rendered once at the output device's rate. The output
+    // callback plays it from the top each time `play` asks, then falls silent
+    // until asked again — one chime per play, never a loop.
+    let mono = chime::samples(output_rate);
+    let restart = Arc::new(AtomicBool::new(false));
+    let callback_restart = Arc::clone(&restart);
+    // Start past the end: silence until the first play request.
+    let mut position = mono.len();
 
     let output_stream = output.build_output_stream(
         output_config,
         move |data: &mut [f32], _| {
-            let start = play_cursor.load(Ordering::Relaxed);
+            // `swap` reads and clears the request in one step, so a play asked
+            // for mid-buffer starts on the next buffer, exactly once.
+            if callback_restart.swap(false, Ordering::AcqRel) {
+                position = 0;
+            }
+            let frames = data.len() / output_channels;
             for (i, frame) in data.chunks_mut(output_channels).enumerate() {
-                let sample = mono.get(start + i).copied().unwrap_or(0.0);
+                let sample = mono.get(position + i).copied().unwrap_or(0.0);
                 for s in frame {
                     *s = sample;
                 }
             }
-            play_cursor.fetch_add(data.len() / output_channels, Ordering::Relaxed);
+            position = position.saturating_add(frames);
         },
         |error| tracing::warn!(%error, "permission-check output stream error"),
         None,
@@ -281,44 +309,60 @@ pub fn check_system() -> ChannelResult {
         };
     }
 
-    std::thread::sleep(Duration::from_millis(u64::from(total_millis) + 300));
+    // Listen to the tap live instead of sleeping and reading the WAV back.
+    // `play_until_heard` keeps time by captured samples, so a tap that stops
+    // delivering would leave it waiting forever; the wall-clock deadline is
+    // the safety net for that, with headroom over its own worst case.
+    let deadline =
+        Instant::now() + Duration::from_millis(u64::from(chime::worst_case_millis()) + 1500);
+    let play = || restart.store(true, Ordering::Release);
+    let pull = || {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        // A timeout or a disconnected tap both end the listening.
+        feed.recv_timeout(left).ok().map(|frames| {
+            frames
+                .into_iter()
+                .map(|s| f32::from(s) / f32::from(i16::MAX))
+                .collect()
+        })
+    };
+    let attempt = chime::play_until_heard(16_000, play, pull);
+
     drop(output_stream);
     let _ = system.stop();
 
-    let result = match hound::WavReader::open(&dest) {
-        Ok(mut reader) => {
-            let samples: Vec<f32> = reader
-                .samples::<i16>()
-                .filter_map(Result::ok)
-                .map(|s| f32::from(s) / f32::from(i16::MAX))
-                .collect();
-            if samples.is_empty() {
-                ChannelResult {
-                    state: ChannelState::Unmeasurable,
-                    detail: "the system-audio check recording was empty".into(),
-                }
-            } else {
-                let reading = chime::heard(&samples, 16_000);
-                if reading.present {
-                    ChannelResult {
-                        state: ChannelState::Granted,
-                        detail: "the check tone was played and recovered from the system-audio \
-                                 recording"
-                            .into(),
-                    }
-                } else {
-                    ChannelResult {
-                        state: ChannelState::Denied,
-                        detail: "the check tone did not come back through the system-audio tap"
-                            .into(),
-                    }
-                }
-            }
-        }
-        Err(error) => ChannelResult {
+    tracing::info!(
+        plays = attempt.plays,
+        captured = attempt.captured,
+        present = attempt.reading.present,
+        "system-audio permission check finished"
+    );
+    tracing::debug!(reading = ?attempt.reading, "system-audio permission check reading");
+
+    // No play means the chime never sounded: the tap delivered nothing at all
+    // (`captured == 0` lands here too) or stopped before the settle time ran
+    // out. Neither "granted" nor "denied" would be honest about that.
+    let result = if attempt.plays == 0 {
+        ChannelResult {
             state: ChannelState::Unmeasurable,
-            detail: format!("the system-audio check recording could not be read: {error}"),
-        },
+            detail: "the system-audio tap stopped delivering audio before the check tone could \
+                     play"
+                .into(),
+        }
+    } else if attempt.reading.present {
+        ChannelResult {
+            state: ChannelState::Granted,
+            detail: "the check tone was played and recovered from the system-audio recording"
+                .into(),
+        }
+    } else {
+        ChannelResult {
+            state: ChannelState::Denied,
+            detail: "the check tone did not come back through the system-audio tap".into(),
+        }
     };
 
     cleanup(&dir, &dest);

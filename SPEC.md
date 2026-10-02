@@ -719,6 +719,8 @@ A6 item 3 established *that* meet-ai must play a known tone and listen for it, b
 
 Implementation: `crates/audio/src/chime.rs` — a rising two-note chime (A5 880 Hz → E6 1318.5 Hz, ~220 ms, −12 dBFS), a Goertzel-based detector requiring both notes present with contrast against each other (rejects a sustained tone that happens to contain both partials), and a poll-until-heard probe sized to the 1.07 s tap settle time measured in TUR-4. Full rationale and test coverage in that file.
 
+**Timing rule, TUR-14 (2026-10-02):** the check used to loop the chime across the whole 2 s settle budget, so a Record press played it about 11 times. Now the user hears it **once**: the tap starts silent, the chime plays after 1.2 s of captured audio (past the 1.07 s settle), the captured audio is checked live, and the check ends as soon as the chime is heard. Only an unheard first play gets **one** more, no earlier than 2 s into capture (`ONSET_TIMEOUT_MILLIS`, ~2x the measured settle), before the check reports. Never more than 2 plays. Same tone, still on every recording start. See `chime::play_until_heard`.
+
 **Open item, not yet measured:** whether the chime still reaches the tap when system output is muted or at zero volume. If it does not, a muted Mac reads identically to a denial. Until this is measured, "no chime" must surface as *needs explaining*, not a bare "permission denied" — see the ⚠️ in `chime.rs`.
 
 *Decided by Nia (onboarding UX owner) on TUR-24. Rune (capture owner) had no preference beyond the tone surviving the audio path.*
