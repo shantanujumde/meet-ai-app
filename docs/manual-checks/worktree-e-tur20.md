@@ -27,28 +27,32 @@ so they were not run here. The headless parts are covered by tests in
    Retry, then put it back and press Retry again. Expected: the first Retry
    says the link could not be saved and shows the issue's address; the second
    saves it, with no agent run either time.
-5. Variant: after step 2, delete the whole meeting folder (or sync the task
-   by hand), then press Retry. Expected: an error that says the task is gone
-   (or already synced), names the issue this sync made and its address, and
-   does not run the agent.
-6. Variant: after step 2, press **Make notes now** so the task's number goes
-   to a different task, then press Sync on it. Expected: a new agent run and a
-   new issue for the new task; the earlier issue is not reused.
-7. Variant: with two meetings that both have a `TICK-0001`, make the first
+5. Variant: after step 2, sync the task by hand (add `external_url` to its
+   file), or press **Make notes now** so its number goes to a different task,
+   then press Retry. Expected: "Created in Linear but couldn't attach it to
+   this task: https://… …", a **Dismiss** button, and no agent run, however
+   often Retry is pressed. After **Dismiss**, Sync runs afresh.
+6. Variant: with two meetings that both have a `TICK-0001`, make the first
    one's save fail, then Sync the second one. Expected: the second gets its
    own new issue; the first's Retry still saves the first issue.
 
-By design: the kept issue is matched to the task file as it was when the
-sync started (title plus a hash of the file). If the user edits that task
-file before Retry, it no longer matches, so Retry runs a normal sync and makes
-a new issue.
+## 2b. The task changes while it syncs
+
+The app has no way to edit an existing task, so nothing in the app is locked
+during a sync. A change from outside the app still cannot cost an issue:
+
+1. Press **Sync**, and while it says "Syncing…" edit the task's file in a
+   text editor (or press **Make notes now** for its meeting).
+2. Expected: when the agent answers, the task shows "Created in Linear but
+   couldn't attach it to this task: https://… TICK-… changed after the sync
+   started." with Retry and **Dismiss**. The edit is kept and the file gets no
+   link. Retry does not run the agent; the tracker has one issue.
 
 Known limit (follow-up): the not-yet-saved issue is kept in memory only. If
-the app quits between the failed save and Retry, Retry runs the agent again
-and can make a second issue. The error text holds the issue's address, so the
-user can still find it. A follow-up could keep it in a small file in the app
-data folder (outside the meetings root). Also a follow-up: the address in the
-`sync-not-saved` error is plain text, not a clickable Open button.
+the app quits before it is saved or dismissed, the next Sync runs the agent
+again and can make a second issue. The error text holds the issue's address,
+so the user can still find it. Also a follow-up: the address in these errors
+is plain text, not a clickable Open button.
 
 ## 3. No local path in the issue
 
