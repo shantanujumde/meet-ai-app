@@ -85,6 +85,30 @@ fn project_marker_above(folder: &Path) -> Option<std::path::PathBuf> {
         .find(|path| path.exists())
 }
 
+/// How a CLI run ended, whatever its exit status, as [`run_cli_exit`] returns
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CliExit {
+    /// The exit code. `None` when a signal stopped the child.
+    pub code: Option<i32>,
+    /// What it printed on stdout. Empty when that was over the size cap.
+    ///
+    /// Only for telling failures apart (a CLI that prints its error as JSON
+    /// on stdout). It may carry model text, so it never goes into an error,
+    /// the UI or a log.
+    pub stdout: String,
+    /// What it printed on stderr, trimmed to its last few KiB.
+    pub stderr: String,
+    /// Whether stdout was over the size cap and dropped.
+    pub stdout_overflowed: bool,
+}
+
+impl CliExit {
+    pub fn success(&self) -> bool {
+        self.code == Some(0)
+    }
+}
+
 /// Runs `command` in `work_dir` with `job.prompt` on stdin, and blocks until it
 /// is done.
 ///
@@ -96,10 +120,41 @@ fn project_marker_above(folder: &Path) -> Option<std::path::PathBuf> {
 /// into logs.
 pub fn run_cli(
     display_name: &str,
-    mut command: Command,
+    command: Command,
     job: &Job,
     work_dir: &Path,
 ) -> Result<CliOutput, AgentError> {
+    let exit = run_cli_exit(display_name, command, job, work_dir)?;
+    if !exit.success() {
+        return Err(AgentError::CliFailed {
+            status: exit.code,
+            stderr: exit.stderr,
+        });
+    }
+    if exit.stdout_overflowed {
+        return Err(AgentError::InvalidJson {
+            reason: format!(
+                "the reply was larger than {} MiB",
+                MAX_STDOUT_BYTES / (1024 * 1024)
+            ),
+        });
+    }
+    Ok(CliOutput {
+        stdout: exit.stdout,
+        stderr: exit.stderr,
+    })
+}
+
+/// Like [`run_cli`], but a non-zero exit is not an error: the exit code and
+/// what the CLI printed come back, so the caller can read a failure the CLI
+/// reports on stdout. Not starting, the time limit and Cancel are still
+/// errors.
+pub fn run_cli_exit(
+    display_name: &str,
+    mut command: Command,
+    job: &Job,
+    work_dir: &Path,
+) -> Result<CliExit, AgentError> {
     if job.cancel.is_cancelled() {
         return Err(AgentError::Cancelled);
     }
@@ -146,22 +201,18 @@ pub fn run_cli(
     )
     .trim_start()
     .to_owned();
-    if !status.success() {
-        return Err(AgentError::CliFailed {
-            status: status.code(),
-            stderr,
-        });
-    }
-    if stdout.overflowed {
-        return Err(AgentError::InvalidJson {
-            reason: format!(
-                "the reply was larger than {} MiB",
-                MAX_STDOUT_BYTES / (1024 * 1024)
-            ),
-        });
-    }
-    let stdout = String::from_utf8_lossy(&stdout.bytes).into_owned();
-    Ok(CliOutput { stdout, stderr })
+    let stdout_overflowed = stdout.overflowed;
+    let stdout = if stdout_overflowed {
+        String::new()
+    } else {
+        String::from_utf8_lossy(&stdout.bytes).into_owned()
+    };
+    Ok(CliExit {
+        code: status.code(),
+        stdout,
+        stderr,
+        stdout_overflowed,
+    })
 }
 
 fn could_not_start(reason: impl Into<String>) -> AgentError {
