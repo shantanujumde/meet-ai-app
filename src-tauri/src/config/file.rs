@@ -9,9 +9,6 @@
 //! Each write also puts `config.schema.json` next to the file, so the
 //! `"$schema": "./config.schema.json"` line gives editors autocomplete.
 
-// TUR-9 (Setup screens) adds the IPC commands that call into this module.
-#![allow(dead_code)]
-
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
@@ -23,33 +20,35 @@ use super::agent_section::{AgentConfig, ConfigError, TicketsConfig, parse_agent,
 /// The JSON Schema for `config.jsonc`, kept in the repo and shipped inside the
 /// binary.
 pub const SCHEMA: &str = include_str!("../../config.schema.json");
-const SCHEMA_FILE: &str = "config.schema.json";
+pub(super) const SCHEMA_FILE: &str = "config.schema.json";
 
 /// `agent` from `~/Meetings/.app/config.jsonc`. A missing file or section is
 /// the SPEC §3.5 defaults; an unknown `harness` is an error.
+#[allow(dead_code)] // TUR-9 (Setup screens) adds the IPC command that calls this.
 pub fn agent() -> Result<AgentConfig, ConfigError> {
     parse_agent(&read_in(&app_dir()?)?)
 }
 
 /// `tickets` from `~/Meetings/.app/config.jsonc`, defaults when missing.
+#[allow(dead_code)] // TUR-9 (Setup screens) adds the IPC command that calls this.
 pub fn tickets() -> Result<TicketsConfig, ConfigError> {
     parse_tickets(&read_in(&app_dir()?)?)
 }
 
 /// Save `agent` into `~/Meetings/.app/config.jsonc`, keeping everything else.
+#[allow(dead_code)] // TUR-9 (Setup screens) adds the IPC command that calls this.
 pub fn set_agent(agent: &AgentConfig) -> Result<(), ConfigError> {
     write_in(&app_dir()?, |raw| with_agent(raw, agent))
 }
 
 /// Save `tickets` into `~/Meetings/.app/config.jsonc`, keeping everything else.
+#[allow(dead_code)] // TUR-9 (Setup screens) adds the IPC command that calls this.
 pub fn set_tickets(tickets: &TicketsConfig) -> Result<(), ConfigError> {
     write_in(&app_dir()?, |raw| with_tickets(raw, tickets))
 }
 
 fn app_dir() -> Result<PathBuf, ConfigError> {
-    let root = crate::meetings::root()
-        .map_err(|error| ConfigError::Io(std::io::Error::other(error.message)))?;
-    Ok(meeting_format::layout::app_dir(&root))
+    super::app_dir().map_err(ConfigError::Root)
 }
 
 /// The text of `config.jsonc` in `dir`, or `""` if there is none yet.
@@ -75,20 +74,18 @@ pub(super) fn write_in(
     Ok(())
 }
 
-/// Write to a sibling temp file, then rename over the target, so a crash
-/// mid-write never leaves a half-written config behind.
+/// Through `meeting_format::write_atomic`: a unique temp file, synced, then
+/// renamed over the target and the folder synced, so neither a crash nor a
+/// power cut leaves a half-written or empty config behind.
 fn write_atomic(path: &Path, contents: &str) -> Result<(), ConfigError> {
-    let mut temp = path.as_os_str().to_owned();
-    temp.push(".tmp");
-    std::fs::write(&temp, contents)?;
-    std::fs::rename(&temp, path)?;
-    Ok(())
+    Ok(meeting_format::write_atomic(path, contents.as_bytes())?)
 }
 
 /// `raw` with its `agent` section set to `agent`.
 pub fn with_agent(raw: &str, agent: &AgentConfig) -> Result<String, ConfigError> {
     let binary_path = match &agent.binary_path {
         None => CstInputValue::Null,
+        Some(path) if path.as_os_str().is_empty() => CstInputValue::Null,
         Some(path) => path
             .to_str()
             .ok_or_else(|| {
@@ -141,6 +138,9 @@ fn with_section(
             .object_value()
             .ok_or_else(|| ConfigError::Invalid("the top level must be an object".into()))?,
     };
+    // A section that is there but not an object (`"agent": null`, `"agent":
+    // "x"`) reads as `Invalid`; saving from the Setup screen replaces it with
+    // a proper object, which is how the user fixes it.
     let object = top.object_value_or_set(section);
     for (name, value) in fields {
         match object.get(name) {
