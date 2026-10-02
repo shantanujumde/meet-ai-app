@@ -24,6 +24,14 @@ if [ "$1" = debug ] && [ "$2" = models ]; then
   if [ -f "$D/models.src" ]; then cat "$D/models.src"; fi
   exit "$code"
 fi
+case " $* " in
+  *" mcp list "*)
+    printf '%s\n' "$@" > "$D/mcp_args.txt"
+    pwd -P > "$D/mcp_cwd.txt"
+    if [ -f "$D/mcp.src" ]; then cat "$D/mcp.src"; else echo '[]'; fi
+    if [ -f "$D/mcp_code.src" ]; then exit "$(cat "$D/mcp_code.src")"; fi
+    exit 0 ;;
+esac
 printf '%s\n' "$@" > "$D/args.txt"
 pwd -P > "$D/cwd.txt"
 ls -A | wc -l > "$D/cwd_count.txt"
@@ -214,8 +222,9 @@ fn a_notes_run_starts_codex_with_no_user_config_and_returns_the_reply_file() {
     assert!(name_of(io).starts_with("meet-ai-codex-io-"), "{io:?}");
     assert_ne!(io, cwd);
 
-    // Both folders are gone afterwards.
+    // Both folders are gone afterwards, and Codex's MCP list was never read.
     assert_empty(fake.root.path());
+    assert!(!fake.dir.path().join("mcp_args.txt").exists());
 }
 
 #[test]
@@ -240,9 +249,15 @@ fn a_notes_run_passes_the_model_only_when_one_is_set() {
     assert_empty(fake.root.path());
 }
 
-#[test]
-fn a_sync_run_loads_the_user_config_and_narrows_the_tracker_tools() {
-    let fake = Fake::new();
+/// What `codex mcp list --json` prints for the sync tests: the tracker, one
+/// other server that is on, and one already off.
+const MCP_LIST: &str = r#"[
+  {"name":"linear","enabled":true,"auth_status":"unsupported"},
+  {"name":"node_repl","enabled":true},
+  {"name":"computer-use","enabled":false}
+]"#;
+
+fn sync_job(fake: &Fake, tools: &[&str]) -> Job {
     let schema = json!({
         "type": "object",
         "additionalProperties": false,
@@ -252,33 +267,136 @@ fn a_sync_run_loads_the_user_config_and_narrows_the_tracker_tools() {
             "url": { "type": "string" }
         }
     });
-    let reply = json!({ "issue_key": "ENG-42", "url": "https://linear.app/acme/issue/ENG-42" });
-    fake.give("reply.src", &reply.to_string());
-    let mut job = Job::sync(
-        "Create an issue: Draft release notes",
-        schema,
-        vec!["mcp__linear__create_issue".into()],
-    );
+    let tools = tools.iter().map(|t| (*t).to_owned()).collect();
+    let mut job = Job::sync("Create an issue: Draft release notes", schema, tools);
     job.work_root = fake.root.path().to_path_buf();
+    job
+}
+
+#[test]
+fn a_sync_run_pre_approves_only_the_tracker_and_turns_every_other_server_off() {
+    let fake = Fake::new();
+    let reply = json!({ "issue_key": "ENG-42", "url": "https://linear.app/acme/issue/ENG-42" });
+    fake.give("reply.src", &reply.to_string())
+        .give("mcp.src", MCP_LIST);
+    let job = sync_job(&fake, &["mcp__linear__*"]);
 
     assert_eq!(fake.harness().run(&job).unwrap(), reply);
 
+    // First Codex's own server list, read with the same features off, in a
+    // fresh folder of the work root.
+    assert_eq!(
+        fake.seen("mcp_args.txt").lines().collect::<Vec<_>>(),
+        [
+            "--disable",
+            "apps",
+            "--disable",
+            "plugins",
+            "mcp",
+            "list",
+            "--json"
+        ]
+    );
+    let mcp_cwd = PathBuf::from(fake.seen("mcp_cwd.txt").trim());
+    assert_eq!(mcp_cwd.parent().unwrap(), fake.root());
+
+    // Then the run, with the user's config and one `mcp_servers` setting.
     let args = fake.args();
     assert!(
         !args.contains(&"--ignore-user-config".to_owned()),
         "{args:?}"
     );
     assert!(!args.contains(&"--ignore-rules".to_owned()), "{args:?}");
+    assert_eq!(args.iter().filter(|a| *a == "-c").count(), 1, "{args:?}");
     assert_eq!(
         value_after(&args, "-c"),
-        r#"mcp_servers.linear.enabled_tools=["create_issue"]"#
+        r#"mcp_servers={"linear"={default_tools_approval_mode="approve"},"node_repl"={enabled=false}}"#
     );
+    let off: Vec<&str> = args
+        .iter()
+        .zip(args.iter().skip(1))
+        .filter(|(flag, _)| *flag == "--disable")
+        .map(|(_, feature)| feature.as_str())
+        .collect();
+    assert_eq!(off, ["apps", "plugins"]);
     assert_eq!(value_after(&args, "-s"), "read-only");
     assert_eq!(args.last().map(String::as_str), Some("-"));
     assert_eq!(
         fake.seen("stdin.txt"),
         "Create an issue: Draft release notes"
     );
+    assert_empty(fake.root.path());
+}
+
+#[test]
+fn a_sync_run_with_listed_tools_pre_approves_each_one() {
+    let fake = Fake::new();
+    let reply = json!({ "issue_key": "ENG-42", "url": "https://linear.app/acme/issue/ENG-42" });
+    fake.give("reply.src", &reply.to_string())
+        .give("mcp.src", MCP_LIST);
+    let job = sync_job(&fake, &["mcp__linear__create_issue"]);
+
+    assert_eq!(fake.harness().run(&job).unwrap(), reply);
+    assert_eq!(
+        value_after(&fake.args(), "-c"),
+        r#"mcp_servers={"linear"={enabled_tools=["create_issue"],tools={"create_issue"={approval_mode="approve"}}},"node_repl"={enabled=false}}"#
+    );
+}
+
+#[test]
+fn a_sync_run_stops_before_codex_runs_when_the_server_list_cannot_be_read() {
+    let fake = Fake::new();
+    fake.give("mcp.src", "Error: bad config")
+        .give("mcp_code.src", "1");
+    let err = fake
+        .harness()
+        .run(&sync_job(&fake, &["mcp__linear__*"]))
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AgentError::CliFailed {
+                status: Some(1),
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert!(!fake.dir.path().join("args.txt").exists(), "exec ran");
+    assert_empty(fake.root.path());
+
+    // A list that is not JSON stops it too.
+    fake.give("mcp_code.src", "0");
+    let err = fake
+        .harness()
+        .run(&sync_job(&fake, &["mcp__linear__*"]))
+        .unwrap_err();
+    assert!(matches!(err, AgentError::InvalidJson { .. }), "{err:?}");
+    assert!(!fake.dir.path().join("args.txt").exists(), "exec ran");
+}
+
+#[test]
+fn a_sync_run_to_a_server_codex_does_not_have_never_starts() {
+    let fake = Fake::new();
+    fake.give("mcp.src", MCP_LIST);
+    for (tracker, words) in [
+        ("mcp__jira__*", "Codex has no MCP server named \"jira\""),
+        ("mcp__computer-use__*", "is turned off in Codex"),
+        ("mcp__my.linear__*", "name contains a dot"),
+    ] {
+        let err = fake
+            .harness()
+            .run(&sync_job(&fake, &[tracker]))
+            .unwrap_err();
+        assert!(
+            matches!(&err, AgentError::CouldNotStart { reason } if reason.contains(words)),
+            "{tracker}: {err:?}"
+        );
+        assert!(
+            !fake.dir.path().join("args.txt").exists(),
+            "{tracker}: exec ran"
+        );
+    }
     assert_empty(fake.root.path());
 }
 

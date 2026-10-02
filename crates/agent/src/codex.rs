@@ -6,7 +6,7 @@
 //! | Run | What it gets |
 //! |---|---|
 //! | Notes | `--ignore-user-config --ignore-rules`: no MCP servers, no hooks, no rules. Codex still reads its sign-in from `CODEX_HOME` |
-//! | Sync | The user's `~/.codex/config.toml`, so their tracker's MCP server is there, narrowed to the tools in [`Job::allowed_tools`] |
+//! | Sync | The user's `~/.codex/config.toml`, so their tracker's MCP server is there, with only the tools in [`Job::allowed_tools`] pre-approved. Every other MCP server is turned off, and so are ChatGPT connectors ("apps") and plugins |
 //!
 //! Codex takes the output schema only as a file (`--output-schema`) and
 //! writes its reply only to a file (`-o`), so each run also gets a second
@@ -15,8 +15,10 @@
 //! deleted when the run ends, however it ends. What Codex prints on stdout is
 //! progress, and is ignored.
 //!
-//! How `exec` handles approval for MCP tool calls is recorded in SPEC A11 and
-//! `docs/manual-checks/worktree-b-tur5.md`. No code here depends on it.
+//! `exec` runs with `approval: never`, so an MCP tool call that is not
+//! pre-approved is refused, and Codex still exits 0. A sync run therefore
+//! pre-approves the tracker's tools in config ([`servers_setting`]). What was
+//! measured is in SPEC A11 and `docs/manual-checks/worktree-e-tur16.md`.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -26,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use crate::mcp::{self, McpServer, McpStatus};
 use crate::process::{self, MAX_STDOUT_BYTES, could_not_start, reply_too_big};
 use crate::{AgentError, Harness, Install, Job, JobKind, OutputCheck, parse_json};
 
@@ -50,6 +53,12 @@ const MAX_REPLY_BYTES: u64 = MAX_STDOUT_BYTES as u64;
 
 /// Time limit for `codex debug models`, which makes no model call.
 const MODELS_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Codex features a sync run turns off (`--disable <feature>`): ChatGPT
+/// connectors ("apps") and plugins, which bring tools of their own that are
+/// not in the MCP server list. A tracker reachable only through a plugin is
+/// therefore "not synced".
+const SYNC_FEATURES_OFF: [&str; 2] = ["apps", "plugins"];
 
 /// Runs the user's Codex CLI.
 #[derive(Debug, Clone, Default)]
@@ -78,6 +87,35 @@ impl CodexHarness {
         command.args(["debug", "models"]);
         let out = process::run_probe(DISPLAY_NAME, command, MODELS_TIMEOUT, &std::env::temp_dir())?;
         Ok(listed_models(&out.stdout))
+    }
+
+    /// The MCP servers Codex will load for a sync run, from `codex mcp list
+    /// --json` with the same features off as the run itself. Same work root,
+    /// time limit (at most [`mcp::LIST_TIMEOUT`]) and Cancel as `job`.
+    fn configured_servers(&self, job: &Job) -> Result<Vec<McpServer>, AgentError> {
+        let mut command = self.command();
+        command
+            .args(disabled_features())
+            .args(["mcp", "list", "--json"]);
+        let mut list = Job::notes(String::new(), serde_json::Value::Null);
+        list.timeout = job.timeout.min(mcp::LIST_TIMEOUT);
+        list.work_root = job.work_root.clone();
+        list.cancel = job.cancel.clone();
+        let dir = process::fresh_work_dir(&list)?;
+        let out = process::run_cli(DISPLAY_NAME, command, &list, dir.path())?;
+        mcp::parse_codex_list(&out.stdout)
+    }
+
+    /// The arguments a sync run adds: the features it turns off, and the one
+    /// `mcp_servers` setting from [`servers_setting`].
+    fn sync_args(&self, job: &Job) -> Result<Vec<OsString>, AgentError> {
+        let configured = self.configured_servers(job)?;
+        let mut args = disabled_features();
+        if let Some(setting) = servers_setting(&job.allowed_tools, &configured)? {
+            args.push("-c".into());
+            args.push(setting.into());
+        }
+        Ok(args)
     }
 
     /// A `Command` for Codex. A configured binary gets its own folder first
@@ -116,13 +154,17 @@ impl Harness for CodexHarness {
 
     fn run(&self, job: &Job) -> Result<serde_json::Value, AgentError> {
         let check = OutputCheck::new(&job.schema)?;
+        let sync_args = match job.kind {
+            JobKind::Sync => self.sync_args(job)?,
+            JobKind::Notes => Vec::new(),
+        };
         let work = process::fresh_work_dir(job)?;
         let io = reply_dir(job, work.path())?;
         let schema = io.path().join(SCHEMA_FILE);
         let reply = io.path().join(REPLY_FILE);
 
         let mut command = self.command();
-        command.args(exec_args(job, &schema, &reply));
+        command.args(exec_args(job, &sync_args, &schema, &reply));
         // Stdout is Codex's progress; the reply is the `-o` file.
         process::run_cli(DISPLAY_NAME, command, job, work.path()).map_err(|e| match e {
             AgentError::CliFailed { status, stderr } => AgentError::CliFailed {
@@ -154,11 +196,12 @@ fn reply_dir(job: &Job, work: &Path) -> Result<tempfile::TempDir, AgentError> {
     Ok(dir)
 }
 
-/// The arguments for `codex exec`.
+/// The arguments for `codex exec`. `sync_args` is what
+/// [`CodexHarness::sync_args`] gave; a notes run ignores it.
 ///
 /// The prompt is never one of them (arguments show up in `ps`); the trailing
 /// `-` makes Codex read it from stdin, which [`process::run_cli`] writes.
-fn exec_args(job: &Job, schema: &Path, reply: &Path) -> Vec<OsString> {
+fn exec_args(job: &Job, sync_args: &[OsString], schema: &Path, reply: &Path) -> Vec<OsString> {
     let mut args: Vec<OsString> = ["exec", "--ephemeral", "--skip-git-repo-check"]
         .map(OsString::from)
         .into();
@@ -169,10 +212,7 @@ fn exec_args(job: &Job, schema: &Path, reply: &Path) -> Vec<OsString> {
     }
     args.extend(["-s", "read-only"].map(OsString::from));
     if job.kind == JobKind::Sync {
-        for setting in enabled_tools_settings(&job.allowed_tools) {
-            args.push("-c".into());
-            args.push(setting.into());
-        }
+        args.extend(sync_args.iter().cloned());
     }
     if let Some(model) = job.model.as_deref().filter(|m| !m.trim().is_empty()) {
         args.push("--model".into());
@@ -186,52 +226,106 @@ fn exec_args(job: &Job, schema: &Path, reply: &Path) -> Vec<OsString> {
     args
 }
 
-/// One `mcp_servers.<server>.enabled_tools=[...]` setting per MCP server
-/// named in `allowed_tools`, in server-name order.
+/// `--disable <feature>` for each of [`SYNC_FEATURES_OFF`].
+fn disabled_features() -> Vec<OsString> {
+    SYNC_FEATURES_OFF
+        .iter()
+        .flat_map(|feature| ["--disable", feature])
+        .map(OsString::from)
+        .collect()
+}
+
+/// The one `mcp_servers={...}` setting of a sync run, or `None` when there is
+/// nothing to set.
 ///
 /// `allowed_tools` uses Claude Code's names, `mcp__<server>__<tool>`; anything
-/// else is skipped, and so is a server whose name is not a bare TOML key
-/// ([`is_bare_key`]). This only narrows the servers it names. Any other MCP
-/// server in the user's Codex config stays on with all its tools, which is a
-/// limit of this run compared to Claude Code's `--allowedTools`.
+/// else is skipped. `configured` is every server Codex will load
+/// ([`CodexHarness::configured_servers`]). In the setting:
 ///
-/// A tool of `*` (`mcp__linear__*`, what [`crate::mcp::tracker_tools`] gives)
-/// means all of that server's tools, so that server gets no setting at all,
-/// even when other tools of it are listed too. Codex would read
-/// `enabled_tools=["*"]` as one tool literally named `*`, and turn every real
-/// tool off.
-fn enabled_tools_settings(allowed_tools: &[String]) -> Vec<String> {
-    let mut all_tools: Vec<&str> = Vec::new();
-    let mut by_server: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+/// - each server named in `allowed_tools` gets its tools pre-approved, since
+///   `exec` refuses any MCP call that is not. A tool of `*`
+///   (`mcp__linear__*`, what [`crate::mcp::tracker_tools`] gives) means all
+///   of that server's tools: `default_tools_approval_mode="approve"`, even
+///   when other tools of it are listed too. Otherwise only the listed tools
+///   are on (`enabled_tools`), each with `approval_mode="approve"`;
+/// - every other configured server that is on gets `enabled=false`.
+///
+/// It is one inline table with every name a quoted TOML key, because Codex
+/// 0.152.1 splits a dotted `-c` key on every `.`, even inside quotes, while an
+/// inline table merges into the user's entry whatever its name. A second
+/// `-c mcp_servers={...}` would replace the first, so there is only one.
+/// Turning off a server Codex does not have fails the whole run, which is why
+/// only listed servers are turned off.
+///
+/// A server named in `allowed_tools` is refused ([`check_tracker`]) when
+/// Codex does not list it, lists it as off, or its name has a `.`.
+fn servers_setting(
+    allowed_tools: &[String],
+    configured: &[McpServer],
+) -> Result<Option<String>, AgentError> {
+    // `None` means all of that server's tools.
+    let mut allowed: BTreeMap<&str, Option<Vec<&str>>> = BTreeMap::new();
     for name in allowed_tools {
         let Some((server, tool)) = mcp_tool(name) else {
             tracing::debug!(tool = %name, "not an MCP tool name; Codex is not told about it");
             continue;
         };
-        if !is_bare_key(server) {
-            tracing::debug!(
-                server,
-                "MCP server name needs TOML quoting; not narrowed for Codex"
-            );
-            continue;
-        }
+        let tools = allowed.entry(server).or_insert_with(|| Some(Vec::new()));
         if tool == "*" {
-            all_tools.push(server);
-            continue;
-        }
-        let tools = by_server.entry(server).or_default();
-        if !tools.contains(&tool) {
-            tools.push(tool);
+            *tools = None;
+        } else if let Some(list) = tools
+            && !list.contains(&tool)
+        {
+            list.push(tool);
         }
     }
-    by_server
-        .into_iter()
-        .filter(|(server, _)| !all_tools.contains(server))
-        .map(|(server, tools)| {
-            let list: Vec<String> = tools.into_iter().map(toml_string).collect();
-            format!("mcp_servers.{server}.enabled_tools=[{}]", list.join(","))
-        })
-        .collect()
+
+    let mut entries: Vec<String> = Vec::new();
+    for (server, tools) in &allowed {
+        check_tracker(server, configured)?;
+        let entry = match tools {
+            None => r#"default_tools_approval_mode="approve""#.to_owned(),
+            Some(tools) => {
+                let names: Vec<String> = tools.iter().map(|t| toml_string(t)).collect();
+                let approvals: Vec<String> = names
+                    .iter()
+                    .map(|t| format!(r#"{t}={{approval_mode="approve"}}"#))
+                    .collect();
+                format!(
+                    "enabled_tools=[{}],tools={{{}}}",
+                    names.join(","),
+                    approvals.join(",")
+                )
+            }
+        };
+        entries.push(format!("{}={{{entry}}}", toml_string(server)));
+    }
+    for server in configured {
+        if server.status != McpStatus::Disabled && !allowed.contains_key(server.name.as_str()) {
+            entries.push(format!("{}={{enabled=false}}", toml_string(&server.name)));
+        }
+    }
+    Ok((!entries.is_empty()).then(|| format!("mcp_servers={{{}}}", entries.join(","))))
+}
+
+/// Refuses a tracker server a sync run cannot use: one Codex does not list,
+/// one turned off in Codex's config, and one whose name has a `.`, since
+/// Codex 0.152.1 loads such a server but never shows its tools to the model.
+fn check_tracker(server: &str, configured: &[McpServer]) -> Result<(), AgentError> {
+    if server.contains('.') {
+        return Err(could_not_start(
+            "Codex can't use a tracker server whose name contains a dot. Rename it in ~/.codex/config.toml.",
+        ));
+    }
+    match configured.iter().find(|s| s.name == server) {
+        None => Err(could_not_start(format!(
+            "Codex has no MCP server named \"{server}\". Pick the tracker again in Settings."
+        ))),
+        Some(s) if s.status == McpStatus::Disabled => Err(could_not_start(format!(
+            "The MCP server \"{server}\" is turned off in Codex. Turn it on in ~/.codex/config.toml."
+        ))),
+        Some(_) => Ok(()),
+    }
 }
 
 /// Splits `mcp__<server>__<tool>` into its server and tool. The server ends
@@ -239,19 +333,6 @@ fn enabled_tools_settings(allowed_tools: &[String]) -> Vec<String> {
 fn mcp_tool(name: &str) -> Option<(&str, &str)> {
     let (server, tool) = name.strip_prefix("mcp__")?.split_once("__")?;
     (!server.is_empty() && !tool.is_empty()).then_some((server, tool))
-}
-
-/// Whether `key` can be one segment of a TOML dotted key as it is.
-///
-/// Others would need quoting (`mcp_servers."my.server"`), and whether Codex's
-/// `-c` parser reads a quoted segment is unchecked: if it splits on every
-/// `.`, the setting would land on the wrong key. Such servers are left
-/// un-narrowed rather than risk that.
-fn is_bare_key(key: &str) -> bool {
-    !key.is_empty()
-        && key
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 /// `stderr` without the lines that are also in `prompt`.
@@ -366,8 +447,14 @@ mod tests {
     use serde_json::json;
 
     fn args_of(job: &Job) -> Vec<String> {
+        args_with(job, &[])
+    }
+
+    fn args_with(job: &Job, sync_args: &[&str]) -> Vec<String> {
+        let sync_args: Vec<OsString> = sync_args.iter().map(OsString::from).collect();
         exec_args(
             job,
+            &sync_args,
             Path::new("/io/schema.json"),
             Path::new("/io/reply.json"),
         )
@@ -413,27 +500,33 @@ mod tests {
         }
     }
 
+    fn server(name: &str, status: McpStatus) -> McpServer {
+        McpServer {
+            name: name.to_owned(),
+            status,
+        }
+    }
+
+    fn tools(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| (*n).to_owned()).collect()
+    }
+
     #[test]
-    fn a_sync_run_loads_the_user_config_and_narrows_the_tracker() {
-        let mut job = Job::sync(
-            "task",
-            json!({}),
-            vec![
-                "mcp__linear__create_issue".into(),
-                "mcp__linear__get_issue".into(),
-            ],
-        );
+    fn a_sync_run_loads_the_user_config_and_adds_its_own_settings() {
+        let mut job = Job::sync("task", json!({}), tools(&["mcp__linear__*"]));
         job.model = Some("gpt-5.5".into());
         assert_eq!(
-            args_of(&job),
+            args_with(&job, &["--disable", "apps", "-c", "mcp_servers={}"]),
             [
                 "exec",
                 "--ephemeral",
                 "--skip-git-repo-check",
                 "-s",
                 "read-only",
+                "--disable",
+                "apps",
                 "-c",
-                "mcp_servers.linear.enabled_tools=[\"create_issue\",\"get_issue\"]",
+                "mcp_servers={}",
                 "--model",
                 "gpt-5.5",
                 "--output-schema",
@@ -446,15 +539,57 @@ mod tests {
     }
 
     #[test]
-    fn a_notes_run_ignores_allowed_tools() {
+    fn a_notes_run_ignores_sync_settings() {
         let mut job = Job::notes("", json!({}));
-        job.allowed_tools = vec!["mcp__linear__create_issue".into()];
-        assert!(!args_of(&job).contains(&"-c".to_owned()));
+        job.allowed_tools = tools(&["mcp__linear__create_issue"]);
+        let args = args_with(&job, &["--disable", "apps", "-c", "mcp_servers={}"]);
+        assert!(!args.contains(&"-c".to_owned()), "{args:?}");
+        assert!(!args.contains(&"--disable".to_owned()), "{args:?}");
     }
 
     #[test]
-    fn allowed_tools_are_grouped_by_server_and_odd_names_skipped() {
-        let tools: Vec<String> = [
+    fn a_sync_run_turns_off_connectors_and_plugins() {
+        assert_eq!(
+            disabled_features(),
+            ["--disable", "apps", "--disable", "plugins"].map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn a_star_tool_pre_approves_the_whole_tracker_and_turns_the_rest_off() {
+        let configured = [
+            server("linear", McpStatus::Configured),
+            server("node_repl", McpStatus::Configured),
+            server("needs-login", McpStatus::NeedsAuth),
+            server("already-off", McpStatus::Disabled),
+        ];
+        assert_eq!(
+            servers_setting(&tools(&["mcp__linear__*"]), &configured)
+                .unwrap()
+                .unwrap(),
+            r#"mcp_servers={"linear"={default_tools_approval_mode="approve"},"node_repl"={enabled=false},"needs-login"={enabled=false}}"#
+        );
+        // `*` wins over listed tools of the same server, in either order.
+        for list in [
+            ["mcp__linear__create_issue", "mcp__linear__*"],
+            ["mcp__linear__*", "mcp__linear__create_issue"],
+        ] {
+            assert_eq!(
+                servers_setting(&tools(&list), &configured[..1])
+                    .unwrap()
+                    .unwrap(),
+                r#"mcp_servers={"linear"={default_tools_approval_mode="approve"}}"#
+            );
+        }
+    }
+
+    #[test]
+    fn listed_tools_are_the_only_ones_on_and_each_is_pre_approved() {
+        let configured = [
+            server("github", McpStatus::Configured),
+            server("linear", McpStatus::Configured),
+        ];
+        let allowed = tools(&[
             "mcp__linear__create_issue",
             "Bash",
             "mcp__github__create_issue",
@@ -462,52 +597,75 @@ mod tests {
             "mcp____nothing",
             "mcp__no_tool__",
             "mcp__linear__update_issue",
-        ]
-        .map(String::from)
-        .into();
+        ]);
         assert_eq!(
-            enabled_tools_settings(&tools),
-            [
-                "mcp_servers.github.enabled_tools=[\"create_issue\"]",
-                "mcp_servers.linear.enabled_tools=[\"create_issue\",\"update_issue\"]",
-            ]
+            servers_setting(&allowed, &configured).unwrap().unwrap(),
+            concat!(
+                r#"mcp_servers={"github"={enabled_tools=["create_issue"],tools={"create_issue"={approval_mode="approve"}}},"#,
+                r#""linear"={enabled_tools=["create_issue","update_issue"],tools={"create_issue"={approval_mode="approve"},"update_issue"={approval_mode="approve"}}}}"#
+            )
         );
-        assert!(enabled_tools_settings(&[]).is_empty());
     }
 
     #[test]
-    fn a_star_tool_leaves_that_server_with_all_its_tools() {
-        let tools: Vec<String> = [
-            "mcp__linear__create_issue",
-            "mcp__linear__*",
-            "mcp__github__create_issue",
-            "mcp__jira__*",
-        ]
-        .map(String::from)
-        .into();
+    fn with_no_mcp_tools_every_server_is_turned_off() {
+        let configured = [server("node_repl", McpStatus::Configured)];
         assert_eq!(
-            enabled_tools_settings(&tools),
-            ["mcp_servers.github.enabled_tools=[\"create_issue\"]"]
+            servers_setting(&tools(&["Bash"]), &configured)
+                .unwrap()
+                .unwrap(),
+            r#"mcp_servers={"node_repl"={enabled=false}}"#
         );
-        assert!(enabled_tools_settings(&["mcp__linear__*".to_owned()]).is_empty());
-
-        let job = Job::sync("task", json!({}), vec!["mcp__linear__*".into()]);
-        assert!(!args_of(&job).contains(&"-c".to_owned()));
+        assert_eq!(servers_setting(&[], &[]).unwrap(), None);
+        let off = [server("off", McpStatus::Disabled)];
+        assert_eq!(servers_setting(&[], &off).unwrap(), None);
     }
 
     #[test]
-    fn server_names_that_need_toml_quoting_are_not_narrowed() {
-        let tools: Vec<String> = [
-            "mcp__my.server__create_issue",
-            "mcp__claude ai Linear__save_issue",
-            "mcp__ok-name_1__a\"b\\c",
-        ]
-        .map(String::from)
-        .into();
+    fn any_other_server_name_is_turned_off_as_a_quoted_key() {
+        let configured = [
+            server("linear", McpStatus::Configured),
+            server("my.server", McpStatus::Configured),
+            server("a:b@c/d", McpStatus::Configured),
+            server("sp ace", McpStatus::Configured),
+            server("quo\"te\\", McpStatus::Configured),
+        ];
         assert_eq!(
-            enabled_tools_settings(&tools),
-            ["mcp_servers.ok-name_1.enabled_tools=[\"a\\\"b\\\\c\"]"]
+            servers_setting(&tools(&["mcp__linear__*"]), &configured)
+                .unwrap()
+                .unwrap(),
+            concat!(
+                r#"mcp_servers={"linear"={default_tools_approval_mode="approve"},"#,
+                r#""my.server"={enabled=false},"a:b@c/d"={enabled=false},"#,
+                r#""sp ace"={enabled=false},"quo\"te\\"={enabled=false}}"#
+            )
         );
+    }
+
+    #[test]
+    fn a_tracker_codex_cannot_use_is_refused_in_plain_words() {
+        let configured = [
+            server("my.linear", McpStatus::Configured),
+            server("off", McpStatus::Disabled),
+        ];
+        for (tracker, expected) in [
+            (
+                "mcp__my.linear__*",
+                "name contains a dot. Rename it in ~/.codex/config.toml.",
+            ),
+            (
+                "mcp__missing__*",
+                "Codex has no MCP server named \"missing\"",
+            ),
+            ("mcp__off__create_issue", "\"off\" is turned off in Codex"),
+        ] {
+            match servers_setting(&tools(&[tracker]), &configured).unwrap_err() {
+                AgentError::CouldNotStart { reason } => {
+                    assert!(reason.contains(expected), "{tracker}: {reason}");
+                }
+                other => panic!("{tracker}: expected CouldNotStart, got {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -530,7 +688,6 @@ mod tests {
     #[test]
     fn toml_strings_escape_control_characters() {
         assert_eq!(toml_string("a\nb\u{7}"), "\"a\\u000Ab\\u0007\"");
-        assert!(!is_bare_key(""));
     }
 
     #[test]
