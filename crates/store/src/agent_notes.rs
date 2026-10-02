@@ -7,7 +7,12 @@
 //! * the four fixed `meeting.md` sections (§3.2), plus `analyzed_by`,
 //!   `analyzed_model` and `analyzed_at` in its frontmatter;
 //! * one `tickets/TICK-NNNN.md` per task (§3.3), `status: open`, `assignee`
-//!   from the task's owner, `transcript_ref` as given.
+//!   from the task's owner, `transcript_ref` as given. §3.3 has no due date,
+//!   so it goes in the body (`Due: Friday.`).
+//!
+//! The text matches what the copy-prompt fallback asks the agent to write
+//! (`crates/prompts/templates/wrap-up.md`), so a meeting looks the same
+//! whichever path made its notes.
 //!
 //! Everything goes through [`Meeting`] and [`Ticket`], so the rules those
 //! types keep apply here too: a `meeting.md` with broken frontmatter is
@@ -51,10 +56,6 @@ use crate::{Error, MEETING_FILE, TICKETS_DIR};
 /// The `meeting.md` frontmatter key that records which tickets the app wrote,
 /// and what each file held when it did.
 pub const AGENT_TICKETS_KEY: &str = "agent_tickets";
-
-/// Ticket frontmatter key for the task's due date, in the meeting's words
-/// ("Friday"). Not a §3.3 key; unknown keys survive, so it rides along.
-pub const DUE_KEY: &str = "due";
 
 /// Held from the ticket-number scan to the last write. Process-wide: the
 /// meetings root is one per app, and only this process allocates numbers.
@@ -179,13 +180,26 @@ pub fn write(
         }
     }
 
-    let titles = folder::load(&dir)
-        .map(|f| f.tickets)
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|t| Some((t.id()?, t)))
-        .collect::<Vec<_>>();
-    fill_meeting(&mut meeting, notes, analysis, &outcome, &titles, record);
+    let mut actions: Vec<String> = outcome
+        .written
+        .iter()
+        .zip(&notes.tasks)
+        .map(|(id, task)| {
+            action_line(
+                id,
+                task.title.trim(),
+                task.owner.as_deref(),
+                task.due.as_deref(),
+            )
+        })
+        .collect();
+    for id in &outcome.kept {
+        let kept = Ticket::read(&tickets_dir.join(format!("{id}.md"))).ok();
+        let title = kept.as_ref().and_then(Ticket::title).unwrap_or_default();
+        let owner = kept.as_ref().and_then(Ticket::assignee);
+        actions.push(action_line(id, &title, owner.as_deref(), None));
+    }
+    fill_meeting(&mut meeting, notes, analysis, &actions, record);
     meeting.write(&meeting_path)?;
     self_writes.note(&meeting_path);
     Ok(outcome)
@@ -297,12 +311,20 @@ fn ticket_for(id: &str, meeting_id: &str, task: &Task) -> Ticket {
     made.frontmatter.set_str("assignee", task.owner.as_deref());
     made.frontmatter
         .set_str("transcript_ref", Some(&task.transcript_ref));
-    made.frontmatter.set_str(DUE_KEY, task.due.as_deref());
-    let details = task.details.trim();
-    made.body = if details.is_empty() {
+    let paragraphs: Vec<String> = [
+        Some(task.details.trim().to_owned()),
+        task.due
+            .as_deref()
+            .map(|due| format!("Due: {}.", due.trim())),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|p| !p.is_empty())
+    .collect();
+    made.body = if paragraphs.is_empty() {
         String::new()
     } else {
-        format!("\n{details}\n")
+        format!("\n{}\n", paragraphs.join("\n\n"))
     };
     made
 }
@@ -311,8 +333,7 @@ fn fill_meeting(
     meeting: &mut Meeting,
     notes: &Notes,
     analysis: &Analysis,
-    outcome: &Outcome,
-    tickets: &[(String, Ticket)],
+    actions: &[String],
     record: Hash,
 ) {
     let fm = &mut meeting.frontmatter;
@@ -327,37 +348,30 @@ fn fill_meeting(
 
     meeting.set_section("Summary", &paragraph(&notes.summary));
     meeting.set_section("Decisions", &bullets(&notes.decisions));
-    let actions: Vec<String> = outcome
-        .written
-        .iter()
-        .chain(&outcome.kept)
-        .map(|id| action_line(id, tickets))
-        .collect();
-    meeting.set_section("Action Items", &bullets(&actions));
+    meeting.set_section("Action Items", &bullets(actions));
     meeting.set_section("Open Questions", &bullets(&notes.open_questions));
 }
 
-/// `TICK-0001 Move sessions to Redis (Priya, due Friday)`.
-fn action_line(id: &str, tickets: &[(String, Ticket)]) -> String {
-    let Some((_, ticket)) = tickets.iter().find(|(t, _)| t == id) else {
-        return id.to_owned();
-    };
-    let mut line = format!("{id} {}", ticket.title().unwrap_or_default());
-    let who = ticket.assignee();
-    let due = ticket.frontmatter.get_str(DUE_KEY).map(|d| format!("due {d}"));
-    let extra: Vec<String> = who.into_iter().chain(due).collect();
+/// `TICK-0001: Move sessions to Redis (Priya, due Friday)`.
+fn action_line(id: &str, title: &str, owner: Option<&str>, due: Option<&str>) -> String {
+    let mut line = format!("{id}: {title}");
+    let due = due.map(|d| format!("due {d}"));
+    let extra: Vec<String> = owner.map(str::to_owned).into_iter().chain(due).collect();
     if !extra.is_empty() {
         line.push_str(&format!(" ({})", extra.join(", ")));
     }
     line
 }
 
+/// What an empty section says, as on the copy-prompt path.
+const NONE: &str = "None.\n";
+
 /// Free text for a section body. A line that starts with `## ` would split
 /// the section on the next read, so its `#` is escaped.
 fn paragraph(text: &str) -> String {
     let text = text.trim();
     if text.is_empty() {
-        return String::new();
+        return NONE.to_owned();
     }
     let mut out = String::new();
     for line in text.lines() {
@@ -370,7 +384,8 @@ fn paragraph(text: &str) -> String {
     out
 }
 
-/// One `- item` line per non-empty item, each folded onto a single line.
+/// One `- item` line per non-empty item, each folded onto a single line;
+/// [`NONE`] when there are none.
 fn bullets(items: &[String]) -> String {
     let mut out = String::new();
     for item in items {
@@ -380,6 +395,9 @@ fn bullets(items: &[String]) -> String {
             out.push_str(&folded);
             out.push('\n');
         }
+    }
+    if out.is_empty() {
+        out.push_str(NONE);
     }
     out
 }
@@ -397,6 +415,20 @@ mod tests {
     fn bullets_fold_lines_and_skip_blanks() {
         let items = ["one\ntwo".to_owned(), "  ".to_owned(), "three".to_owned()];
         assert_eq!(bullets(&items), "- one two\n- three\n");
+        assert_eq!(bullets(&[]), "None.\n");
+        assert_eq!(paragraph(" "), "None.\n");
+    }
+
+    #[test]
+    fn action_lines_leave_out_what_was_not_said() {
+        assert_eq!(
+            action_line("TICK-0001", "Ship it", Some("Priya"), Some("Friday")),
+            "TICK-0001: Ship it (Priya, due Friday)"
+        );
+        assert_eq!(
+            action_line("TICK-0002", "Ship it", None, None),
+            "TICK-0002: Ship it"
+        );
     }
 
     #[test]
