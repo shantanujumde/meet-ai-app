@@ -144,7 +144,11 @@ pub fn write(
 
     let tickets_dir = dir.join(TICKETS_DIR);
     let earlier = sort_earlier(&tickets_dir, &meeting);
-    let mut next = highest_ticket_number(root)?.saturating_add(1);
+    // A number the user's deletion freed stays retired: counting the record
+    // too keeps a deleted top ticket from coming back under its old name.
+    let mut next = highest_ticket_number(root)?
+        .max(earlier.highest)
+        .saturating_add(1);
 
     let mut record = Hash::new();
     let mut outcome = Outcome {
@@ -228,12 +232,15 @@ struct Earlier {
     replaceable: Vec<String>,
     /// Touched, so the user's now. In id order.
     kept: Vec<String>,
+    /// The highest number in the record, deleted tickets included.
+    highest: u32,
 }
 
 fn sort_earlier(tickets_dir: &Path, meeting: &Meeting) -> Earlier {
     let mut earlier = Earlier {
         replaceable: Vec::new(),
         kept: Vec::new(),
+        highest: 0,
     };
     let Some(Yaml::Hash(record)) = meeting.frontmatter.get(AGENT_TICKETS_KEY) else {
         return earlier;
@@ -245,6 +252,11 @@ fn sort_earlier(tickets_dir: &Path, meeting: &Meeting) -> Earlier {
         .filter(|(id, _)| ticket::parse_id(id).is_some())
         .collect();
     ids.sort_by_key(|(id, _)| ticket::parse_id(id));
+    earlier.highest = ids
+        .iter()
+        .filter_map(|(id, _)| ticket::parse_id(id))
+        .max()
+        .unwrap_or(0);
     for (id, hash) in ids {
         let path = tickets_dir.join(format!("{id}.md"));
         match std::fs::read(&path) {
