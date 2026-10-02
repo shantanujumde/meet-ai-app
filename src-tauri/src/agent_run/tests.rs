@@ -16,7 +16,9 @@ use store::watcher::SelfWrites;
 
 use super::notes::{self, Agent};
 use super::runs::{AgentRuns, Sink, Work};
-use super::{Failure, FailureKind, State, Status, failure, meeting_of, read_meeting_notes};
+use super::{
+    Failure, FailureKind, State, Status, failure, meeting_of, read_meeting_notes, switch_notes,
+};
 
 const STANDUP: &str = "2026-09-01-1430-standup";
 
@@ -598,4 +600,151 @@ fn a_meeting_with_no_notes_yet_has_no_sections() {
     let none = read_meeting_notes(&root.path, "2026-09-02-1000-nothing").unwrap();
     assert!(none.sections.is_empty());
     assert!(read_meeting_notes(&root.path, "../escape").is_err());
+}
+
+// ---------------------------------------------------------------------------
+// "Make notes for this meeting" (SPEC A11, TUR-12)
+// ---------------------------------------------------------------------------
+
+/// Flip the switch the way `set_meeting_notes` does.
+fn switch(root: &Root, agent_runs: Option<&AgentRuns>, on: bool) -> super::MeetingNotes {
+    switch_notes(&root.path, agent_runs, STANDUP, on, &SelfWrites::default()).unwrap()
+}
+
+#[test]
+fn switched_off_before_stop_the_meeting_is_never_sent() {
+    let root = Root::new();
+    // As a call leaves it: a transcript, no meeting.md yet.
+    let dir = root.path.join(STANDUP);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(store::TRANSCRIPT_FILE), TRANSCRIPT).unwrap();
+    let mut expected = snapshot(&dir);
+
+    assert!(switch(&root, None, false).notes_off);
+    let switched = snapshot(&dir);
+    let meeting_md = PathBuf::from(store::MEETING_FILE);
+    expected.insert(meeting_md.clone(), switched[&meeting_md].clone());
+    assert_eq!(switched, expected, "the switch wrote only meeting.md");
+
+    let asked = Arc::new(AtomicBool::new(false));
+    let asked_in = Arc::clone(&asked);
+    let result = notes::run_notes(
+        &root.path,
+        STANDUP,
+        move || {
+            asked_in.store(true, Ordering::SeqCst);
+            fake(FakeBehavior::Reply(standup_reply()), LONG)()
+        },
+        &CancelHandle::new(),
+        &SelfWrites::default(),
+    );
+
+    assert_eq!(result.unwrap_err().kind, FailureKind::NotesOff);
+    assert!(
+        !asked.load(Ordering::SeqCst),
+        "no agent was looked for, so none could start"
+    );
+    assert_eq!(snapshot(&dir), switched);
+}
+
+#[test]
+fn switched_back_on_make_notes_now_writes_the_notes() {
+    let root = Root::new();
+    let dir = root.standup();
+    assert!(switch(&root, None, false).notes_off);
+    let back_on = switch(&root, None, true);
+    assert!(!back_on.notes_off);
+    assert!(back_on.sections.is_empty(), "no notes yet");
+
+    assert_eq!(
+        run(&root, FakeBehavior::Reply(standup_reply()), LONG).unwrap(),
+        2
+    );
+
+    let notes = read_meeting_notes(&root.path, STANDUP).unwrap();
+    assert!(!notes.notes_off);
+    assert_eq!(notes.analyzed_by.as_deref(), Some("claude-code"));
+    assert!(dir.join(store::TICKETS_DIR).join("TICK-0001.md").is_file());
+}
+
+#[test]
+fn switched_off_while_the_agent_works_nothing_is_written() {
+    let root = Root::new();
+    let dir = root.standup();
+    let root_path = root.path.clone();
+
+    let result = notes::run_notes(
+        &root.path,
+        STANDUP,
+        move || {
+            // The meeting was read and found on; the user flips the switch
+            // before the agent answers.
+            notes_switch_off(&root_path);
+            fake(FakeBehavior::Reply(standup_reply()), LONG)()
+        },
+        &CancelHandle::new(),
+        &SelfWrites::default(),
+    );
+
+    assert_eq!(result.unwrap_err().kind, FailureKind::NotesOff);
+    assert!(!dir.join(store::TICKETS_DIR).exists());
+    let notes = read_meeting_notes(&root.path, STANDUP).unwrap();
+    assert!(notes.notes_off);
+    assert_eq!(notes.analyzed_by, None);
+    assert!(notes.sections.is_empty());
+}
+
+fn notes_switch_off(root: &Path) {
+    store::notes_switch::set(root, STANDUP, false, &SelfWrites::default()).unwrap();
+}
+
+#[test]
+fn switching_off_stops_the_running_run_and_says_notes_off() {
+    let root = Root::new();
+    let dir = root.standup();
+    let runs = AgentRuns::default();
+    let sink = Arc::new(Recorded::default());
+
+    runs.start(
+        STANDUP,
+        work(&root, FakeBehavior::Sleep(Duration::from_secs(20)), LONG),
+        sink.clone(),
+    );
+    std::thread::sleep(Duration::from_millis(200));
+    let started = Instant::now();
+    assert!(switch(&root, Some(&runs), false).notes_off);
+
+    let ended = sink.wait_for_end();
+    assert!(failed(FailureKind::NotesOff)(&ended), "{ended:?}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(sink.ready.lock().unwrap().is_empty());
+    assert!(!dir.join(store::TICKETS_DIR).exists());
+    assert_eq!(
+        read_meeting_notes(&root.path, STANDUP).unwrap().analyzed_by,
+        None
+    );
+}
+
+#[test]
+fn switching_on_leaves_a_running_run_alone() {
+    let root = Root::new();
+    root.standup();
+    let runs = AgentRuns::default();
+    let sink = Arc::new(Recorded::default());
+
+    runs.start(
+        STANDUP,
+        work(&root, FakeBehavior::Reply(standup_reply()), LONG),
+        sink.clone(),
+    );
+    switch(&root, Some(&runs), true);
+
+    assert_eq!(sink.wait_for_end(), State::Done { tasks: 2 });
+}
+
+#[test]
+fn the_switch_refuses_a_bad_meeting_id() {
+    let root = Root::new();
+    let result = switch_notes(&root.path, None, "../escape", false, &SelfWrites::default());
+    assert!(result.is_err());
 }

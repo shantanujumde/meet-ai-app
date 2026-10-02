@@ -40,6 +40,12 @@ export type MeetingSummary = {
   hasNotes: boolean;
   /** `meeting.md` exists, i.e. an agent has wrapped this meeting up. */
   hasAnalysis: boolean;
+  /**
+   * `meeting.md` says `agent_notes: off`: the user switched notes off for
+   * this meeting (TUR-12, SPEC A11), so its transcript is never sent to an
+   * agent. The list marks it "Notes off".
+   */
+  notesOff: boolean;
   /** How the recording ended. See {@link RecordingState}. */
   recordingState: RecordingState;
   /**

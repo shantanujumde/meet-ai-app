@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use agent::{AgentError, CancelHandle, ClaudeHarness, CodexHarness, Harness, Install, Job};
 use prompts::wrap_up::{Target, WrapUpInput, render_wrap_up_from};
-use store::agent_notes::{self, AGENT_NOTES_KEY, Analysis, AnalyzedBy};
+use store::agent_notes::{self, Analysis, AnalyzedBy};
 use store::folder_name::{prettify_slug, split_folder_name};
 use store::meeting::Meeting;
 use store::watcher::SelfWrites;
@@ -51,14 +51,14 @@ pub fn run_notes(
     job.timeout = agent.timeout;
     job.work_root = agent.work_root;
     job.cancel = cancel.clone();
-    let reply = agent
-        .harness
-        .run(&job)
-        .map_err(|error| failure::from_agent(&error, harness_id))?;
+    let reply = agent.harness.run(&job).map_err(|error| match error {
+        AgentError::Cancelled => stopped(root, meeting_id, harness_id),
+        other => failure::from_agent(&other, harness_id),
+    })?;
     let notes = prompts::Notes::from_value(reply).map_err(|_| failure::bad_reply())?;
     // Cancel pressed while the answer was on its way: write nothing.
     if cancel.is_cancelled() {
-        return Err(failure::from_agent(&AgentError::Cancelled, harness_id));
+        return Err(stopped(root, meeting_id, harness_id));
     }
 
     let analysis = Analysis {
@@ -160,7 +160,7 @@ fn prepare(root: &Path, meeting_id: &str) -> Result<String, Failure> {
             store::MEETING_FILE
         ))
     })?;
-    if meeting.as_ref().is_some_and(notes_are_off) {
+    if meeting.as_ref().is_some_and(store::notes_switch::is_off) {
         return Err(failure::notes_off());
     }
     let transcript = match std::fs::read_to_string(dir.join(store::TRANSCRIPT_FILE)) {
@@ -189,12 +189,22 @@ fn prepare(root: &Path, meeting_id: &str) -> Result<String, Failure> {
         .map_err(|error| failure::could_not_start(format!("the prompt template: {error}")))
 }
 
-/// `agent_notes: off` (or `false`), as `store::agent_notes::write` reads it.
-fn notes_are_off(meeting: &Meeting) -> bool {
-    matches!(
-        meeting.frontmatter.get_str(AGENT_NOTES_KEY).as_deref(),
-        Some("off" | "false")
-    )
+/// Why a cancelled run stopped: Cancel, or the user switching notes off for
+/// this meeting, which cancels its run (TUR-12).
+fn stopped(root: &Path, meeting_id: &str, harness_id: &str) -> Failure {
+    if switched_off(root, meeting_id) {
+        failure::notes_off()
+    } else {
+        failure::from_agent(&AgentError::Cancelled, harness_id)
+    }
+}
+
+/// The meeting's `meeting.md` now says `agent_notes: off`.
+fn switched_off(root: &Path, meeting_id: &str) -> bool {
+    store::folder::meeting_dir(root, meeting_id)
+        .ok()
+        .and_then(|dir| Meeting::read(&dir.join(store::MEETING_FILE)).ok().flatten())
+        .is_some_and(|meeting| store::notes_switch::is_off(&meeting))
 }
 
 /// The meeting's title, or its folder name made readable, as Copy prompt

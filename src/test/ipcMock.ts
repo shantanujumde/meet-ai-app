@@ -129,6 +129,12 @@ export const ipc = {
     state: { state: "failed", failure: CANCELLED },
   })),
   meetingNotes: vi.fn<typeof Client.meetingNotes>(async () => NO_NOTES),
+  // The switch answers with the notes as they now read: none written yet,
+  // and switched the way it was asked.
+  setMeetingNotes: vi.fn<typeof Client.setMeetingNotes>(async (_meetingId, on) => ({
+    ...NO_NOTES,
+    notesOff: !on,
+  })),
 
   search: vi.fn<typeof Client.search>(async () => []),
 

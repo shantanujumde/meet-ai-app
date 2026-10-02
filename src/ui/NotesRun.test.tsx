@@ -1,9 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
+import { useNotesRun } from "@/hooks/useNotesRun";
 import { AGENT_RUN_STATUS_EVENT } from "@/ipc/client";
 import type { MeetingNotes, NotesRunState, NotesRunStatus } from "@/ipc/types";
 import { emit, ipc } from "@/test/ipcMock";
 import { NotesRun } from "./NotesRun";
+import { NotesSwitch } from "./NotesSwitch";
 
 /**
  * TUR-10: a meeting's notes run as the meeting view shows it — Writing notes…
@@ -14,7 +16,7 @@ vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
 );
 
-const { notesRunStatus, startNotesRun, cancelNotesRun, meetingNotes } = ipc;
+const { notesRunStatus, startNotesRun, cancelNotesRun, meetingNotes, setMeetingNotes } = ipc;
 
 const ID = "2026-09-30-1015-meeting";
 
@@ -36,8 +38,45 @@ function given(state: NotesRunState, notes?: MeetingNotes) {
   if (notes) meetingNotes.mockResolvedValue(notes);
 }
 
-function renderRun({ canStart = true, onDone }: { canStart?: boolean; onDone?: () => void } = {}) {
-  return render(<NotesRun meetingId={ID} canStart={canStart} onDone={onDone} />);
+/**
+ * The run pane with the page's hook behind it, as the meeting view has it.
+ * `withSwitch` adds the TUR-12 switch over it, wired the same way.
+ */
+function Page({
+  canStart,
+  onDone,
+  withSwitch,
+}: {
+  canStart: boolean;
+  onDone?: () => void;
+  withSwitch: boolean;
+}) {
+  const run = useNotesRun(ID, onDone);
+  const pane = <NotesRun run={run} canStart={canStart} />;
+  if (!withSwitch) return pane;
+  return (
+    <>
+      <NotesSwitch
+        on={run.notes ? !run.notes.notesOff : true}
+        busy={run.switching}
+        error={run.switchError}
+        onChange={run.setNotesOn}
+      />
+      {pane}
+    </>
+  );
+}
+
+function renderRun({
+  canStart = true,
+  onDone,
+  withSwitch = false,
+}: {
+  canStart?: boolean;
+  onDone?: () => void;
+  withSwitch?: boolean;
+} = {}) {
+  return render(<Page canStart={canStart} onDone={onDone} withSwitch={withSwitch} />);
 }
 
 /** Wait until both first answers are in, so a test is past the blank render. */
@@ -225,5 +264,128 @@ describe("NotesRun", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Write notes" }));
     expect(await screen.findByText("Bad TOML.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Write notes" })).not.toBeDisabled();
+  });
+});
+
+/**
+ * TUR-12: the "Make notes for this meeting" switch, and what the pane shows
+ * as it moves.
+ */
+describe("the notes switch", () => {
+  const OFF: MeetingNotes = { notesOff: true, analyzedBy: null, sections: [] };
+
+  function theSwitch() {
+    return screen.getByRole("switch", { name: "Make notes for this meeting" });
+  }
+
+  test("is on by default; off saves it, says so, and hides the run and its start button", async () => {
+    const onDone = vi.fn();
+    renderRun({ withSwitch: true, onDone });
+    expect(await screen.findByRole("button", { name: "Write notes" })).toBeTruthy();
+    expect(theSwitch()).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(theSwitch());
+    await waitFor(() => expect(setMeetingNotes).toHaveBeenCalledWith(ID, false));
+
+    await waitFor(() => expect(theSwitch()).toHaveAttribute("aria-checked", "false"));
+    expect(theSwitch()).toHaveAccessibleDescription(
+      "Off: the transcript is not sent to your agent. For private calls.",
+    );
+    expect(screen.queryByRole("button", { name: "Write notes" })).toBeNull();
+    expect(screen.queryByText("No notes yet")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Meeting notes" })).toBeNull();
+    // The list's "Notes off" marker reads from the list, so it is reloaded.
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  test("waits for its answer, so a second press while saving does nothing", async () => {
+    let answer: (value: MeetingNotes) => void = () => {};
+    setMeetingNotes.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    renderRun({ withSwitch: true });
+    await loaded();
+
+    fireEvent.click(theSwitch());
+    await waitFor(() => expect(theSwitch()).toBeDisabled());
+    fireEvent.click(theSwitch());
+    expect(setMeetingNotes).toHaveBeenCalledTimes(1);
+
+    await act(async () => answer(OFF));
+    expect(theSwitch()).not.toBeDisabled();
+    expect(theSwitch()).toHaveAttribute("aria-checked", "false");
+  });
+
+  test("off, then on again: offers Make notes now, which starts the run", async () => {
+    given({ state: "idle" }, OFF);
+    renderRun({ withSwitch: true });
+    await loaded();
+    expect(theSwitch()).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByRole("button", { name: "Make notes now" })).toBeNull();
+
+    fireEvent.click(theSwitch());
+    await waitFor(() => expect(setMeetingNotes).toHaveBeenCalledWith(ID, true));
+
+    expect(await screen.findByText("Notes are on for this meeting")).toBeTruthy();
+    expect(theSwitch()).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Make notes now" }));
+    await waitFor(() => expect(startNotesRun).toHaveBeenCalledWith(ID));
+    expect(await screen.findByText("Writing notes…")).toBeTruthy();
+  });
+
+  test("a run refused because notes were off reads as Make notes now once they are on", async () => {
+    given(
+      {
+        state: "failed",
+        failure: { kind: "notes-off", message: "Notes are off for this meeting.", command: null },
+      },
+      OFF,
+    );
+    renderRun({ withSwitch: true });
+    await loaded();
+
+    fireEvent.click(theSwitch());
+    expect(await screen.findByRole("button", { name: "Make notes now" })).toBeTruthy();
+    expect(screen.queryByText("Notes are off for this meeting")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  test("switched off mid-run, the cancelled run says nothing; back on, Make notes now", async () => {
+    given({ state: "running" });
+    renderRun({ withSwitch: true });
+    expect(await screen.findByText("Writing notes…")).toBeTruthy();
+
+    fireEvent.click(theSwitch());
+    await waitFor(() => expect(setMeetingNotes).toHaveBeenCalledWith(ID, false));
+    // Rust cancels the run as it writes the switch, and says so.
+    act(() =>
+      emit(
+        AGENT_RUN_STATUS_EVENT,
+        status({
+          state: "failed",
+          failure: { kind: "cancelled", message: "Cancelled.", command: null },
+        }),
+      ),
+    );
+    await waitFor(() => expect(screen.queryByText("Writing notes…")).toBeNull());
+    expect(screen.queryByText("You cancelled the notes")).toBeNull();
+
+    fireEvent.click(theSwitch());
+    expect(await screen.findByRole("button", { name: "Make notes now" })).toBeTruthy();
+    expect(screen.queryByText("You cancelled the notes")).toBeNull();
+  });
+
+  test("a switch Rust cannot save shows why and stays where it was", async () => {
+    setMeetingNotes.mockRejectedValue({ domain: "app", kind: "config", message: "Bad TOML." });
+    renderRun({ withSwitch: true });
+    await loaded();
+
+    fireEvent.click(theSwitch());
+    expect(await screen.findByText("Bad TOML.")).toBeTruthy();
+    expect(theSwitch()).toHaveAttribute("aria-checked", "true");
+    expect(theSwitch()).not.toBeDisabled();
   });
 });

@@ -415,6 +415,55 @@ test("an interrupted meeting opens like any other and says how much audio was ke
   expect(readMeeting).toHaveBeenCalledWith("2026-09-30-1140-meeting");
 });
 
+// --- TUR-12: a meeting with notes switched off -----------------------------
+
+const PRIVATE = meetingSummary({
+  id: "2026-09-30-1200-meeting",
+  time: "12:00",
+  notesOff: true,
+});
+
+test("a meeting with notes switched off is marked in the list, and others are not", async () => {
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  listMeetings.mockResolvedValue({
+    root: "/Users/test/Meetings",
+    rootExists: true,
+    meetings: [PRIVATE, FINISHED],
+  });
+
+  render(<App />);
+
+  // Once in the sidebar, once on the list page — and only on its own row.
+  const labels = await screen.findAllByText("Notes off");
+  expect(labels).toHaveLength(2);
+  for (const label of labels) {
+    const row = label.closest("button");
+    expect(row?.textContent).toMatch(/12:00/);
+    expect(row?.textContent).not.toMatch(/11:29/);
+  }
+});
+
+test("a recording meeting with notes off keeps its recording dot beside the marker", async () => {
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  listMeetings.mockResolvedValue({
+    root: "/Users/test/Meetings",
+    rootExists: true,
+    meetings: [PRIVATE],
+  });
+  ipc.recordingStatus.mockResolvedValue({
+    phase: "recording",
+    meetingId: PRIVATE.id,
+    startedAtMs: 0,
+    error: null,
+  });
+
+  render(<App />);
+
+  const sidebar = await screen.findByRole("navigation", { name: "Meetings" });
+  await waitFor(() => expect(within(sidebar).getByText("● Recording")).toBeInTheDocument());
+  expect(within(sidebar).getByText("Notes off")).toBeInTheDocument();
+});
+
 test("a change made outside the app refreshes the list quietly and leaves the open meeting alone", async () => {
   onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
   listMeetings.mockResolvedValue({

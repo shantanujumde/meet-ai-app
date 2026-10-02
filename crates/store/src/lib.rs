@@ -11,6 +11,7 @@
 //! * [`ticket`] — `tickets/TICK-NNNN.md` (§3.3).
 //! * [`agent_notes`] — `meeting.md` sections and tickets written from the
 //!   agent's notes JSON (SPEC A11).
+//! * [`notes_switch`] — the per-meeting `agent_notes: off` switch (SPEC A11).
 //! * [`folder`] — one meeting folder, or every folder under the root, loaded
 //!   together.
 //!
@@ -50,6 +51,7 @@ pub mod frontmatter;
 pub mod index;
 pub mod meeting;
 pub mod notes;
+pub mod notes_switch;
 pub mod ticket;
 pub mod transcript;
 pub mod watcher;

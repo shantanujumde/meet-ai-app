@@ -329,7 +329,7 @@ fn save_meeting(
     Ok(Some(contents.into_bytes()))
 }
 
-fn notes_are_off(meeting: &Meeting) -> bool {
+pub(crate) fn notes_are_off(meeting: &Meeting) -> bool {
     matches!(
         meeting.frontmatter.get_str(AGENT_NOTES_KEY).as_deref(),
         Some("off" | "false")
@@ -338,7 +338,7 @@ fn notes_are_off(meeting: &Meeting) -> bool {
 
 /// The title a brand-new `meeting.md` gets: the folder's slug, prettified, or
 /// the id itself for a folder someone renamed by hand.
-fn default_title(meeting_id: &str) -> String {
+pub(crate) fn default_title(meeting_id: &str) -> String {
     match split_folder_name(meeting_id) {
         (_, _, Some(slug)) => prettify_slug(slug),
         _ => meeting_id.to_owned(),

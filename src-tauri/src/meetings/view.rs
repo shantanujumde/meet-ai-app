@@ -36,8 +36,13 @@ pub struct MeetingSummary {
     pub last_timestamp: Option<String>,
     /// `notes.md` exists and has something in it.
     pub has_notes: bool,
-    /// `meeting.md` exists, i.e. an agent has wrapped this meeting up.
+    /// The meeting has been wrapped up: `meeting.md` exists and its notes are
+    /// written (`analyzed_by` is set, or one of the four sections has text).
+    /// A `meeting.md` that holds only the notes switch does not count.
     pub has_analysis: bool,
+    /// `meeting.md` says `agent_notes: off`: the user switched notes off for
+    /// this meeting (SPEC A11, TUR-12), so no notes run sends it.
+    pub notes_off: bool,
     /// Whether the recording ended on purpose. See [`RecordingState`].
     pub recording_state: RecordingState,
     /// Milliseconds of audio a player can actually reach: the longer of the
@@ -187,8 +192,24 @@ pub(super) fn summarize(folder: &store::folder::MeetingFolder, is_live: bool) ->
         line_count,
         last_timestamp,
         has_notes: !folder.notes.is_empty(),
-        has_analysis: folder.meeting.is_some(),
+        has_analysis: folder.meeting.as_ref().is_some_and(is_wrapped_up),
+        notes_off: folder
+            .meeting
+            .as_ref()
+            .is_some_and(store::notes_switch::is_off),
     }
+}
+
+/// Notes are written: `analyzed_by` is set, or a section has text (an agent
+/// on the copy-prompt path may leave `analyzed_by` out). Switching notes off
+/// can make a `meeting.md` with neither.
+fn is_wrapped_up(meeting: &store::meeting::Meeting) -> bool {
+    meeting.is_analyzed()
+        || store::meeting::SECTIONS.iter().any(|heading| {
+            meeting
+                .section(heading)
+                .is_some_and(|body| !body.trim().is_empty())
+        })
 }
 
 /// The §3.4 lines `store` skipped, as the single count the review view shows.
