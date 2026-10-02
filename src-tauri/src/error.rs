@@ -97,6 +97,25 @@ impl From<store::Error> for UiError {
     }
 }
 
+impl From<crate::config::ConfigError> for UiError {
+    fn from(error: crate::config::ConfigError) -> Self {
+        use crate::config::ConfigError;
+        // `app` domain like the other shell errors. `unknown-harness` is its
+        // own kind so the Setup screen can point at the agent picker.
+        let kind = match &error {
+            ConfigError::UnknownHarness(_) => "unknown-harness",
+            ConfigError::Invalid(_) => "invalid-config",
+            ConfigError::Io(_) => "io",
+            ConfigError::Root(_) => "root",
+        };
+        // Already a UI error (no meetings folder, say): keep its own kind.
+        if let ConfigError::Root(error) = error {
+            return error;
+        }
+        Self::app(kind, error.to_string())
+    }
+}
+
 impl From<std::io::Error> for UiError {
     fn from(error: std::io::Error) -> Self {
         Self::app("io", error.to_string())
