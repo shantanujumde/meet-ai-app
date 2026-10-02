@@ -11,7 +11,12 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { cn } from "@/lib/cn";
 import { DEFAULT_ROOT_LABEL, SHORTCUT_LABEL } from "@/lib/constants";
-import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "@/lib/format";
+import {
+  formatLineCount,
+  formatRelativeDate,
+  INTERRUPTED_LABEL,
+  NOTES_OFF_LABEL,
+} from "@/lib/format";
 import { openPermissionScreen } from "@/lib/permissionRoute";
 import { meetingPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
@@ -126,6 +131,8 @@ export function Meetings() {
                     {INTERRUPTED_LABEL}
                   </Pill>
                 ) : null}
+                {/* TUR-12: this meeting is never sent to an agent. */}
+                {meeting.notesOff ? <Pill className="me-4">{NOTES_OFF_LABEL}</Pill> : null}
                 {formatLineCount(meeting.lineCount)}
                 {meeting.hasAnalysis ? " · wrapped up" : ""}
               </RowValue>

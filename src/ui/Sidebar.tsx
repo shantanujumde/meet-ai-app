@@ -7,11 +7,21 @@
  *
  * Selection is marked by a fill *and* a leading accent bar, never by colour
  * alone.
+ *
+ * A meeting with notes switched off (TUR-12) says "Notes off" in words. It
+ * takes the line count's place, the way Interrupted does, and sits beside the
+ * recording dot or Interrupted rather than replacing them: those say what
+ * happened to the recording, this says what will happen to the transcript.
  */
 
 import { NavLink, useNavigate } from "react-router";
 import type { MeetingList, MeetingSummary, RecordingStatus } from "@/ipc/types";
-import { formatLineCount, formatRelativeDate, INTERRUPTED_LABEL } from "@/lib/format";
+import {
+  formatLineCount,
+  formatRelativeDate,
+  INTERRUPTED_LABEL,
+  NOTES_OFF_LABEL,
+} from "@/lib/format";
 import { meetingPath, SETTINGS, TICKETS } from "@/lib/routes";
 import { buttonVariants } from "./primitives";
 import { Checking } from "./states";
@@ -96,7 +106,9 @@ function MeetingRow({
   return (
     <button type="button" className="meeting-row" aria-current={selected} onClick={onOpen}>
       <span className="meeting-row__title">{meeting.title}</span>
-      <span className="meeting-row__meta">
+      {/* Wraps rather than clipping when the dot or Interrupted and "Notes
+          off" both show and the sidebar is narrow. */}
+      <span className="meeting-row__meta flex-wrap">
         <span>{formatRelativeDate(meeting.date)}</span>
         {meeting.time ? <span>{meeting.time}</span> : null}
         {/* A recording meeting shows the dot, not a red title — colour alone
@@ -109,9 +121,10 @@ function MeetingRow({
           <span className="meeting-row__badge meeting-row__badge--interrupted">
             {INTERRUPTED_LABEL}
           </span>
-        ) : (
+        ) : meeting.notesOff ? null : (
           <span className="meeting-row__badge">{formatLineCount(meeting.lineCount)}</span>
         )}
+        {meeting.notesOff ? <span className="meeting-row__badge">{NOTES_OFF_LABEL}</span> : null}
       </span>
     </button>
   );

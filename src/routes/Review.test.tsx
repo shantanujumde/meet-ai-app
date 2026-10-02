@@ -199,3 +199,57 @@ describe("Review's meeting notes", () => {
     expect(screen.queryByRole("button", { name: "Write notes" })).toBeNull();
   });
 });
+
+/**
+ * TUR-12, SPEC A11: the "Make notes for this meeting" switch sits in the
+ * header, so it is there while recording as well as after.
+ */
+describe("Review's notes switch", () => {
+  const SWITCH = { name: "Make notes for this meeting" } as const;
+
+  test("is there while this meeting records, and switching off saves it and reloads the list", async () => {
+    recording({ phase: "recording", meetingId: ID, startedAtMs: 0 });
+    readMeeting.mockResolvedValue(detail([]));
+    renderReview();
+
+    expect(await screen.findByRole("heading", { name: "Live transcript" })).toBeTruthy();
+    const toggle = screen.getByRole("switch", SWITCH);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(ipc.setMeetingNotes).toHaveBeenCalledWith(ID, false));
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "false"));
+    // The list's "Notes off" marker comes from a fresh read of the list.
+    await waitFor(() => expect(ipc.listMeetings).toHaveBeenCalled());
+  });
+
+  test("a meeting already switched off opens off, with no Copy prompt and no start button", async () => {
+    copyPromptFallback.mockResolvedValue(true);
+    readMeeting.mockResolvedValue(
+      meetingDetail({ summary: { id: ID, notesOff: true }, lines: [transcriptLine()] }),
+    );
+    ipc.meetingNotes.mockResolvedValue({ notesOff: true, analyzedBy: null, sections: [] });
+    renderReview();
+
+    expect(await screen.findByRole("switch", SWITCH)).toHaveAttribute("aria-checked", "false");
+    await waitFor(() => expect(copyPromptFallback).toHaveBeenCalled());
+    await waitFor(() => expect(ipc.meetingNotes).toHaveBeenCalledWith(ID));
+    expect(screen.queryByRole("button", { name: "Copy prompt" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Write notes" })).toBeNull();
+  });
+
+  test("switched back on for a finished meeting, offers Make notes now", async () => {
+    readMeeting.mockResolvedValue(
+      meetingDetail({ summary: { id: ID, notesOff: true }, lines: [transcriptLine()] }),
+    );
+    ipc.meetingNotes.mockResolvedValue({ notesOff: true, analyzedBy: null, sections: [] });
+    renderReview();
+
+    const toggle = await screen.findByRole("switch", SWITCH);
+    await waitFor(() => expect(ipc.meetingNotes).toHaveBeenCalledWith(ID));
+    fireEvent.click(toggle);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Make notes now" }));
+    await waitFor(() => expect(ipc.startNotesRun).toHaveBeenCalledWith(ID));
+  });
+});

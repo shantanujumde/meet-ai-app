@@ -291,6 +291,16 @@ export function cancelNotesRun(meetingId: string): Promise<NotesRunStatus> {
   return call(() => commands.cancelNotesRun(meetingId));
 }
 
+/**
+ * The "Make notes for this meeting" switch (TUR-12, SPEC A11). Off writes
+ * `agent_notes: off` into `meeting.md`, so no run sends this transcript
+ * anywhere, and cancels a run already going. Answers with the notes as they
+ * now read.
+ */
+export function setMeetingNotes(meetingId: string, on: boolean): Promise<MeetingNotes> {
+  return call(() => commands.setMeetingNotes(meetingId, on));
+}
+
 /** The agent-written sections of this meeting's `meeting.md`. */
 export async function meetingNotes(meetingId: string): Promise<MeetingNotes> {
   if (!hasBackend()) return { notesOff: false, analyzedBy: null, sections: [] };

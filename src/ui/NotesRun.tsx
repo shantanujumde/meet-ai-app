@@ -8,12 +8,20 @@
  * quit mid-run, say) shows what is on disk, and offers to start one when
  * there is nothing there.
  *
+ * With notes switched off for the meeting (TUR-12) none of that shows: there
+ * is no run to talk about. Switched back on, a meeting with no notes offers
+ * **Make notes now** — including when its last run was refused because notes
+ * were off, or cancelled by the switch.
+ *
+ * The run itself is the page's {@link useNotesRun}, passed in, so the header's
+ * switch and this pane read the same answers.
+ *
  * The sections are markdown as the agent wrote it, shown as pre-wrapped text:
  * readable as is, and no markdown library for four short sections.
  */
 
 import type { ReactNode } from "react";
-import { useNotesRun } from "@/hooks/useNotesRun";
+import type { NotesRun as NotesRunModel } from "@/hooks/useNotesRun";
 import type {
   NotesRunFailure,
   NotesRunFailureKind,
@@ -46,20 +54,18 @@ const AGENT_NAMES: Record<string, string> = {
 };
 
 export function NotesRun({
-  meetingId,
+  run,
   canStart,
-  onDone,
 }: {
-  meetingId: string;
+  /** This meeting's run and notes, from the page's {@link useNotesRun}. */
+  run: NotesRunModel;
   /**
    * Whether Retry and "Write notes" are offered: the meeting has a transcript,
    * and an agent is set up (with none, the header's Copy prompt stands in).
    */
   canStart: boolean;
-  /** A run finished and wrote notes — the meeting list reads differently now. */
-  onDone?: () => void;
 }) {
-  const { state, notes, busy, error, start, cancel } = useNotesRun(meetingId, onDone);
+  const { state, notes, busy, error, start, cancel, switchedOn } = run;
 
   // Nothing until both answers are in, so the page does not flash a start
   // button for a meeting that already has notes.
@@ -69,7 +75,15 @@ export function NotesRun({
   // Notes switched off for this meeting: nothing about runs at all.
   const panel = notes.notesOff
     ? null
-    : runPanel({ state, hasNotes: sections.length > 0, canStart, busy, start, cancel });
+    : runPanel({
+        state: afterSwitch(state, switchedOn),
+        hasNotes: sections.length > 0,
+        canStart,
+        busy,
+        justSwitchedOn: switchedOn,
+        start,
+        cancel,
+      });
 
   if (panel === null && sections.length === 0 && error === null) return null;
 
@@ -91,11 +105,24 @@ export function NotesRun({
   );
 }
 
+/**
+ * A failure the switch explains, read as "no run yet" now notes are on: the
+ * run refused because notes were off, or — just after switching back on —
+ * the run the switch cancelled when it went off.
+ */
+function afterSwitch(state: NotesRunState, switchedOn: boolean): NotesRunState {
+  if (state.state !== "failed") return state;
+  const { kind } = state.failure;
+  if (kind === "notes-off" || (switchedOn && kind === "cancelled")) return { state: "idle" };
+  return state;
+}
+
 function runPanel({
   state,
   hasNotes,
   canStart,
   busy,
+  justSwitchedOn,
   start,
   cancel,
 }: {
@@ -103,6 +130,8 @@ function runPanel({
   hasNotes: boolean;
   canStart: boolean;
   busy: boolean;
+  /** Notes were just switched back on here: the user is asking for them. */
+  justSwitchedOn: boolean;
   start: () => void;
   cancel: () => void;
 }): ReactNode {
@@ -133,6 +162,18 @@ function runPanel({
       );
     case "idle":
       if (hasNotes || !canStart) return null;
+      if (justSwitchedOn) {
+        return (
+          <RunCard
+            status={<span className="text-body font-medium">Notes are on for this meeting</span>}
+            body="Your agent can write a summary, the decisions and the tasks from this transcript."
+          >
+            <Button size="small" disabled={busy} onClick={start}>
+              Make notes now
+            </Button>
+          </RunCard>
+        );
+      }
       return (
         <RunCard
           status={<span className="text-body font-medium">No notes yet</span>}

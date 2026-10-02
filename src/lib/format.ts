@@ -91,6 +91,13 @@ function wholeDaysBetween(earlier: Date, later: Date): number {
 export const INTERRUPTED_LABEL = "Interrupted";
 
 /**
+ * How the meeting list marks a meeting whose notes were switched off
+ * (TUR-12, SPEC A11): its transcript is never sent to an agent. Words, not a
+ * colour, so it reads the same to everyone.
+ */
+export const NOTES_OFF_LABEL = "Notes off";
+
+/**
  * The one-line explanation an interrupted meeting shows when it is opened.
  *
  * `audioMs` is the header-declared length (SPEC A5), so the time quoted is

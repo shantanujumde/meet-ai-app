@@ -13,7 +13,15 @@
  *   fetch on open, or a Start that answers "running", must not overwrite a
  *   "done" event that came in while it was on its way.
  * * **Only the newest notes fetch lands.** Opening the meeting and a run
- *   finishing both fetch the notes; the older answer is dropped.
+ *   finishing both fetch the notes; the older answer is dropped. The
+ *   switch's answer counts as a fetch, so a read that left before it cannot
+ *   put the old switch position back.
+ *
+ * It also holds the "Make notes for this meeting" switch (TUR-12, SPEC A11):
+ * its position is `notes.notesOff`, and flipping it writes `meeting.md` and
+ * stores the notes Rust answers with. The meeting view keeps one of these for
+ * the whole page, recording or not, so the switch and the run panel share one
+ * fetch and one listener.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -22,6 +30,7 @@ import {
   meetingNotes,
   notesRunStatus,
   onNotesRunStatus,
+  setMeetingNotes,
   startNotesRun,
 } from "@/ipc/client";
 import type { MeetingNotes, NotesRunState, NotesRunStatus, UiError } from "@/ipc/types";
@@ -43,15 +52,33 @@ export type NotesRun = {
   start: () => void;
   /** Cancel the running run. Ignored while a request is on its way. */
   cancel: () => void;
+  /** Switch notes on or off for this meeting. Ignored while a switch is on its way. */
+  setNotesOn: (on: boolean) => void;
+  /** A switch is on its way to Rust. */
+  switching: boolean;
+  /** Why the last switch could not be saved. */
+  switchError: UiError | null;
+  /**
+   * Notes were switched back on in this view, so a start button reads "Make
+   * notes now": the user has just asked for them.
+   */
+  switchedOn: boolean;
 };
 
 type ForMeeting<T> = { meetingId: string; value: T };
 
-export function useNotesRun(meetingId: string, onDone?: () => void): NotesRun {
+/**
+ * `onChanged` runs when the meeting list reads differently because of this
+ * meeting: a run wrote notes, or the switch moved.
+ */
+export function useNotesRun(meetingId: string, onChanged?: () => void): NotesRun {
   const [status, setStatus] = useState<NotesRunStatus | null>(null);
   const [notes, setNotes] = useState<ForMeeting<MeetingNotes> | null>(null);
   const [busyFor, setBusyFor] = useState<string | null>(null);
   const [error, setError] = useState<ForMeeting<UiError> | null>(null);
+  const [switchingFor, setSwitchingFor] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState<ForMeeting<UiError> | null>(null);
+  const [switchedOnFor, setSwitchedOnFor] = useState<string | null>(null);
 
   // The meeting on screen, or null once unmounted: every async answer checks
   // it before it is allowed to change anything.
@@ -61,10 +88,11 @@ export function useNotesRun(meetingId: string, onDone?: () => void): NotesRun {
   const heard = useRef(0);
   const notesFetch = useRef(0);
   const inFlight = useRef<string | null>(null);
+  const switchInFlight = useRef<string | null>(null);
 
   // Usually an inline arrow, so held in a ref rather than made a dependency.
-  const notifyDone = useRef(onDone);
-  notifyDone.current = onDone;
+  const notifyChanged = useRef(onChanged);
+  notifyChanged.current = onChanged;
 
   const refreshNotes = useCallback(async (id: string) => {
     const ticket = ++notesFetch.current;
@@ -84,7 +112,7 @@ export function useNotesRun(meetingId: string, onDone?: () => void): NotesRun {
       setStatus(next);
       if (next.state.state === "done") {
         void refreshNotes(next.meetingId);
-        notifyDone.current?.();
+        notifyChanged.current?.();
       }
     },
     [refreshNotes],
@@ -148,6 +176,43 @@ export function useNotesRun(meetingId: string, onDone?: () => void): NotesRun {
     void request(cancelNotesRun);
   }, [request]);
 
+  const writeSwitch = useCallback(
+    async (on: boolean) => {
+      const id = meetingId;
+      if (switchInFlight.current === id) return;
+      switchInFlight.current = id;
+      setSwitchingFor(id);
+      setSwitchError(null);
+      // Takes a notes ticket: a read that left before this answer is older
+      // than it, and must not land on top of it.
+      const ticket = ++notesFetch.current;
+      try {
+        const value = await setMeetingNotes(id, on);
+        if (current.current === id) {
+          // A read that left after this one may have read the file before
+          // the write landed: read it once more, now that it has.
+          if (notesFetch.current === ticket) setNotes({ meetingId: id, value });
+          else void refreshNotes(id);
+          setSwitchedOnFor(on ? id : null);
+        }
+        notifyChanged.current?.();
+      } catch (thrown) {
+        if (current.current === id) setSwitchError({ meetingId: id, value: toUiError(thrown) });
+      } finally {
+        if (switchInFlight.current === id) switchInFlight.current = null;
+        if (current.current === id) setSwitchingFor(null);
+      }
+    },
+    [meetingId, refreshNotes],
+  );
+
+  const setNotesOn = useCallback(
+    (on: boolean) => {
+      void writeSwitch(on);
+    },
+    [writeSwitch],
+  );
+
   return {
     state,
     notes: notes?.meetingId === meetingId ? notes.value : null,
@@ -155,5 +220,9 @@ export function useNotesRun(meetingId: string, onDone?: () => void): NotesRun {
     error: error?.meetingId === meetingId ? error.value : null,
     start,
     cancel,
+    setNotesOn,
+    switching: switchingFor === meetingId,
+    switchError: switchError?.meetingId === meetingId ? switchError.value : null,
+    switchedOn: switchedOnFor === meetingId,
   };
 }

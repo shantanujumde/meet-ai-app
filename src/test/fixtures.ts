@@ -36,6 +36,7 @@ export function meetingSummary(overrides: Partial<MeetingSummary> = {}): Meeting
     lastTimestamp: null,
     hasNotes: false,
     hasAnalysis: false,
+    notesOff: false,
     recordingState: "finished",
     audioMs: null,
     ...overrides,

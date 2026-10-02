@@ -9,10 +9,15 @@
  * to the live pane (TUR-96): the file only has settled lines and would sit
  * there looking stale. Once the recording ends the meeting is re-read, so what
  * shows next is the finished `transcript.md`.
+ *
+ * The header holds the "Make notes for this meeting" switch (TUR-12, SPEC
+ * A11), recording or not, so a private call can be switched off before it
+ * ends. One {@link useNotesRun} serves the switch and the notes pane below it.
  */
 
 import { memo, useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
+import { useNotesRun } from "@/hooks/useNotesRun";
 import { copyPromptFallback, readMeeting, revealMeeting, wrapUpPrompt } from "@/ipc/client";
 import type { MeetingDetail, TranscriptLine, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
@@ -27,12 +32,24 @@ import { LiveTranscript } from "@/ui/LiveTranscript";
 import { MeetingTasks } from "@/ui/MeetingTasks";
 import { NotesPane } from "@/ui/NotesPane";
 import { NotesRun } from "@/ui/NotesRun";
+import { NotesSwitch } from "@/ui/NotesSwitch";
 import { Button, ButtonRow, rowDetailVariants } from "@/ui/primitives";
 import { SpeakerLabel } from "@/ui/SpeakerLabel";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
 export function Review() {
   const { id } = useParams<{ id: string }>();
+  if (!id) {
+    return (
+      <div className="page">
+        <EmptyState title="No meeting selected" body="Pick one from the list on the left." />
+      </div>
+    );
+  }
+  return <MeetingReview id={id} />;
+}
+
+function MeetingReview({ id }: { id: string }) {
   const navigate = useNavigate();
   const reloadMeetings = useAppStore((state) => state.loadMeetings);
 
@@ -91,33 +108,27 @@ export function Review() {
   }, []);
 
   useEffect(() => {
-    if (!id) return;
     void load(id);
   }, [id, load]);
 
   const recording = useRecordingStore((state) => state.status);
   const live = useTranscriptStore((state) => state.live);
-  const isLive = id !== undefined && recording.meetingId === id && recording.phase !== "idle";
+  const isLive = recording.meetingId === id && recording.phase !== "idle";
+
+  // A run writing notes and the switch moving both change how this meeting
+  // reads in the list (its "Notes off" marker, say).
+  const notesRun = useNotesRun(id, () => void reloadMeetings());
 
   // When this meeting's recording ends, the file on disk is now the finished
   // record — re-read it, or the screen shows whatever was there at the start.
   // A store subscription for the same reason as in App's Bootstrap: the phase
   // is a trigger here, not something this effect displays.
   useEffect(() => {
-    if (!id) return;
     return useRecordingStore.subscribe((state, previous) => {
       const ended = previous.status.phase !== "idle" && state.status.phase === "idle";
       if (ended && previous.status.meetingId === id) void load(id);
     });
   }, [id, load]);
-
-  if (!id) {
-    return (
-      <div className="page">
-        <EmptyState title="No meeting selected" body="Pick one from the list on the left." />
-      </div>
-    );
-  }
 
   if (loading && detail === null) {
     return (
@@ -145,6 +156,9 @@ export function Review() {
 
   const { summary, lines, transcriptMissing, unparsedLineCount, path } = detail;
   const interrupted = summary.recordingState === "interrupted";
+  // The notes as last read are the newest word; the list's summary stands in
+  // until they arrive, so a switched-off meeting never flashes on.
+  const notesOn = !(notesRun.notes?.notesOff ?? summary.notesOff);
 
   return (
     <div className="page">
@@ -171,8 +185,9 @@ export function Review() {
         </ButtonRow>
         {revealError ? <ErrorState error={revealError} /> : null}
         {/* Not while recording: the transcript is not finished, so the
-            prompt would wrap up half a meeting. */}
-        {copyPrompt && !isLive ? (
+            prompt would wrap up half a meeting. Not with notes off either:
+            the user has said this one is not for an agent. */}
+        {copyPrompt && !isLive && notesOn ? (
           <CopyPromptButton
             label="Copy prompt"
             size="small"
@@ -180,15 +195,20 @@ export function Review() {
             render={() => wrapUpPrompt(summary.id)}
           />
         ) : null}
+        <NotesSwitch
+          on={notesOn}
+          busy={notesRun.switching}
+          error={notesRun.switchError}
+          onChange={notesRun.setNotesOn}
+        />
       </header>
 
       {/* TUR-10: the agent's notes. Not while recording — the run starts on
           its own when this recording stops, and its status event arrives. */}
       {isLive ? null : (
         <NotesRun
-          meetingId={summary.id}
+          run={notesRun}
           canStart={harnessIsNone !== null && !copyPrompt && lines.length > 0}
-          onDone={() => void reloadMeetings()}
         />
       )}
 
