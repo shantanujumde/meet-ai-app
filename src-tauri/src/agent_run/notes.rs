@@ -9,7 +9,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent::{AgentError, CancelHandle, ClaudeHarness, Harness, Install, Job};
+use agent::{AgentError, CancelHandle, ClaudeHarness, CodexHarness, Harness, Install, Job};
 use prompts::wrap_up::{Target, WrapUpInput, render_wrap_up_from};
 use store::agent_notes::{self, AGENT_NOTES_KEY, Analysis, AnalyzedBy};
 use store::folder_name::{prettify_slug, split_folder_name};
@@ -81,7 +81,16 @@ pub fn configured() -> Result<Agent, Failure> {
         .map_err(|error| failure::could_not_start(crate::error::UiError::from(error).message))?;
     let harness: Box<dyn Harness> = match settings.harness {
         config::Harness::None => return Err(failure::no_agent()),
-        config::Harness::Codex => return Err(failure::codex_not_ready()),
+        config::Harness::Codex => {
+            let finder = match &settings.binary_path {
+                Some(path) => CodexHarness::with_binary(path),
+                None => CodexHarness::new(),
+            };
+            // `CodexHarness` puts the CLI's own folder first on `PATH` itself.
+            Box::new(detected(finder, |install| {
+                CodexHarness::with_binary(install.path)
+            })?)
+        }
         config::Harness::ClaudeCode => {
             let mut finder = ClaudeHarness::new();
             if let Some(path) = &settings.binary_path {

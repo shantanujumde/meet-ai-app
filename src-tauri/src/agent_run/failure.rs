@@ -112,14 +112,6 @@ pub fn no_agent() -> Failure {
     )
 }
 
-/// `agent.harness` is `codex`, which has no runner yet (TUR-5).
-pub fn codex_not_ready() -> Failure {
-    failure(
-        FailureKind::CouldNotStart,
-        "meet-ai cannot run Codex yet. Pick Claude Code in Settings, or use Copy prompt.",
-    )
-}
-
 /// The meeting has no transcript, or no folder at all.
 pub fn no_transcript() -> Failure {
     failure(

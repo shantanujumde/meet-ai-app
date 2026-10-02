@@ -51,10 +51,11 @@ vitest against a mocked IPC.
    and stop.
    Expect: no run starts; the meeting view offers to write notes by hand.
    Why skipped: needs the running app.
-7. **Codex picked.** Set `"harness": "codex"`, record and stop.
-   Expect: "meet-ai cannot run Codex yet…" with Retry. The Codex runner is
-   TUR-5; this message goes once it lands.
-   Why skipped: needs the running app.
+7. **Codex picked.** Install and sign in to Codex, set `"harness": "codex"`
+   and `"model"` to a Codex model, record and stop.
+   Expect: notes appear as with Claude Code; `meeting.md` says
+   `analyzed_by: codex`.
+   Why skipped: needs the running app and a signed-in Codex.
 
 ## Decisions taken without an answer
 
