@@ -6,9 +6,10 @@
  */
 
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { createTicket, listTickets } from "@/ipc/client";
+import { createTicket, listTickets, startWorkPrompt } from "@/ipc/client";
 import type { TicketStatus, TicketSummary, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
+import { CopyPromptButton } from "@/ui/CopyPromptButton";
 import { Button, ButtonRow, cardVariants, Pill } from "@/ui/primitives";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
@@ -104,6 +105,13 @@ export function Tickets() {
               {ticket.body ? (
                 <p className="line-clamp-3 text-callout text-fg-secondary">{ticket.body}</p>
               ) : null}
+              {/* L14: Rust renders the prompt; the user pastes it into their
+                  own agent session in the repo. */}
+              <CopyPromptButton
+                label="Start Work"
+                size="small"
+                render={() => startWorkPrompt(ticket.id, ticket.meeting)}
+              />
             </li>
           ))}
         </ul>

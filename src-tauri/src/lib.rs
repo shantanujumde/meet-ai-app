@@ -11,6 +11,7 @@ use tauri_plugin_log::log;
 mod bindings;
 mod commands;
 mod config;
+mod copy_prompt;
 mod engine;
 mod error;
 mod events;

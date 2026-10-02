@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, test, vi } from "vitest";
 import type { TicketSummary } from "@/ipc/types";
+import { copyText } from "@/lib/clipboard";
 import { ipc } from "@/test/ipcMock";
 import { Tickets } from "./Tickets";
 
@@ -9,7 +10,9 @@ vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
 );
 
-const { listTickets, createTicket } = ipc;
+vi.mock("@/lib/clipboard", () => ({ copyText: vi.fn(async (_text: string) => {}) }));
+
+const { listTickets, createTicket, startWorkPrompt } = ipc;
 
 function ticket(over: Partial<TicketSummary> = {}): TicketSummary {
   return {
@@ -92,5 +95,32 @@ describe("Tickets", () => {
 
     expect(await screen.findByText("Disk is full.")).toBeTruthy();
     expect(screen.getByLabelText("Title")).toBeTruthy();
+  });
+});
+
+describe("Start Work", () => {
+  test("each ticket's button copies the prompt Rust makes for that ticket", async () => {
+    vi.mocked(copyText).mockReset();
+    listTickets.mockResolvedValue([
+      ticket({ id: "TUR-7", meeting: "2026-09-30-1015-meeting" }),
+      ticket({ id: "TUR-8", title: "Hand-made", meeting: null }),
+    ]);
+    startWorkPrompt.mockImplementation(async (id) => `Start work on ${id}.`);
+    renderTickets();
+
+    await screen.findByText("Hand-made");
+    const buttons = screen.getAllByRole("button", { name: "Start Work" });
+    expect(buttons).toHaveLength(2);
+
+    fireEvent.click(buttons[0] as HTMLElement);
+    await waitFor(() =>
+      expect(startWorkPrompt).toHaveBeenCalledWith("TUR-7", "2026-09-30-1015-meeting"),
+    );
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith("Start work on TUR-7."));
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start Work" }));
+    await waitFor(() => expect(startWorkPrompt).toHaveBeenCalledWith("TUR-8", null));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith("Start work on TUR-8."));
   });
 });

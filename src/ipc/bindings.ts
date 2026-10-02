@@ -133,6 +133,18 @@ export const commands = {
 	/**  Add a ticket by hand. Through the [`FolderGate`], like [`save_notes`]. */
 	createTicket: (title: string, body: string) => typedError<meet_ai_lib_tickets_TicketSummary, meet_ai_lib_error_UiError>(__TAURI_INVOKE("create_ticket", { title, body })),
 	/**
+	 *  The Start Work prompt for a ticket, for the window to copy (SPEC L14).
+	 *  `meeting_id` is the meeting the ticket is listed under, if any.
+	 */
+	startWorkPrompt: (ticketId: string, meetingId: string | null) => typedError<string, meet_ai_lib_error_UiError>(__TAURI_INVOKE("start_work_prompt", { ticketId, meetingId })),
+	/**
+	 *  The clipboard wrap-up prompt for a meeting, for when no agent is set up
+	 *  (SPEC A11).
+	 */
+	wrapUpPrompt: (meetingId: string) => typedError<string, meet_ai_lib_error_UiError>(__TAURI_INVOKE("wrap_up_prompt", { meetingId })),
+	/**  Whether the meeting view offers Copy prompt: `agent.harness` is `none`. */
+	copyPromptFallback: () => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("copy_prompt_fallback")),
+	/**
 	 *  Search every meeting's transcript, notes, summary and tickets.
 	 * 
 	 *  Runs on the blocking pool: the first call after launch can still be

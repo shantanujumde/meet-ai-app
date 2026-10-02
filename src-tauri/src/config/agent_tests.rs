@@ -367,3 +367,20 @@ fn the_schema_never_rejects_unknown_keys() {
     }
     walk(&schema());
 }
+
+#[test]
+fn repos_default_is_read_and_blank_is_unset() {
+    use super::agent_section::parse_default_repo;
+    let read = |raw: &str| parse_default_repo(raw).unwrap();
+    assert_eq!(read(""), None);
+    assert_eq!(read(r#"{ "repos": {} }"#), None);
+    assert_eq!(read(r#"{ "repos": { "default": "  " } }"#), None);
+    assert_eq!(
+        read(r#"{ "repos": { "default": "~/apps/api" } } // comment"#),
+        Some("~/apps/api".to_owned())
+    );
+    assert!(matches!(
+        parse_default_repo(r#"{ "repos": { "default": 3 } }"#),
+        Err(ConfigError::Invalid(_))
+    ));
+}

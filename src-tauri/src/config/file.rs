@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use jsonc_parser::cst::{CstInputValue, CstRootNode};
 
 use super::FILE;
+use super::agent_section::parse_default_repo;
 use super::agent_section::{AgentConfig, ConfigError, TicketsConfig, parse_agent, parse_tickets};
 
 /// The JSON Schema for `config.jsonc`, kept in the repo and shipped inside the
@@ -33,6 +34,11 @@ pub fn agent() -> Result<AgentConfig, ConfigError> {
 #[allow(dead_code)] // TUR-9 (Setup screens) adds the IPC command that calls this.
 pub fn tickets() -> Result<TicketsConfig, ConfigError> {
     parse_tickets(&read_in(&app_dir()?)?)
+}
+
+/// `repos.default` from `~/Meetings/.app/config.jsonc`, `None` when unset.
+pub fn default_repo() -> Result<Option<String>, ConfigError> {
+    parse_default_repo(&read_in(&app_dir()?)?)
 }
 
 /// Save `agent` into `~/Meetings/.app/config.jsonc`, keeping everything else.
