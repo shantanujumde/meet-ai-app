@@ -126,6 +126,8 @@ pub async fn change_meetings_folder(
             ));
         }
         let moved = meetings::change_root(PathBuf::from(new_root))?;
+        // Write the kept Sync issues the move refused to let through (TUR-21).
+        app.state::<crate::sync::SyncRuns>().after_folder_move();
         // Watch the new folder instead of the old one (TUR-100).
         watch::state(&app).restart(&app);
         // ...and index it (TUR-101).

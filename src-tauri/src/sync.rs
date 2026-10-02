@@ -22,6 +22,7 @@
 //! status events are `agent_run.rs`'s (TUR-10). Settings for the tracker are
 //! in [`tracker`].
 
+mod kept;
 mod save;
 pub mod tracker;
 
@@ -86,6 +87,12 @@ impl SyncRuns {
             ticket_id: ticket_id.to_owned(),
             cancel,
         })
+    }
+
+    /// Writes the kept issues a folder move kept from being written; for the
+    /// end of the move, which holds the gate itself (`save.rs`).
+    pub fn after_folder_move(&self) {
+        self.unsaved.flush(&meetings::root);
     }
 
     /// Stops the Sync run for `ticket_id`, if there is one.
@@ -162,12 +169,22 @@ pub async fn sync_task(
 /// window shows the issue's link until the user dismisses it.
 #[tauri::command]
 #[specta::specta]
-pub fn dismiss_unsaved_sync(
-    runs: State<'_, SyncRuns>,
+pub async fn dismiss_unsaved_sync(
+    app: AppHandle,
     ticket_id: String,
     meeting_id: Option<String>,
-) {
-    runs.unsaved.dismiss(&ticket_id, meeting_id.as_deref());
+) -> Result<(), UiError> {
+    blocking(move || {
+        let gate = app.try_state::<FolderGate>();
+        let unsaved = &app.state::<SyncRuns>().unsaved;
+        unsaved.dismiss(
+            gate.as_deref(),
+            &meetings::root,
+            &ticket_id,
+            meeting_id.as_deref(),
+        );
+    })
+    .await
 }
 
 /// Stop a running Sync; its `sync_task` then fails with `agent-cancelled`.
@@ -270,7 +287,7 @@ pub(crate) fn sync_in(
     agent: impl FnOnce() -> Result<(Box<dyn Harness>, RunSettings), UiError>,
 ) -> Result<TicketSummary, UiError> {
     let claim = runs.claim(ticket_id)?;
-    let created = match runs.unsaved.get(ticket_id, meeting_id) {
+    let created = match runs.unsaved.kept(gate, &root, ticket_id, meeting_id)? {
         Some(created) => created,
         None => {
             let (harness, settings) = agent()?;
