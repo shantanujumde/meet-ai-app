@@ -1,13 +1,16 @@
 //! Listing and hand-creating tickets for the Tickets screen (TUR-102).
 //!
 //! A thin adapter over `store::ticket`: `store` owns the file format, this
-//! module turns it into the shape the webview renders and picks the next id.
+//! module turns it into the shape the webview renders and picks the next id:
+//! the highest across the whole meetings root plus one, under the same lock
+//! and rules a notes run numbers its tickets by (`store::agent_notes`).
 //! As everywhere else, a broken ticket file is a badge, not an error (SPEC §7).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use store::agent_notes;
 use store::ticket::{self, Ticket};
 
 use crate::error::UiError;
@@ -132,14 +135,16 @@ fn create_in(root: &Path, title: &str, body: &str) -> Result<TicketSummary, UiEr
             "Give the ticket a title before saving it.",
         ));
     }
+    // Held until the file is on disk, as a notes run holds it while it writes
+    // its tasks, so the two never hand out the same number (TUR-18).
+    let _numbers = agent_notes::lock_ticket_numbers();
     let dir = tickets_dir(root);
     fs::create_dir_all(&dir)?;
 
-    let mut next = ticket_files(root)?
-        .iter()
-        .filter_map(|(stem, _)| ticket::parse_id(stem))
-        .max()
-        .map_or(1, |max| max.saturating_add(1));
+    // Across every meeting, and past any number a notes run keeps retired.
+    let mut next = agent_notes::highest_ticket_number(root)?
+        .max(agent_notes::highest_recorded_ticket_number(root)?)
+        .saturating_add(1);
 
     for _ in 0..CREATE_ATTEMPTS {
         let id = ticket::format_id(next);
@@ -253,6 +258,121 @@ mod tests {
         assert_eq!(
             create_in(&root, "next", "").expect("create").id,
             "TICK-0008"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    const MEETING: &str = "2026-09-01-1430-standup";
+
+    fn meeting_folder(root: &Path) {
+        fs::create_dir_all(root.join(MEETING)).expect("meeting folder");
+    }
+
+    fn notes_with(tasks: &[&str]) -> prompts::notes::Notes {
+        prompts::notes::Notes {
+            summary: "Standup.".to_owned(),
+            decisions: Vec::new(),
+            open_questions: Vec::new(),
+            tasks: tasks
+                .iter()
+                .map(|title| prompts::notes::Task {
+                    title: (*title).to_owned(),
+                    details: "From the call.".to_owned(),
+                    owner: None,
+                    due: None,
+                    transcript_ref: "00:00:04".to_owned(),
+                })
+                .collect(),
+        }
+    }
+
+    fn write_notes(root: &Path, tasks: &[&str]) -> Vec<String> {
+        let analysis = agent_notes::Analysis {
+            by: agent_notes::AnalyzedBy::ClaudeCode,
+            model: "opus".to_owned(),
+            at: "2026-09-01T15:32:00+05:30".to_owned(),
+        };
+        let self_writes = store::watcher::SelfWrites::default();
+        agent_notes::write(root, MEETING, &notes_with(tasks), &analysis, &self_writes)
+            .expect("notes written")
+            .written
+    }
+
+    #[test]
+    fn a_hand_made_ticket_and_a_notes_run_at_the_same_time_get_different_numbers() {
+        for round in 0..10 {
+            let root = temp_root("race");
+            meeting_folder(&root);
+            let start = std::sync::Barrier::new(2);
+            let (agent, by_hand) = std::thread::scope(|s| {
+                let agent = s.spawn(|| {
+                    start.wait();
+                    write_notes(&root, &["Load test", "Move sessions to Redis"])
+                });
+                let by_hand = s.spawn(|| {
+                    start.wait();
+                    create_in(&root, "By hand", "").expect("create")
+                });
+                (
+                    agent.join().expect("agent thread"),
+                    by_hand.join().expect("hand thread"),
+                )
+            });
+            let mut ids = agent.clone();
+            ids.push(by_hand.id.clone());
+            ids.sort();
+            ids.dedup();
+            assert_eq!(ids.len(), 3, "round {round}: {agent:?} and {}", by_hand.id);
+            fs::remove_dir_all(&root).ok();
+        }
+    }
+
+    #[test]
+    fn a_hand_made_ticket_waits_for_the_ticket_number_lock() {
+        let root = temp_root("lock");
+        meeting_folder(&root);
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::scope(|s| {
+            // Taken in here so a failed assert lets go of it before the join.
+            let numbers = agent_notes::lock_ticket_numbers();
+            s.spawn(|| {
+                let made = create_in(&root, "By hand", "");
+                done.send(made).ok();
+            });
+            assert!(
+                finished
+                    .recv_timeout(std::time::Duration::from_millis(300))
+                    .is_err(),
+                "created while another writer held the lock"
+            );
+            // What a notes run holding the lock lands before it lets go.
+            let agent_dir = root.join(MEETING).join(store::TICKETS_DIR);
+            fs::create_dir_all(&agent_dir).expect("agent tickets dir");
+            Ticket::new("TICK-0001", "Load test", MEETING)
+                .write(&agent_dir.join("TICK-0001.md"))
+                .expect("agent ticket");
+            drop(numbers);
+            let made = finished.recv().expect("sent").expect("create");
+            assert_eq!(made.id, "TICK-0002");
+        });
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_number_a_notes_run_retired_is_not_handed_out_by_hand() {
+        let root = temp_root("retired");
+        meeting_folder(&root);
+        assert_eq!(write_notes(&root, &["Load test"]), ["TICK-0001"]);
+        // The user deleted the agent's ticket; its number stays retired.
+        fs::remove_file(
+            root.join(MEETING)
+                .join(store::TICKETS_DIR)
+                .join("TICK-0001.md"),
+        )
+        .expect("delete");
+        assert_eq!(
+            create_in(&root, "By hand", "").expect("create").id,
+            "TICK-0002"
         );
         fs::remove_dir_all(&root).ok();
     }
