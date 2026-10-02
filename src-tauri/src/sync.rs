@@ -47,6 +47,12 @@ use crate::meetings;
 use crate::sync::save::{Created, Fingerprint, Unsaved};
 use crate::tickets::{self, TicketSummary};
 
+/// The ticket's file is not where it should be.
+pub(crate) const TICKET_MISSING: &str = "ticket-missing";
+
+/// The ticket is already in the tracker.
+pub(crate) const ALREADY_SYNCED: &str = "sync-already-synced";
+
 /// The Sync runs in flight, by ticket id, so the window can cancel one and a
 /// second press on the same task is refused instead of making two issues.
 /// Also the issues a run created but could not save, so Retry saves them
@@ -151,6 +157,19 @@ pub async fn sync_task(
     .await?
 }
 
+/// Forget the issue a Sync created but could not attach to this task
+/// (`sync-not-saved`, `sync-not-attached`), so the next Sync runs afresh. The
+/// window shows the issue's link until the user dismisses it.
+#[tauri::command]
+#[specta::specta]
+pub fn dismiss_unsaved_sync(
+    runs: State<'_, SyncRuns>,
+    ticket_id: String,
+    meeting_id: Option<String>,
+) {
+    runs.unsaved.dismiss(&ticket_id, meeting_id.as_deref());
+}
+
 /// Stop a running Sync; its `sync_task` then fails with `agent-cancelled`.
 #[tauri::command]
 #[specta::specta]
@@ -239,9 +258,9 @@ pub(crate) fn find_binary(agent: &AgentConfig) -> Result<PathBuf, UiError> {
 /// The root is looked up twice: once to start the run, and again for the
 /// save, so a folder moved during the run gets the link in its new place.
 /// Only the save goes through `gate`: holding it for the whole run would
-/// refuse a folder move for minutes. An issue an earlier run created but
-/// could not save is saved without running the agent again, as long as the
-/// ticket is still the task it was made for (`save.rs`).
+/// refuse a folder move for minutes. While an issue an earlier run created
+/// is kept unsaved, a Sync tries to save that issue and never runs the agent
+/// (`save.rs`).
 pub(crate) fn sync_in(
     runs: &SyncRuns,
     gate: Option<&FolderGate>,
@@ -251,11 +270,11 @@ pub(crate) fn sync_in(
     agent: impl FnOnce() -> Result<(Box<dyn Harness>, RunSettings), UiError>,
 ) -> Result<TicketSummary, UiError> {
     let claim = runs.claim(ticket_id)?;
-    let start = root()?;
-    let created = match runs.unsaved.matching(&start, ticket_id, meeting_id)? {
+    let created = match runs.unsaved.get(ticket_id, meeting_id) {
         Some(created) => created,
         None => {
             let (harness, settings) = agent()?;
+            let start = root()?;
             let ticket = Fingerprint::of(&find_ticket(&start, ticket_id, meeting_id)?)?;
             let synced = run(
                 &start,
@@ -308,8 +327,9 @@ pub(crate) fn run(
     parse_sync_reply(&reply).ok_or_else(|| not_synced(tickets_config))
 }
 
-/// Writes what a Sync run created into the ticket file, re-read first so an
-/// edit made during the run is kept. Never called for a run with no issue.
+/// Writes what a Sync run created into the ticket file. Never called for a
+/// run with no issue, nor for a ticket that changed since its sync started
+/// (`save.rs` refuses that save and keeps the issue).
 pub(crate) fn record(
     path: &Path,
     tracker: &str,
@@ -343,7 +363,7 @@ fn refuse_if_synced(ticket_id: &str, found: &Ticket) -> Result<(), UiError> {
         Some(key) => format!("{ticket_id} is already in {place} as {key}."),
         None => format!("{ticket_id} is already in {place}."),
     };
-    Err(UiError::app("sync-already-synced", message))
+    Err(UiError::app(ALREADY_SYNCED, message))
 }
 
 /// The prompt's input: the task and its meeting, nothing from the transcript.
@@ -457,7 +477,7 @@ fn find_ticket(root: &Path, ticket_id: &str, meeting_id: Option<&str>) -> Result
         .find(|path| path.is_file())
         .ok_or_else(|| {
             UiError::app(
-                "ticket-missing",
+                TICKET_MISSING,
                 format!("Could not find the file for {ticket_id}."),
             )
         })

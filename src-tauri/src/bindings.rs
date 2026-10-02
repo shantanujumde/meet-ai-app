@@ -55,6 +55,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             agent_run::meeting_notes,
             sync::sync_task,
             sync::cancel_sync,
+            sync::dismiss_unsaved_sync,
             sync::meeting_tasks,
             sync::open_synced_issue,
             tracker::tracker_settings,

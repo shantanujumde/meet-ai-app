@@ -475,7 +475,10 @@ fn tracker_names_read_well() {
 
 // --- saving the result (TUR-20) ---------------------------------------------
 
+use super::save::{SYNC_NOT_ATTACHED, SYNC_NOT_SAVED};
+
 const OTHER_MEETING: &str = "2026-09-02-0900-planning";
+const NOT_ATTACHED: &str = "Created in Linear but couldn't attach it to this task: ";
 
 /// Adds `meeting` to `root` with its own `TICK-0001`: ticket numbers are
 /// only unique within one meeting plus the shared folder.
@@ -495,14 +498,33 @@ fn ticket_in(root: &Path, meeting: &str) -> Ticket {
     Ticket::read(&path).unwrap()
 }
 
+/// A user editing the task's details in their own editor.
+fn edit_the_details(root: &Path) {
+    let path = ticket_path(root);
+    let mut edited = Ticket::read(&path).unwrap();
+    edited.body.push_str("\nAlso check Safari.\n");
+    edited.write(&path).unwrap();
+}
+
+/// A notes re-run ("Make notes now") rewriting the meeting's tickets, which
+/// can give an untouched number to a different task. Written the way the
+/// notes run writes a ticket.
+fn give_the_number_to_another_task(root: &Path) {
+    Ticket::new("TICK-0001", "Book the offsite", MEETING)
+        .write(&ticket_path(root))
+        .unwrap();
+}
+
 /// Answers with a new issue each run, `ENG-42` first, and counts its runs.
 /// With `move_to`, it first moves the meetings folder there and points
 /// `root` at the new place, like a user changing the folder in Settings
-/// while the agent works.
+/// while the agent works. With `meanwhile`, it first changes the ticket
+/// under the current root, like an edit made while the agent works.
 #[derive(Clone)]
 struct MovingHarness {
     root: Arc<Mutex<PathBuf>>,
     move_to: Option<PathBuf>,
+    meanwhile: Option<fn(&Path)>,
     runs: Arc<AtomicUsize>,
 }
 
@@ -511,7 +533,15 @@ impl MovingHarness {
         Self {
             root: Arc::clone(root),
             move_to,
+            meanwhile: None,
             runs: Arc::default(),
+        }
+    }
+
+    fn changing_the_ticket(root: &Arc<Mutex<PathBuf>>, change: fn(&Path)) -> Self {
+        Self {
+            meanwhile: Some(change),
+            ..Self::new(root, None)
         }
     }
 
@@ -532,10 +562,13 @@ impl Harness for MovingHarness {
     }
     fn run(&self, _job: &Job) -> Result<serde_json::Value, AgentError> {
         let number = 42 + self.runs.fetch_add(1, Ordering::SeqCst);
+        let mut root = self.root.lock().unwrap();
         if let Some(to) = &self.move_to {
-            let mut root = self.root.lock().unwrap();
             fs::rename(&*root, to).unwrap();
             *root = to.clone();
+        }
+        if let Some(change) = self.meanwhile {
+            change(&root);
         }
         Ok(json!({
             "external_id": format!("ENG-{number}"),
@@ -570,6 +603,16 @@ fn sync_during_a_move(
 ) -> UiError {
     let _moving = gate.begin_move().unwrap();
     sync_through(runs, gate, root, harness, meeting).unwrap_err()
+}
+
+/// `err` is the "couldn't attach" error for the first issue, `ENG-42`.
+fn assert_not_attached(err: &UiError) {
+    assert_eq!(err.kind, SYNC_NOT_ATTACHED, "{}", err.message);
+    assert!(
+        err.message.starts_with(&format!("{NOT_ATTACHED}{URL} ")),
+        "{}",
+        err.message
+    );
 }
 
 #[test]
@@ -613,7 +656,7 @@ fn a_save_that_fails_shows_the_link_and_retry_does_not_make_a_second_issue() {
     let before = fs::read(ticket_path(meetings.path())).unwrap();
 
     let err = sync_during_a_move(&runs, &gate, &root, &harness, MEETING);
-    assert_eq!(err.kind, "sync-not-saved", "{}", err.message);
+    assert_eq!(err.kind, SYNC_NOT_SAVED, "{}", err.message);
     assert!(
         err.message
             .starts_with("Created in Linear as ENG-42 but could not save the link"),
@@ -638,7 +681,7 @@ fn a_save_that_fails_shows_the_link_and_retry_does_not_make_a_second_issue() {
 
     // Saved, so it is forgotten: another press is the usual "already synced".
     let again = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
-    assert_eq!(again.kind, "sync-already-synced", "{}", again.message);
+    assert_eq!(again.kind, ALREADY_SYNCED, "{}", again.message);
     assert_eq!(harness.runs(), 1);
 }
 
@@ -652,7 +695,7 @@ fn a_kept_issue_is_only_saved_to_its_own_meetings_ticket() {
     let gate = FolderGate::default();
 
     let err = sync_during_a_move(&runs, &gate, &root, &harness, MEETING);
-    assert_eq!(err.kind, "sync-not-saved", "{}", err.message);
+    assert_eq!(err.kind, SYNC_NOT_SAVED, "{}", err.message);
 
     // The other meeting's TICK-0001 is another task: it gets its own issue.
     let other = sync_through(&runs, &gate, &root, &harness, OTHER_MEETING).unwrap();
@@ -670,6 +713,78 @@ fn a_kept_issue_is_only_saved_to_its_own_meetings_ticket() {
             .get_str("external_id")
             .as_deref(),
         Some("ENG-43")
+    );
+}
+
+/// An edit in the user's own editor while the agent runs: the first save
+/// refuses, keeps the user's edit, shows the link, and Retry never runs the
+/// agent again.
+#[test]
+fn an_edit_during_the_sync_shows_the_link_and_never_makes_a_second_issue() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::changing_the_ticket(&root, edit_the_details);
+    let runs = SyncRuns::default();
+    let gate = FolderGate::default();
+
+    let err = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
+    assert_not_attached(&err);
+    assert!(err.message.contains("TICK-0001 changed"), "{}", err.message);
+    let back = Ticket::read(&ticket_path(meetings.path())).unwrap();
+    assert!(back.body.contains("Also check Safari."), "{}", back.body);
+    assert!(back.synced_to().is_none());
+    assert_eq!(back.frontmatter.get_str("external_url"), None);
+
+    let again = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
+    assert_not_attached(&again);
+    assert_eq!(harness.runs(), 1, "a second issue");
+}
+
+/// A notes re-run while the agent runs gives the number to a different
+/// task: the first save does not write the link onto it.
+#[test]
+fn a_number_given_to_another_task_during_the_sync_does_not_get_the_link() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::changing_the_ticket(&root, give_the_number_to_another_task);
+    let runs = SyncRuns::default();
+
+    let err = sync_through(&runs, &FolderGate::default(), &root, &harness, MEETING).unwrap_err();
+    assert_not_attached(&err);
+    let back = ticket_in(meetings.path(), MEETING);
+    assert_eq!(back.title().as_deref(), Some("Book the offsite"));
+    assert!(back.synced_to().is_none());
+    assert!(runs.unsaved.get("TICK-0001", Some(MEETING)).is_some());
+    assert_eq!(harness.runs(), 1);
+}
+
+/// The same after a failed save: Retry shows the link, never runs the
+/// agent, and keeps doing so until the user dismisses the issue.
+#[test]
+fn a_number_given_to_another_task_keeps_the_issue_until_dismissed() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let runs = SyncRuns::default();
+    let gate = FolderGate::default();
+    sync_during_a_move(&runs, &gate, &root, &harness, MEETING);
+
+    give_the_number_to_another_task(meetings.path());
+    for _ in 0..2 {
+        let err = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
+        assert_not_attached(&err);
+        assert_eq!(harness.runs(), 1, "a second issue");
+    }
+    assert!(ticket_in(meetings.path(), MEETING).synced_to().is_none());
+
+    // Dismissed: the next Sync is a fresh run for the new task.
+    runs.unsaved.dismiss("TICK-0001", Some(MEETING));
+    let summary = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap();
+    assert_eq!(harness.runs(), 2);
+    assert_eq!(summary.external_id.as_deref(), Some("ENG-43"));
+    assert_eq!(
+        ticket_in(meetings.path(), MEETING).title().as_deref(),
+        Some("Book the offsite")
     );
 }
 
@@ -693,39 +808,11 @@ fn a_kept_issue_never_overwrites_a_ticket_synced_meanwhile() {
     let before = fs::read(&path).unwrap();
 
     let err = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
-    assert_eq!(err.kind, "sync-already-synced", "{}", err.message);
+    assert_not_attached(&err);
     assert!(err.message.contains("as ENG-7"), "{}", err.message);
-    assert!(err.message.contains(URL), "{}", err.message);
     assert_eq!(fs::read(&path).unwrap(), before);
-    assert_eq!(runs.unsaved.get("TICK-0001", Some(MEETING)), None);
+    assert!(runs.unsaved.get("TICK-0001", Some(MEETING)).is_some());
     assert_eq!(harness.runs(), 1);
-}
-
-/// A notes re-run ("Make notes now") rewrites the meeting's tickets and can
-/// give an untouched number to a different task. Written here the way the
-/// notes run writes a ticket.
-#[test]
-fn a_number_given_to_another_task_does_not_reuse_the_kept_issue() {
-    let meetings = meetings_root();
-    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
-    let harness = MovingHarness::new(&root, None);
-    let runs = SyncRuns::default();
-    let gate = FolderGate::default();
-    sync_during_a_move(&runs, &gate, &root, &harness, MEETING);
-
-    Ticket::new("TICK-0001", "Book the offsite", MEETING)
-        .write(&ticket_path(meetings.path()))
-        .unwrap();
-    let summary = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap();
-    assert_eq!(harness.runs(), 2, "the new task gets its own run");
-    assert_eq!(summary.external_id.as_deref(), Some("ENG-43"));
-    let back = ticket_in(meetings.path(), MEETING);
-    assert_eq!(back.title().as_deref(), Some("Book the offsite"));
-    assert_eq!(
-        back.frontmatter.get_str("external_id").as_deref(),
-        Some("ENG-43")
-    );
-    assert_eq!(runs.unsaved.get("TICK-0001", Some(MEETING)), None);
 }
 
 #[test]
@@ -741,7 +828,7 @@ fn a_kept_issue_waits_while_its_ticket_is_missing() {
     let aside = meetings.path().join("TICK-0001.md.aside");
     fs::rename(&path, &aside).unwrap();
     let err = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
-    assert_eq!(err.kind, "sync-not-saved", "{}", err.message);
+    assert_eq!(err.kind, SYNC_NOT_SAVED, "{}", err.message);
     assert!(err.message.contains(URL), "{}", err.message);
     assert!(err.message.contains("Retry"), "{}", err.message);
     assert!(runs.unsaved.get("TICK-0001", Some(MEETING)).is_some());
@@ -755,7 +842,7 @@ fn a_kept_issue_waits_while_its_ticket_is_missing() {
 }
 
 #[test]
-fn a_kept_issue_is_dropped_and_shown_when_its_meeting_is_deleted() {
+fn a_kept_issue_is_never_dropped_on_its_own_even_if_the_meeting_is_deleted() {
     let meetings = meetings_root();
     let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
     let harness = MovingHarness::new(&root, None);
@@ -765,12 +852,26 @@ fn a_kept_issue_is_dropped_and_shown_when_its_meeting_is_deleted() {
 
     fs::remove_dir_all(meetings.path().join(MEETING)).unwrap();
     let err = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
-    assert_eq!(err.kind, "ticket-missing", "{}", err.message);
-    assert!(err.message.contains("ENG-42"), "{}", err.message);
+    assert_eq!(err.kind, SYNC_NOT_SAVED, "{}", err.message);
     assert!(err.message.contains(URL), "{}", err.message);
-    assert!(err.message.contains("did not save it"), "{}", err.message);
-    assert_eq!(runs.unsaved.get("TICK-0001", Some(MEETING)), None);
+    assert!(runs.unsaved.get("TICK-0001", Some(MEETING)).is_some());
     assert_eq!(harness.runs(), 1);
+
+    runs.unsaved.dismiss("TICK-0001", Some(MEETING));
+    assert_eq!(runs.unsaved.get("TICK-0001", Some(MEETING)), None);
+}
+
+/// The kinds the window switches on (`useTicketSync.ts`), and the ones the
+/// save is built from, by name.
+#[test]
+fn error_kinds_keep_their_names() {
+    assert_eq!(SYNC_NOT_SAVED, "sync-not-saved");
+    assert_eq!(SYNC_NOT_ATTACHED, "sync-not-attached");
+    assert_eq!(ALREADY_SYNCED, "sync-already-synced");
+    assert_eq!(TICKET_MISSING, "ticket-missing");
+    let root = meetings_root();
+    let err = find_ticket(root.path(), "TICK-0009", Some(MEETING)).unwrap_err();
+    assert_eq!(err.kind, TICKET_MISSING);
 }
 
 #[test]

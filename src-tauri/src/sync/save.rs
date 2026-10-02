@@ -5,18 +5,18 @@
 //! root as it is when the save starts ([`crate::folder_move::writing_in`]),
 //! not where it was when the run began.
 //!
-//! By then the issue exists in the tracker. If the save fails (a move is
-//! running, the file is read-only or missing for now), the issue is kept in
-//! [`Unsaved`] and the error shows its address. Retry then saves the kept
-//! issue instead of running the agent again, which would make a second one.
+//! By then the issue exists in the tracker, and it is never dropped without
+//! the user's say. A save that fails keeps the issue in [`Unsaved`], and
+//! every later Sync of that task tries to save the kept issue instead of
+//! running the agent again, until it is saved or the user dismisses it
+//! ([`Unsaved::dismiss`]). The error always shows the issue's address:
 //!
-//! A kept issue is only reused for the same task. A ticket is named by its
-//! meeting and number, and a notes re-run can give an untouched number to a
-//! different task, so the kept issue also holds a [`Fingerprint`] of the
-//! ticket as it was when the sync started. A ticket that no longer matches
-//! drops the kept issue and gets a normal sync. So does a ticket that was
-//! synced some other way meanwhile, or whose meeting was deleted; the error
-//! still shows where the dropped issue is.
+//! - [`SYNC_NOT_SAVED`]: the link could not be written (a move is running,
+//!   the file is missing for now or read-only). Retry may work.
+//! - [`SYNC_NOT_ATTACHED`]: the ticket is no longer the task the issue was
+//!   made for. Its file changed after the sync started (the user's editor,
+//!   or a notes re-run that gave the number to a different task; checked by
+//!   [`Fingerprint`]), or it was synced some other way.
 //!
 //! [`Unsaved`] lives in memory only: the disk is the thing that just failed.
 
@@ -33,6 +33,12 @@ use super::{find_ticket, record, refuse_if_synced, tracker_name};
 use crate::error::UiError;
 use crate::folder_move::{FolderGate, writing_in};
 use crate::tickets::TicketSummary;
+
+/// The issue exists but its link is not in the ticket yet; Retry saves it.
+pub(crate) const SYNC_NOT_SAVED: &str = "sync-not-saved";
+
+/// The issue exists but the ticket is no longer the task it was made for.
+pub(crate) const SYNC_NOT_ATTACHED: &str = "sync-not-attached";
 
 /// An issue a Sync run created, the tracker it is in, and the ticket it was
 /// made for.
@@ -54,13 +60,16 @@ pub(crate) struct Fingerprint {
 
 impl Fingerprint {
     pub fn of(path: &Path) -> Result<Self, UiError> {
-        let bytes = fs::read(path)?;
+        Ok(Self::of_bytes(&fs::read(path)?))
+    }
+
+    fn of_bytes(bytes: &[u8]) -> Self {
         let mut hasher = DefaultHasher::new();
         bytes.hash(&mut hasher);
-        Ok(Self {
-            title: Ticket::parse(&String::from_utf8_lossy(&bytes)).title(),
+        Self {
+            title: Ticket::parse(&String::from_utf8_lossy(bytes)).title(),
             hash: hasher.finish(),
-        })
+        }
     }
 }
 
@@ -74,6 +83,18 @@ fn key(ticket_id: &str, meeting_id: Option<&str>) -> Key {
     (meeting, ticket_id.to_owned())
 }
 
+/// Why a save did not happen; both keep the issue.
+enum Refusal {
+    NotSaved(UiError),
+    NotAttached(UiError),
+}
+
+impl From<UiError> for Refusal {
+    fn from(error: UiError) -> Self {
+        Self::NotSaved(error)
+    }
+}
+
 /// Issues created but not yet written to their ticket.
 #[derive(Debug, Default)]
 pub(crate) struct Unsaved(Mutex<HashMap<Key, Created>>);
@@ -85,58 +106,21 @@ impl Unsaved {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The issue kept for this ticket, if any, whatever it now holds.
-    #[cfg(test)]
+    /// The issue kept for this ticket, if any. While there is one, a Sync of
+    /// the ticket saves it and never runs the agent.
     pub fn get(&self, ticket_id: &str, meeting_id: Option<&str>) -> Option<Created> {
         self.lock().get(&key(ticket_id, meeting_id)).cloned()
     }
 
-    /// The issue kept for this ticket under `root`, if the ticket is still
-    /// the task it was made for. `None` means run a normal sync: nothing is
-    /// kept, or the ticket changed and the kept issue was dropped.
-    ///
-    /// A missing ticket keeps the issue (the file may be back soon) and is
-    /// an error that shows it; a missing meeting folder means the meeting
-    /// was deleted, and drops it.
-    pub fn matching(
-        &self,
-        root: &Path,
-        ticket_id: &str,
-        meeting_id: Option<&str>,
-    ) -> Result<Option<Created>, UiError> {
-        let key = key(ticket_id, meeting_id);
-        let Some(kept) = self.lock().get(&key).cloned() else {
-            return Ok(None);
-        };
-        let path = match find_ticket(root, ticket_id, meeting_id) {
-            Ok(path) => path,
-            Err(error) if error.kind == "ticket-missing" => {
-                return Err(if meeting_deleted(root, key.0.as_deref()) {
-                    self.lock().remove(&key);
-                    dropped(&kept, &error)
-                } else {
-                    not_saved(&kept, &error)
-                });
-            }
-            Err(error) => return Err(error),
-        };
-        // Before the fingerprint: syncing the ticket some other way changed
-        // its file too, and that drop must still say where the issue is.
-        if let Err(error) = refuse_if_synced(ticket_id, &Ticket::read(&path)?) {
-            self.lock().remove(&key);
-            return Err(dropped(&kept, &error));
-        }
-        if Fingerprint::of(&path)? == kept.ticket {
-            Ok(Some(kept))
-        } else {
-            self.lock().remove(&key);
-            Ok(None)
-        }
+    /// Forgets the issue kept for this ticket: the user has its link and
+    /// asked for the next Sync to be a fresh one.
+    pub fn dismiss(&self, ticket_id: &str, meeting_id: Option<&str>) {
+        self.lock().remove(&key(ticket_id, meeting_id));
     }
 
-    /// Writes `created` to the ticket's file under the root as it is now,
-    /// unless the ticket is already synced. Any other failure keeps the issue
-    /// for the next try; every error says where the issue is.
+    /// Writes `created` to the ticket's file under the root as it is now, if
+    /// the ticket is still the task it was made for and not synced already.
+    /// Otherwise the issue is kept, and the error shows where it is.
     pub fn save(
         &self,
         gate: Option<&FolderGate>,
@@ -147,31 +131,29 @@ impl Unsaved {
     ) -> Result<TicketSummary, UiError> {
         let saved = writing_in(gate, root, |root| {
             let path = find_ticket(root, ticket_id, meeting_id)?;
-            refuse_if_synced(ticket_id, &Ticket::read(&path)?)?;
-            record(&path, &created.tracker, &created.synced)
+            let bytes = fs::read(&path).map_err(UiError::from)?;
+            let found = Ticket::parse(&String::from_utf8_lossy(&bytes));
+            refuse_if_synced(ticket_id, &found).map_err(Refusal::NotAttached)?;
+            if Fingerprint::of_bytes(&bytes) != created.ticket {
+                return Err(Refusal::NotAttached(UiError::app(
+                    SYNC_NOT_ATTACHED,
+                    format!("{ticket_id} changed after the sync started."),
+                )));
+            }
+            Ok(record(&path, &created.tracker, &created.synced)?)
         });
         let key = key(ticket_id, meeting_id);
-        match saved {
+        let error = match saved {
             Ok(summary) => {
                 self.lock().remove(&key);
-                Ok(summary)
+                return Ok(summary);
             }
-            Err(error) if error.kind == "sync-already-synced" => {
-                self.lock().remove(&key);
-                Err(dropped(&created, &error))
-            }
-            Err(error) => {
-                let refused = not_saved(&created, &error);
-                self.lock().insert(key, created);
-                Err(refused)
-            }
-        }
+            Err(Refusal::NotSaved(error)) => not_saved(&created, &error),
+            Err(Refusal::NotAttached(error)) => not_attached(&created, &error),
+        };
+        self.lock().insert(key, created);
+        Err(error)
     }
-}
-
-/// True when `meeting_id` names a meeting whose folder is not under `root`.
-fn meeting_deleted(root: &Path, meeting_id: Option<&str>) -> bool {
-    meeting_id.is_some_and(|id| store::folder::meeting_dir(root, id).is_ok_and(|dir| !dir.is_dir()))
 }
 
 /// `error`'s message as a sentence, ending in a full stop.
@@ -184,15 +166,14 @@ fn sentence(error: &UiError) -> String {
     }
 }
 
-/// The error for an issue that exists in the tracker but not yet in its
-/// ticket, and that Retry will save.
+/// The error for an issue whose link could not be written yet.
 fn not_saved(created: &Created, error: &UiError) -> UiError {
     let Synced {
         external_id,
         external_url,
     } = &created.synced;
     UiError::app(
-        "sync-not-saved",
+        SYNC_NOT_SAVED,
         format!(
             "Created in {} as {external_id} but could not save the link: {} The issue is at {external_url}. Press Retry to save the link; it will not create another issue.",
             tracker_name(&created.tracker),
@@ -201,19 +182,15 @@ fn not_saved(created: &Created, error: &UiError) -> UiError {
     )
 }
 
-/// The error for an issue whose ticket can never take its link: `error`
-/// says why, with its own kind, and the message says where the issue is.
-fn dropped(created: &Created, error: &UiError) -> UiError {
-    let Synced {
-        external_id,
-        external_url,
-    } = &created.synced;
+/// The error for an issue the ticket can no longer take: `error` says why.
+fn not_attached(created: &Created, error: &UiError) -> UiError {
     UiError::app(
-        error.kind,
+        SYNC_NOT_ATTACHED,
         format!(
-            "{} This sync created {external_id} in {}, at {external_url}, and did not save it to the task. Delete it there if you do not need it.",
-            sentence(error),
+            "Created in {} but couldn't attach it to this task: {} {} Sync will not create another issue until you dismiss this.",
             tracker_name(&created.tracker),
+            created.synced.external_url,
+            sentence(error),
         ),
     )
 }
