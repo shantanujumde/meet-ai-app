@@ -10,7 +10,7 @@ vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
 );
 
-const { meetingTasks, syncTask, cancelSync, trackerSettings } = ipc;
+const { meetingTasks, syncTask, cancelSync, dismissUnsavedSync, trackerSettings } = ipc;
 
 const MEETING = "2026-09-30-1015-meeting";
 
@@ -104,6 +104,30 @@ describe("MeetingTasks", () => {
 
     await act(async () => runs[1]?.resolve());
     expect(await screen.findByText("ENG-TUR-2")).toBeTruthy();
+  });
+
+  test("Dismiss forgets a row's unattached issue with this meeting's id", async () => {
+    meetingTasks.mockResolvedValue([task("TUR-1", { meeting: null })]);
+    syncTask.mockRejectedValueOnce({
+      domain: "app",
+      kind: "sync-not-attached",
+      message:
+        "Created in Linear but couldn't attach it to this task: https://linear.app/issue/ENG-1",
+    });
+    render(<MeetingTasks meetingId={MEETING} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Sync TUR-1" }));
+    const row = screen.getByText("Task TUR-1").closest("li") as HTMLElement;
+    expect(await within(row).findByRole("alert")).toHaveTextContent(
+      "https://linear.app/issue/ENG-1",
+    );
+
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Dismiss the unsaved issue of TUR-1" }),
+    );
+    await waitFor(() => expect(dismissUnsavedSync).toHaveBeenCalledWith("TUR-1", MEETING));
+    expect(await within(row).findByRole("button", { name: "Sync TUR-1" })).toBeTruthy();
+    expect(within(row).queryByRole("alert")).toBeNull();
   });
 
   test("Cancel stops Sync all", async () => {

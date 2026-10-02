@@ -17,7 +17,8 @@
                    may be empty
     meeting_title  the meeting title; may be empty
     meeting_date   the meeting date; may be empty
-    meeting_file   the full path of the meeting's meeting.md; may be empty
+    meeting_file   no longer filled, always empty: a path on this computer
+                   would show your folder names in a shared issue
     tracker        linear, jira or github
     tracker_mcp    the tracker's MCP server, named as your agent lists it,
                    e.g. claude.ai Linear
@@ -52,9 +53,6 @@ Meeting date: {{ meeting_date }}
 {% if meeting_id %}
 Meeting ID: {{ meeting_id }}
 {% endif %}
-{% if meeting_file %}
-Meeting file: {{ meeting_file }}
-{% endif %}
 
 {% if details %}
 {{ details }}
@@ -66,7 +64,7 @@ Meeting file: {{ meeting_file }}
 ## The issue
 
 - Title: the task's title.
-- Description: the task's details{% if owner and due %}, then the owner and the due date{% elif owner %}, then the owner{% elif due %}, then the due date{% endif %}. End it with one line saying the issue came from meet-ai task {{ ticket_id }}{% if meeting_title or meeting_date or meeting_file %}, from the meeting named above (its title, date and meeting file){% endif %}.
+- Description: the task's details{% if owner and due %}, then the owner and the due date{% elif owner %}, then the owner{% elif due %}, then the due date{% endif %}. End it with one line saying the issue came from meet-ai task {{ ticket_id }}{% if meeting_title or meeting_date %}, from the meeting named above (its title and date){% endif %}.
 - If the tracker needs a team, project or repository and nothing here says which, use the user's default, or the only one there is. Do not ask.
 {% if owner %}
 - Assign the issue to the owner only if the tracker has a user who clearly matches that name. Otherwise leave it unassigned; the name is already in the description.

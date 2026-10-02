@@ -14,7 +14,6 @@ Due: Friday
 Meeting: Search sync
 Meeting date: 2026-09-01
 Meeting ID: 2026-09-01-1430-search-sync
-Meeting file: /Users/me/Meetings/2026-09-01-1430-search-sync/meeting.md
 
 Search box on the dashboard, backed by Postgres full-text search.
 </task>
@@ -22,7 +21,7 @@ Search box on the dashboard, backed by Postgres full-text search.
 ## The issue
 
 - Title: the task's title.
-- Description: the task's details, then the owner and the due date. End it with one line saying the issue came from meet-ai task TICK-0007, from the meeting named above (its title, date and meeting file).
+- Description: the task's details, then the owner and the due date. End it with one line saying the issue came from meet-ai task TICK-0007, from the meeting named above (its title and date).
 - If the tracker needs a team, project or repository and nothing here says which, use the user's default, or the only one there is. Do not ask.
 - Assign the issue to the owner only if the tracker has a user who clearly matches that name. Otherwise leave it unassigned; the name is already in the description.
 - Create exactly one issue. Do not search for, read or change any other issue.

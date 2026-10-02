@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { cancelSync, syncTask, trackerSettings } from "@/ipc/client";
+import { cancelSync, dismissUnsavedSync, syncTask, trackerSettings } from "@/ipc/client";
 import type { TicketSummary, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 
@@ -30,6 +30,18 @@ export type SyncState =
 export type SyncResult = "synced" | "failed" | "cancelled";
 
 const IDLE: SyncState = { kind: "idle" };
+
+/**
+ * The errors of a sync whose issue was created but not attached to the task.
+ * Rust keeps that issue, and every Sync of the task answers with this error,
+ * until the user dismisses it.
+ */
+const KEPT_ISSUE_KINDS: ReadonlySet<string> = new Set(["sync-not-saved", "sync-not-attached"]);
+
+/** Whether this error is a kept issue the user can dismiss. */
+export function isKeptIssue(error: UiError): boolean {
+  return error.domain === "app" && KEPT_ISSUE_KINDS.has(error.kind);
+}
 
 export function useTicketSync(onSynced: (ticket: TicketSummary) => void) {
   const [states, setStates] = useState<Record<string, SyncState>>({});
@@ -92,10 +104,26 @@ export function useTicketSync(onSynced: (ticket: TicketSummary) => void) {
     [updateBusy],
   );
 
+  /**
+   * Forget the issue Rust kept for this ticket, so the next Sync is a fresh
+   * run. A failed dismiss keeps the row failed, with the new error.
+   */
+  const dismiss = useCallback(
+    async (ticketId: string, meetingId: string | null) => {
+      try {
+        await dismissUnsavedSync(ticketId, meetingId);
+        put(ticketId, IDLE);
+      } catch (caught) {
+        put(ticketId, { kind: "failed", error: toUiError(caught) });
+      }
+    },
+    [put],
+  );
+
   const stateOf = useCallback((ticketId: string) => states[ticketId] ?? IDLE, [states]);
   const anyBusy = Object.values(states).some((state) => state.kind === "busy");
 
-  return { stateOf, sync, cancel, anyBusy };
+  return { stateOf, sync, cancel, dismiss, anyBusy };
 }
 
 /**

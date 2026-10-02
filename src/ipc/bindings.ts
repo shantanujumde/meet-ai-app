@@ -192,6 +192,12 @@ export const commands = {
 	/**  Stop a running Sync; its `sync_task` then fails with `agent-cancelled`. */
 	cancelSync: (ticketId: string) => __TAURI_INVOKE<void>("cancel_sync", { ticketId }),
 	/**
+	 *  Forget the issue a Sync created but could not attach to this task
+	 *  (`sync-not-saved`, `sync-not-attached`), so the next Sync runs afresh. The
+	 *  window shows the issue's link until the user dismisses it.
+	 */
+	dismissUnsavedSync: (ticketId: string, meetingId: string | null) => __TAURI_INVOKE<void>("dismiss_unsaved_sync", { ticketId, meetingId }),
+	/**
 	 *  A meeting's tasks: the ones in its own `tickets/` folder, where the notes
 	 *  run writes them, and shared ones that name it. Sorted by id.
 	 */

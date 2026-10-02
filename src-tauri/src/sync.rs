@@ -4,8 +4,10 @@
 //! The app never talks to Linear, Jira or GitHub. Each Sync press is a
 //! separate background run of the user's agent CLI (`crates/agent`) that:
 //!
-//! - gets **only the task**: title, details, owner, due and a link back to
-//!   the meeting, rendered from `push-ticket.md`. Never the transcript;
+//! - gets **only the task**: title, details, owner, due and the meeting's
+//!   title and date, rendered from `push-ticket.md`. Never the transcript,
+//!   and no local path: the issue is shared, and a path shows the user's
+//!   folder names;
 //! - may use only the tools of the MCP server named in `tickets.tracker_mcp`
 //!   (`mcp__<server>__*`);
 //! - must reply `{external_id, external_url}`, which this module writes to
@@ -20,6 +22,7 @@
 //! status events are `agent_run.rs`'s (TUR-10). Settings for the tracker are
 //! in [`tracker`].
 
+mod save;
 pub mod tracker;
 
 use std::collections::HashMap;
@@ -41,18 +44,30 @@ use crate::config::{self, AgentConfig, Harness as HarnessChoice, TicketsConfig};
 use crate::error::UiError;
 use crate::folder_move::FolderGate;
 use crate::meetings;
+use crate::sync::save::{Created, Fingerprint, Unsaved};
 use crate::tickets::{self, TicketSummary};
+
+/// The ticket's file is not where it should be.
+pub(crate) const TICKET_MISSING: &str = "ticket-missing";
+
+/// The ticket is already in the tracker.
+pub(crate) const ALREADY_SYNCED: &str = "sync-already-synced";
 
 /// The Sync runs in flight, by ticket id, so the window can cancel one and a
 /// second press on the same task is refused instead of making two issues.
+/// Also the issues a run created but could not save, so Retry saves them
+/// instead of making another (`save.rs`).
 #[derive(Debug, Default)]
-pub struct SyncRuns(Mutex<HashMap<String, CancelHandle>>);
+pub struct SyncRuns {
+    running: Mutex<HashMap<String, CancelHandle>>,
+    unsaved: Unsaved,
+}
 
 impl SyncRuns {
     fn lock(&self) -> MutexGuard<'_, HashMap<String, CancelHandle>> {
         // The map holds only cancel flags, so a panic mid-insert leaves
         // nothing half-written worth refusing over.
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        self.running.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Marks `ticket_id` as syncing until the returned claim is dropped.
@@ -125,26 +140,34 @@ pub async fn sync_task(
     meeting_id: Option<String>,
 ) -> Result<TicketSummary, UiError> {
     blocking(move || {
-        let runs = app.state::<SyncRuns>();
-        let claim = runs.claim(&ticket_id)?;
-        let root = meetings::root()?;
-        let agent = config::agent()?;
-        let settings = RunSettings::new(&agent, config::tickets()?);
-        let harness = harness_for(&agent)?;
-        let (path, synced) = run(
-            &root,
+        let gate = app.try_state::<FolderGate>();
+        sync_in(
+            &app.state::<SyncRuns>(),
+            gate.as_deref(),
+            meetings::root,
             &ticket_id,
             meeting_id.as_deref(),
-            harness.as_ref(),
-            &settings,
-            &claim.cancel,
-        )?;
-        // Only the write goes through the gate: holding it for the whole run
-        // would refuse a folder move for minutes.
-        app.state::<FolderGate>()
-            .writing(|| record(&path, &settings.tickets.tracker, &synced))
+            || {
+                let agent = config::agent()?;
+                let settings = RunSettings::new(&agent, config::tickets()?);
+                Ok((harness_for(&agent)?, settings))
+            },
+        )
     })
     .await?
+}
+
+/// Forget the issue a Sync created but could not attach to this task
+/// (`sync-not-saved`, `sync-not-attached`), so the next Sync runs afresh. The
+/// window shows the issue's link until the user dismisses it.
+#[tauri::command]
+#[specta::specta]
+pub fn dismiss_unsaved_sync(
+    runs: State<'_, SyncRuns>,
+    ticket_id: String,
+    meeting_id: Option<String>,
+) {
+    runs.unsaved.dismiss(&ticket_id, meeting_id.as_deref());
 }
 
 /// Stop a running Sync; its `sync_task` then fails with `agent-cancelled`.
@@ -228,9 +251,52 @@ pub(crate) fn find_binary(agent: &AgentConfig) -> Result<PathBuf, UiError> {
     })
 }
 
+/// [`sync_task`] without the `AppHandle`: `root` looks the meetings root up
+/// and `agent` gives the harness and settings, asked for only when a run is
+/// needed.
+///
+/// The root is looked up twice: once to start the run, and again for the
+/// save, so a folder moved during the run gets the link in its new place.
+/// Only the save goes through `gate`: holding it for the whole run would
+/// refuse a folder move for minutes. While an issue an earlier run created
+/// is kept unsaved, a Sync tries to save that issue and never runs the agent
+/// (`save.rs`).
+pub(crate) fn sync_in(
+    runs: &SyncRuns,
+    gate: Option<&FolderGate>,
+    root: impl Fn() -> Result<PathBuf, UiError>,
+    ticket_id: &str,
+    meeting_id: Option<&str>,
+    agent: impl FnOnce() -> Result<(Box<dyn Harness>, RunSettings), UiError>,
+) -> Result<TicketSummary, UiError> {
+    let claim = runs.claim(ticket_id)?;
+    let created = match runs.unsaved.get(ticket_id, meeting_id) {
+        Some(created) => created,
+        None => {
+            let (harness, settings) = agent()?;
+            let start = root()?;
+            let ticket = Fingerprint::of(&find_ticket(&start, ticket_id, meeting_id)?)?;
+            let synced = run(
+                &start,
+                ticket_id,
+                meeting_id,
+                harness.as_ref(),
+                &settings,
+                &claim.cancel,
+            )?;
+            Created {
+                tracker: settings.tickets.tracker,
+                synced,
+                ticket,
+            }
+        }
+    };
+    runs.unsaved
+        .save(gate, &root, ticket_id, meeting_id, created)
+}
+
 /// Renders the push-ticket prompt for one ticket, runs `harness` with it and
-/// reads the reply. Returns the ticket's file and what was created; writes
-/// nothing.
+/// reads the reply. Returns what was created; writes nothing.
 pub(crate) fn run(
     root: &Path,
     ticket_id: &str,
@@ -238,7 +304,7 @@ pub(crate) fn run(
     harness: &dyn Harness,
     settings: &RunSettings,
     cancel: &CancelHandle,
-) -> Result<(PathBuf, Synced), UiError> {
+) -> Result<Synced, UiError> {
     let path = find_ticket(root, ticket_id, meeting_id)?;
     let found = Ticket::read(&path)?;
     refuse_if_synced(ticket_id, &found)?;
@@ -258,12 +324,12 @@ pub(crate) fn run(
     job.timeout = settings.timeout;
     job.cancel = cancel.clone();
     let reply = harness.run(&job).map_err(agent_error)?;
-    let synced = parse_sync_reply(&reply).ok_or_else(|| not_synced(tickets_config))?;
-    Ok((path, synced))
+    parse_sync_reply(&reply).ok_or_else(|| not_synced(tickets_config))
 }
 
-/// Writes what a Sync run created into the ticket file, re-read first so an
-/// edit made during the run is kept. Never called for a run with no issue.
+/// Writes what a Sync run created into the ticket file. Never called for a
+/// run with no issue, nor for a ticket that changed since its sync started
+/// (`save.rs` refuses that save and keeps the issue).
 pub(crate) fn record(
     path: &Path,
     tracker: &str,
@@ -297,7 +363,7 @@ fn refuse_if_synced(ticket_id: &str, found: &Ticket) -> Result<(), UiError> {
         Some(key) => format!("{ticket_id} is already in {place} as {key}."),
         None => format!("{ticket_id} is already in {place}."),
     };
-    Err(UiError::app("sync-already-synced", message))
+    Err(UiError::app(ALREADY_SYNCED, message))
 }
 
 /// The prompt's input: the task and its meeting, nothing from the transcript.
@@ -314,7 +380,6 @@ fn push_ticket_input(
         .filter(|id| !id.is_empty());
     let mut meeting_title = None;
     let mut meeting_date = None;
-    let mut meeting_file = None;
     if let Some(id) = &meeting_id {
         let dir = store::folder::meeting_dir(root, id)?;
         let file = dir.join(store::MEETING_FILE);
@@ -328,7 +393,6 @@ fn push_ticket_input(
         meeting_date = meeting_date
             .or_else(|| day.map(|day| format!("{day} {}", time.unwrap_or_default())))
             .map(|date| date.trim().to_owned());
-        meeting_file = Some(file.display().to_string());
     }
     Ok(PushTicketInput {
         ticket_id: found.id().unwrap_or_else(|| ticket_id.to_owned()),
@@ -339,7 +403,6 @@ fn push_ticket_input(
         meeting_id,
         meeting_title,
         meeting_date,
-        meeting_file,
         tracker: tickets_config.tracker.clone(),
         tracker_mcp: tickets_config.tracker_mcp.clone(),
     })
@@ -414,7 +477,7 @@ fn find_ticket(root: &Path, ticket_id: &str, meeting_id: Option<&str>) -> Result
         .find(|path| path.is_file())
         .ok_or_else(|| {
             UiError::app(
-                "ticket-missing",
+                TICKET_MISSING,
                 format!("Could not find the file for {ticket_id}."),
             )
         })

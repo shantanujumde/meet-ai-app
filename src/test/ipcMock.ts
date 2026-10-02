@@ -164,6 +164,7 @@ export const ipc = {
     }),
   ),
   cancelSync: vi.fn<typeof Client.cancelSync>(async () => {}),
+  dismissUnsavedSync: vi.fn<typeof Client.dismissUnsavedSync>(async () => {}),
   openSyncedIssue: vi.fn<typeof Client.openSyncedIssue>(async () => {}),
   trackerSettings: vi.fn<typeof Client.trackerSettings>(async () => ({
     tracker: "linear",
