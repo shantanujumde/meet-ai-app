@@ -14,6 +14,11 @@ dirs.workspace = true
 # shared with `stt` (the transcript's writer) without depending on it.
 meeting-format.workspace = true
 notify.workspace = true
+# The checked notes JSON (SPEC A11) that `agent_notes` writes out.
+prompts.workspace = true
+# `agent_notes` fingerprints each ticket it writes, to tell later whether the
+# user touched it.
+sha2.workspace = true
 notify-debouncer-full.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

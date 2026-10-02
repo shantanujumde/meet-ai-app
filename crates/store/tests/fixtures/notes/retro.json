@@ -1,0 +1,21 @@
+{
+  "summary": "The release slipped two days because the staging database was out of date.",
+  "decisions": ["Refresh staging from production every Monday."],
+  "open_questions": ["Should the refresh be automated?"],
+  "tasks": [
+    {
+      "title": "Script the staging refresh",
+      "details": "Write a script that copies last night's production snapshot into staging.",
+      "owner": "Dev",
+      "due": "next sprint",
+      "transcript_ref": "00:05:12"
+    },
+    {
+      "title": "Add a staging age check to the release list",
+      "details": "The release checklist should say how old the staging data is.",
+      "owner": "Shantanu",
+      "due": null,
+      "transcript_ref": "00:18:40"
+    }
+  ]
+}

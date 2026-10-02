@@ -1,0 +1,21 @@
+{
+  "summary": "Second pass: sessions move to Redis this week, and the load test gates the switch.",
+  "decisions": ["Redis goes in this week."],
+  "open_questions": [],
+  "tasks": [
+    {
+      "title": "Ship the Redis session store",
+      "details": "Swap the session map for Redis and keep the old map behind a flag.",
+      "owner": "Dev",
+      "due": "Thursday",
+      "transcript_ref": "00:15:00"
+    },
+    {
+      "title": "Load test with two instances",
+      "details": "Point the load test at both API instances and record the p95 login time.",
+      "owner": null,
+      "due": null,
+      "transcript_ref": "00:22:10"
+    }
+  ]
+}

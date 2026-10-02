@@ -9,6 +9,8 @@
 //!   format is appended by `stt`'s sink and nothing else.
 //! * [`notes`] — `notes.md`: the user's own notes.
 //! * [`ticket`] — `tickets/TICK-NNNN.md` (§3.3).
+//! * [`agent_notes`] — `meeting.md` sections and tickets written from the
+//!   agent's notes JSON (SPEC A11).
 //! * [`folder`] — one meeting folder, or every folder under the root, loaded
 //!   together.
 //!
@@ -28,8 +30,10 @@
 //!   [`Error`].
 //! * **SPEC §4 — the watcher must suppress this process's own writes.** The app
 //!   writes `notes.md` while the user types in it. Without suppression the
-//!   watcher fires, the app reloads, and the cursor jumps mid-sentence. Agent
-//!   writes are *not* suppressed. (Phase 3b, TUR-100.)
+//!   watcher fires, the app reloads, and the cursor jumps mid-sentence. Files an
+//!   agent writes itself (the copy-prompt path) are *not* suppressed; the notes
+//!   the app writes from the agent's JSON ([`agent_notes`]) are. (Phase 3b,
+//!   TUR-100; TUR-7.)
 //!
 //! No `#[cfg(target_os)]` anywhere in this crate: `store` must stay free of
 //! mac-only code (SPEC §8.2). Every path is built with `Path::join`.
@@ -39,6 +43,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+pub mod agent_notes;
 pub mod folder;
 pub mod folder_name;
 pub mod frontmatter;

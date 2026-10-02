@@ -228,7 +228,7 @@ impl Meeting {
 
     /// The line ending this file uses, judged from the text around the
     /// headings.
-    fn eol(&self) -> &'static str {
+    pub(crate) fn eol(&self) -> &'static str {
         let crlf =
             self.preamble.contains("\r\n") || self.sections.iter().any(|s| s.body.contains("\r\n"));
         if crlf { "\r\n" } else { "\n" }

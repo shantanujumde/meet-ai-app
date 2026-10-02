@@ -12,8 +12,9 @@
 //!   dropped; a dot in the root's own path (say `~/.meetings`) does not count.
 //! * **`index.db` and its sidecars.** The index is derived (L7). Reacting to
 //!   our own index update would loop forever.
-//! * **This process's own writes.** See [`SelfWrites`]. Agent writes are not
-//!   suppressed.
+//! * **This process's own writes.** See [`SelfWrites`], including the notes the
+//!   app writes from the agent's JSON. Files an agent writes itself (the
+//!   copy-prompt path) are not suppressed.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
