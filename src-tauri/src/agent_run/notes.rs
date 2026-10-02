@@ -32,15 +32,25 @@ pub struct Agent {
     pub work_root: PathBuf,
 }
 
+/// A finished run's write: given the meetings root, writes the notes there
+/// and returns how many tasks it wrote.
+pub type SaveWrite<'a> = &'a dyn Fn(&Path) -> Result<u32, Failure>;
+
 /// Writes the notes for `meeting_id` under `root` and returns how many tasks
 /// were written. `agent` is asked for the CLI only once the meeting is known
 /// to have a transcript and notes switched on.
+///
+/// `root` is where the meeting is read from at the start. The answer is
+/// written through `save`, which runs the write against the meetings root as
+/// it is once the answer is in: the user may have moved the meetings folder
+/// while the agent worked (TUR-17).
 pub fn run_notes(
     root: &Path,
     meeting_id: &str,
     agent: impl FnOnce() -> Result<Agent, Failure>,
     cancel: &CancelHandle,
     self_writes: &SelfWrites,
+    save: impl FnOnce(SaveWrite<'_>) -> Result<u32, Failure>,
 ) -> Result<u32, Failure> {
     let prompt = prepare(root, meeting_id)?;
     let agent = agent()?;
@@ -66,19 +76,26 @@ pub fn run_notes(
         model: agent.model.unwrap_or_default(),
         at: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
     };
-    let outcome = agent_notes::write(root, meeting_id, &notes, &analysis, self_writes)
-        .map_err(failure::write_failed)?;
-    if outcome.notes_off {
-        // Switched off while the agent was working.
-        return Err(failure::notes_off());
-    }
-    Ok(u32::try_from(outcome.written.len()).unwrap_or(u32::MAX))
+    save(&|root| {
+        let outcome = agent_notes::write(root, meeting_id, &notes, &analysis, self_writes)
+            .map_err(failure::write_failed)?;
+        if outcome.notes_off {
+            // Switched off while the agent was working.
+            return Err(failure::notes_off());
+        }
+        Ok(u32::try_from(outcome.written.len()).unwrap_or(u32::MAX))
+    })
 }
 
 /// The agent the config names, found through its harness.
 pub fn configured() -> Result<Agent, Failure> {
     let settings = config::agent()
         .map_err(|error| failure::could_not_start(crate::error::UiError::from(error).message))?;
+    from_settings(&settings)
+}
+
+/// The agent `settings` names, found through its harness.
+pub fn from_settings(settings: &config::AgentConfig) -> Result<Agent, Failure> {
     let harness: Box<dyn Harness> = match settings.harness {
         config::Harness::None => return Err(failure::no_agent()),
         config::Harness::Codex => {
@@ -114,7 +131,7 @@ pub fn configured() -> Result<Agent, Failure> {
     };
     Ok(Agent {
         harness,
-        model: Some(settings.model).filter(|model| !model.trim().is_empty()),
+        model: Some(settings.model.clone()).filter(|model| !model.trim().is_empty()),
         timeout: Duration::from_secs(settings.timeout_sec),
         work_root: std::env::temp_dir(),
     })
@@ -141,7 +158,7 @@ pub fn detected<H: Harness>(harness: H, run_with: impl FnOnce(Install) -> H) -> 
 /// `analyzed_by` for a harness id. Anything but Codex is Claude Code, which
 /// is what the fake harness in tests stands in for.
 fn analyzed_by(harness_id: &str) -> AnalyzedBy {
-    if harness_id == "codex" {
+    if harness_id == agent::codex::ID {
         AnalyzedBy::Codex
     } else {
         AnalyzedBy::ClaudeCode
@@ -200,7 +217,7 @@ fn stopped(root: &Path, meeting_id: &str, harness_id: &str) -> Failure {
 }
 
 /// The meeting's `meeting.md` now says `agent_notes: off`.
-fn switched_off(root: &Path, meeting_id: &str) -> bool {
+pub fn switched_off(root: &Path, meeting_id: &str) -> bool {
     store::folder::meeting_dir(root, meeting_id)
         .ok()
         .and_then(|dir| Meeting::read(&dir.join(store::MEETING_FILE)).ok().flatten())

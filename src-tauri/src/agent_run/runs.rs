@@ -111,6 +111,33 @@ impl AgentRuns {
         running
     }
 
+    /// Record that `meeting_id`'s run cannot begin, without starting one: no
+    /// thread, no agent, just the failure, so the meeting view offers Retry.
+    /// Ignored while a run is going for that meeting, and once the app is
+    /// quitting.
+    pub fn fail(&self, meeting_id: &str, failure: Failure, sink: &dyn Sink) {
+        let mut inner = self.shared.lock();
+        let busy = inner
+            .runs
+            .get(meeting_id)
+            .is_some_and(|entry| entry.state == State::Running);
+        if inner.closed || busy {
+            return;
+        }
+        let state = State::Failed { failure };
+        inner.runs.insert(
+            meeting_id.to_owned(),
+            Entry {
+                state: state.clone(),
+                cancel: None,
+            },
+        );
+        sink.status(&Status {
+            meeting_id: meeting_id.to_owned(),
+            state,
+        });
+    }
+
     /// Cancel `meeting_id`'s run, if one is going. The run then ends as
     /// cancelled, which arrives through the sink.
     pub fn cancel(&self, meeting_id: &str) -> Status {

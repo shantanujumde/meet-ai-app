@@ -801,3 +801,168 @@ fn a_guess_the_engine_keeps_updating_is_never_withdrawn() {
         .count();
     assert_eq!(dropped, 1, "only the one `finish` sends");
 }
+
+// --- when transcript.md is final (TUR-17) -----------------------------
+
+/// How long a [`LateLineEngine`] takes inside `finish`.
+#[derive(Clone)]
+enum Hold {
+    For(Duration),
+    Until(Gate),
+}
+
+/// An engine that settles one more line inside `finish`, after its [`Hold`]:
+/// a slow engine flushing its tail, possibly after Stop stopped waiting.
+struct LateLineEngine(Hold);
+
+impl SttEngine for LateLineEngine {
+    fn name(&self) -> &'static str {
+        "fake"
+    }
+
+    fn transcribe(
+        &mut self,
+        _wav: &std::path::Path,
+        _speaker: Speaker,
+        _sink: &mut dyn stt::TranscriptSink,
+    ) -> Result<(), stt::Error> {
+        Ok(())
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    fn start_session(
+        &mut self,
+        options: stt::SessionOptions,
+        sink: Box<dyn stt::TranscriptSink + Send>,
+        listener: Box<dyn stt::LiveListener>,
+    ) -> Result<Box<dyn stt::SttSession>, stt::Error> {
+        Ok(Box::new(LateLineSession {
+            speaker: options.speaker,
+            emitter: stt::LiveEmitter::new(&options, listener),
+            sink,
+            hold: self.0.clone(),
+        }))
+    }
+}
+
+struct LateLineSession {
+    speaker: Speaker,
+    emitter: stt::LiveEmitter,
+    sink: Box<dyn stt::TranscriptSink + Send>,
+    hold: Hold,
+}
+
+impl stt::SttSession for LateLineSession {
+    fn engine_name(&self) -> &'static str {
+        "fake"
+    }
+
+    fn feed(&mut self, _samples: &[i16]) -> Result<(), stt::Error> {
+        Ok(())
+    }
+
+    fn finish(mut self: Box<Self>) -> Result<stt::SessionOutcome, stt::Error> {
+        match &self.hold {
+            Hold::For(delay) => std::thread::sleep(*delay),
+            Hold::Until(gate) => gate.wait(),
+        }
+        self.emitter
+            .finalize(1.0, "The last line.", self.sink.as_mut())?;
+        self.sink.flush()?;
+        Ok(stt::SessionOutcome {
+            speaker: self.speaker,
+            finalized: self.emitter.finalized(),
+            discarded_volatile: self.emitter.withdraw(),
+            audio_sec: 0,
+            engine: "fake",
+        })
+    }
+}
+
+/// Start a microphone-only meeting on a [`LateLineEngine`] and stop the
+/// recording at once, so the engine's `finish` is all that is left.
+fn stop_a_late_line_meeting(
+    name: &str,
+    hold: Hold,
+    timeout: Duration,
+) -> (PathBuf, Status, TranscriptFinal) {
+    let path = temp_transcript(name);
+    let live = LiveTranscript::default();
+    let (mic_tee, mic_feed) = audio::tee::tee();
+    let transcription = live.start(
+        Arc::new(CollectingNotify::default()),
+        path.clone(),
+        vec![(Speaker::You, mic_feed)],
+        Box::new(move || Ok(Box::new(LateLineEngine(hold)) as Box<dyn SttEngine>)),
+    );
+    drop(mic_tee);
+    let (status, transcript_final) = transcription.finish_final(timeout);
+    (path, status, transcript_final)
+}
+
+const LAST_LINE: &str = "[00:00:01] You: The last line.";
+
+#[test]
+fn an_engine_that_finishes_in_time_leaves_transcript_md_final_at_once() {
+    let (path, status, mut transcript_final) =
+        stop_a_late_line_meeting("final-in-time", Hold::For(Duration::ZERO), STOP_TIMEOUT);
+    assert_eq!(status.state, State::Stopped);
+    assert!(
+        transcript_final.wait(Duration::ZERO),
+        "nothing left to wait for"
+    );
+    assert!(read(&path).contains(LAST_LINE), "{:?}", read(&path));
+}
+
+#[test]
+fn an_engine_slower_than_stop_makes_transcript_md_final_only_once_it_ends() {
+    let (path, status, mut transcript_final) = stop_a_late_line_meeting(
+        "final-late",
+        Hold::For(Duration::from_millis(300)),
+        Duration::from_millis(50),
+    );
+    assert_eq!(status.state, State::Failed, "Stop gave up on the engine");
+    assert!(
+        !transcript_final.wait(Duration::ZERO),
+        "the engine is still finishing"
+    );
+    assert!(
+        !read(&path).contains(LAST_LINE),
+        "the last line is not written yet"
+    );
+
+    assert!(
+        transcript_final.wait(Duration::from_secs(5)),
+        "a later wait sees the engine end"
+    );
+    assert!(
+        read(&path).contains(LAST_LINE),
+        "final means the late line is in: {:?}",
+        read(&path)
+    );
+    assert!(transcript_final.wait(Duration::ZERO), "and it stays final");
+}
+
+#[test]
+fn an_engine_that_never_finishes_never_makes_transcript_md_final() {
+    let gate = Gate::default();
+    let (path, status, mut transcript_final) = stop_a_late_line_meeting(
+        "final-never",
+        Hold::Until(gate.clone()),
+        Duration::from_millis(50),
+    );
+    assert_eq!(status.state, State::Failed);
+    assert!(!transcript_final.wait(Duration::from_millis(100)));
+    assert!(
+        !transcript_final.wait(Duration::from_millis(100)),
+        "still not final"
+    );
+    assert!(!read(&path).contains(LAST_LINE));
+
+    // Let the engine go, so its thread does not outlive the test.
+    gate.open();
+    assert!(transcript_final.wait(Duration::from_secs(5)));
+}

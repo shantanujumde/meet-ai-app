@@ -33,6 +33,11 @@ use runs::{Sink, Work};
 /// How long quitting waits for running agents to be stopped.
 const QUIT_WAIT: Duration = Duration::from_secs(3);
 
+/// How long, after Stop's own [`live_transcript::STOP_TIMEOUT`], the notes
+/// run waits for `transcript.md` to be final before it gives up and says so.
+/// An engine still writing after this long is stuck.
+const FINAL_WAIT: Duration = Duration::from_secs(120);
+
 /// Where one meeting's notes run stands, as the meeting view shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -187,33 +192,88 @@ pub async fn set_meeting_notes(
 
 /// Finish the meeting's transcription, then start its notes run if
 /// `agent.auto_run` is on. The recorder's Stop calls this in place of
-/// `Transcription::finish`; `transcript.md` is final once that returns.
+/// `Transcription::finish`.
 ///
-/// The run has a thread of its own, so this returns at once after the
-/// transcript is done and the next recording is never held up by it.
-/// Starts nothing while the app quits.
+/// Stop waits for the transcript as long as it always has; the rest happens
+/// on a thread of its own, so the next recording is never held up by it.
+/// That thread waits for `transcript.md` to be final before any run starts
+/// (TUR-17); see [`after_stop`].
 pub fn finish_then_run(app: &AppHandle, transcription: Transcription) {
     let transcript = transcription.transcript().to_path_buf();
-    transcription.finish(live_transcript::STOP_TIMEOUT);
-    let Ok(agent_runs) = runs(app) else {
-        return;
-    };
-    if agent_runs.is_closed() {
-        return;
-    }
-    let Some((root, meeting_id)) = meeting_of(&transcript) else {
+    let (_, mut transcript_final) = transcription.finish_final(live_transcript::STOP_TIMEOUT);
+    let Some((stop_root, meeting_id)) = meeting_of(&transcript) else {
         tracing::warn!(path = %transcript.display(), "no meeting folder around the transcript; no notes run");
         return;
     };
-    match crate::config::agent() {
-        Ok(settings) if !settings.auto_run || settings.harness == crate::config::Harness::None => {}
-        // A config that cannot be read still starts, so the meeting view
-        // says why there are no notes.
-        _ => {
-            if let Err(error) = start(app, root, &meeting_id) {
-                tracing::warn!(message = %error.message, "could not start the notes run");
-            }
-        }
+    let app = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("meet-ai-notes-wait".to_owned())
+        .spawn(move || {
+            let Ok(agent_runs) = runs(&app) else {
+                return;
+            };
+            after_stop(
+                &agent_runs,
+                &stop_root,
+                &meeting_id,
+                &crate::config::agent(),
+                |wait| transcript_final.wait(wait),
+                &AppSink { app: app.clone() },
+                || {
+                    // The root as it is now: the wait may have outlasted a
+                    // folder move.
+                    let root = crate::meetings::root().unwrap_or_else(|_| stop_root.clone());
+                    if let Err(error) = start(&app, root, &meeting_id) {
+                        tracing::warn!(message = %error.message, "could not start the notes run");
+                    }
+                },
+            );
+        });
+    if let Err(error) = spawned {
+        tracing::warn!(%error, "could not wait for the transcript; no notes run");
+    }
+}
+
+/// What Stop leads to once transcription is finished, without Tauri.
+///
+/// Nothing at all — no status, no agent, no *Writing notes…* — when the app
+/// is quitting, `agent.auto_run` is off, no agent is set up, or notes are off
+/// for this meeting (SPEC A11, "Skip one meeting"). Otherwise it waits up to
+/// [`FINAL_WAIT`] for `transcript.md` to be final, so the agent never gets a
+/// transcript with its last lines still to come, and then calls `start`. A
+/// transcript that never becomes final starts no run: the meeting view says
+/// so, with Retry.
+fn after_stop(
+    agent_runs: &AgentRuns,
+    root: &Path,
+    meeting_id: &str,
+    settings: &Result<crate::config::AgentConfig, crate::config::ConfigError>,
+    wait_final: impl FnOnce(Duration) -> bool,
+    sink: &dyn Sink,
+    start: impl FnOnce(),
+) {
+    let skipped = || agent_runs.is_closed() || notes::switched_off(root, meeting_id);
+    if !auto_runs(settings) || skipped() {
+        return;
+    }
+    let transcript_final = wait_final(FINAL_WAIT);
+    // Notes may have been switched off, or the app told to quit, meanwhile.
+    if skipped() {
+        return;
+    }
+    if transcript_final {
+        start();
+    } else {
+        agent_runs.fail(meeting_id, failure::not_final(), sink);
+    }
+}
+
+/// Whether Stop starts a notes run on its own. A config that cannot be read
+/// still does, so the meeting view says why there are no notes.
+fn auto_runs(settings: &Result<crate::config::AgentConfig, crate::config::ConfigError>) -> bool {
+    match settings {
+        Ok(settings) => settings.auto_run && settings.harness != crate::config::Harness::None,
+        Err(_) => true,
     }
 }
 
@@ -228,13 +288,18 @@ pub fn shutdown(app: &AppHandle) {
 /// under `root`.
 fn start(app: &AppHandle, root: PathBuf, meeting_id: &str) -> Result<Status, UiError> {
     let self_writes = own_writes(app);
-    let sink: Arc<dyn Sink> = Arc::new(AppSink {
-        app: app.clone(),
-        root: root.clone(),
-    });
+    let sink: Arc<dyn Sink> = Arc::new(AppSink { app: app.clone() });
     let id = meeting_id.to_owned();
+    let save_app = app.clone();
     let work: Work = Box::new(move |cancel| {
-        notes::run_notes(&root, &id, notes::configured, cancel, &self_writes)
+        notes::run_notes(
+            &root,
+            &id,
+            notes::configured,
+            cancel,
+            &self_writes,
+            |write| crate::folder_move::writing_in_root(&save_app, write),
+        )
     });
     Ok(runs(app)?.start(meeting_id, work, sink))
 }
@@ -319,7 +384,6 @@ async fn blocking<T: Send + 'static>(
 /// The window and the notification, as a [`Sink`].
 struct AppSink {
     app: AppHandle,
-    root: PathBuf,
 }
 
 impl Sink for AppSink {
@@ -339,8 +403,10 @@ impl Sink for AppSink {
         if in_front {
             return;
         }
-        let title = store::folder::meeting_dir(&self.root, meeting_id)
+        // The root as it is now, which a folder move may have changed.
+        let title = crate::meetings::root()
             .ok()
+            .and_then(|root| store::folder::meeting_dir(&root, meeting_id).ok())
             .and_then(|dir| store::meeting::Meeting::read(&dir.join(store::MEETING_FILE)).ok())
             .flatten()
             .and_then(|meeting| meeting.title())

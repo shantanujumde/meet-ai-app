@@ -33,7 +33,7 @@ use crate::process::{self, MAX_STDOUT_BYTES, could_not_start, reply_too_big};
 use crate::{AgentError, Harness, Install, Job, JobKind, OutputCheck, parse_json};
 
 /// The harness id, as written to `agent.harness` and `analyzed_by`.
-const ID: &str = "codex";
+pub const ID: &str = "codex";
 
 /// The CLI's name as the user knows it, for errors such as "Codex is not
 /// installed".
