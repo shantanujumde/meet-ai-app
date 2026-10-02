@@ -58,6 +58,19 @@ export function Checking({ label }: { label: string }) {
 }
 
 /**
+ * A one-line error for a small control — a row's Sync, a settings field —
+ * where {@link ErrorState}'s headline and body would crowd the row. Shows only
+ * the Rust message, which for these errors is already worded for the user.
+ */
+export function InlineError({ error }: { error: UiError }) {
+  return (
+    <p className="text-footnote text-danger wrap-anywhere" role="alert">
+      {error.message}
+    </p>
+  );
+}
+
+/**
  * An error with a human sentence, the verbatim Rust message, and the button
  * the agreed mapping says to offer.
  *

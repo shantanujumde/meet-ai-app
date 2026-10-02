@@ -22,6 +22,9 @@ function ticket(over: Partial<TicketSummary> = {}): TicketSummary {
     meeting: null,
     body: "Cover the setup.",
     hasProblems: false,
+    syncedTo: null,
+    externalId: null,
+    externalUrl: null,
     ...over,
   };
 }

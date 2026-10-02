@@ -267,6 +267,45 @@ export type TicketSummary = {
   meeting: string | null;
   body: string;
   hasProblems: boolean;
+  /**
+   * Which tracker the agent created this ticket's issue in (`linear`, `jira`
+   * or `github` in practice), or null before it has been synced (TUR-11).
+   */
+  syncedTo: string | null;
+  /** The issue's id in that tracker, e.g. `ENG-42`. */
+  externalId: string | null;
+  /** The issue's web address. Rust opens it; the window never does. */
+  externalUrl: string | null;
+};
+
+/** The issue trackers Sync can create an issue in. */
+export type Tracker = "linear" | "jira" | "github";
+
+/** Which agent runs Sync; `none` means the user chose no agent. */
+export type Harness = "claude-code" | "codex" | "none";
+
+/** Where Sync sends a ticket, and which agent does it. */
+export type TrackerSettings = {
+  tracker: Tracker;
+  /** The name of the tracker's MCP server, as the agent lists it. */
+  trackerMcp: string;
+  harness: Harness;
+};
+
+/** An MCP server's state, as `claude mcp list` / `codex mcp list` report it. */
+export type McpStatus =
+  | "connected"
+  | "needs_auth"
+  | "failed"
+  | "pending"
+  | "disabled"
+  | "configured"
+  | "unknown";
+
+/** One MCP server the agent knows about. */
+export type TrackerServer = {
+  name: string;
+  status: McpStatus;
 };
 
 /**

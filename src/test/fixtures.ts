@@ -7,7 +7,23 @@
  * new required field on the Rust side is added here once, not in every file.
  */
 
-import type { MeetingDetail, MeetingSummary, TranscriptLine } from "@/ipc/types";
+import type { MeetingDetail, MeetingSummary, TicketSummary, TranscriptLine } from "@/ipc/types";
+
+/** An open, hand-made ticket that has not been synced to a tracker. */
+export function ticketSummary(overrides: Partial<TicketSummary> = {}): TicketSummary {
+  return {
+    id: "TUR-7",
+    title: "Write the docs",
+    status: "open",
+    meeting: null,
+    body: "Cover the setup.",
+    hasProblems: false,
+    syncedTo: null,
+    externalId: null,
+    externalUrl: null,
+    ...overrides,
+  };
+}
 
 /** A finished, ordinary meeting with one line and no notes. */
 export function meetingSummary(overrides: Partial<MeetingSummary> = {}): MeetingSummary {
