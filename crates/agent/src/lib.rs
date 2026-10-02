@@ -24,6 +24,7 @@ pub mod codex;
 pub mod detect;
 mod error;
 mod job;
+pub mod mcp;
 mod output;
 pub mod process;
 
@@ -36,6 +37,7 @@ pub use claude::ClaudeHarness;
 pub use codex::CodexHarness;
 pub use error::AgentError;
 pub use job::{CancelHandle, DEFAULT_TIMEOUT_SECS, Job, JobKind};
+pub use mcp::{McpServer, McpStatus};
 pub use output::{OutputCheck, parse_json};
 
 /// An installed agent CLI, as found by [`Harness::detect`].

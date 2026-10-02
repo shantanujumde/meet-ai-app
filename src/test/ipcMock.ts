@@ -38,7 +38,7 @@ import type {
   PermissionStatus,
   RecordingStatus,
 } from "@/ipc/types";
-import { meetingDetail, meetingSummary } from "./fixtures";
+import { meetingDetail, meetingSummary, ticketSummary } from "./fixtures";
 
 const IDLE: RecordingStatus = { phase: "idle", meetingId: null, startedAtMs: null, error: null };
 
@@ -140,8 +140,36 @@ export const ipc = {
     meeting: null,
     body,
     hasProblems: false,
+    syncedTo: null,
+    externalId: null,
+    externalUrl: null,
   })),
   startWorkPrompt: vi.fn<typeof Client.startWorkPrompt>(async (id) => `Start work on ${id}`),
+
+  // Tracker sync (TUR-11): a meeting with no tickets, and a sync that works.
+  meetingTasks: vi.fn<typeof Client.meetingTasks>(async () => []),
+  syncTask: vi.fn<typeof Client.syncTask>(async (id, meeting) =>
+    ticketSummary({
+      id,
+      meeting,
+      syncedTo: "linear",
+      externalId: "ENG-1",
+      externalUrl: "https://linear.app/team/issue/ENG-1",
+    }),
+  ),
+  cancelSync: vi.fn<typeof Client.cancelSync>(async () => {}),
+  openSyncedIssue: vi.fn<typeof Client.openSyncedIssue>(async () => {}),
+  trackerSettings: vi.fn<typeof Client.trackerSettings>(async () => ({
+    tracker: "linear",
+    trackerMcp: "claude.ai Linear",
+    harness: "claude-code",
+  })),
+  setTracker: vi.fn<typeof Client.setTracker>(async (tracker, trackerMcp) => ({
+    tracker,
+    trackerMcp,
+    harness: "claude-code",
+  })),
+  trackerServers: vi.fn<typeof Client.trackerServers>(async () => []),
 
   measurePermission: vi.fn<typeof Client.measurePermission>(async () => NOT_CHECKED),
   permissionQuick: vi.fn<typeof Client.permissionQuick>(async () => NOT_CHECKED),

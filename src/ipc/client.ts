@@ -46,6 +46,9 @@ import type {
   SearchHit,
   SelectionView,
   TicketSummary,
+  Tracker,
+  TrackerServer,
+  TrackerSettings,
   TranscriptStatus,
   TranscriptUpdate,
 } from "./types";
@@ -156,6 +159,66 @@ export function createTicket(title: string, body: string): Promise<TicketSummary
  */
 export function startWorkPrompt(ticketId: string, meetingId: string | null): Promise<string> {
   return call(() => commands.startWorkPrompt(ticketId, meetingId));
+}
+
+// --- tracker sync (TUR-11) --------------------------------------------------
+
+/**
+ * The tickets that came out of one meeting: those in its own `tickets/`
+ * folder, where the agent writes them, plus shared ones that name it. Sorted
+ * by id.
+ */
+export async function meetingTasks(meetingId: string): Promise<TicketSummary[]> {
+  if (!hasBackend()) return [];
+  return narrow(() => commands.meetingTasks(meetingId));
+}
+
+/**
+ * Ask the user's agent CLI to create this ticket's issue in their tracker,
+ * through the tracker's MCP server. One agent run per ticket, and it can take
+ * minutes. Resolves with the ticket as it now reads (`syncedTo`, `externalId`,
+ * `externalUrl` set); a run stopped by {@link cancelSync} rejects with kind
+ * `agent-cancelled`. `meetingId` is the meeting whose folder holds the ticket,
+ * or null for a shared one.
+ */
+export function syncTask(ticketId: string, meetingId: string | null): Promise<TicketSummary> {
+  return narrow(() => commands.syncTask(ticketId, meetingId));
+}
+
+/** Stop this ticket's running sync. */
+export async function cancelSync(ticketId: string): Promise<void> {
+  await call(() => commands.cancelSync(ticketId));
+}
+
+/** Open a synced ticket's issue in the browser. Rust opens it; the window never opens URLs. */
+export async function openSyncedIssue(ticketId: string, meetingId: string | null): Promise<void> {
+  await call(() => commands.openSyncedIssue(ticketId, meetingId));
+}
+
+/** What Sync uses when there is no Rust side to ask: the shipped defaults. */
+const DEFAULT_TRACKER_SETTINGS: TrackerSettings = {
+  tracker: "linear",
+  trackerMcp: "claude.ai Linear",
+  harness: "claude-code",
+};
+
+export async function trackerSettings(): Promise<TrackerSettings> {
+  if (!hasBackend()) return DEFAULT_TRACKER_SETTINGS;
+  return narrow(() => commands.trackerSettings());
+}
+
+export function setTracker(tracker: Tracker, trackerMcp: string): Promise<TrackerSettings> {
+  return narrow(() => commands.setTracker(tracker, trackerMcp));
+}
+
+/**
+ * The MCP servers the agent knows about, from `claude mcp list` or
+ * `codex mcp list --json`. That can take up to a minute, so never hold a
+ * screen on it.
+ */
+export async function trackerServers(): Promise<TrackerServer[]> {
+  if (!hasBackend()) return [];
+  return narrow(() => commands.trackerServers());
 }
 
 export async function search(query: string): Promise<SearchHit[]> {

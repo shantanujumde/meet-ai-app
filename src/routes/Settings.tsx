@@ -16,6 +16,7 @@ import { EngineSummary } from "@/ui/engine/EngineSummary";
 import { FolderRow } from "@/ui/FolderRow";
 import { Button, Card, Row, RowLabel } from "@/ui/primitives";
 import { ErrorState } from "@/ui/states";
+import { TrackerSettings } from "@/ui/TrackerSettings";
 
 export function Settings() {
   const restartOnboarding = useAppStore((state) => state.restartOnboarding);
@@ -53,6 +54,8 @@ export function Settings() {
           <ErrorState error={onboardingError} onRemedy={() => void restartOnboarding()} />
         ) : null}
       </section>
+
+      <TrackerSettings />
     </div>
   );
 }

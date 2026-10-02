@@ -11,7 +11,9 @@ import type { TicketStatus, TicketSummary, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { CopyPromptButton } from "@/ui/CopyPromptButton";
 import { Button, ButtonRow, cardVariants, Pill } from "@/ui/primitives";
+import { SyncButton } from "@/ui/SyncButton";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
+import { useCanSync } from "@/ui/useTicketSync";
 
 const STATUS_LABEL: Record<TicketStatus, string> = {
   open: "Open",
@@ -34,6 +36,7 @@ export function Tickets() {
   const [tickets, setTickets] = useState<TicketSummary[] | null>(null);
   const [error, setError] = useState<UiError | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const canSync = useCanSync();
 
   const load = useCallback(async () => {
     setError(null);
@@ -107,11 +110,23 @@ export function Tickets() {
               ) : null}
               {/* L14: Rust renders the prompt; the user pastes it into their
                   own agent session in the repo. */}
-              <CopyPromptButton
-                label="Start Work"
-                size="small"
-                render={() => startWorkPrompt(ticket.id, ticket.meeting)}
-              />
+              <ButtonRow className="items-start">
+                <CopyPromptButton
+                  label="Start Work"
+                  size="small"
+                  render={() => startWorkPrompt(ticket.id, ticket.meeting)}
+                />
+                {/* TUR-11: the agent creates the issue in the user's tracker. */}
+                <SyncButton
+                  ticket={ticket}
+                  canSync={canSync === true}
+                  onSynced={(updated) =>
+                    setTickets((current) =>
+                      (current ?? []).map((each) => (each.id === updated.id ? updated : each)),
+                    )
+                  }
+                />
+              </ButtonRow>
             </li>
           ))}
         </ul>

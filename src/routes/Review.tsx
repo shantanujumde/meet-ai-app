@@ -24,6 +24,7 @@ import { useRecordingStore } from "@/state/recording";
 import { useTranscriptStore } from "@/state/transcript";
 import { CopyPromptButton } from "@/ui/CopyPromptButton";
 import { LiveTranscript } from "@/ui/LiveTranscript";
+import { MeetingTasks } from "@/ui/MeetingTasks";
 import { NotesPane } from "@/ui/NotesPane";
 import { NotesRun } from "@/ui/NotesRun";
 import { Button, ButtonRow, rowDetailVariants } from "@/ui/primitives";
@@ -231,6 +232,8 @@ export function Review() {
           )}
         </section>
       )}
+
+      {isLive ? null : <MeetingTasks meetingId={summary.id} />}
 
       <NotesPane
         meetingId={summary.id}
