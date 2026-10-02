@@ -20,6 +20,7 @@
 #![forbid(unsafe_code)]
 
 pub mod claude;
+pub mod detect;
 mod error;
 mod job;
 mod output;
