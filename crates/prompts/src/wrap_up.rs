@@ -13,19 +13,15 @@
 //! user template is an expected state, so every template problem comes back
 //! as [`Error::Template`], never a panic.
 
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use meeting_format::layout::{MEETING_FILE, app_dir};
-use minijinja::{AutoEscape, Environment, UndefinedBehavior};
+use meeting_format::layout::MEETING_FILE;
 
-use crate::{Error, PromptKind};
+pub use crate::template::{PROMPTS_DIR, prompts_dir};
+use crate::{Error, PromptKind, template};
 
 /// The built-in wrap-up template, used when the user has not saved their own.
 pub const DEFAULT_WRAP_UP: &str = include_str!("../templates/wrap-up.md");
-
-/// The prompt templates folder's name inside `.app` (SPEC §3.1).
-pub const PROMPTS_DIR: &str = "prompts";
 
 /// A meeting's tickets folder (SPEC §3.1). `crates/store` has the same name as
 /// `store::TICKETS_DIR`; this crate does not depend on `store`.
@@ -34,12 +30,6 @@ const TICKETS_DIR: &str = "tickets";
 /// The tags that wrap the meeting's own text in the template. A closing tag
 /// for any of these inside that text is neutralized before rendering.
 const DATA_TAGS: [&str; 3] = ["title", "transcript", "notes"];
-
-/// `<root>/.app/prompts`, where the user's own templates live. `root` is the
-/// meetings folder.
-pub fn prompts_dir(root: &Path) -> PathBuf {
-    app_dir(root).join(PROMPTS_DIR)
-}
 
 /// What a wrap-up prompt is about: one meeting's title, date, transcript and
 /// the user's typed notes.
@@ -130,12 +120,7 @@ impl<'a> Context<'a> {
 /// permission, not UTF-8, a folder in its place) is [`Error::Io`], so the user
 /// learns their edit is being ignored.
 pub fn load_wrap_up_template(root: &Path) -> Result<String, Error> {
-    let path = prompts_dir(root).join(PromptKind::WrapUp.template_name());
-    match std::fs::read_to_string(path) {
-        Ok(text) => Ok(text),
-        Err(err) if err.kind() == ErrorKind::NotFound => Ok(DEFAULT_WRAP_UP.to_owned()),
-        Err(err) => Err(Error::Io(err)),
-    }
+    template::load(root, PromptKind::WrapUp, DEFAULT_WRAP_UP)
 }
 
 /// Renders the wrap-up `template` for one meeting.
@@ -159,17 +144,7 @@ pub fn render_wrap_up(
     input: &WrapUpInput,
     target: &Target,
 ) -> Result<String, Error> {
-    let name = PromptKind::WrapUp.template_name();
-    let mut env = Environment::new();
-    env.set_undefined_behavior(UndefinedBehavior::Strict);
-    env.set_keep_trailing_newline(true);
-    env.set_trim_blocks(true);
-    env.set_lstrip_blocks(true);
-    env.set_auto_escape_callback(|_| AutoEscape::None);
-    env.add_template(name, template).map_err(template_error)?;
-    env.get_template(name)
-        .and_then(|compiled| compiled.render(Context::new(input, target)))
-        .map_err(template_error)
+    template::render(PromptKind::WrapUp, template, Context::new(input, target))
 }
 
 /// Loads the wrap-up template for `root` ([`load_wrap_up_template`]) and
@@ -183,31 +158,9 @@ pub fn render_wrap_up_from(
     render_wrap_up(&template, input, target)
 }
 
-fn template_error(err: minijinja::Error) -> Error {
-    Error::Template {
-        template: PromptKind::WrapUp.template_name().to_owned(),
-        detail: err.to_string(),
-    }
-}
-
-/// Turns `</tag` into `<\/tag` for each of [`DATA_TAGS`], ignoring case and
-/// any spaces after the `/`. Other text is left exactly as it was.
+/// [`template::neutralize`] for [`DATA_TAGS`].
 fn neutralize(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find("</") {
-        out.push_str(&rest[..at]);
-        let after = &rest[at + 2..];
-        let name = after.trim_start();
-        let closes_a_block = DATA_TAGS.iter().any(|tag| {
-            name.get(..tag.len())
-                .is_some_and(|head| head.eq_ignore_ascii_case(tag))
-        });
-        out.push_str(if closes_a_block { "<\\/" } else { "</" });
-        rest = after;
-    }
-    out.push_str(rest);
-    out
+    template::neutralize(text, &DATA_TAGS)
 }
 
 #[cfg(test)]
