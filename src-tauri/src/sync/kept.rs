@@ -26,8 +26,9 @@
 //! file as it was when its sync started ([`Fingerprint`]).
 //!
 //! This is never the ticket file itself: the ticket is the thing that could
-//! not be written. A broken or hand-edited file never blocks Sync; what
-//! cannot be read is skipped with a warning.
+//! not be written. A single entry that fails its checks (a hand edit) is
+//! skipped with a warning. A file that cannot be read at all is an error, so
+//! it is never ignored or written over while it may still hold issues.
 
 use std::fs;
 use std::io::{self, ErrorKind};
@@ -72,30 +73,24 @@ pub(super) fn path(root: &Path) -> PathBuf {
 }
 
 /// What an earlier run of the app kept under `root`. A missing file is an
-/// empty list, and so is one that cannot be read or parsed: a broken file
-/// must not block Sync. Entries that fail the checks are skipped.
-pub(super) fn load(root: &Path) -> Vec<(Key, Created)> {
-    let path = path(root);
-    let bytes = match fs::read(&path) {
+/// empty list. A file that cannot be read, is not JSON or has a `version`
+/// this build does not know is an error: it may hold issues that exist, so
+/// the caller must neither ignore it nor write over it. Single entries that
+/// fail the checks are skipped.
+pub(super) fn load(root: &Path) -> io::Result<Vec<(Key, Created)>> {
+    let bytes = match fs::read(path(root)) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Vec::new(),
-        Err(error) => {
-            tracing::warn!(%error, path = %path.display(), "could not read the kept syncs; ignoring them");
-            return Vec::new();
-        }
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
     };
-    let file: Kept = match serde_json::from_slice(&bytes) {
-        Ok(file) => file,
-        Err(error) => {
-            tracing::warn!(%error, path = %path.display(), "could not parse the kept syncs; ignoring them");
-            return Vec::new();
-        }
-    };
+    let file: Kept = serde_json::from_slice(&bytes)?;
     if file.version != VERSION {
-        tracing::warn!(version = file.version, path = %path.display(), "kept syncs in an unknown format; ignoring them");
-        return Vec::new();
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            format!("version {} is not one this app knows", file.version),
+        ));
     }
-    file.kept.into_iter().filter_map(entry).collect()
+    Ok(file.kept.into_iter().filter_map(entry).collect())
 }
 
 /// One entry, if it passes the checks. The link gets written into a ticket,
@@ -215,7 +210,7 @@ mod tests {
         let kept = [meeting.clone(), shared.clone()];
         store(root.path(), kept.iter().map(|(k, c)| (k, c))).unwrap();
 
-        let mut loaded = load(root.path());
+        let mut loaded = load(root.path()).unwrap();
         loaded.sort_by(|a, b| a.0.cmp(&b.0));
         assert_eq!(loaded, vec![shared, meeting]);
     }
@@ -237,18 +232,18 @@ mod tests {
     #[test]
     fn missing_file_is_empty() {
         let root = tempfile::tempdir().unwrap();
-        assert!(load(root.path()).is_empty());
+        assert!(load(root.path()).unwrap().is_empty());
     }
 
     #[test]
-    fn corrupt_file_is_empty() {
+    fn a_corrupt_file_is_an_error() {
         let root = tempfile::tempdir().unwrap();
         write(root.path(), "{ not json");
-        assert!(load(root.path()).is_empty());
+        assert!(load(root.path()).is_err());
     }
 
     #[test]
-    fn unknown_version_is_empty() {
+    fn an_unknown_version_is_an_error() {
         let root = tempfile::tempdir().unwrap();
         write(
             root.path(),
@@ -256,7 +251,7 @@ mod tests {
                 "fingerprint": "ab", "external_id": "ENG-1",
                 "external_url": "https://linear.app/acme/issue/ENG-1"}]}"#,
         );
-        assert!(load(root.path()).is_empty());
+        assert!(load(root.path()).is_err());
     }
 
     #[test]
@@ -276,7 +271,7 @@ mod tests {
                  "external_id": "ENG-5", "external_url": "https://linear.app/acme/issue/ENG-5"}
             ]}"#,
         );
-        let loaded = load(root.path());
+        let loaded = load(root.path()).unwrap();
         assert_eq!(loaded.len(), 1);
         let (found, kept) = &loaded[0];
         assert_eq!(found, &key("TICK-0005", None));

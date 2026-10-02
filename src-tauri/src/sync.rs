@@ -287,7 +287,7 @@ pub(crate) fn sync_in(
     agent: impl FnOnce() -> Result<(Box<dyn Harness>, RunSettings), UiError>,
 ) -> Result<TicketSummary, UiError> {
     let claim = runs.claim(ticket_id)?;
-    let created = match runs.unsaved.kept(gate, &root, ticket_id, meeting_id) {
+    let created = match runs.unsaved.kept(gate, &root, ticket_id, meeting_id)? {
         Some(created) => created,
         None => {
             let (harness, settings) = agent()?;

@@ -40,6 +40,14 @@ dismissed.
 2. Quit and reopen the app, press **Sync**. Expected: a normal agent run; the
    dismissed issue is not written to the task.
 
+## 4. A broken file
+
+1. Quit the app. Replace `<meetings>/.app/unsaved-syncs.json` with `{ x`.
+2. Open the app and press **Sync** on any task. Expected: an error naming
+   the file ("Could not read …/unsaved-syncs.json: … fix or delete it, then
+   press Retry"), no agent run, and the file left as it was. After deleting
+   the file, Sync works as usual.
+
 ## Known limit
 
 If the app quits *while* the folder move that refused the save is still
@@ -52,7 +60,14 @@ address. A move that ends normally writes the file (check 1.2).
 
 - The file is read on the first Sync, Retry or Dismiss after the app starts,
   not in the app's setup: that is the first time anything needs it, and it
-  keeps a broken file from slowing or blocking the start.
+  keeps a broken file from slowing or blocking the start. Reading needs no
+  folder-move gate (only writes do), so a Sync pressed during a move still
+  finds a kept issue.
+- A file that cannot be read (bad JSON, unknown version, read error) blocks
+  Sync with an error naming it, instead of being ignored: ignoring it could
+  make a second issue, and writing over it could lose a kept one. The new
+  error kind is `sync-kept-unreadable`; the window shows its message like any
+  other Sync error.
 - The ticket fingerprint is now SHA-256 of the ticket file (it was std's
   `DefaultHasher`, which Rust does not promise to keep the same between
   releases, so a saved fingerprint could stop matching after an update).

@@ -47,6 +47,10 @@ pub(crate) const SYNC_NOT_SAVED: &str = "sync-not-saved";
 /// The issue exists but the ticket is no longer the task it was made for.
 pub(crate) const SYNC_NOT_ATTACHED: &str = "sync-not-attached";
 
+/// The file of kept issues ([`super::kept`]) is there but cannot be read, so
+/// a Sync could make an issue that is already kept in it.
+pub(crate) const SYNC_KEPT_UNREADABLE: &str = "sync-kept-unreadable";
+
 /// An issue a Sync run created, the tracker it is in, and the ticket it was
 /// made for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,12 +127,16 @@ struct State {
     forgotten: HashSet<Key>,
     /// `kept` has changes the file does not have.
     dirty: bool,
+    /// The file has been read since the app started, so memory knows every
+    /// kept issue.
+    read: bool,
 }
 
 impl State {
+    /// An issue read from the file and not checked yet stays unchecked.
     fn keep(&mut self, key: Key, created: Created) {
         self.forgotten.remove(&key);
-        let from_disk = false;
+        let from_disk = self.kept.get(&key).is_some_and(|kept| kept.from_disk);
         self.kept.insert(key, Kept { created, from_disk });
         self.dirty = true;
     }
@@ -143,41 +151,57 @@ impl State {
 
     /// Brings `self` and the file under the root as it is now in line: adds
     /// what the file kept that memory does not know yet, then writes memory
-    /// back if the file is behind. Through the gate, so nothing is written
-    /// into a folder that is moving. A refused or failed write leaves `dirty`
-    /// set, and the next call tries again. Returns the root it used.
+    /// back if the file is behind. Returns the root it read.
+    ///
+    /// Reading needs no gate: a move deletes the old folder only once it is
+    /// copied, and the root then points at the copy. The write goes through
+    /// the gate, so nothing is written into a folder that is moving; refused
+    /// or failed, it leaves `dirty` set and the next call tries again. A file
+    /// that cannot be read is never written over: it may hold issues memory
+    /// does not know.
     fn sync_disk(
         &mut self,
         gate: Option<&FolderGate>,
         root: &impl Fn() -> Result<PathBuf, UiError>,
-    ) -> Option<PathBuf> {
-        let synced = writing_in(gate, root, |root| {
-            for (key, created) in kept::load(root) {
-                if !self.forgotten.contains(&key) {
-                    let from_disk = true;
-                    self.kept.entry(key).or_insert(Kept { created, from_disk });
-                }
+    ) -> Result<PathBuf, UiError> {
+        let now = root()?;
+        let loaded = kept::load(&now).map_err(|error| unreadable(&now, &error));
+        for (key, created) in loaded.inspect_err(warn)? {
+            if !self.forgotten.contains(&key) {
+                let from_disk = true;
+                self.kept.entry(key).or_insert(Kept { created, from_disk });
             }
-            if self.dirty {
-                kept::store(
-                    root,
-                    self.kept.iter().map(|(key, kept)| (key, &kept.created)),
-                )?;
+        }
+        self.read = true;
+        if self.dirty {
+            let kept = self.kept.iter().map(|(key, kept)| (key, &kept.created));
+            let written = writing_in(
+                gate,
+                || Ok(now.clone()),
+                |root| kept::store(root, kept).map_err(UiError::from),
+            );
+            if written.inspect_err(warn).is_ok() {
                 self.forgotten.clear();
                 self.dirty = false;
             }
-            Ok::<_, UiError>(root.to_owned())
-        });
-        synced
-            .inspect_err(|error| {
-                tracing::warn!(
-                    "kept Sync issues not written to {}: {}",
-                    kept::FILE,
-                    error.message
-                );
-            })
-            .ok()
+        }
+        Ok(now)
     }
+}
+
+fn warn(error: &UiError) {
+    tracing::warn!("kept Sync issues: {}", error.message);
+}
+
+/// The error for a kept-issues file that is there but cannot be read.
+fn unreadable(root: &Path, error: &std::io::Error) -> UiError {
+    UiError::app(
+        SYNC_KEPT_UNREADABLE,
+        format!(
+            "Could not read {}: {error}. It lists issues Sync created but could not save yet; fix or delete it, then press Retry.",
+            kept::path(root).display()
+        ),
+    )
 }
 
 /// Issues created but not yet written to their ticket.
@@ -208,19 +232,29 @@ impl Unsaved {
     /// the app quit before it could forget the issue), the issue is dropped,
     /// with its address in the log, and this Sync runs afresh. A ticket that
     /// is missing for now keeps it: the save then says so.
+    ///
+    /// Until the file has been read once, a Sync that cannot read it (the
+    /// file is broken, the root cannot be found) is refused rather than run:
+    /// the file may hold this ticket's issue.
     pub fn kept(
         &self,
         gate: Option<&FolderGate>,
         root: &impl Fn() -> Result<PathBuf, UiError>,
         ticket_id: &str,
         meeting_id: Option<&str>,
-    ) -> Option<Created> {
+    ) -> Result<Option<Created>, UiError> {
         let key = key(ticket_id, meeting_id);
         let mut state = self.lock();
-        let now = state.sync_disk(gate, root);
-        let found = state.kept.get(&key)?.clone();
+        let now = match state.sync_disk(gate, root) {
+            Ok(root) => Some(root),
+            Err(error) if !state.read => return Err(error),
+            Err(_) => None,
+        };
+        let Some(found) = state.kept.get(&key).cloned() else {
+            return Ok(None);
+        };
         if !found.from_disk {
-            return Some(found.created);
+            return Ok(Some(found.created));
         }
         let ticket = now
             .and_then(|root| find_ticket(&root, ticket_id, meeting_id).ok())
@@ -232,17 +266,17 @@ impl Unsaved {
                     found.created.synced.external_url
                 );
                 state.forget(&key);
-                state.sync_disk(gate, root);
-                None
+                state.sync_disk(gate, root).ok();
+                Ok(None)
             }
             Some(_) => {
                 state
                     .kept
                     .entry(key)
                     .and_modify(|kept| kept.from_disk = false);
-                Some(found.created)
+                Ok(Some(found.created))
             }
-            None => Some(found.created),
+            None => Ok(Some(found.created)),
         }
     }
 
@@ -257,14 +291,14 @@ impl Unsaved {
     ) {
         let mut state = self.lock();
         state.forget(&key(ticket_id, meeting_id));
-        state.sync_disk(gate, root);
+        state.sync_disk(gate, root).ok();
     }
 
     /// Writes the kept issues to the file under the root, if it is behind.
     /// For the end of a folder move, which refuses every other write while it
     /// runs: it holds the gate itself, so this takes none.
     pub fn flush(&self, root: &impl Fn() -> Result<PathBuf, UiError>) {
-        self.lock().sync_disk(None, root);
+        self.lock().sync_disk(None, root).ok();
     }
 
     /// Writes `created` to the ticket's file under the root as it is now, if
@@ -307,7 +341,7 @@ impl Unsaved {
                 Err(error)
             }
         };
-        state.sync_disk(gate, root);
+        state.sync_disk(gate, root).ok();
         result
     }
 }

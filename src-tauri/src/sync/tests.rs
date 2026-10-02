@@ -475,7 +475,7 @@ fn tracker_names_read_well() {
 
 // --- saving the result (TUR-20) ---------------------------------------------
 
-use super::save::{SYNC_NOT_ATTACHED, SYNC_NOT_SAVED};
+use super::save::{SYNC_KEPT_UNREADABLE, SYNC_NOT_ATTACHED, SYNC_NOT_SAVED};
 
 const OTHER_MEETING: &str = "2026-09-02-0900-planning";
 const NOT_ATTACHED: &str = "Created in Linear but couldn't attach it to this task: ";
@@ -874,6 +874,7 @@ fn dismiss(runs: &SyncRuns, gate: &FolderGate, root: &Arc<Mutex<PathBuf>>) {
 fn error_kinds_keep_their_names() {
     assert_eq!(SYNC_NOT_SAVED, "sync-not-saved");
     assert_eq!(SYNC_NOT_ATTACHED, "sync-not-attached");
+    assert_eq!(SYNC_KEPT_UNREADABLE, "sync-kept-unreadable");
     assert_eq!(ALREADY_SYNCED, "sync-already-synced");
     assert_eq!(TICKET_MISSING, "ticket-missing");
     let root = meetings_root();
@@ -1021,6 +1022,53 @@ fn a_dismissed_issue_stays_dismissed_after_a_restart() {
     let summary = sync_through(&SyncRuns::default(), &gate, &root, &harness, MEETING).unwrap();
     assert_eq!(harness.runs(), 2, "the dismissed issue was saved");
     assert_eq!(summary.external_id.as_deref(), Some("ENG-43"));
+}
+
+/// After a restart, a Sync pressed while a move is running still finds the
+/// kept issue (reading needs no gate) and does not run the agent.
+#[test]
+fn a_kept_issue_is_found_after_a_restart_even_during_a_move() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let gate = FolderGate::default();
+    fail_a_save_then_quit(&gate, &root, &harness);
+
+    let runs = SyncRuns::default();
+    let err = sync_during_a_move(&runs, &gate, &root, &harness, MEETING);
+    assert_eq!(err.kind, SYNC_NOT_SAVED, "{}", err.message);
+    assert!(err.message.contains(URL), "{}", err.message);
+    assert_eq!(harness.runs(), 1, "a second issue");
+}
+
+/// A file of kept issues that cannot be read refuses the Sync instead of
+/// running it, and is never written over.
+#[test]
+fn an_unreadable_kept_file_refuses_the_sync_and_is_kept() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let gate = FolderGate::default();
+    let file = kept::path(meetings.path());
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "{ half written").unwrap();
+
+    let runs = SyncRuns::default();
+    let err = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
+    assert_eq!(err.kind, SYNC_KEPT_UNREADABLE, "{}", err.message);
+    assert!(
+        err.message.contains(&file.display().to_string()),
+        "{}",
+        err.message
+    );
+    assert_eq!(harness.runs(), 0);
+    dismiss(&runs, &gate, &root);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "{ half written");
+
+    // Deleted by the user: Sync runs as usual.
+    fs::remove_file(&file).unwrap();
+    sync_through(&runs, &gate, &root, &harness, MEETING).unwrap();
+    assert_eq!(harness.runs(), 1);
 }
 
 /// Kept issues are filed by meeting on disk too: the other meeting's
