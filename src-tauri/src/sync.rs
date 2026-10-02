@@ -138,7 +138,7 @@ pub async fn sync_task(
         sync_in(
             &app.state::<SyncRuns>(),
             gate.as_deref(),
-            &meetings::root,
+            meetings::root,
             &ticket_id,
             meeting_id.as_deref(),
             || {
@@ -244,17 +244,17 @@ pub(crate) fn find_binary(agent: &AgentConfig) -> Result<PathBuf, UiError> {
 pub(crate) fn sync_in(
     runs: &SyncRuns,
     gate: Option<&FolderGate>,
-    root: &dyn Fn() -> Result<PathBuf, UiError>,
+    root: impl Fn() -> Result<PathBuf, UiError>,
     ticket_id: &str,
     meeting_id: Option<&str>,
     agent: impl FnOnce() -> Result<(Box<dyn Harness>, RunSettings), UiError>,
 ) -> Result<TicketSummary, UiError> {
     let claim = runs.claim(ticket_id)?;
-    let created = match runs.unsaved.get(ticket_id) {
+    let created = match runs.unsaved.get(ticket_id, meeting_id) {
         Some(created) => created,
         None => {
             let (harness, settings) = agent()?;
-            let (_, synced) = run(
+            let synced = run(
                 &root()?,
                 ticket_id,
                 meeting_id,
@@ -269,12 +269,11 @@ pub(crate) fn sync_in(
         }
     };
     runs.unsaved
-        .save(gate, root, ticket_id, meeting_id, created)
+        .save(gate, &root, ticket_id, meeting_id, created)
 }
 
 /// Renders the push-ticket prompt for one ticket, runs `harness` with it and
-/// reads the reply. Returns the ticket's file and what was created; writes
-/// nothing.
+/// reads the reply. Returns what was created; writes nothing.
 pub(crate) fn run(
     root: &Path,
     ticket_id: &str,
@@ -282,7 +281,7 @@ pub(crate) fn run(
     harness: &dyn Harness,
     settings: &RunSettings,
     cancel: &CancelHandle,
-) -> Result<(PathBuf, Synced), UiError> {
+) -> Result<Synced, UiError> {
     let path = find_ticket(root, ticket_id, meeting_id)?;
     let found = Ticket::read(&path)?;
     refuse_if_synced(ticket_id, &found)?;
@@ -302,8 +301,7 @@ pub(crate) fn run(
     job.timeout = settings.timeout;
     job.cancel = cancel.clone();
     let reply = harness.run(&job).map_err(agent_error)?;
-    let synced = parse_sync_reply(&reply).ok_or_else(|| not_synced(tickets_config))?;
-    Ok((path, synced))
+    parse_sync_reply(&reply).ok_or_else(|| not_synced(tickets_config))
 }
 
 /// Writes what a Sync run created into the ticket file, re-read first so an

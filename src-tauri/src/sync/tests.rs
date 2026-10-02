@@ -56,7 +56,7 @@ fn settings() -> RunSettings {
 }
 
 fn sync_with(root: &Path, harness: &dyn Harness) -> Result<TicketSummary, UiError> {
-    let (path, synced) = run(
+    let synced = run(
         root,
         "TICK-0001",
         Some(MEETING),
@@ -64,6 +64,7 @@ fn sync_with(root: &Path, harness: &dyn Harness) -> Result<TicketSummary, UiErro
         &settings(),
         &CancelHandle::new(),
     )?;
+    let path = find_ticket(root, "TICK-0001", Some(MEETING))?;
     record(&path, &settings().tickets.tracker, &synced)
 }
 
@@ -474,13 +475,35 @@ fn tracker_names_read_well() {
 
 // --- saving the result (TUR-20) ---------------------------------------------
 
-/// Answers with `ENG-42` and counts its runs. With `move_to`, it first moves
-/// the meetings folder there and points `root` at the new place, like a user
-/// changing the folder in Settings while the agent works.
+const OTHER_MEETING: &str = "2026-09-02-0900-planning";
+
+/// Adds `meeting` to `root` with its own `TICK-0001`: ticket numbers are
+/// only unique within one meeting plus the shared folder.
+fn add_meeting(root: &Path, meeting: &str) {
+    let dir = root.join(meeting).join(store::TICKETS_DIR);
+    fs::create_dir_all(&dir).unwrap();
+    Ticket::new("TICK-0001", "Plan the launch", meeting)
+        .write(&dir.join("TICK-0001.md"))
+        .unwrap();
+}
+
+fn ticket_in(root: &Path, meeting: &str) -> Ticket {
+    let path = root
+        .join(meeting)
+        .join(store::TICKETS_DIR)
+        .join("TICK-0001.md");
+    Ticket::read(&path).unwrap()
+}
+
+/// Answers with a new issue each run, `ENG-42` first, and counts its runs.
+/// With `move_to`, it first moves the meetings folder there and points
+/// `root` at the new place, like a user changing the folder in Settings
+/// while the agent works.
+#[derive(Clone)]
 struct MovingHarness {
     root: Arc<Mutex<PathBuf>>,
     move_to: Option<PathBuf>,
-    runs: AtomicUsize,
+    runs: Arc<AtomicUsize>,
 }
 
 impl MovingHarness {
@@ -488,8 +511,12 @@ impl MovingHarness {
         Self {
             root: Arc::clone(root),
             move_to,
-            runs: AtomicUsize::new(0),
+            runs: Arc::default(),
         }
+    }
+
+    fn runs(&self) -> usize {
+        self.runs.load(Ordering::SeqCst)
     }
 }
 
@@ -504,54 +531,45 @@ impl Harness for MovingHarness {
         Vec::new()
     }
     fn run(&self, _job: &Job) -> Result<serde_json::Value, AgentError> {
-        self.runs.fetch_add(1, Ordering::SeqCst);
+        let number = 42 + self.runs.fetch_add(1, Ordering::SeqCst);
         if let Some(to) = &self.move_to {
             let mut root = self.root.lock().unwrap();
             fs::rename(&*root, to).unwrap();
             *root = to.clone();
         }
-        Ok(json!({ "external_id": "ENG-42", "external_url": URL }))
+        Ok(json!({
+            "external_id": format!("ENG-{number}"),
+            "external_url": format!("https://linear.app/acme/issue/ENG-{number}"),
+        }))
     }
 }
 
-/// A shared [`MovingHarness`] as the `Box<dyn Harness>` `sync_in` wants, so
-/// the test can still count its runs.
-struct Shared(Arc<MovingHarness>);
-
-impl Harness for Shared {
-    fn id(&self) -> &'static str {
-        self.0.id()
-    }
-    fn detect(&self) -> Option<agent::Install> {
-        self.0.detect()
-    }
-    fn models(&self) -> Vec<String> {
-        self.0.models()
-    }
-    fn run(&self, job: &Job) -> Result<serde_json::Value, AgentError> {
-        self.0.run(job)
-    }
-}
-
-/// `sync_in` with `harness`, the root read from `root` each time it is asked.
+/// `sync_in` on `meeting`'s `TICK-0001` with `harness`, the root read from
+/// `root` each time it is asked.
 fn sync_through(
     runs: &SyncRuns,
     gate: &FolderGate,
     root: &Arc<Mutex<PathBuf>>,
-    harness: &Arc<MovingHarness>,
+    harness: &MovingHarness,
+    meeting: &str,
 ) -> Result<TicketSummary, UiError> {
     let lookup = || Ok(root.lock().unwrap().clone());
-    sync_in(
-        runs,
-        Some(gate),
-        &lookup,
-        "TICK-0001",
-        Some(MEETING),
-        || {
-            let harness: Box<dyn Harness> = Box::new(Shared(Arc::clone(harness)));
-            Ok((harness, settings()))
-        },
-    )
+    sync_in(runs, Some(gate), lookup, "TICK-0001", Some(meeting), || {
+        Ok((Box::new(harness.clone()) as Box<dyn Harness>, settings()))
+    })
+}
+
+/// A sync whose save is refused because a folder move holds the root: the
+/// issue exists in the tracker, the ticket has no link.
+fn sync_during_a_move(
+    runs: &SyncRuns,
+    gate: &FolderGate,
+    root: &Arc<Mutex<PathBuf>>,
+    harness: &MovingHarness,
+    meeting: &str,
+) -> UiError {
+    let _moving = gate.begin_move().unwrap();
+    sync_through(runs, gate, root, harness, meeting).unwrap_err()
 }
 
 #[test]
@@ -560,13 +578,14 @@ fn a_folder_moved_during_the_sync_gets_the_link_in_its_new_place() {
     let elsewhere = tempfile::tempdir().unwrap();
     let new = elsewhere.path().join("Moved Meetings");
     let root = Arc::new(Mutex::new(old.path().to_path_buf()));
-    let harness = Arc::new(MovingHarness::new(&root, Some(new.clone())));
+    let harness = MovingHarness::new(&root, Some(new.clone()));
 
     let summary = sync_through(
         &SyncRuns::default(),
         &FolderGate::default(),
         &root,
         &harness,
+        MEETING,
     )
     .unwrap();
     assert_eq!(summary.external_url.as_deref(), Some(URL));
@@ -588,16 +607,12 @@ fn a_folder_moved_during_the_sync_gets_the_link_in_its_new_place() {
 fn a_save_that_fails_shows_the_link_and_retry_does_not_make_a_second_issue() {
     let meetings = meetings_root();
     let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
-    let harness = Arc::new(MovingHarness::new(&root, None));
+    let harness = MovingHarness::new(&root, None);
     let runs = SyncRuns::default();
     let gate = FolderGate::default();
     let before = fs::read(ticket_path(meetings.path())).unwrap();
 
-    // The run finishes while a folder move holds the root: the issue exists,
-    // the ticket cannot be written.
-    let moving = gate.begin_move().unwrap();
-    let err = sync_through(&runs, &gate, &root, &harness).unwrap_err();
-    drop(moving);
+    let err = sync_during_a_move(&runs, &gate, &root, &harness, MEETING);
     assert_eq!(err.kind, "sync-not-saved", "{}", err.message);
     assert!(
         err.message
@@ -608,13 +623,13 @@ fn a_save_that_fails_shows_the_link_and_retry_does_not_make_a_second_issue() {
     assert!(err.message.contains(URL), "{}", err.message);
     assert!(err.message.contains("Retry"), "{}", err.message);
     assert_eq!(fs::read(ticket_path(meetings.path())).unwrap(), before);
-    assert_eq!(harness.runs.load(Ordering::SeqCst), 1);
+    assert_eq!(harness.runs(), 1);
 
     // Retry saves the issue already made; the agent does not run again.
-    let summary = sync_through(&runs, &gate, &root, &harness).unwrap();
+    let summary = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap();
     assert_eq!(summary.external_id.as_deref(), Some("ENG-42"));
     assert_eq!(summary.external_url.as_deref(), Some(URL));
-    assert_eq!(harness.runs.load(Ordering::SeqCst), 1, "a second issue");
+    assert_eq!(harness.runs(), 1, "a second issue");
     let back = Ticket::read(&ticket_path(meetings.path())).unwrap();
     assert_eq!(
         back.frontmatter.get_str("external_url").as_deref(),
@@ -622,19 +637,96 @@ fn a_save_that_fails_shows_the_link_and_retry_does_not_make_a_second_issue() {
     );
 
     // Saved, so it is forgotten: another press is the usual "already synced".
-    let again = sync_through(&runs, &gate, &root, &harness).unwrap_err();
+    let again = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
     assert_eq!(again.kind, "sync-already-synced", "{}", again.message);
-    assert_eq!(harness.runs.load(Ordering::SeqCst), 1);
+    assert_eq!(harness.runs(), 1);
+}
+
+#[test]
+fn a_kept_issue_is_only_saved_to_its_own_meetings_ticket() {
+    let meetings = meetings_root();
+    add_meeting(meetings.path(), OTHER_MEETING);
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let runs = SyncRuns::default();
+    let gate = FolderGate::default();
+
+    let err = sync_during_a_move(&runs, &gate, &root, &harness, MEETING);
+    assert_eq!(err.kind, "sync-not-saved", "{}", err.message);
+
+    // The other meeting's TICK-0001 is another task: it gets its own issue.
+    let other = sync_through(&runs, &gate, &root, &harness, OTHER_MEETING).unwrap();
+    assert_eq!(harness.runs(), 2);
+    assert_eq!(other.external_id.as_deref(), Some("ENG-43"));
+    assert!(ticket_in(meetings.path(), MEETING).synced_to().is_none());
+
+    // And the first meeting's Retry still saves its own issue.
+    let first = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap();
+    assert_eq!(first.external_id.as_deref(), Some("ENG-42"));
+    assert_eq!(harness.runs(), 2);
+    assert_eq!(
+        ticket_in(meetings.path(), OTHER_MEETING)
+            .frontmatter
+            .get_str("external_id")
+            .as_deref(),
+        Some("ENG-43")
+    );
+}
+
+#[test]
+fn a_kept_issue_never_overwrites_a_ticket_synced_meanwhile() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let runs = SyncRuns::default();
+    let gate = FolderGate::default();
+    sync_during_a_move(&runs, &gate, &root, &harness, MEETING);
+
+    let path = ticket_path(meetings.path());
+    let mut synced = Ticket::read(&path).unwrap();
+    synced.frontmatter.set_str("synced_to", Some("linear"));
+    synced.frontmatter.set_str("external_id", Some("ENG-7"));
+    synced
+        .frontmatter
+        .set_str("external_url", Some("https://linear.app/acme/issue/ENG-7"));
+    synced.write(&path).unwrap();
+    let before = fs::read(&path).unwrap();
+
+    let err = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
+    assert_eq!(err.kind, "sync-already-synced", "{}", err.message);
+    assert!(err.message.contains("as ENG-7"), "{}", err.message);
+    assert!(err.message.contains(URL), "{}", err.message);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(runs.unsaved.get("TICK-0001", Some(MEETING)), None);
+    assert_eq!(harness.runs(), 1);
+}
+
+#[test]
+fn a_kept_issue_whose_ticket_is_gone_is_dropped_and_shown() {
+    let meetings = meetings_root();
+    let root = Arc::new(Mutex::new(meetings.path().to_path_buf()));
+    let harness = MovingHarness::new(&root, None);
+    let runs = SyncRuns::default();
+    let gate = FolderGate::default();
+    sync_during_a_move(&runs, &gate, &root, &harness, MEETING);
+
+    fs::remove_file(ticket_path(meetings.path())).unwrap();
+    let err = sync_through(&runs, &gate, &root, &harness, MEETING).unwrap_err();
+    assert_eq!(err.kind, "ticket-missing", "{}", err.message);
+    assert!(err.message.contains("ENG-42"), "{}", err.message);
+    assert!(err.message.contains(URL), "{}", err.message);
+    assert!(err.message.contains("did not save it"), "{}", err.message);
+    assert_eq!(runs.unsaved.get("TICK-0001", Some(MEETING)), None);
+    assert_eq!(harness.runs(), 1);
 }
 
 #[test]
 fn a_run_with_nothing_unsaved_still_needs_an_agent() {
     let meetings = meetings_root();
-    let lookup = || Ok(meetings.path().to_path_buf());
     let err = sync_in(
         &SyncRuns::default(),
         None,
-        &lookup,
+        || Ok(meetings.path().to_path_buf()),
         "TICK-0001",
         Some(MEETING),
         || Err(UiError::app("sync-no-agent", "no agent")),
