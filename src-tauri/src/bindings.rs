@@ -37,6 +37,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             commands::live_transcript,
             commands::list_tickets,
             commands::create_ticket,
+            commands::start_work_prompt,
+            commands::wrap_up_prompt,
             search::search,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)

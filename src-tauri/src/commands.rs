@@ -14,6 +14,7 @@ use tauri::{AppHandle, Manager as _, State};
 use tauri_plugin_opener::OpenerExt as _;
 
 use crate::config;
+use crate::copy_prompt;
 use crate::engine::{self, EnvironmentView, ModelView, SelectionView};
 use crate::error::UiError;
 use crate::folder_move::{self, FolderGate};
@@ -346,4 +347,23 @@ pub async fn create_ticket(
             .writing(|| tickets::create(&title, &body))
     })
     .await?
+}
+
+/// The Start Work prompt for a ticket, for the window to copy (SPEC L14).
+/// `meeting_id` is the meeting the ticket is listed under, if any.
+#[tauri::command]
+#[specta::specta]
+pub async fn start_work_prompt(
+    ticket_id: String,
+    meeting_id: Option<String>,
+) -> Result<String, UiError> {
+    on_blocking_pool(move || copy_prompt::start_work(&ticket_id, meeting_id.as_deref())).await?
+}
+
+/// The clipboard wrap-up prompt for a meeting, for when no agent is set up
+/// (SPEC A11).
+#[tauri::command]
+#[specta::specta]
+pub async fn wrap_up_prompt(meeting_id: String) -> Result<String, UiError> {
+    on_blocking_pool(move || copy_prompt::wrap_up(&meeting_id)).await?
 }
