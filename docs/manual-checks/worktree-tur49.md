@@ -78,6 +78,7 @@ Why skipped: no Windows or Linux machine; CI runs only the headless tests.
 
 ## Notes
 
-- `Event.join_url` (TUR-77, PR #88) is not on main yet. When it lands,
-  `richness` in `crates/calendar/src/merge.rs` should count it, so the copy
-  with a join link wins a merge.
+- `Event.join_url` (TUR-77) is counted by `richness` in
+  `crates/calendar/src/merge.rs`, and a link only the poorer copy had is
+  kept, so the menu bar's **Join** keeps working for a merged meeting
+  (unit-tested in `merge.rs`).
