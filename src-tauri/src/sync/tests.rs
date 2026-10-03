@@ -2,7 +2,6 @@
 //! scripts run through the real harnesses. No real CLI, no tracker.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -250,7 +249,7 @@ fn fake_cli(dir: &Path, name: &str, then: &str) -> PathBuf {
         stdin = dir.join("stdin.txt").display(),
     );
     fs::write(&path, script).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    crate::platform::make_executable(&path).unwrap();
     path
 }
 
