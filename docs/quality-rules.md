@@ -24,7 +24,7 @@ Only on the changed files, all at the same time:
 | `.ts .tsx .js .json .css` | `biome check` on those files |
 | `.ts .tsx` | `pnpm typecheck`, and `vitest related --run` (the tests that import those files) |
 | `.rs` in `crates/<x>/` or `src-tauri/` | `cargo fmt --check`, `cargo clippy --all-targets -D warnings` and `cargo test`, only for the affected packages |
-| any file | the repo rules R1–R8 below |
+| any file | the repo rules R1–R10 below |
 
 `crates/stt` tests and every `meet-ai` build need the Swift speech helper at
 `target/meet-stt`. If it is missing, the gate builds it with `just sidecar`. If
@@ -205,6 +205,14 @@ commit the file. CI runs the same check (`git diff --exit-code`).
 stale, the frontend calls commands with the wrong shape, and that only shows up
 at runtime.
 
+`meet-ai` does not build without the speech sidecar next to the source
+(`target/meet-stt-<host triple>`, made by `just sidecar`), whatever
+`CARGO_TARGET_DIR` says. A worktree that shares a build cache often has it only
+there. Then R7 prints a `WARN` that it skipped the check, as the gate does for
+`stt`, instead of failing: the bindings were not compared, not found stale. Run
+`just sidecar` (and copy `target/meet-stt*` into `$CARGO_TARGET_DIR` if you set
+it), then the gate again.
+
 ### R8: new CSS rule in `src/app.css` (ERROR)
 
 An added selector line (a line with `{` that does not start with `@`) in
@@ -231,16 +239,24 @@ script, workflow, CMake or CSS file (`.rs .ts .tsx .js .swift .sh .yml .cmake
   `<host>/<owner>/<repo>` is for example `github.com/insidegui/AudioCap`
   (`https://` in front is accepted)
 - pins a branch or tag instead of a commit hash (7 to 40 hex digits)
-- has no SPDX id, or one that is GPL-\*, AGPL-\*, LGPL-\*, SSPL-\*, BUSL-\*,
-  `NONE`, `NOASSERTION` or `UNLICENSED`. A choice like `MIT OR GPL-3.0-only`
-  passes, because we take it under MIT.
+- has no SPDX id, or one that is not on the COPY allow-list in
+  CONTRIBUTING.md: `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`,
+  `Zlib`, `Unlicense`, `MPL-2.0` (case does not matter). Anything else fails,
+  including a licence nobody thought of. `X OR Y` is a choice, so it passes
+  when one side is on the list (`MIT OR GPL-3.0-only` passes; we take it under
+  MIT), and then the section's `Licence:` line must name the licence we took
+  (`Licence: MIT (chosen from MIT OR GPL-3.0-only)`). `X AND Y` binds both, so
+  each must be on the list. `X WITH <exception>` is judged by `X`.
 - has no section in `THIRD_PARTY_NOTICES.md` whose `URL:` line names that
   repository. The match ignores case and must be the whole repository, so
   `github.com/acme/lib` does not match a notice for `github.com/acme/library`.
   A source listed under `## To confirm` does not count.
 
 Unlike most rules, R9 reads every line of the file, not only the added ones: a
-copy needs its notice for as long as it is in the repo. `R9_NOTICES=<file>`
+copy needs its notice for as long as it is in the repo. For the same reason,
+when `THIRD_PARTY_NOTICES.md` itself is among the changed files, R9 also checks
+every file `git grep -l 'Adapted from'` finds, so dropping a section (or the
+whole file) fails the copy that needed it. `R9_NOTICES=<file>`
 points it at another notices file. The rule's own script and self-test are
 skipped, because they spell the format out as examples.
 
@@ -256,7 +272,9 @@ own. The full rules are in CONTRIBUTING.md, "Code from other projects".
 
 **Self-test:** `scripts/quality-rules-selftest.sh` runs R9 on sample files in a
 throwaway git repo: an `Adapted from` line with no notice must fail, one with a
-notice must pass, and so on for each case above. CI runs it in the
+notice must pass, and so on for each case above, including every licence on
+the allow-list, ones that are not, `OR`/`AND`/`WITH`, and dropping a section
+from (or deleting) the notices file. CI runs it in the
 `rust-portable` job.
 
 ### R10: OS-specific cfg outside a platform module (ERROR)
@@ -286,10 +304,21 @@ Not OS cfgs, so never flagged: `cfg(test)`, `cfg(feature = ...)`,
 `target_os = "android"` or `"ios"`. That last one is Tauri's desktop-vs-mobile
 plugin gate (`src-tauri/src/lib.rs`, `notify.rs`), not a port.
 
-Three unix-only test modules in `crates/agent/src` (`process.rs`, `detect.rs`,
-`mcp/tests.rs`) still carry `cfg(unix)`. They run the `/bin/sh` fake harness,
-and TUR-54 makes them portable; R10 lets them be until someone edits those
-lines.
+Three unix-only test modules in `crates/agent/src` still carry `cfg(unix)`:
+`process.rs:504`, `detect.rs:401` and `mcp/tests.rs:190`. They run the
+`/bin/sh` fake harness, and TUR-54 makes them portable. Those exact lines are
+the known-debt list, `R10_DEBT` in `scripts/quality-rules.sh`; a new cfg in the
+same files still fails. Nothing else in the tree has an OS cfg outside the
+allowed paths (`crates/store` keeps its one, Windows' lock-violation codes, in
+`src/platform/` since TUR-89).
+
+**Whole tree in CI.** R10 normally counts only added lines, so two branches
+that each pass alone can still add up to an OS cfg in shared code when both
+merge (TUR-45 and TUR-42 did, in `crates/store`). So the `rust-portable` CI job
+also runs `scripts/quality-rules.sh --r10-tree`: R10 alone, over every file
+`git ls-files '*.rs'` lists and every line, with the same allowed paths. Any
+hit fails the job; the `R10_DEBT` lines print a `WARN`. Run it by hand the same
+way.
 
 **Why:** SPEC §8.2 keeps OS code in one place per crate so that a Windows or
 Linux port adds files instead of editing every module. A `cfg` dropped into
@@ -306,7 +335,9 @@ instead of using `cfg!`.
 
 **Self-test:** the R10 cases in `scripts/quality-rules-selftest.sh`: a stray
 `cfg(target_os = ...)` in a crate must fail and the same line under
-`src/platform/` must pass, plus every form and allowed path above.
+`src/platform/` must pass, plus every form and allowed path above, and for
+`--r10-tree`: an old cfg fails, a known-debt line warns, and a new cfg in a
+known-debt file fails.
 
 ## Knobs
 

@@ -19,6 +19,7 @@ scripts/quality-gate.sh <file>...                  # exactly these files
 scripts/quality-gate.sh --from-transcript <jsonl>  # files a session edited (+ branch changes)
 scripts/quality-gate.sh --list [...]               # just print the file list
 scripts/quality-rules.sh <file>...                 # only the repo rules
+scripts/quality-rules.sh --r10-tree                # R10 over every tracked .rs file (CI runs this)
 ```
 
 In your own worktree branch, the no-argument form is the right one: it checks
@@ -58,16 +59,18 @@ branch still count as new. On `main`, the base is `HEAD`.
 | Rule | What it catches | Fix |
 | --- | --- | --- |
 | R1 | a file over 600 non-test lines that is new or grew (Rust: before the `#[cfg(test)] mod` test module) | move the new code into its own module |
-| R2 (warn) | a `"name://event"` string outside `src-tauri/src/events.rs` and `src/ipc/bindings.ts` | use the event constant |
+| R2 | a `"name://event"` string outside `src-tauri/src/events.rs` and `src/ipc/bindings.ts` | use the event constant |
 | R3 (warn) | `"transcript.md"`, `"notes.md"`, `"segments.json"`, `"meeting.md"` or `".app"` in Rust outside `crates/meeting-format` | use the meeting-format constant |
 | R4 | a new `.unwrap()` / `.expect(` in non-test Rust under `crates/*/src` or `src-tauri/src` (strings and comments ignored) | return the error with `?`; if it truly cannot fail, add `// quality: allow-unwrap <reason>` on that line or the line above |
 | R5 (warn) | a sync `#[tauri::command]` that calls `meetings::x(`, `store::x(`, `fs::x(` or `std::fs::` | make it `pub async fn`, and use `spawn_blocking` for heavy work |
 | R6 | a new `style={{` in `src/**/*.tsx` | use Tailwind classes in `className`; for a runtime-only value, add `{/* quality: allow-style <reason> */}` on that line or the line above |
-| R7 (off) | `src/ipc/bindings.ts` is stale; turned on once a `just bindings` recipe exists | run `just bindings` and keep the result |
+| R7 | `src/ipc/bindings.ts` is stale (checked once per run, when a command file, a type they send, `Cargo.toml` or `bindings.ts` changed). A WARN, not an ERROR, when `target/meet-stt-<host triple>` is missing next to the source, since `meet-ai` cannot build then | run `just bindings` and keep the result; for the WARN, `just sidecar` (and copy `target/meet-stt*` into `$CARGO_TARGET_DIR` if you set it) |
 | R8 | a new selector rule (a line with `{` not starting with `@`) in `src/app.css` | style with Tailwind utilities in the component; for a real global override, add `/* quality: allow-css <reason> */` |
+| R9 | an `Adapted from` comment (every line, not only added ones) that is not `Adapted from <host>/<owner>/<repo>/<path> @ <commit> (<SPDX>)`, pins a branch, has a licence off the allow-list (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, Unlicense, MPL-2.0; `X OR Y` when one side is, `X AND Y` when both are), or has no `THIRD_PARTY_NOTICES.md` section for its repo. A change to the notices file re-checks every file with an `Adapted from` line | add or extend the project's section in `THIRD_PARTY_NOTICES.md` (for `X OR Y`, its `Licence:` line names the one we took); for a GPL source, delete the copy and write our own |
+| R10 | a new `cfg` naming an OS (`target_os`, `target_family`, `target_vendor`, `unix`, `windows`; `cfg`, `cfg!`, `cfg_attr` conditions) in Rust under `crates/` or `src-tauri/src/`, outside `platform/`, `macos/`, `windows/`, `linux/`, `eventkit.rs`, `build.rs` and `crates/*/tests/`. Android/iOS-only conditions pass. CI also runs it over the whole tree (`--r10-tree`) | move the OS code into the crate's `src/platform/` and call `platform::...` |
 
-R2 and R3 print warnings until their phase lands. To make them fail, flip
-`R2_LEVEL` / `R3_LEVEL` to `error` at the top of `scripts/quality-rules.sh`.
+R3 prints warnings until its phase lands. To make it fail, flip `R3_LEVEL` to
+`error` at the top of `scripts/quality-rules.sh` (R2 already is).
 
 ## How to add a rule
 
