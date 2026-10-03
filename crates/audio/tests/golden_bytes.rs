@@ -3,6 +3,11 @@
 //! allocation clean-up, on fully deterministic synthetic audio, so any change to
 //! output bytes (not just to behaviour) fails here.
 
+// macOS only: the hashes were taken there, and each OS's libm rounds the `sin`
+// in the synthetic signal differently (Linux and Windows disagree with macOS and
+// with each other). TUR-50 makes it portable.
+#![cfg(target_os = "macos")]
+
 use std::path::PathBuf;
 
 use audio::tee::tee;

@@ -35,3 +35,17 @@ Notes:
   tauri-build fails the build when the `macos-private-api` Cargo feature on
   `tauri` (always on in `src-tauri/Cargo.toml`) does not match that key. It has
   no effect off macOS.
+- Tests gated to macOS for TUR-50 (each file starts with
+  `#![cfg(target_os = "macos")]`, R10's integration-test exemption, or asks
+  the platform module):
+  - `crates/audio/tests/golden_bytes.rs`: hashes of f32 synthesis taken on
+    macOS; Linux and Windows libm round `sin` differently (each gives its own
+    hash).
+  - `crates/audio/src/resample.rs` `golden_output_bytes_at_48k_and_44k1`,
+    `golden_downmix_stereo_bytes`: same reason, gated by
+    `platform::F32_GOLDEN_HASHES`.
+  - `crates/stt/tests/live.rs`, `crates/stt/tests/silence.rs`: the fixture
+    WAVs are generated with macOS `say`.
+- `src-tauri/src/sync/tests.rs`'s fake `claude`/`codex` scripts need
+  `/bin/sh`; on Windows they compile now (through
+  `platform::make_executable`) and TUR-54 makes them run.

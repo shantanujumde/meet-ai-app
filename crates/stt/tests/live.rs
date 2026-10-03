@@ -11,6 +11,10 @@
 //! The whisper half is opt-in behind `whisper-model-tests` because it needs a
 //! 190 MB model; the replay half needs nothing and runs in `just check`.
 
+// macOS only: the fixture WAVs are made with macOS `say`
+// (crates/audio/fixtures/generate.sh). TUR-50 makes it portable.
+#![cfg(target_os = "macos")]
+
 mod fixtures;
 
 use stt::replay::{ReplayEngine, ReplayOptions, replay_samples, replay_track};
