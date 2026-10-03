@@ -151,28 +151,63 @@ impl Environment {
     }
 }
 
+/// Which of the four ways Apple's engine can be unavailable happened. The one
+/// place that reads a probe for it: [`apple_unavailable_detail`] words it for
+/// a log or an error, `options::apple_reason` for the picker.
+#[derive(Debug, Clone, Copy)]
+enum AppleUnavailable<'a> {
+    /// This build was not given the sidecar.
+    NoSidecar,
+    /// `meet-stt --probe` itself failed.
+    ProbeFailed(&'a Error),
+    /// The sidecar's macOS 26 guard said no, in its own words.
+    TooOld(&'a str),
+    /// The Mac is on 26+, but `SpeechTranscriber.isAvailable` said no.
+    CannotRun,
+    /// Available, but the on-device model for the locale is not installed.
+    ModelMissing,
+}
+
+impl<'a> AppleUnavailable<'a> {
+    fn of(apple: &'a Option<Result<Probe, Error>>) -> Self {
+        match apple {
+            None => Self::NoSidecar,
+            Some(Err(error)) => Self::ProbeFailed(error),
+            // `main.swift` only ever sets `reason` from its top-level
+            // `#available(macOS 26, *)` guard — exactly the "this Mac is too
+            // old" case. When `runProbe` itself reports `available: false`
+            // (this Mac *is* on 26+, but `SpeechTranscriber.isAvailable` said
+            // no — unsupported hardware or language), it sends no reason,
+            // because there is no OS-version story to tell.
+            Some(Ok(probe)) if !probe.available => match probe.reason.as_deref() {
+                Some(reason) => Self::TooOld(reason),
+                None => Self::CannotRun,
+            },
+            Some(Ok(_)) => Self::ModelMissing,
+        }
+    }
+}
+
 /// Say precisely which of the four ways Apple's engine can be unavailable
 /// happened, so the UI can tell a genuine incompatibility (this Mac is too
 /// old, or this build was not given the sidecar) apart from "not ready yet"
 /// (the on-device model for this locale has not finished installing).
 fn apple_unavailable_detail(apple: &Option<Result<Probe, Error>>, locale: &str) -> String {
-    match apple {
-        None => "the meet-stt sidecar was not found in the app bundle".to_string(),
-        Some(Err(error)) => error.to_string(),
-        // `main.swift` only ever sets `reason` from its top-level
-        // `#available(macOS 26, *)` guard — exactly the "this Mac is too old"
-        // case. When `runProbe` itself reports `available: false` (this Mac
-        // *is* on 26+, but `SpeechTranscriber.isAvailable` said no —
-        // unsupported hardware or language), it sends no reason, because
-        // there is no OS-version story to tell. Falling back to "below macOS
-        // 26" in that case would be a false claim, so the fallback text stays
-        // agnostic about which of those two it is.
-        Some(Ok(probe)) if !probe.available => probe.reason.clone().unwrap_or_else(|| {
-            "Apple's on-device speech engine reports it cannot run on this Mac (usually \
-             unsupported hardware or language, not something a download fixes)"
-                .to_string()
-        }),
-        Some(Ok(_)) => format!("the on-device model for {locale} is not installed yet"),
+    match AppleUnavailable::of(apple) {
+        AppleUnavailable::NoSidecar => {
+            "the meet-stt sidecar was not found in the app bundle".to_string()
+        }
+        AppleUnavailable::ProbeFailed(error) => error.to_string(),
+        AppleUnavailable::TooOld(reason) => reason.to_string(),
+        // Falling back to "below macOS 26" here would be a false claim, so
+        // the text stays agnostic about whether it is hardware or language.
+        AppleUnavailable::CannotRun => "Apple's on-device speech engine reports it cannot run \
+             on this Mac (usually unsupported hardware or language, not something a download \
+             fixes)"
+            .to_string(),
+        AppleUnavailable::ModelMissing => {
+            format!("the on-device model for {locale} is not installed yet")
+        }
     }
 }
 
