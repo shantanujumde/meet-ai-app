@@ -40,6 +40,10 @@ pub use today::{redraw_soon, reread_soon};
 /// than a slightly bigger binary.
 const TEMPLATE_ICON: &[u8] = include_bytes!("../icons/meet-aiTemplate@2x.png");
 
+/// Every menu-bar item's id starts with this, `today.rs`'s too. Menu events
+/// reach every handler, so the app menu's own items (`app-quit`, Edit's
+/// copy and paste) arrive here as well, and are not ours to warn about.
+const TRAY_PREFIX: &str = "tray-";
 const OPEN_ITEM: &str = "tray-open-window";
 const TOGGLE_ITEM: &str = "tray-toggle-recording";
 const QUIT_ITEM: &str = "tray-quit";
@@ -127,7 +131,35 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         // toggle blocks for as long as the chime and Core Audio take.
         TOGGLE_ITEM => crate::spawn_toggle(app, "menu-bar toggle"),
         QUIT_ITEM => app.exit(0),
+        other if !is_tray_item(other) => {}
         other if today::on_click(app, other) => {}
         other => tracing::warn!(item = other, "unknown menu-bar item"),
+    }
+}
+
+/// Whether `id` names one of the menu-bar item's own entries.
+fn is_tray_item(id: &str) -> bool {
+    id.starts_with(TRAY_PREFIX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_tray_ids_are_the_menu_bar_s_own() {
+        for id in [
+            OPEN_ITEM,
+            TOGGLE_ITEM,
+            QUIT_ITEM,
+            "tray-join:abc",
+            "tray-today-connect",
+        ] {
+            assert!(is_tray_item(id), "{id}");
+        }
+        // The app menu's items reach the same handler and are ignored quietly.
+        for id in ["app-quit", "copy", "paste", ""] {
+            assert!(!is_tray_item(id), "{id}");
+        }
     }
 }
