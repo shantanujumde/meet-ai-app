@@ -24,6 +24,7 @@ use tauri::{AppHandle, Manager as _};
 use crate::config::{self, Provider};
 use crate::error::UiError;
 
+pub mod signin;
 #[cfg(test)]
 mod tests;
 
@@ -83,7 +84,7 @@ fn provider_for(provider: Provider) -> Option<SharedProvider> {
         // `#[cfg]` inside `crates/calendar/src/eventkit.rs`).
         Provider::EventKit => Some(Arc::new(::calendar::eventkit::EventKitProvider::new())),
         // Not built yet; `available_providers` already logged and dropped them.
-        Provider::Google | Provider::Microsoft | Provider::Ics => None,
+        Provider::Google | Provider::Microsoft => None,
     }
 }
 

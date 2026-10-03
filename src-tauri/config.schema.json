@@ -61,24 +61,51 @@
           "type": "array",
           "description": "Calendar sources to read. \"eventkit\" is the macOS Calendar app.",
           "items": {
-            "enum": ["eventkit", "google", "microsoft", "ics"]
+            "enum": ["eventkit", "google", "microsoft"]
           },
           "uniqueItems": true,
           "default": ["eventkit"]
         },
         "ics_urls": {
           "type": "array",
-          "description": "Calendar feed links (.ics), used by the \"ics\" provider.",
+          "description": "Unused: ignored; ICS was dropped on 2026-10-03 (SPEC A12). Still accepted so old configs load.",
           "items": {
             "type": "string"
           },
-          "default": []
+          "default": [],
+          "deprecated": true
         },
         "refresh_minutes": {
           "type": "integer",
           "minimum": 1,
           "description": "How often, in minutes, to re-read the calendars.",
           "default": 15
+        },
+        "google": {
+          "type": "object",
+          "description": "The Google OAuth client used by \"Sign in with Google\". Create one of type Desktop app (SETUP.md, Calendar sign-in).",
+          "properties": {
+            "client_id": {
+              "type": "string",
+              "description": "The client ID, ending in .apps.googleusercontent.com.",
+              "examples": ["123456789012-abc.apps.googleusercontent.com"]
+            },
+            "client_secret": {
+              "type": "string",
+              "description": "The client secret Google gives a Desktop app client. Google treats it as non-secret (it ships inside every desktop app), but it must be sent with each token request. Sign-in itself is protected by PKCE."
+            }
+          }
+        },
+        "microsoft": {
+          "type": "object",
+          "description": "The Microsoft app registration used by \"Sign in with Microsoft\": a public client with an http://127.0.0.1 redirect (SETUP.md, Calendar sign-in). No client secret.",
+          "properties": {
+            "client_id": {
+              "type": "string",
+              "description": "The Application (client) ID from the app registration.",
+              "examples": ["00000000-0000-0000-0000-000000000000"]
+            }
+          }
         }
       }
     },
