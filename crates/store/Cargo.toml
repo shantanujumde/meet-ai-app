@@ -9,6 +9,8 @@ version.workspace = true
 [dependencies]
 # Optional: only the app shell turns it on, to generate TypeScript bindings.
 specta = { workspace = true, optional = true }
+# `retention` dates a meeting from its `meeting.md` date or folder name.
+chrono.workspace = true
 dirs.workspace = true
 # The §3.1 file names, `Speaker`, the transcript line and the atomic write,
 # shared with `stt` (the transcript's writer) without depending on it.

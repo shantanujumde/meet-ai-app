@@ -16,6 +16,7 @@
 //!   the calendar event the meeting was recorded during (TUR-29).
 //! * [`folder`] — one meeting folder, or every folder under the root, loaded
 //!   together.
+//! * [`retention`] — deleting meeting audio after `retention_days` (L16).
 //!
 //! Four rules from the spec are worth reading before adding anything here,
 //! because all four are easy to violate by accident:
@@ -55,6 +56,7 @@ pub mod meeting;
 pub mod meeting_event;
 pub mod notes;
 pub mod notes_switch;
+pub mod retention;
 pub mod ticket;
 pub mod transcript;
 pub mod watcher;

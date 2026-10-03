@@ -11,6 +11,7 @@
  */
 
 import { useAppStore } from "@/state/app";
+import { AudioRetentionRow } from "@/ui/AudioRetentionRow";
 import { AgentSetup } from "@/ui/agent/AgentSetup";
 import { EngineSummary } from "@/ui/engine/EngineSummary";
 import { FolderRow } from "@/ui/FolderRow";
@@ -39,6 +40,7 @@ export function Settings() {
         </h2>
         <Card flush>
           <FolderRow status={rootExists ? "Exists" : "Created on first recording"} />
+          <AudioRetentionRow />
           <Row>
             <RowLabel
               name="Setup"

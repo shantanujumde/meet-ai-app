@@ -29,6 +29,7 @@ mod onboarding;
 mod permission;
 mod recording;
 mod recording_state;
+mod retention;
 mod search;
 mod sync;
 mod tickets;
@@ -100,6 +101,7 @@ pub fn run() {
         .manage(calendar::CalendarState::default())
         // TUR-44: Google and Microsoft sign-in; TUR-47/48 read access tokens from it.
         .manage(calendar::signin::auth())
+        .manage(retention::AudioRetention::default())
         .setup(|_app| {
             // TUR-97: before the record shortcut exists, so nothing can be
             // mid-recording while this rewrites a header. Fast — two 44-byte
@@ -128,6 +130,9 @@ pub fn run() {
                 let handle = _app.handle().clone();
                 std::thread::spawn(move || search::state(&handle).warm());
             }
+            // TUR-45: delete audio older than `audio.retention_days`, soon
+            // after launch and then daily.
+            retention::start(_app.handle());
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 register_record_shortcut(_app.handle());

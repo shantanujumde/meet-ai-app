@@ -222,6 +222,9 @@ export const ipc = {
     async () => NO_MEETINGS_TODAY.refreshMinutes,
   ),
 
+  // TUR-45: the SPEC §3.5 default.
+  audioRetentionDays: vi.fn<typeof Client.audioRetentionDays>(async () => 7),
+
   agentChoice: vi.fn<typeof Client.agentChoice>(async () => ({
     harness: "claude-code",
     model: "opus",
