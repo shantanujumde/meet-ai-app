@@ -8,6 +8,11 @@
 //! [`redraw_soon`]) wakes it early: the Today pane just read the calendar,
 //! or the countdown setting was switched.
 //!
+//! The Today pane's last good read is kept here with its time (TUR-90), and
+//! the worker takes it instead of reading again while it is younger than
+//! `calendar.refresh_minutes`: one Today refresh reads each cloud calendar
+//! once, not once for the pane and once more for the menu bar.
+//!
 //! What to draw is `menu_model`'s pure functions; this file only reads,
 //! renders and reacts.
 
@@ -53,14 +58,29 @@ enum Nudge {
     Redraw,
 }
 
-/// Managed state: the last read, for the item clicks, and the worker's inbox.
+/// The Today pane's last good read: when, for which day, and what.
+struct PaneRead {
+    at: Instant,
+    day: NaiveDate,
+    events: Vec<Event>,
+}
+
+/// Managed state: the last read, for the item clicks, the pane's last read,
+/// and the worker's inbox.
 #[derive(Default)]
 pub(super) struct Today {
     read: Mutex<Option<CalendarRead>>,
+    pane: Mutex<Option<PaneRead>>,
     nudge: Mutex<Option<Sender<Nudge>>>,
 }
 
 impl Today {
+    /// The pane's events, if it read `day` less than `every` ago.
+    fn pane_events(&self, every: StdDuration, day: NaiveDate) -> Option<Vec<Event>> {
+        let pane = self.pane.lock().unwrap_or_else(|e| e.into_inner());
+        fresh(pane.as_ref(), every, day).map(<[Event]>::to_vec)
+    }
+
     fn event(&self, id: &str) -> Option<Event> {
         let read = self.read.lock().unwrap_or_else(|e| e.into_inner());
         match read.as_ref()? {
@@ -151,10 +171,16 @@ pub(super) fn start(app: &AppHandle, tray_id: &'static str, fixed: Fixed) {
     }
 }
 
-/// Read the calendar again now: the Today pane just did, so a grant or an
-/// edit reaches the menu bar without waiting for the next refresh.
-pub fn reread_soon(app: &AppHandle) {
+/// The Today pane just read `events`: show them now, so a grant or an edit
+/// reaches the menu bar without waiting for the next refresh, and without a
+/// read of its own (TUR-90).
+pub fn reread_soon(app: &AppHandle, events: &[Event]) {
     if let Some(today) = app.try_state::<Today>() {
+        *today.pane.lock().unwrap_or_else(|e| e.into_inner()) = Some(PaneRead {
+            at: Instant::now(),
+            day: Local::now().date_naive(),
+            events: events.to_vec(),
+        });
         today.send(Nudge::Reread);
     }
 }
@@ -179,7 +205,12 @@ fn run(app: &AppHandle, tray_id: &str, fixed: &Fixed, rx: &mpsc::Receiver<Nudge>
         let stale =
             last_read.is_none_or(|(at, day)| at.elapsed() >= every || day != now.date_naive());
         if reread || stale {
-            let result = read_today(app, &now);
+            // The pane's read when it is fresh enough; a read of our own
+            // only when it is not.
+            let result = match app.state::<Today>().pane_events(every, now.date_naive()) {
+                Some(events) => Ok(events),
+                None => read_today(app, &now),
+            };
             if result.is_ok() {
                 good_day = Some(now.date_naive());
             }
@@ -240,6 +271,12 @@ fn read_today(app: &AppHandle, now: &chrono::DateTime<Local>) -> Result<Vec<Even
     };
     let (from, to) = crate::calendar::today_bounds(now);
     state.events_between_unprompted(from, to)
+}
+
+/// `pane`'s events when they are `day`'s and younger than `every`.
+fn fresh(pane: Option<&PaneRead>, every: StdDuration, day: NaiveDate) -> Option<&[Event]> {
+    pane.filter(|pane| pane.day == day && pane.at.elapsed() < every)
+        .map(|pane| pane.events.as_slice())
 }
 
 /// What the menu shows after a read, given what it showed before.
@@ -429,6 +466,38 @@ mod tests {
                 CalendarRead::NotConnected
             );
         }
+    }
+
+    fn pane(age: StdDuration, day: NaiveDate) -> PaneRead {
+        PaneRead {
+            at: Instant::now()
+                .checked_sub(age)
+                .expect("the test's age fits in an Instant"),
+            day,
+            events: vec![standup()],
+        }
+    }
+
+    #[test]
+    fn a_fresh_pane_read_is_reused_instead_of_reading_again() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("valid test date");
+        let every = StdDuration::from_secs(5 * 60);
+        let read = pane(StdDuration::from_secs(1), day);
+        assert_eq!(fresh(Some(&read), every, day), Some(&[standup()][..]));
+    }
+
+    #[test]
+    fn an_old_missing_or_yesterdays_pane_read_is_not_reused() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 5).expect("valid test date");
+        let every = StdDuration::from_secs(5 * 60);
+        assert_eq!(fresh(None, every, day), None);
+        let old = pane(StdDuration::from_secs(6 * 60), day);
+        assert_eq!(fresh(Some(&old), every, day), None);
+        let yesterday = pane(
+            StdDuration::from_secs(1),
+            day.pred_opt().expect("a day before"),
+        );
+        assert_eq!(fresh(Some(&yesterday), every, day), None);
     }
 
     #[test]
