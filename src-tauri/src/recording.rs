@@ -41,6 +41,8 @@
 //! is built from that status too.
 
 mod auto_title;
+// TUR-77: the menu bar's Record names the meeting from the event clicked.
+pub use auto_title::PinnedEvent;
 mod phase;
 mod ticker;
 
