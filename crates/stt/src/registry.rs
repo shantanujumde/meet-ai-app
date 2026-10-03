@@ -81,6 +81,13 @@ pub struct Environment {
     pub locale: String,
     /// Path to a downloaded whisper model, if one is present.
     pub whisper_model: Option<PathBuf>,
+    /// The whisper model id config asked for (`transcription.model`), so an
+    /// error can name it.
+    pub whisper_model_id: String,
+    /// Ids of every catalogue model that is on disk, the wanted one or not.
+    /// Only used to word errors: "model X is not downloaded (installed: Y)"
+    /// instead of "no model is downloaded" when Y is right there.
+    pub installed_whisper_models: Vec<String>,
 }
 
 impl Environment {
@@ -106,12 +113,38 @@ impl Environment {
         let whisper_model = models_dir
             .and_then(|dir| crate::model::find(model_id).map(|spec| dir.join(spec.filename)))
             .filter(|path| path.is_file());
+        let installed_whisper_models = models_dir
+            .map(|dir| {
+                crate::model::MODELS
+                    .iter()
+                    .filter(|spec| crate::model::is_installed(spec, dir))
+                    .map(|spec| spec.id.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Self {
             sidecar: AppleEngine::discover(),
             locale: locale.to_string(),
             whisper_model,
+            whisper_model_id: model_id.to_string(),
+            installed_whisper_models,
         }
+    }
+
+    /// "model large-v3-turbo-q5_0 is not downloaded (installed: small.en-q5_1)",
+    /// or "... (none installed)". Says which model is missing, so a user with a
+    /// different one on disk is not told nothing is downloaded (TUR-23).
+    fn missing_whisper_model(&self) -> String {
+        let installed = if self.installed_whisper_models.is_empty() {
+            "none installed".to_string()
+        } else {
+            format!("installed: {}", self.installed_whisper_models.join(", "))
+        };
+        format!(
+            "model {} is not downloaded ({installed})",
+            self.whisper_model_id
+        )
     }
 }
 
@@ -176,9 +209,10 @@ pub fn resolve(preference: Preference, environment: &Environment) -> Result<Sele
                     reason: "config asked for the whisper engine".into(),
                 })
             } else {
-                Err(Error::EngineUnavailable(
-                    "config asked for the whisper engine but no model is downloaded yet".into(),
-                ))
+                Err(Error::EngineUnavailable(format!(
+                    "config asked for the whisper engine but {}",
+                    environment.missing_whisper_model()
+                )))
             }
         }
 
@@ -204,9 +238,10 @@ pub fn resolve(preference: Preference, environment: &Environment) -> Result<Sele
                 // downloaded a whisper model yet — so name which one this is
                 // rather than collapsing both into "Apple's is unavailable".
                 let detail = apple_unavailable_detail(&apple, &environment.locale);
+                let missing = environment.missing_whisper_model();
                 Err(Error::EngineUnavailable(format!(
                     "no speech engine is ready: Apple's speech engine cannot be used ({detail}), \
-                     and no whisper model is downloaded yet — download one below to continue"
+                     and whisper {missing} — download it below to continue"
                 )))
             }
         }
@@ -264,6 +299,8 @@ mod tests {
             sidecar: None,
             locale: "en-US".into(),
             whisper_model: None,
+            whisper_model_id: "large-v3-turbo-q5_0".into(),
+            installed_whisper_models: Vec::new(),
         }
     }
 
@@ -304,8 +341,20 @@ mod tests {
             "message does not explain why Apple's engine is unavailable: {message}"
         );
         assert!(
-            message.contains("no whisper model is downloaded"),
+            message.contains("model large-v3-turbo-q5_0 is not downloaded (none installed)"),
             "message does not mention the actionable next step: {message}"
+        );
+    }
+
+    #[test]
+    fn auto_with_a_different_model_installed_names_the_missing_one() {
+        let mut env = environment();
+        env.installed_whisper_models = vec!["small.en-q5_1".into()];
+        let message = resolve(Preference::Auto, &env).unwrap_err().to_string();
+        assert!(
+            message
+                .contains("model large-v3-turbo-q5_0 is not downloaded (installed: small.en-q5_1)"),
+            "got: {message}"
         );
     }
 
@@ -319,7 +368,53 @@ mod tests {
     #[test]
     fn forcing_whisper_without_a_model_does_not_silently_use_apple() {
         let error = resolve(Preference::Whisper, &environment()).unwrap_err();
-        assert!(error.to_string().contains("no model is downloaded"));
+        assert_eq!(
+            error.to_string(),
+            "config asked for the whisper engine but model large-v3-turbo-q5_0 is not \
+             downloaded (none installed)"
+        );
+    }
+
+    #[test]
+    fn forcing_whisper_names_the_missing_model_and_the_installed_ones() {
+        // TUR-23: with only small.en installed, "no model is downloaded" was
+        // false. Name the model config asked for and what is on disk instead.
+        let mut env = environment();
+        env.installed_whisper_models = vec!["small.en-q5_1".into(), "medium-q5_0".into()];
+        let message = resolve(Preference::Whisper, &env).unwrap_err().to_string();
+        assert!(
+            message.contains(
+                "model large-v3-turbo-q5_0 is not downloaded (installed: small.en-q5_1, medium-q5_0)"
+            ),
+            "got: {message}"
+        );
+        assert!(!message.contains("no model"), "got: {message}");
+    }
+
+    #[test]
+    fn discovery_lists_every_installed_model_even_when_the_wanted_one_is_missing() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = crate::model::model_dir(root.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        let small = crate::model::find("small.en-q5_1").unwrap();
+        std::fs::write(dir.join(small.filename), b"not really a model").unwrap();
+
+        let found = Environment::discover_in(Some(&dir), "en-US", "large-v3-turbo-q5_0");
+        assert_eq!(found.whisper_model, None);
+        assert_eq!(found.whisper_model_id, "large-v3-turbo-q5_0");
+        assert_eq!(found.installed_whisper_models, vec!["small.en-q5_1"]);
+
+        let message = resolve(Preference::Whisper, &found)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            message
+                .contains("model large-v3-turbo-q5_0 is not downloaded (installed: small.en-q5_1)"),
+            "got: {message}"
+        );
+
+        let nowhere = Environment::discover_in(None, "en-US", "large-v3-turbo-q5_0");
+        assert!(nowhere.installed_whisper_models.is_empty());
     }
 
     #[test]
