@@ -5,6 +5,8 @@
 # Usage:
 #   scripts/quality-rules.sh <file>...     paths relative to the repo root
 #   scripts/quality-rules.sh --print-base  print the commit the rules diff against
+#   scripts/quality-rules.sh --r10-tree    R10 only, over every tracked .rs file and
+#                                          every line (CI; see R10 below)
 #
 # Prints one line per finding:
 #   path:line RULE LEVEL: message        (LEVEL is ERROR or WARN)
@@ -81,6 +83,13 @@ BASE=$(diff_base)
 if [ "${1:-}" = --print-base ]; then
   echo "$BASE"
   exit 0
+fi
+# --r10-tree (TUR-89): R10 on the whole tree, not only on added lines, so two
+# branches that each pass on their own cannot add up to a cfg in shared code.
+R10_TREE=0
+if [ "${1:-}" = --r10-tree ]; then
+  R10_TREE=1
+  shift
 fi
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/quality-rules.XXXXXX") || exit 1
@@ -385,8 +394,24 @@ rule_r7() {
   [ "$touched" = 1 ] || return
   [ -f src/ipc/bindings.ts ] || return
   command -v cargo >/dev/null || return
+  # tauri-build wants the sidecar next to the source (target/meet-stt-<host
+  # triple>, from `just sidecar`), whatever CARGO_TARGET_DIR says. A worktree
+  # sharing a build cache often has it only there. Without it meet-ai does not
+  # build, so this is a skipped check (a WARN, as the gate does for stt), not
+  # a stale bindings file (TUR-89).
+  local host sidecar_msg
+  host=$(rustc -vV 2>/dev/null | sed -n 's/^host: //p')
+  sidecar_msg="skipped: target/meet-stt-${host:-<host>} is missing, and meet-ai does not build without it; run \`just sidecar\` (and copy target/meet-stt* into \$CARGO_TARGET_DIR if you set it), then the gate again"
+  if [ -n "$host" ] && [ ! -e "target/meet-stt-$host" ]; then
+    report warn R7 src/ipc/bindings.ts 1 "$sidecar_msg"
+    return
+  fi
   local out="$tmp/bindings.ts"
   if ! BINDINGS_OUT="$out" cargo test -p meet-ai --lib export_bindings >"$tmp/bindings.log" 2>&1; then
+    if grep -q 'meet-stt' "$tmp/bindings.log"; then
+      report warn R7 src/ipc/bindings.ts 1 "$sidecar_msg"
+      return
+    fi
     report error R7 src/ipc/bindings.ts 1 "could not generate the bindings (cargo test -p meet-ai --lib export_bindings failed); run \`just bindings\` to see why"
     return
   fi
@@ -424,15 +449,30 @@ R9_NOTICES=${R9_NOTICES:-THIRD_PARTY_NOTICES.md}
 
 # True when R9_NOTICES has a section (not "## To confirm") with a URL line that
 # names $1 (lowercase host/owner/name) as a whole repo, not a prefix of one.
+# With $2 (licence ids, space-separated), that section's Licence line must also
+# name one of them: for an `X OR Y` source, the licence we took it under.
 r9_has_notice() {
   [ -f "$R9_NOTICES" ] || return 1
-  awk -v repo="$1" '
+  awk -v repo="$1" -v choices="${2:-}" '
+    function close_section() {
+      if (urlhit && (choices == "" || lichit)) found = 1
+      urlhit = 0; lichit = 0
+    }
+    BEGIN { nc = split(tolower(choices), C, " ") }
     /^##[[:space:]]/ {
+      close_section()
       s = tolower($0)
       sub(/^##[[:space:]]+/, "", s)
       sub(/[[:space:]]+$/, "", s)
       ok = (s != "to confirm")
       next
+    }
+    ok && /^[[:space:]]*(-[[:space:]]+)?Licen[cs]e:/ {
+      l = " " tolower($0) " "
+      for (k = 1; k <= nc; k++) {
+        if ((i = index(l, C[k])) > 0 && substr(l, i - 1, 1) !~ /[a-z0-9.-]/ &&
+            substr(l, i + length(C[k]), 1) !~ /[a-z0-9.-]/) lichit = 1
+      }
     }
     ok && /^[[:space:]]*(-[[:space:]]+)?URL:/ {
       l = tolower($0)
@@ -443,31 +483,71 @@ r9_has_notice() {
         after = substr(l, at + length(repo), 1)
         if ((before == "" || before ~ /[\/[:space:]<(]/) &&
             (after == "" || after ~ /[\/[:space:]>)#]/ || substr(l, at + length(repo), 4) == ".git")) {
-          found = 1
-          exit
+          urlhit = 1
+          break
         }
         off = at
       }
     }
-    END { exit found ? 0 : 1 }' "$R9_NOTICES"
+    END { close_section(); exit found ? 0 : 1 }' "$R9_NOTICES"
 }
 
-# Prints why the SPDX expression $1 cannot be copied from, or nothing when it
-# can. GPL-family, "no licence" and source-available ids fail, unless an OR
-# offers a licence we can take instead.
+# The licences we may copy from: CONTRIBUTING.md, "Code from other projects",
+# COPY allowed (TUR-89). An allow-list, so a licence nobody thought of fails.
+R9_ALLOWED="MIT Apache-2.0 BSD-2-Clause BSD-3-Clause ISC Zlib Unlicense MPL-2.0"
+
+# Prints why the SPDX expression $1 cannot be copied from (the first licence id
+# that sinks it), or nothing when it can. `X OR Y` means we may pick one, so it
+# passes when either side does; `X AND Y` binds both, so each must pass
+# (AND binds tighter than OR, parentheses group); `X WITH <exception>` is
+# judged by X. Ids match without regard to case, as SPDX says.
+# shellcheck disable=SC2016  # an awk program: $0 is awk's, not the shell's
 r9_licence_problem() {
-  local word gpl="" other=0 has_or=0
+  awk -v expr="$1" -v allowed="$R9_ALLOWED" '
+    function f(   r, id) {
+      if (T[p] == "(") {
+        p++; r = or_(); if (T[p] == ")") p++; else syntax = 1
+        return r
+      }
+      id = T[p]; p++
+      if (tolower(T[p]) == "with") p += 2
+      if (id == "" || id == ")" || tolower(id) ~ /^(or|and|with)$/) { syntax = 1; return 0 }
+      if (tolower(id) in ok) return 1
+      if (bad == "") bad = id
+      return 0
+    }
+    function and_(   r, r2) {
+      r = f()
+      while (tolower(T[p]) == "and") { p++; r2 = f(); r = r && r2 }
+      return r
+    }
+    function or_(   r, r2) {
+      r = and_()
+      while (tolower(T[p]) == "or") { p++; r2 = and_(); r = r || r2 }
+      return r
+    }
+    BEGIN {
+      n = split(allowed, A, " ")
+      for (i = 1; i <= n; i++) ok[tolower(A[i])] = 1
+      e = expr; gsub(/\(/, " ( ", e); gsub(/\)/, " ) ", e)
+      nt = split(e, T, " ")
+      p = 1
+      r = or_()
+      if (p <= nt) syntax = 1
+      if (!r || syntax) print (bad != "" ? bad : expr)
+    }'
+}
+
+# Prints the ids in the SPDX expression $1 that are on R9_ALLOWED, one per line.
+r9_allowed_parts() {
+  local word allowed
   for word in $(printf '%s' "$1" | tr '()' '  '); do
-    case $word in
-      OR | or) has_or=1 ;;
-      AND | and | WITH | with) ;;
-      GPL* | AGPL* | LGPL* | SSPL* | BUSL* | NONE | NOASSERTION | UNLICENSED) gpl=$word ;;
-      *) other=1 ;;
-    esac
+    for allowed in $R9_ALLOWED; do
+      if [ "$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$allowed" | tr '[:upper:]' '[:lower:]')" ]; then
+        echo "$allowed"
+      fi
+    done
   done
-  if [ -n "$gpl" ] && { [ "$has_or" = 0 ] || [ "$other" = 0 ]; }; then
-    echo "$gpl"
-  fi
 }
 
 rule_r9() {
@@ -479,10 +559,11 @@ rule_r9() {
     *.cmake | CMakeLists.txt | */CMakeLists.txt | *.css | *.html | *.c | *.h | *.m | *.mm | *.py | *.toml | justfile) ;;
     *) return ;;
   esac
-  local n text repo commit spdx rest problem
+  local n text repo commit spdx rest problem choices
   # Group 2 is the repo, 3 the upstream path, 4 the commit, 5 what follows.
   local re='Adapted from[[:space:]]+(https?://)?([A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+/[^/[:space:]]+/[^/[:space:]]+)/([^[:space:]]+)[[:space:]]+@[[:space:]]+([^[:space:]]+)(.*)$'
-  local spdx_re='^[[:space:]]*[(]([^)]*)[)]'
+  # The SPDX expression in parentheses, with one level of grouping inside it.
+  local spdx_re='^[[:space:]]*[(](([^()]|[(][^()]*[)])*)[)]'
   local format='Adapted from <host>/<owner>/<repo>/<path> @ <commit> (<SPDX>)'
   awk '/(\/\/|#|\/\*|<!--|^[[:space:]]*\*)[[:space:]]*Adapted from/ { printf "%d\t%s\n", FNR, $0 }' "$f" |
     while IFS="$TAB" read -r n text; do
@@ -507,12 +588,27 @@ rule_r9() {
         continue
       fi
       problem=$(r9_licence_problem "$spdx")
-      if [ -n "$problem" ]; then
-        report error R9 "$f" "$n" "code adapted from $repo is $spdx; $problem code is inspiration only, never copied (CONTRIBUTING.md, \"Code from other projects\")"
-        continue
-      fi
+      case $problem in
+        '') ;;
+        GPL* | AGPL* | LGPL* | gpl* | agpl* | lgpl*)
+          report error R9 "$f" "$n" "code adapted from $repo is $spdx; $problem code is inspiration only, never copied (CONTRIBUTING.md, \"Code from other projects\")"
+          continue
+          ;;
+        *)
+          report error R9 "$f" "$n" "code adapted from $repo is $spdx; $problem is not one we may copy from (only ${R9_ALLOWED// /, }, and 'X OR Y' when each is one; CONTRIBUTING.md, \"Code from other projects\")"
+          continue
+          ;;
+      esac
       if ! r9_has_notice "$repo"; then
         report error R9 "$f" "$n" "adapted code without a notice: add a '## <Project>' section with 'URL: https://$repo' to $R9_NOTICES"
+        continue
+      fi
+      # A choice of licences: the notice says which one we took (TUR-89).
+      if printf ' %s ' "$spdx" | tr '()' '  ' | grep -qi ' or '; then
+        choices=$(r9_allowed_parts "$spdx" | tr '\n' ' ')
+        if ! r9_has_notice "$repo" "$choices"; then
+          report error R9 "$f" "$n" "$spdx is a choice of licences: the Licence line of $repo's section in $R9_NOTICES must name the one we took it under (one of: ${choices% }), e.g. 'Licence: MIT (chosen from $spdx)'"
+        fi
       fi
     done
 }
@@ -636,6 +732,15 @@ R10_FIND_AWK='
     }
   }'
 
+# Known R10 debt, as path:line. Only these exact lines are let through, so a
+# new cfg in the same file still fails. Matters for --r10-tree only: on added
+# lines, an untouched old cfg never counts. If you move one of these lines,
+# move its entry; better, make the test portable and drop it.
+#   crates/agent/src/process.rs:504     TUR-54 removes this (unix-only /bin/sh fake harness tests)
+#   crates/agent/src/detect.rs:401      TUR-54 removes this (same)
+#   crates/agent/src/mcp/tests.rs:190   TUR-54 removes this (same)
+R10_DEBT="crates/agent/src/process.rs:504 crates/agent/src/detect.rs:401 crates/agent/src/mcp/tests.rs:190"
+
 rule_r10() {
   local f=$1 first last
   case $f in
@@ -649,7 +754,15 @@ rule_r10() {
   [[ $f =~ ^crates/[^/]+/tests/ ]] && return
   added_lines "$f" >"$tmp/r10nums"
   # Bytes, not characters: macOS awk gives up on some UTF-8 text otherwise.
+  # --r10-tree: every line counts (the whole file is "added").
+  [ "$R10_TREE" = 1 ] && awk '{ print NR }' "$f" >"$tmp/r10nums"
   LC_ALL=C awk "$R10_CLEAN_AWK" "$f" | LC_ALL=C awk "$R10_FIND_AWK" | while read -r first last; do
+    case " $R10_DEBT " in
+      *" $f:$first "*)
+        [ "$R10_TREE" = 1 ] && report warn R10 "$f" "$first" "known OS cfg outside a platform module (R10_DEBT in scripts/quality-rules.sh); TUR-54 removes it"
+        continue
+        ;;
+    esac
     # Only a cfg with at least one added line counts.
     if awk -v a="$first" -v b="$last" '$1 >= a && $1 <= b { found = 1; exit } END { exit !found }' "$tmp/r10nums"; then
       report error R10 "$f" "$first" "OS-specific cfg outside a platform module; put the OS code in the crate's src/platform/ (macos.rs / windows.rs / linux.rs) and call platform::... from here (SPEC §8.2)"
@@ -664,16 +777,45 @@ for f in "$@"; do
   f=${f#./}
   [ -f "$f" ] && files+=("$f")
 done
-[ "${#files[@]}" -gt 0 ] || exit 0
-
-for f in "${files[@]}"; do
-  for rule in $RULES; do
-    "$rule" "$f"
+if [ "$R10_TREE" = 1 ]; then
+  RULES=rule_r10
+  RUN_ONCE=""
+  files=()
+  while IFS= read -r f; do
+    [ -f "$f" ] && files+=("$f")
+  done < <(git ls-files '*.rs')
+fi
+# R9 reads the notices file, so a change to it (a section dropped, or the file
+# deleted) can break files nobody touched: then R9 checks every file with an
+# `Adapted from` line too (TUR-89).
+r9_extra=()
+if [ "$R10_TREE" = 0 ]; then
+  for f in "$@"; do
+    if [ "${f#./}" = "$R9_NOTICES" ]; then
+      while IFS= read -r f; do
+        [ -f "$f" ] && r9_extra+=("$f")
+      done < <(git grep -l --untracked 'Adapted from' 2>/dev/null)
+      break
+    fi
   done
-done
-for rule in $RUN_ONCE; do
-  "$rule" "${files[@]}"
-done
+fi
+[ "${#files[@]}" -gt 0 ] || [ "${#r9_extra[@]}" -gt 0 ] || exit 0
+
+if [ "${#files[@]}" -gt 0 ]; then
+  for f in "${files[@]}"; do
+    for rule in $RULES; do
+      "$rule" "$f"
+    done
+  done
+  for rule in $RUN_ONCE; do
+    "$rule" "${files[@]}"
+  done
+fi
+if [ "${#r9_extra[@]}" -gt 0 ]; then
+  for f in "${r9_extra[@]}"; do
+    rule_r9 "$f"
+  done
+fi
 
 [ -s "$findings" ] || exit 0
 # Errors first, then warnings, each sorted by path and line.

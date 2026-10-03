@@ -11,6 +11,8 @@
 # with the same `expect` helper.
 # R10 (OS-specific cfg outside a platform module) has its own `expect10`
 # below, since `expect` looks for R9 by name.
+# TUR-89 adds the R9 allow-list and notices-change cases, R10's --r10-tree
+# mode and its known-debt lines, and R7's missing-sidecar WARN.
 #
 # Must stay compatible with macOS /bin/bash 3.2.
 
@@ -243,6 +245,136 @@ else
   failed=$((failed + 1))
 fi
 git checkout -q -- crates/x/src/old.rs
+
+# R9 allow-list (TUR-89): CONTRIBUTING.md's COPY list, nothing else.
+for lic in Apache-2.0 BSD-2-Clause BSD-3-Clause ISC Zlib Unlicense MPL-2.0 mit; do
+  expect pass "R9: $lic is on the allow-list" src/a.rs \
+    "// Adapted from github.com/acme/library/a.rs @ $sha ($lic)"
+done
+for lic in CC-BY-4.0 BSL-1.0 SSPL-1.0 BUSL-1.1 NOASSERTION UNLICENSED MIT-0; do
+  expect fail "R9: $lic is not on the allow-list" src/a.rs \
+    "// Adapted from github.com/acme/library/a.rs @ $sha ($lic)"
+done
+expect pass "R9: MIT OR Apache-2.0 passes" src/a.rs \
+  "// Adapted from github.com/acme/library/a.rs @ $sha (MIT OR Apache-2.0)"
+expect fail "R9: GPL-3.0-only AND MIT fails" src/a.rs \
+  "// Adapted from github.com/acme/library/a.rs @ $sha (GPL-3.0-only AND MIT)"
+expect fail "R9: a choice of two licences we may not copy fails" src/a.rs \
+  "// Adapted from github.com/acme/library/a.rs @ $sha (GPL-3.0-only OR CC-BY-4.0)"
+expect pass "R9: (MIT OR GPL) AND Apache-2.0 passes" src/a.rs \
+  "// Adapted from github.com/acme/library/a.rs @ $sha ((MIT OR GPL-3.0-only) AND Apache-2.0)"
+expect pass "R9: WITH is judged by its base licence (allowed)" src/a.rs \
+  "// Adapted from github.com/acme/library/a.rs @ $sha (Apache-2.0 WITH LLVM-exception)"
+expect fail "R9: WITH is judged by its base licence (GPL)" src/a.rs \
+  "// Adapted from github.com/acme/library/a.rs @ $sha (GPL-2.0-only WITH Classpath-exception-2.0)"
+expect fail "R9: an OR choice whose notice names none of the allowed parts fails" src/a.swift \
+  "// Adapted from codeberg.org/someone/tool/A.swift @ $sha (MIT OR GPL-3.0-only)"
+
+# R9 when only the notices file changes (TUR-89): every file with an
+# `Adapted from` line is checked again, so dropping a section fails.
+printf '%s\n' "// Adapted from github.com/acme/library/src/y.rs @ $sha (MIT)" 'fn a() {}' >src/kept.rs
+git add src/kept.rs
+git commit -q -m "kept copy"
+expect9_notices() {
+  local want=$1 name=$2 out code
+  ran=$((ran + 1))
+  out=$(scripts/quality-rules.sh THIRD_PARTY_NOTICES.md 2>&1)
+  code=$?
+  git checkout -q -- THIRD_PARTY_NOTICES.md 2>/dev/null || git checkout -q HEAD -- THIRD_PARTY_NOTICES.md
+  if [ "$want" = pass ] && [ "$code" -eq 0 ] && ! printf '%s' "$out" | grep -q ' R9 '; then
+    echo "ok   $name"
+  elif [ "$want" = fail ] && [ "$code" -eq 2 ] && printf '%s' "$out" | grep -q '^src/kept.rs:1 R9 ERROR: '; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name: wanted $want, got exit $code"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/     /'
+    failed=$((failed + 1))
+  fi
+}
+printf '\nAn unrelated line.\n' >>THIRD_PARTY_NOTICES.md
+expect9_notices pass "R9: an edit to the notices that keeps every section passes"
+awk '/^## Example Library/ { skip = 1; next } /^## / { skip = 0 } !skip' THIRD_PARTY_NOTICES.md >notices.tmp
+mv notices.tmp THIRD_PARTY_NOTICES.md
+expect9_notices fail "R9: dropping a section from the notices fails the file that needs it"
+rm THIRD_PARTY_NOTICES.md
+expect9_notices fail "R9: deleting the notices file fails the file that needs it"
+git rm -q src/kept.rs
+git commit -q -m "drop kept copy"
+
+# R10 --r10-tree (TUR-89): every tracked .rs file, every line.
+# expect10tree NAME FILE LINE LEVEL — the tree run reports FILE:LINE at LEVEL
+# (ERROR, WARN, or none).
+expect10tree() {
+  local name=$1 file=$2 line=$3 level=$4 out hit
+  ran=$((ran + 1))
+  out=$(scripts/quality-rules.sh --r10-tree 2>&1)
+  hit=$(printf '%s\n' "$out" | sed -n "s|^$file:$line R10 \([A-Z]*\): .*|\1|p")
+  if [ "${hit:-none}" = "$level" ]; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name: wanted $level at $file:$line, got ${hit:-none}"
+    printf '%s\n' "$out" | sed 's/^/     /'
+    failed=$((failed + 1))
+  fi
+}
+mkdir -p crates/x/src/platform crates/agent/src src-tauri/src
+printf '#[cfg(unix)]\nfn a() {}\n' >crates/x/src/old.rs
+printf '#[cfg(windows)]\nfn a() {}\n' >crates/x/src/platform/windows.rs
+printf '#[cfg(not(any(target_os = "android", target_os = "ios")))]\nmod tray;\n' >src-tauri/src/lib.rs
+# A known-debt line (R10_DEBT) at its exact place, and a new cfg below it.
+{
+  i=1
+  while [ "$i" -lt 504 ]; do
+    echo "// line $i"
+    i=$((i + 1))
+  done
+  echo '    #[cfg(unix)]'
+  echo '    mod unix_tests {}'
+  echo '    #[cfg(unix)]'
+  echo '    mod more_unix_tests {}'
+} >crates/agent/src/process.rs
+git add -A
+git commit -q -m "tree"
+expect10tree "R10 tree: a cfg already in the base fails" crates/x/src/old.rs 1 ERROR
+expect10tree "R10 tree: the platform module passes" crates/x/src/platform/windows.rs 1 none
+expect10tree "R10 tree: the desktop-vs-mobile gate passes" src-tauri/src/lib.rs 1 none
+expect10tree "R10 tree: a known-debt line warns" crates/agent/src/process.rs 504 WARN
+expect10tree "R10 tree: a new cfg in a known-debt file fails" crates/agent/src/process.rs 506 ERROR
+ran=$((ran + 1))
+if scripts/quality-rules.sh crates/agent/src/process.rs >/dev/null 2>&1; then
+  echo "ok   R10: the known-debt lines pass a normal (added-lines) run"
+else
+  echo "FAIL R10: the known-debt lines pass a normal (added-lines) run"
+  failed=$((failed + 1))
+fi
+git rm -rq crates/x crates/agent src-tauri
+git commit -q -m "untree"
+ran=$((ran + 1))
+if scripts/quality-rules.sh --r10-tree >/dev/null 2>&1; then
+  echo "ok   R10 tree: a clean tree passes"
+else
+  echo "FAIL R10 tree: a clean tree passes"
+  failed=$((failed + 1))
+fi
+
+# R7 (TUR-89): with no sidecar next to the source, the bindings check is a
+# WARN, not an ERROR. Only where rustc can name the host triple.
+if command -v rustc >/dev/null 2>&1 && command -v cargo >/dev/null 2>&1; then
+  ran=$((ran + 1))
+  mkdir -p src/ipc src-tauri/src
+  echo '// generated' >src/ipc/bindings.ts
+  echo 'fn a() {}' >src-tauri/src/a.rs
+  out=$(scripts/quality-rules.sh src-tauri/src/a.rs 2>&1)
+  code=$?
+  rm -rf src/ipc src-tauri
+  if [ "$code" -eq 0 ] && printf '%s' "$out" | grep -q ' R7 WARN: skipped: target/meet-stt-'; then
+    echo "ok   R7: a missing sidecar is a WARN"
+  else
+    echo "FAIL R7: a missing sidecar is a WARN: got exit $code"
+    printf '%s\n' "$out" | sed 's/^/     /'
+    failed=$((failed + 1))
+  fi
+fi
 
 # No notices file at all.
 git rm -q THIRD_PARTY_NOTICES.md
