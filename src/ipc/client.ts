@@ -34,8 +34,6 @@ import type {
   AgentChoice,
   AgentCli,
   AgentTestResult,
-  EngineChoice,
-  EngineChoices,
   EnvironmentView,
   LiveTranscriptSnapshot,
   MeetingBrief,
@@ -443,16 +441,6 @@ export function downloadModel(id: string): Promise<string> {
   return call(() => commands.downloadModel(id));
 }
 
-/** The Settings engine picker (TUR-75), with Rust's disabled reasons. Runs the ~160 ms probe. */
-export function engineChoices(): Promise<EngineChoices> {
-  return call(() => commands.engineChoices());
-}
-
-/** Save `transcription.engine`/`model` in config.jsonc; used from the next recording on. */
-export function setTranscription(engine: EngineChoice, model: string): Promise<EngineChoices> {
-  return call(() => commands.setTranscription(engine, model));
-}
-
 // --- recording ------------------------------------------------------------
 
 export async function recordingStatus(): Promise<RecordingStatus> {
@@ -606,4 +594,6 @@ export async function meetingBrief(title: string): Promise<MeetingBrief> {
 // `subscribe` are exported for such modules.
 export * from "./lifecycle";
 export * from "./logs";
+// The Settings speech engine picker (TUR-75).
+export * from "./speech";
 export { call, subscribe };
