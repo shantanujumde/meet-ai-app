@@ -14,13 +14,15 @@
  */
 
 import { type Event, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
+import { DEFAULT_ROOT_LABEL, NO_MEETINGS_TODAY } from "@/lib/constants";
 import {
   AGENT_RUN_STATUS_EVENT,
   commands,
   DETECTION_PROMPT_EVENT,
   MEETINGS_CHANGED_EVENT,
   MODEL_PROGRESS_EVENT,
+  type meet_ai_lib_calendar_TodayEvent,
+  type meet_ai_lib_calendar_TodaysMeetings,
   type meet_ai_lib_detection_notify_Prompt,
   PERMISSION_STATUS_EVENT,
   RECORDING_STATE_EVENT,
@@ -532,4 +534,30 @@ export type DetectionPrompt = meet_ai_lib_detection_notify_Prompt;
 
 export function onDetectionPrompt(handler: (prompt: DetectionPrompt) => void): () => void {
   return subscribe<DetectionPrompt>(DETECTION_PROMPT_EVENT, handler);
+}
+
+// --- today's meetings (TUR-28) ----------------------------------------------
+
+/** Today's calendar events, plus how often to re-read them and the solo cut-off. */
+export type TodaysMeetings = meet_ai_lib_calendar_TodaysMeetings;
+export type TodayEvent = meet_ai_lib_calendar_TodayEvent;
+
+/**
+ * Today's events from Calendar.app, local midnight to midnight. Rejects with
+ * kind `calendar-denied` when macOS has not granted calendar access — never
+ * an empty list. The first call can wait for the macOS prompt. Without a
+ * backend there is no calendar, so no events.
+ */
+export async function todaysMeetings(): Promise<TodaysMeetings> {
+  if (!hasBackend()) return NO_MEETINGS_TODAY;
+  return call(() => commands.todaysMeetings());
+}
+
+/**
+ * `calendar.refresh_minutes` without reading the calendar, for when
+ * {@link todaysMeetings} failed and so did not say.
+ */
+export async function calendarRefreshMinutes(): Promise<number> {
+  if (!hasBackend()) return NO_MEETINGS_TODAY.refreshMinutes;
+  return call(() => commands.calendarRefreshMinutes());
 }

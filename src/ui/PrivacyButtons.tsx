@@ -18,6 +18,7 @@ import { Button } from "./primitives";
 const LABEL: Record<PrivacyPane, string> = {
   microphone: "Open Microphone",
   "audio-capture": "Open System Audio Recording",
+  calendars: "Open Calendars",
 };
 
 export function PrivacyButtons({ primary }: { primary?: PrivacyPane }) {
@@ -41,13 +42,13 @@ export function PrivacyButtons({ primary }: { primary?: PrivacyPane }) {
   );
 }
 
-async function openSettings(pane: PrivacyPane) {
+/** Open one Settings pane, quietly. The Today pane's denied state uses it too. */
+export async function openSettings(pane: PrivacyPane) {
   try {
     await openPrivacySettings(pane);
   } catch {
     // The deep link failed and so did the fallback to the pane root. The
-    // written steps on the permission screen still work — they name the panes
-    // rather than relying on the button — so this is not worth an error screen
-    // on top of an error screen.
+    // copy next to every button names the pane rather than relying on the
+    // button, so this is not worth an error screen on top of an error screen.
   }
 }

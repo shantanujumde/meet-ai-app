@@ -105,8 +105,11 @@ export type PermissionStatus = {
   denied: PrivacyPane[];
 };
 
-/** Which System Settings pane to deep-link to. */
-export type PrivacyPane = "audio-capture" | "microphone";
+/**
+ * Which System Settings pane to deep-link to. `calendars` is the Today pane's
+ * (TUR-28); audio permission never reports it as denied.
+ */
+export type PrivacyPane = "audio-capture" | "microphone" | "calendars";
 
 export type OnboardingState = {
   /** RFC 3339, or null if onboarding has not been finished. */

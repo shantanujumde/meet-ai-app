@@ -6,6 +6,8 @@
  * are Rust's to decide, and these only describe them until Rust answers.
  */
 
+import type { meet_ai_lib_calendar_TodaysMeetings as TodaysMeetings } from "@/ipc/bindings";
+
 /**
  * The meetings folder as written before `list_meetings` has answered, or when
  * there is no backend. Matches Rust's default root (`config.rs`).
@@ -17,3 +19,15 @@ export const SHORTCUT_LABEL = "⌘⇧R";
 
 /** How long a "Copied" confirmation stays before the button reads normally again. */
 export const COPIED_RESET_MS = 2000;
+
+/**
+ * An empty day at the config defaults (`calendar.refresh_minutes` 15,
+ * `detection.min_attendees` 2, as in `config/`): what `todaysMeetings` answers
+ * with no backend, and what the Today pane times its re-reads by until Rust
+ * says otherwise.
+ */
+export const NO_MEETINGS_TODAY: TodaysMeetings = {
+  events: [],
+  refreshMinutes: 15,
+  minAttendees: 2,
+};

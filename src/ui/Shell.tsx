@@ -99,6 +99,7 @@ export function Shell() {
 const PANE_LABEL: Record<PrivacyPane, string> = {
   microphone: "Microphone",
   "audio-capture": "System Audio Recording",
+  calendars: "Calendars",
 };
 
 /** Name the switch that is off, so the banner says where to go. */

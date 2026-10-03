@@ -230,6 +230,20 @@ export const commands = {
 	 *  [`start_notes_run`].
 	 */
 	setMeetingNotes: (meetingId: string, on: boolean) => typedError<meet_ai_lib_agent_run_MeetingNotes, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_meeting_notes", { meetingId, on })),
+	/**
+	 *  Today's events from every configured calendar, local midnight to
+	 *  midnight. Denied access is the error kind `calendar-denied`, never an
+	 *  empty list.
+	 * 
+	 *  On the blocking pool: EventKit can wait minutes for the permission answer.
+	 */
+	todaysMeetings: () => typedError<meet_ai_lib_calendar_TodaysMeetings, meet_ai_lib_error_UiError>(__TAURI_INVOKE("todays_meetings")),
+	/**
+	 *  `calendar.refresh_minutes` alone: a config read, never the calendar. The
+	 *  Today pane asks for it when [`todays_meetings`] fails, so the re-read
+	 *  timer follows the config even while access is denied.
+	 */
+	calendarRefreshMinutes: () => __TAURI_INVOKE<number>("calendar_refresh_minutes"),
 };
 
 /* Constants */
@@ -532,15 +546,21 @@ export type meet_ai_lib_agent_run_NotesSection = {
  *    Contents/MacOS/SecurityPrivacyExtension | grep -oE 'Privacy_[A-Za-z0-9]+'
  *  ```
  * 
- *  `Privacy_AudioCapture` and `Privacy_Microphone` are both in that table. The
- *  pane root stays here as the third entry because an unknown anchor lands on
- *  the root anyway, and because this list will be wrong on some future macOS.
+ *  `Privacy_AudioCapture`, `Privacy_Microphone` and `Privacy_Calendars` are
+ *  all in that table. The pane root stays as the fallback because an unknown
+ *  anchor lands on the root anyway, and because this list will be wrong on
+ *  some future macOS.
  */
 export type meet_ai_lib_permission_Pane = 
 /**  "System Audio Recording Only" — the tap permission. */
 "audio-capture" | 
 /**  The microphone half, which is a separate grant. */
-"microphone";
+"microphone" | 
+/**
+ *  Calendar access, for the Today pane (TUR-28). Never in an audio
+ *  [`Status::denied`] list.
+ */
+"calendars";
 
 /**
  *  Where the recorder is right now.
@@ -794,6 +814,32 @@ export type meet_ai_lib_tickets_TicketSummary = {
 	externalId: string | null,
 	/**  The issue's web address. */
 	externalUrl: string | null,
+};
+
+/**  One of today's events, as the Today pane shows it. */
+export type meet_ai_lib_calendar_TodayEvent = {
+	id: string,
+	title: string,
+	/**  Start, in milliseconds since the Unix epoch. */
+	startMs: number,
+	/**  End, in milliseconds since the Unix epoch. */
+	endMs: number,
+	/**  People invited, rooms not counted. */
+	attendees: number,
+	/**
+	 *  Fewer attendees than `detection.min_attendees`: a focus block or a
+	 *  reminder, not a meeting. Shown greyed and never acted on.
+	 */
+	solo: boolean,
+};
+
+/**  What [`todays_meetings`] answers. */
+export type meet_ai_lib_calendar_TodaysMeetings = {
+	events: meet_ai_lib_calendar_TodayEvent[],
+	/**  `calendar.refresh_minutes`: how often the pane asks again. */
+	refreshMinutes: number,
+	/**  `detection.min_attendees`: below it an event is `solo`. */
+	minAttendees: number,
 };
 
 /**  One MCP server the agent's CLI lists. */

@@ -33,6 +33,7 @@ import {
 import { SearchBox } from "@/ui/SearchBox";
 import { SearchResults } from "@/ui/SearchResults";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
+import { TodayPane } from "@/ui/TodayPane";
 
 export function Meetings() {
   const navigate = useNavigate();
@@ -49,6 +50,7 @@ export function Meetings() {
   if (loading && list === null) {
     return (
       <div className="page">
+        <TodayPane />
         <Checking label="Reading your meetings folder…" />
       </div>
     );
@@ -57,6 +59,7 @@ export function Meetings() {
   if (error) {
     return (
       <div className="page">
+        <TodayPane />
         <ErrorState error={error} onRemedy={() => void reload()} />
       </div>
     );
@@ -67,6 +70,7 @@ export function Meetings() {
   if (meetings.length === 0) {
     return (
       <div className="page page--narrow">
+        <TodayPane />
         <EmptyState
           title="No meetings yet"
           body={
@@ -104,6 +108,8 @@ export function Meetings() {
           <span>{list?.root}</span>
         </p>
       </header>
+
+      <TodayPane />
 
       <SearchBox value={query} onChange={setQuery} />
 
