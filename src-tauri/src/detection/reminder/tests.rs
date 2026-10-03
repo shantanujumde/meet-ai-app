@@ -34,6 +34,7 @@ fn invite(id: &str, start: DateTime<Utc>, attendees: usize) -> RawEvent {
         all_day: false,
         attendees: people(attendees),
         ical_uid: None,
+        join_url: None,
     }
 }
 

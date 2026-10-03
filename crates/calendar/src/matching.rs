@@ -75,6 +75,7 @@ mod tests {
             attendees,
             attendee_names: Vec::new(),
             ical_uid: None,
+            join_url: None,
         }
     }
 

@@ -37,6 +37,8 @@ use objc2_event_kit::{
 use objc2_foundation::{NSDate, NSError};
 
 #[cfg(target_os = "macos")]
+use crate::join_url::extract_join_url;
+#[cfg(target_os = "macos")]
 use crate::raw::{RawAttendee, RawEvent, email_from_url, occurrence_id, to_events};
 use crate::{CalendarProvider, Error, Event};
 
@@ -232,6 +234,14 @@ fn raw_event(event: &EKEvent) -> Option<RawEvent> {
             .attendees()
             .map(|list| list.iter().map(|p| raw_attendee(&p)).collect())
             .unwrap_or_default();
+        // TUR-77: the call link, from the URL, else the location, else the notes.
+        let link = event
+            .URL()
+            .and_then(|u| u.absoluteString())
+            .map(|u| u.to_string());
+        let location = event.location().map(|l| l.to_string());
+        let notes = event.notes().map(|n| n.to_string());
+        let join_url = extract_join_url(link.as_deref(), location.as_deref(), notes.as_deref());
         Some(RawEvent {
             id: occurrence_id(&base, occurrence),
             title: event.title().to_string(),
@@ -242,6 +252,7 @@ fn raw_event(event: &EKEvent) -> Option<RawEvent> {
             // EventKit's external identifier is not always the iCalendar UID
             // (Exchange gives its own), so none rather than a wrong one.
             ical_uid: None,
+            join_url,
         })
     }
 }

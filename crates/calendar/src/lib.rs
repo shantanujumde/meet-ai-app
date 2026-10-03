@@ -34,6 +34,8 @@ pub mod eventkit;
 #[cfg(feature = "fake")]
 pub mod fake;
 pub mod google;
+// TUR-77: the video-call link in an event's URL, location or notes.
+pub mod join_url;
 pub mod matching;
 pub mod microsoft;
 pub mod oauth;
@@ -65,6 +67,11 @@ pub struct Event {
     /// once (TUR-49). `None` when the provider does not give one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ical_uid: Option<String>,
+    /// The link that joins the call (Zoom, Meet, Teams, Webex, a Slack
+    /// huddle), if the event has one (TUR-77). EventKit finds it with
+    /// [`join_url::extract_join_url`]; the menu bar's **Join** opens it.
+    #[serde(default)]
+    pub join_url: Option<String>,
 }
 
 /// A source of calendar events.

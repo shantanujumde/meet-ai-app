@@ -26,6 +26,9 @@ pub struct RawEvent {
     /// The iCalendar UID, when the provider gives one; see [`Event::ical_uid`].
     #[serde(default)]
     pub ical_uid: Option<String>,
+    /// The link that joins the call, if the provider found one (TUR-77).
+    #[serde(default)]
+    pub join_url: Option<String>,
 }
 
 /// One invitee as a provider read it.
@@ -67,6 +70,7 @@ pub fn to_events(
                 start: e.start,
                 end: e.end,
                 ical_uid: e.ical_uid,
+                join_url: e.join_url,
             }
         })
         .collect();
@@ -142,6 +146,7 @@ mod tests {
             all_day: false,
             attendees: vec![],
             ical_uid: None,
+            join_url: None,
         }
     }
 
@@ -172,6 +177,7 @@ mod tests {
                 attendees: 1,
                 attendee_names: vec!["Priya".into()],
                 ical_uid: None,
+                join_url: None,
             }]
         );
     }

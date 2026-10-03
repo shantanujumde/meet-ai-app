@@ -28,6 +28,7 @@ fn raw(id: &str, start: &str, end: &str, people: usize) -> RawEvent {
         all_day: false,
         attendees: (0..people).map(|i| person(&format!("P{i}"))).collect(),
         ical_uid: None,
+        join_url: None,
     }
 }
 

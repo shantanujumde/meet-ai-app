@@ -48,6 +48,7 @@ fn event(id: &str, title: &str, start: DateTime<Utc>, minutes: i64, people: &[&s
         all_day: false,
         attendees: people.iter().map(|name| person(name)).collect(),
         ical_uid: None,
+        join_url: None,
     }
 }
 

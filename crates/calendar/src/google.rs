@@ -224,6 +224,7 @@ fn raw_event(event: types::Event) -> Option<RawEvent> {
         all_day: false,
         attendees,
         ical_uid: event.ical_uid,
+        join_url: None,
     };
     Some(raw)
 }
