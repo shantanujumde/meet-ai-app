@@ -86,10 +86,15 @@ pub fn with_transcription(
     engine: Preference,
     model: &str,
 ) -> Result<String, ConfigError> {
-    let engine = match engine {
-        Preference::Auto => "auto",
-        Preference::AppleSpeech => "apple-speech",
-        Preference::Whisper => "whisper",
+    // Preference's own serde name, the spelling the reader expects, so the
+    // two cannot drift apart.
+    let engine = match serde_json::to_value(engine) {
+        Ok(serde_json::Value::String(name)) => name,
+        _ => {
+            return Err(ConfigError::Invalid(format!(
+                "transcription.engine {engine:?} has no name to write"
+            )));
+        }
     };
     with_section(
         raw,
