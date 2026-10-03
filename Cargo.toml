@@ -42,6 +42,19 @@ rubato = "=5.0.0"
 # Tier 1, zero-auth (TUR-26). Same 0.3.2 line as the other objc2-* framework
 # crates. No default features: those pull AppKit, MapKit and CoreLocation.
 objc2-event-kit = { version = "=0.3.2", default-features = false }
+# Google + Microsoft sign-in (TUR-44, SPEC A12). `oauth2` without default
+# features: those pull reqwest, and `crates/calendar` must keep no network
+# client of its own, so `cargo check --target x86_64-pc-windows-msvc -p
+# calendar` stays free of ring's C build. The app turns on `reqwest-blocking`
+# in src-tauri, where the HTTP client lives.
+oauth2 = { version = "=5.0.0", default-features = false }
+# v4: a thin wrapper over the per-OS stores (Keychain, Windows Credential
+# Manager, Secret Service through zbus). Default feature `v1` is the simple
+# `Entry` API. LLMs know v2/v3; read docs.rs for 4.2 first.
+keyring = "=4.2.0"
+# The account label is read from the id_token's payload (base64url JSON).
+# Same version oauth2 itself already pulls.
+base64 = "=0.22.1"
 
 # --- speech-to-text (SETUP.md §2.3) ---
 whisper-rs = "=0.16.0"
@@ -92,6 +105,9 @@ tauri-plugin-fs = "=2.5.2"
 tauri-plugin-global-shortcut = "=2.3.2"
 tauri-plugin-log = "=2.9.1"
 tauri-plugin-notification = "=2.4.0"
+# The loopback listener for calendar sign-in (TUR-44). Only its Rust API is
+# used; the JS plugin is never registered.
+tauri-plugin-oauth = "=2.1.0"
 tauri-plugin-opener = "=2.5.5"
 tauri-plugin-single-instance = "=2.4.4"
 tauri-plugin-updater = "=2.11.0"

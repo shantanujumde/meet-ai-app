@@ -53,6 +53,13 @@ tauri-plugin-fs.workspace = true
 tauri-plugin-log.workspace = true
 tauri-plugin-notification.workspace = true
 tauri-plugin-opener.workspace = true
+# Calendar sign-in (TUR-44): the loopback listener, and the one HTTP client the
+# token exchange and refresh go through. `reqwest-blocking` makes oauth2's own
+# `SyncHttpClient` impl for `reqwest::blocking::Client` available; the calls
+# run on the blocking pool, never on the async runtime.
+oauth2 = { workspace = true, features = ["reqwest-blocking"] }
+reqwest = { workspace = true, features = ["blocking"] }
+tauri-plugin-oauth.workspace = true
 tokio = { workspace = true, features = [
   "rt-multi-thread",
   "macros",

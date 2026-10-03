@@ -1,5 +1,6 @@
-//! The `calendar` section of `config.jsonc` (SPEC §3.5, providers per L13):
-//! which calendars the app reads upcoming meetings from, and how often.
+//! The `calendar` section of `config.jsonc` (SPEC §3.5, providers per L13 as
+//! amended by A12): which calendars the app reads upcoming meetings from, how
+//! often, and the OAuth clients for Google and Microsoft sign-in (SPEC §8.1).
 //!
 //! An unknown provider name is an error, never silently dropped: the same rule
 //! A4 set for `transcription.engine`. If you wrote `"googel"`, you want to be
@@ -11,6 +12,12 @@
 //!
 //! The app's `CalendarState` (TUR-28) calls [`calendar`] and
 //! [`CalendarConfig::available_providers`] on every read.
+//!
+//! A12 (2026-10-03) dropped ICS: `"ics"` is now an unknown provider name, and
+//! `ics_urls` is still parsed, so an old config loads, but nothing reads it.
+//! Sign-in (TUR-44) reads [`CalendarConfig::google`] and
+//! [`CalendarConfig::microsoft`] on every sign-in and refresh, so pasting a
+//! client id needs no restart.
 
 use std::fmt;
 
@@ -29,13 +36,11 @@ pub enum Provider {
     Google,
     /// Microsoft Graph over OAuth.
     Microsoft,
-    /// The feeds listed in `calendar.ics_urls`.
-    Ics,
 }
 
 impl Provider {
     /// Every value, in the order `config.schema.json` lists them.
-    pub const ALL: [Self; 4] = [Self::EventKit, Self::Google, Self::Microsoft, Self::Ics];
+    pub const ALL: [Self; 3] = [Self::EventKit, Self::Google, Self::Microsoft];
 
     /// The spelling in `config.jsonc`.
     pub fn as_str(self) -> &'static str {
@@ -43,12 +48,11 @@ impl Provider {
             Self::EventKit => "eventkit",
             Self::Google => "google",
             Self::Microsoft => "microsoft",
-            Self::Ics => "ics",
         }
     }
 
     /// Whether this build can read the provider. Only EventKit is built so
-    /// far; the other three are valid names that are skipped with a log line.
+    /// far; the other two are valid names that are skipped with a log line.
     pub fn is_available(self) -> bool {
         matches!(self, Self::EventKit)
     }
@@ -77,10 +81,56 @@ impl fmt::Display for Provider {
 pub struct CalendarConfig {
     /// The sources to read, in the order written, without repeats.
     pub providers: Vec<Provider>,
-    /// `.ics` feed links, read by the `ics` provider.
+    /// `.ics` feed links. Ignored since A12 dropped ICS; kept so old configs
+    /// still load.
     pub ics_urls: Vec<String>,
     /// How often to re-read the calendars, in minutes. Never 0.
     pub refresh_minutes: u32,
+    /// `calendar.google`: the OAuth client for Google sign-in.
+    pub google: OAuthClientConfig,
+    /// `calendar.microsoft`: the OAuth client for Microsoft sign-in. Never
+    /// has a `client_secret` (a public client).
+    pub microsoft: OAuthClientConfig,
+}
+
+/// `calendar.google` / `calendar.microsoft`: an OAuth client registered by
+/// whoever builds or runs the app (SETUP.md, "Calendar sign-in"). `None` (or
+/// an empty string) means not set up, and that provider's sign-in says so.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct OAuthClientConfig {
+    pub client_id: Option<String>,
+    /// Google desktop clients only: a client secret that Google itself calls
+    /// non-secret, which must still be sent with each token request.
+    pub client_secret: Option<String>,
+}
+
+impl fmt::Debug for OAuthClientConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthClientConfig")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &self.client_secret.as_ref().map(|_| "…"))
+            .finish()
+    }
+}
+
+/// `calendar.google` as written.
+#[derive(Debug, Default, Deserialize)]
+struct RawGoogle {
+    client_id: Option<String>,
+    client_secret: Option<String>,
+}
+
+/// `calendar.microsoft` as written. No secret: a public client.
+#[derive(Debug, Default, Deserialize)]
+struct RawMicrosoft {
+    client_id: Option<String>,
+}
+
+/// A set, non-blank value, trimmed.
+fn non_blank(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 impl Default for CalendarConfig {
@@ -89,13 +139,15 @@ impl Default for CalendarConfig {
             providers: vec![Provider::EventKit],
             ics_urls: Vec::new(),
             refresh_minutes: 15,
+            google: OAuthClientConfig::default(),
+            microsoft: OAuthClientConfig::default(),
         }
     }
 }
 
 impl CalendarConfig {
     /// The providers this build can read. A known provider that is not built
-    /// yet (google, microsoft, ics) is logged as "not available yet" and
+    /// yet (google, microsoft) is logged as "not available yet" and
     /// skipped, so the rest still work.
     pub fn available_providers(&self) -> Vec<Provider> {
         self.providers
@@ -120,6 +172,8 @@ struct RawCalendar {
     providers: Option<Vec<String>>,
     ics_urls: Option<Vec<String>>,
     refresh_minutes: Option<u32>,
+    google: Option<RawGoogle>,
+    microsoft: Option<RawMicrosoft>,
 }
 
 /// `calendar` from the text of `config.jsonc`. Empty text, or no `calendar`
@@ -153,6 +207,20 @@ pub fn parse_calendar(raw: &str) -> Result<CalendarConfig, ConfigError> {
         providers,
         ics_urls: calendar.ics_urls.unwrap_or(defaults.ics_urls),
         refresh_minutes,
+        google: calendar
+            .google
+            .map(|google| OAuthClientConfig {
+                client_id: non_blank(google.client_id),
+                client_secret: non_blank(google.client_secret),
+            })
+            .unwrap_or_default(),
+        microsoft: calendar
+            .microsoft
+            .map(|microsoft| OAuthClientConfig {
+                client_id: non_blank(microsoft.client_id),
+                client_secret: None,
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -182,6 +250,8 @@ mod tests {
             providers: vec![Provider::EventKit],
             ics_urls: vec![],
             refresh_minutes: 15,
+            google: OAuthClientConfig::default(),
+            microsoft: OAuthClientConfig::default(),
         };
         assert_eq!(CalendarConfig::default(), defaults);
         for raw in [
@@ -201,9 +271,14 @@ mod tests {
             r#"{
                 // JSONC: comments allowed
                 "calendar": {
-                    "providers": ["ics", "eventkit", "google", "microsoft"],
+                    "providers": ["microsoft", "eventkit", "google"],
                     "ics_urls": ["https://example.com/a.ics"],
-                    "refresh_minutes": 5
+                    "refresh_minutes": 5,
+                    "google": {
+                        "client_id": " 123-abc.apps.googleusercontent.com ",
+                        "client_secret": "GOCSPX-not-secret"
+                    },
+                    "microsoft": { "client_id": "00000000-0000-0000-0000-000000000000" }
                 }
             }"#,
         )
@@ -211,14 +286,17 @@ mod tests {
         assert_eq!(
             calendar,
             CalendarConfig {
-                providers: vec![
-                    Provider::Ics,
-                    Provider::EventKit,
-                    Provider::Google,
-                    Provider::Microsoft
-                ],
+                providers: vec![Provider::Microsoft, Provider::EventKit, Provider::Google],
                 ics_urls: vec!["https://example.com/a.ics".into()],
                 refresh_minutes: 5,
+                google: OAuthClientConfig {
+                    client_id: Some("123-abc.apps.googleusercontent.com".into()),
+                    client_secret: Some("GOCSPX-not-secret".into()),
+                },
+                microsoft: OAuthClientConfig {
+                    client_id: Some("00000000-0000-0000-0000-000000000000".into()),
+                    client_secret: None,
+                },
             }
         );
     }
@@ -254,9 +332,73 @@ mod tests {
             "{message}"
         );
         assert!(
-            message.contains("eventkit, google, microsoft, ics"),
+            message.ends_with("is not one of eventkit, google, microsoft"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn ics_was_dropped_so_it_is_an_unknown_provider_but_old_ics_urls_still_load() {
+        let error =
+            parse_calendar(r#"{ "calendar": { "providers": ["eventkit", "ics"] } }"#).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("calendar.providers \"ics\""), "{message}");
+        assert!(
+            message.ends_with("eventkit, google, microsoft"),
+            "{message}"
+        );
+
+        let calendar =
+            parse_calendar(r#"{ "calendar": { "ics_urls": ["https://example.com/a.ics"] } }"#)
+                .unwrap();
+        assert_eq!(calendar.providers, vec![Provider::EventKit]);
+        assert_eq!(
+            calendar.ics_urls,
+            vec!["https://example.com/a.ics".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_blank_client_id_is_not_set_and_microsoft_takes_no_secret() {
+        let calendar = parse_calendar(
+            r#"{ "calendar": {
+                "google": { "client_id": "   ", "client_secret": "" },
+                "microsoft": { "client_id": "ms-id", "client_secret": "ignored" }
+            } }"#,
+        )
+        .unwrap();
+        assert_eq!(calendar.google, OAuthClientConfig::default());
+        assert_eq!(
+            calendar.microsoft,
+            OAuthClientConfig {
+                client_id: Some("ms-id".into()),
+                client_secret: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_bad_client_id_is_logged_and_the_defaults_used() {
+        for raw in [
+            r#"{ "calendar": { "google": { "client_id": 5 } } }"#,
+            r#"{ "calendar": { "microsoft": "ms-id" } }"#,
+        ] {
+            assert!(parse_calendar(raw).is_err(), "{raw:?}");
+            assert_eq!(
+                calendar_or_defaults(raw),
+                CalendarConfig::default(),
+                "{raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_client_secret_is_not_printed() {
+        let client = OAuthClientConfig {
+            client_id: Some("id".into()),
+            client_secret: Some("GOCSPX-not-secret".into()),
+        };
+        assert!(!format!("{client:?}").contains("GOCSPX"));
     }
 
     #[test]
@@ -281,11 +423,11 @@ mod tests {
     #[test]
     fn a_known_but_unbuilt_provider_is_skipped_not_rejected() {
         let calendar = parse_calendar(
-            r#"{ "calendar": { "providers": ["google", "eventkit", "microsoft", "ics"] } }"#,
+            r#"{ "calendar": { "providers": ["google", "eventkit", "microsoft"] } }"#,
         )
         .unwrap();
         assert_eq!(calendar.available_providers(), vec![Provider::EventKit]);
-        let calendar = parse_calendar(r#"{ "calendar": { "providers": ["ics"] } }"#).unwrap();
+        let calendar = parse_calendar(r#"{ "calendar": { "providers": ["google"] } }"#).unwrap();
         assert!(calendar.available_providers().is_empty());
     }
 

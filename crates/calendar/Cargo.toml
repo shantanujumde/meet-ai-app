@@ -9,13 +9,20 @@ version.workspace = true
 [features]
 # `calendar::fake::FakeProvider`: fixture events or a denied calendar, for tests
 # that must not touch Calendar.app (SPEC §6). Never on in the app.
-fake = ["dep:serde_json"]
+fake = []
 
 [dependencies]
 chrono.workspace = true
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true, optional = true }
 thiserror.workspace = true
+# Google + Microsoft sign-in (TUR-44, src/oauth/). These are on every OS, so the
+# "still deliberately absent" note below is out of date for oauth2 and keyring.
+# No HTTP client here: the app passes one in (`oauth::HttpClient`).
+base64.workspace = true
+keyring.workspace = true
+oauth2.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
 
 # Tier 1, EventKit (TUR-26). SPEC §8.2: the only OS-specific code in this crate
 # is src/eventkit.rs, and gating the dependencies here is what keeps

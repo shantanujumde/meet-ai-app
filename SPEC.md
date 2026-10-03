@@ -544,6 +544,24 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A12 — 2026-10-03 · Calendars: EventKit on macOS + Google and Microsoft sign-in on every OS; no ICS (amends L13, §2.7, §5 Phase 5b)
+
+**Decision (2026-10-03):** L13 becomes **"EventKit on macOS + Google + Microsoft sign-in; no ICS."** EventKit stays the zero-auth default on macOS. Google and Microsoft sign-in are built for macOS, Windows and Linux alike. The ICS URL tier (§2.7 tier 4, the `ics` provider, `calendar.ics_urls`) is dropped.
+
+**Why.** Windows and Linux have no EventKit, so without a sign-in they have no calendar at all; the two sign-ins are what give them one, and they also cover a Mac whose Calendar.app was never set up. Once both exist, ICS adds little: nearly every user's calendar is Google or Microsoft, a private ICS link is a bearer secret pasted into a config file, and its feed is often hours stale. One fewer provider to build and test.
+
+**What changes.**
+
+| Where | Before | After |
+|---|---|---|
+| L13 | EventKit + Google OAuth + Microsoft Graph OAuth + ICS URL | EventKit (macOS) + Google + Microsoft sign-in; no ICS |
+| §2.7 | four tiers | tiers 1–3. Security notes stand, with two corrections: Google desktop clients do get a client secret, which Google calls non-secret and which must be sent (it lives in `config.jsonc`, never in the binary); and the refresh token goes to the **OS** keystore through `keyring` 4 (Keychain, Windows Credential Manager, Secret Service), not only the macOS Keychain. On Linux with no Secret Service the sign-in still works but lasts only until the app quits, and the app says so |
+| §2.3 | `icalendar` row; `keyring` 3.x | no `icalendar`; `keyring` 4.2 (SETUP.md §2.5) |
+| §3.5 | `"ics"` provider, `ics_urls` | `"ics"` is an unknown provider name (an error naming the allowed list, per A4's rule). `ics_urls` is still accepted so old configs load, and ignored. New keys `calendar.google.client_id`, `calendar.google.client_secret`, `calendar.microsoft.client_id` (§8.1) |
+| §5 Phase 5b | Microsoft, then Google, then ICS URL | Microsoft, then Google. The gate is unchanged, and is run on all three OSes |
+
+**Built in TUR-44:** the shared sign-in (`crates/calendar/src/oauth/`, `src-tauri/src/calendar/signin.rs`): PKCE S256, loopback redirect `http://127.0.0.1:<random port>/callback`, `state` checked on every callback, refresh token only in the keystore, access tokens in memory. The calendar providers on top of it are TUR-47 (Microsoft) and TUR-48 (Google).
+
 ### A11 — 2026-10-01 · The app runs the user's agent itself; the clipboard step goes (amends L9, L10, §2.8, §3.1, §3.2, §3.3, §3.5, §5 Phase 4; L11 unchanged)
 
 **Decision:** when a call ends, meet-ai starts the agent CLI the user already has installed and signed in to (Claude Code or Codex) as a background process, with no window. It passes the transcript and an output schema, gets back structured notes and tasks, checks them, and writes `meeting.md` and `tickets/TICK-NNNN.md` itself. The user no longer copies a prompt, pastes it into another app and waits for files to appear. The pattern is taken from t3code (`pingdotgg/t3code`, MIT, `apps/server/src/textGeneration/`), which drives the same CLIs the same way.
