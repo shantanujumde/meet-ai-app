@@ -56,6 +56,30 @@ pub const LISTEN_TAIL_MILLIS: u32 = 600;
 /// the one retry that protects against a slow-settling tap.
 pub const MAX_PLAYS: u32 = 2;
 
+/// How long a live check waits, in wall time, for the tap's first frame
+/// before giving up on it (TUR-72): a tap that never delivers anything must
+/// not hang the check, and a slow start (~3 s seen on a granted Mac) must
+/// not count against the listen time.
+pub const FIRST_FRAME_TIMEOUT_MILLIS: u32 = 5000;
+
+/// Wall time a live check allows on top of [`worst_case_millis`], counted
+/// from the first frame (TUR-72): covers a tap that delivers in bursts or a
+/// little slower than real time, so only a stalled tap hits the deadline.
+pub const DEADLINE_HEADROOM_MILLIS: u32 = 2000;
+
+/// Why [`play_until_heard`] returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finish {
+    /// The chime was heard.
+    Heard,
+    /// The last allowed play was listened to for its whole window, unheard:
+    /// the only ending that can honestly be called a denial.
+    Window,
+    /// `pull` returned `None` first: listening was cut short (or never got
+    /// to a play at all).
+    Pulled,
+}
+
 /// How one check went.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Attempt {
@@ -69,6 +93,51 @@ pub struct Attempt {
     /// all, which the caller should report as unmeasurable rather than as a
     /// failed check.
     pub captured: usize,
+    /// Why the check ended.
+    pub finish: Finish,
+    /// Captured samples since the latest play started (0 with no play).
+    pub listened: usize,
+    /// Peak and RMS of everything captured since the first play (0 with no
+    /// play). All zeros means the tap delivered bit-exact silence, the
+    /// measured denial; real audio without the chime is something else.
+    pub peak: f32,
+    pub rms: f32,
+}
+
+impl Attempt {
+    fn new(
+        reading: Reading,
+        plays: u32,
+        captured: &[f32],
+        first_play: usize,
+        play_start: usize,
+        finish: Finish,
+    ) -> Self {
+        let after = if plays == 0 {
+            &[][..]
+        } else {
+            &captured[first_play..]
+        };
+        let peak = after.iter().fold(0.0f32, |peak, s| peak.max(s.abs()));
+        let rms = if after.is_empty() {
+            0.0
+        } else {
+            (after.iter().map(|s| s * s).sum::<f32>() / after.len() as f32).sqrt()
+        };
+        Self {
+            reading,
+            plays,
+            captured: captured.len(),
+            finish,
+            listened: if plays == 0 {
+                0
+            } else {
+                captured.len() - play_start
+            },
+            peak,
+            rms,
+        }
+    }
 }
 
 /// Captured-audio length, in milliseconds, after which [`play_until_heard`]
@@ -121,6 +190,7 @@ pub fn play_until_heard(
     // Where the latest play started, in captured samples. Zero until the
     // first play, so a check that ends before any play looks at everything.
     let mut play_start = 0;
+    let mut first_play = 0;
     let mut listening = false;
 
     while let Some(chunk) = pull() {
@@ -129,19 +199,25 @@ pub fn play_until_heard(
         if listening {
             let reading = heard(&captured[play_start..], sample_rate);
             if reading.present {
-                return Attempt {
+                return Attempt::new(
                     reading,
                     plays,
-                    captured: captured.len(),
-                };
+                    &captured,
+                    first_play,
+                    play_start,
+                    Finish::Heard,
+                );
             }
             if captured.len() - play_start >= listen_window {
                 if plays >= MAX_PLAYS {
-                    return Attempt {
+                    return Attempt::new(
                         reading,
                         plays,
-                        captured: captured.len(),
-                    };
+                        &captured,
+                        first_play,
+                        play_start,
+                        Finish::Window,
+                    );
                 }
                 listening = false;
             }
@@ -152,14 +228,152 @@ pub fn play_until_heard(
             play();
             plays += 1;
             play_start = captured.len();
+            if plays == 1 {
+                first_play = play_start;
+            }
             listening = true;
         }
     }
 
-    Attempt {
-        reading: heard(&captured[play_start..], sample_rate),
+    let reading = heard(&captured[play_start..], sample_rate);
+    Attempt::new(
+        reading,
         plays,
-        captured: captured.len(),
+        &captured,
+        first_play,
+        play_start,
+        Finish::Pulled,
+    )
+}
+
+/// A live check's clock, in time since the check started. Real checks use
+/// [`WallClock`]; tests pass a fake one that the fake feed advances.
+pub trait Clock {
+    fn elapsed(&self) -> std::time::Duration;
+}
+
+/// [`Clock`] on the real monotonic clock.
+pub struct WallClock(std::time::Instant);
+
+impl WallClock {
+    pub fn start() -> Self {
+        Self(std::time::Instant::now())
+    }
+}
+
+impl Clock for WallClock {
+    fn elapsed(&self) -> std::time::Duration {
+        self.0.elapsed()
+    }
+}
+
+/// Why a live check stopped listening, for the log line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ended {
+    /// The chime came back.
+    Heard,
+    /// Every allowed play was listened to in full; the chime never came back.
+    Window,
+    /// The wall-clock safety net ran out first: no first frame within
+    /// [`FIRST_FRAME_TIMEOUT_MILLIS`], or the tap stalled after it.
+    Deadline,
+    /// The tap's feed disconnected (the tap stopped).
+    TapClosed,
+}
+
+impl Ended {
+    /// The `ended=` value in the log line.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Heard => "heard",
+            Self::Window => "window",
+            Self::Deadline => "deadline",
+            Self::TapClosed => "tap_closed",
+        }
+    }
+}
+
+/// What one live check saw: the attempt plus the wall-clock facts around it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Listened {
+    pub attempt: Attempt,
+    pub ended: Ended,
+    /// Wall time from the start of listening to the first non-empty chunk;
+    /// `None` if none ever came.
+    pub first_frame: Option<std::time::Duration>,
+}
+
+impl Listened {
+    /// Whether every allowed play was listened to for its whole window, so
+    /// a missing chime really means the tap is not passing our audio.
+    pub fn listened_fully(&self) -> bool {
+        self.attempt.finish == Finish::Window
+    }
+}
+
+/// Run [`play_until_heard`] against a live feed of 16 kHz `i16` frames.
+///
+/// `recv(timeout)` waits at most `timeout` for the next chunk, like
+/// [`crate::tee::TeeFeed::recv_timeout`]. The wall-clock safety net has two
+/// parts, so a late start can never eat the listen time (TUR-72): up to
+/// [`FIRST_FRAME_TIMEOUT_MILLIS`] for the first frame, then
+/// [`worst_case_millis`] + [`DEADLINE_HEADROOM_MILLIS`] counted from that
+/// first frame.
+pub fn listen_live(
+    sample_rate: u32,
+    clock: &impl Clock,
+    play: impl FnMut(),
+    mut recv: impl FnMut(std::time::Duration) -> Result<Vec<i16>, std::sync::mpsc::RecvTimeoutError>,
+) -> Listened {
+    use std::sync::mpsc::RecvTimeoutError;
+    use std::time::Duration;
+
+    let first_frame_limit = Duration::from_millis(u64::from(FIRST_FRAME_TIMEOUT_MILLIS));
+    let after_first =
+        Duration::from_millis(u64::from(worst_case_millis() + DEADLINE_HEADROOM_MILLIS));
+    let mut first_frame: Option<Duration> = None;
+    let mut cut: Option<Ended> = None;
+
+    let pull = || loop {
+        let limit = first_frame.map_or(first_frame_limit, |at| at + after_first);
+        let left = limit.saturating_sub(clock.elapsed());
+        if left.is_zero() {
+            cut = Some(Ended::Deadline);
+            return None;
+        }
+        match recv(left) {
+            Ok(frames) => {
+                if frames.is_empty() {
+                    continue;
+                }
+                if first_frame.is_none() {
+                    first_frame = Some(clock.elapsed());
+                }
+                return Some(
+                    frames
+                        .into_iter()
+                        .map(|s| f32::from(s) / f32::from(i16::MAX))
+                        .collect(),
+                );
+            }
+            // Re-check the deadline: a timeout normally means it has passed.
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                cut = Some(Ended::TapClosed);
+                return None;
+            }
+        }
+    };
+    let attempt = play_until_heard(sample_rate, play, pull);
+    let ended = match attempt.finish {
+        Finish::Heard => Ended::Heard,
+        Finish::Window => Ended::Window,
+        Finish::Pulled => cut.unwrap_or(Ended::TapClosed),
+    };
+    Listened {
+        attempt,
+        ended,
+        first_frame,
     }
 }
 

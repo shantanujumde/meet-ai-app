@@ -43,12 +43,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::mic::MicSource;
 use crate::{AudioSource, Error, chime};
+
+pub mod verdict;
 
 #[cfg(target_os = "macos")]
 use crate::macos::tap::SystemSource;
@@ -214,8 +215,9 @@ pub fn check_mic() -> ChannelResult {
 /// settle, plays the chime once, listens, and returns as soon as it is
 /// heard. If it is not, it plays once more — at most [`chime::MAX_PLAYS`]
 /// plays in all — so a denied tap costs about [`chime::worst_case_millis`].
-/// A wall-clock deadline a little past that ends the check if the tap stops
-/// delivering audio.
+/// A wall-clock deadline a little past that, counted from the tap's first
+/// frame, ends the check if the tap stops delivering audio; a check cut
+/// short that way is unmeasurable, never denied (TUR-72).
 #[cfg(target_os = "macos")]
 pub fn check_system() -> ChannelResult {
     let host = cpal::default_host();
@@ -310,60 +312,18 @@ pub fn check_system() -> ChannelResult {
     }
 
     // Listen to the tap live instead of sleeping and reading the WAV back.
-    // `play_until_heard` keeps time by captured samples, so a tap that stops
-    // delivering would leave it waiting forever; the wall-clock deadline is
-    // the safety net for that, with headroom over its own worst case.
-    let deadline =
-        Instant::now() + Duration::from_millis(u64::from(chime::worst_case_millis()) + 1500);
+    // `play_until_heard` keeps time by captured samples; `listen_live` adds
+    // the wall-clock safety net, counted from the tap's first frame so a
+    // slow start cannot eat the listen time (TUR-72).
+    let clock = chime::WallClock::start();
     let play = || restart.store(true, Ordering::Release);
-    let pull = || {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return None;
-        }
-        // A timeout or a disconnected tap both end the listening.
-        feed.recv_timeout(left).ok().map(|frames| {
-            frames
-                .into_iter()
-                .map(|s| f32::from(s) / f32::from(i16::MAX))
-                .collect()
-        })
-    };
-    let attempt = chime::play_until_heard(16_000, play, pull);
+    let listened = chime::listen_live(verdict::RATE, &clock, play, |left| feed.recv_timeout(left));
 
     drop(output_stream);
     let _ = system.stop();
 
-    tracing::info!(
-        plays = attempt.plays,
-        captured = attempt.captured,
-        present = attempt.reading.present,
-        "system-audio permission check finished"
-    );
-    tracing::debug!(reading = ?attempt.reading, "system-audio permission check reading");
-
-    // No play means the chime never sounded: the tap delivered nothing at all
-    // (`captured == 0` lands here too) or stopped before the settle time ran
-    // out. Neither "granted" nor "denied" would be honest about that.
-    let result = if attempt.plays == 0 {
-        ChannelResult {
-            state: ChannelState::Unmeasurable,
-            detail: "the system-audio tap stopped delivering audio before the check tone could \
-                     play"
-                .into(),
-        }
-    } else if attempt.reading.present {
-        ChannelResult {
-            state: ChannelState::Granted,
-            detail: "the check tone was played and recovered from the system-audio recording"
-                .into(),
-        }
-    } else {
-        ChannelResult {
-            state: ChannelState::Denied,
-            detail: "the check tone did not come back through the system-audio tap".into(),
-        }
-    };
+    verdict::log(&listened);
+    let result = verdict::system_verdict(&listened);
 
     cleanup(&dir, &dest);
     result
