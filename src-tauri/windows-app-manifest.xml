@@ -1,9 +1,7 @@
+<!-- Adapted from github.com/tauri-apps/tauri/crates/tauri-build/src/windows-app-manifest.xml @ 6f6ab1207bb3923c2721fbc67d2fdb1c8deb0c7a (Apache-2.0 OR MIT) -->
+<!-- The Windows app manifest, linked into every artifact by build.rs
+     (TUR-36): the Common Controls v6 dependency tauri's dialogs need. -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <!-- The Windows app manifest, linked into every artifact by build.rs
-       (TUR-36). Same content as tauri-build's default,
-       crates/tauri-build/src/windows-app-manifest.xml @
-       6f6ab1207bb3923c2721fbc67d2fdb1c8deb0c7a (Apache-2.0 OR MIT): the
-       Common Controls v6 dependency tauri's dialogs need. -->
   <dependency>
     <dependentAssembly>
       <assemblyIdentity
