@@ -13,6 +13,7 @@
 import { useAppStore } from "@/state/app";
 import { AudioRetentionRow } from "@/ui/AudioRetentionRow";
 import { AgentSetup } from "@/ui/agent/AgentSetup";
+import { DockSetting } from "@/ui/DockSetting";
 import { EngineSummary } from "@/ui/engine/EngineSummary";
 import { FolderRow } from "@/ui/FolderRow";
 import { Button, Card, Row, RowLabel } from "@/ui/primitives";
@@ -55,6 +56,16 @@ export function Settings() {
         {onboardingError ? (
           <ErrorState error={onboardingError} onRemedy={() => void restartOnboarding()} />
         ) : null}
+      </section>
+
+      {/* TUR-76: closing the window keeps meet-ai running in the menu bar. */}
+      <section className="section" aria-labelledby="menu-bar-heading">
+        <h2 className="section__title" id="menu-bar-heading">
+          Menu bar
+        </h2>
+        <Card flush>
+          <DockSetting />
+        </Card>
       </section>
 
       <TrackerSettings />

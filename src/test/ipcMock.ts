@@ -216,6 +216,13 @@ export const ipc = {
 
   liveTranscript: vi.fn<typeof Client.liveTranscript>(async () => EMPTY_SNAPSHOT),
 
+  // TUR-76: the Dock icon goes with the window, and quitting works.
+  appSettings: vi.fn<typeof Client.appSettings>(async () => ({ showInDockWhenClosed: false })),
+  setShowInDockWhenClosed: vi.fn<typeof Client.setShowInDockWhenClosed>(async (show) => ({
+    showInDockWhenClosed: show,
+  })),
+  confirmQuit: vi.fn<typeof Client.confirmQuit>(async () => {}),
+
   // TUR-28: a calendar that was read and has nothing today.
   todaysMeetings: vi.fn<typeof Client.todaysMeetings>(async () => NO_MEETINGS_TODAY),
   calendarRefreshMinutes: vi.fn<typeof Client.calendarRefreshMinutes>(
@@ -285,6 +292,7 @@ export function mockClient(actual: typeof Client): typeof Client {
     onMeetingsChanged: subscriber(actual.MEETINGS_CHANGED_EVENT),
     onNotesRunStatus: subscriber(actual.AGENT_RUN_STATUS_EVENT),
     onDetectionPrompt: subscriber(actual.DETECTION_PROMPT_EVENT),
+    onQuitConfirm: subscriber(actual.QUIT_CONFIRM_EVENT),
   };
 }
 

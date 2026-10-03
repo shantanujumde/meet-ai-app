@@ -24,7 +24,9 @@ import {
   type meet_ai_lib_calendar_TodayEvent,
   type meet_ai_lib_calendar_TodaysMeetings,
   type meet_ai_lib_detection_notify_Prompt,
+  type meet_ai_lib_lifecycle_AppSettings,
   PERMISSION_STATUS_EVENT,
+  QUIT_CONFIRM_EVENT,
   RECORDING_STATE_EVENT,
   TRANSCRIPT_STATUS_EVENT,
   TRANSCRIPT_UPDATE_EVENT,
@@ -74,6 +76,7 @@ export {
   MEETINGS_CHANGED_EVENT,
   MODEL_PROGRESS_EVENT,
   PERMISSION_STATUS_EVENT,
+  QUIT_CONFIRM_EVENT,
   RECORDING_STATE_EVENT,
   TRANSCRIPT_STATUS_EVENT,
   TRANSCRIPT_UPDATE_EVENT,
@@ -584,4 +587,35 @@ export async function audioRetentionDays(): Promise<number> {
 export async function meetingBrief(title: string): Promise<MeetingBrief> {
   if (!hasBackend()) return { title, previous: null, commits: null };
   return narrow(() => commands.meetingBrief(title));
+}
+
+// --- closing and quitting (TUR-76) -----------------------------------------
+
+/** How meet-ai behaves as an app: the `app` section of `config.jsonc`. */
+export type AppSettings = meet_ai_lib_lifecycle_AppSettings;
+
+/** What Settings shows when there is no Rust side to ask: the defaults. */
+const DEFAULT_APP_SETTINGS: AppSettings = { showInDockWhenClosed: false };
+
+export async function appSettings(): Promise<AppSettings> {
+  if (!hasBackend()) return DEFAULT_APP_SETTINGS;
+  return call(() => commands.appSettings());
+}
+
+/** "Show in Dock when the window is closed" (macOS). Resolves to what was saved. */
+export function setShowInDockWhenClosed(show: boolean): Promise<AppSettings> {
+  return call(() => commands.setShowInDockWhenClosed(show));
+}
+
+/**
+ * ⌘Q or the menu-bar Quit came in while recording, and Rust is holding it
+ * until the user answers "Stop recording and quit?".
+ */
+export function onQuitConfirm(handler: () => void): () => void {
+  return subscribe<null>(QUIT_CONFIRM_EVENT, () => handler());
+}
+
+/** "Stop and quit": Rust stops the recording through its normal stop path and quits. */
+export async function confirmQuit(): Promise<void> {
+  await call(() => commands.confirmQuit());
 }
