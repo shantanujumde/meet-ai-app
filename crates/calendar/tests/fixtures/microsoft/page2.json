@@ -20,7 +20,11 @@
       "start": { "dateTime": "2026-10-05T08:00:00.0000000", "timeZone": "Pacific Standard Time" },
       "end": { "dateTime": "2026-10-05T09:00:00.0000000", "timeZone": "Pacific Standard Time" },
       "attendees": [
-        { "type": "required", "status": { "response": "declined" }, "emailAddress": { "name": "Dev", "address": "dev@example.com" } },
+        {
+          "type": "required",
+          "status": { "response": "declined" },
+          "emailAddress": { "name": "Dev", "address": "dev@example.com" }
+        },
         { "type": "required", "emailAddress": { "name": "  ", "address": "sam@example.com" } }
       ]
     },
