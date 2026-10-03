@@ -43,7 +43,7 @@
 //! meeting and the live one agree about when things were said.
 
 mod board;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod e2e;
 #[cfg(test)]
 mod fakes;

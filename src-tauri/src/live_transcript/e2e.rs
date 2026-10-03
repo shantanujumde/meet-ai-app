@@ -235,9 +235,7 @@ fn whisper() -> OpenEngine {
     Box::new(move || {
         // What `registry::select` builds for the whisper choice, so this is
         // the configuration the app actually runs live.
-        let engine = stt::whisper::WhisperEngine::load(&model, Default::default())
-            .map_err(|e| e.to_string())?;
-        Ok(Box::new(engine) as Box<dyn SttEngine>)
+        crate::platform::load_whisper(&model)
     })
 }
 
