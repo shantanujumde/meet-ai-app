@@ -518,8 +518,9 @@ impl CalendarAuth {
             }
             Err(error) => return Err(unreachable(request_error_detail(&error))),
         };
-        // Microsoft hands out a new refresh token on every refresh; the old
-        // one stops working, so keep the new one.
+        // Microsoft hands out a new refresh token on every refresh. The old
+        // one stays valid until it expires; keep the new one, whose lifetime
+        // starts now.
         if let Some(rotated) = response.refresh_token()
             && rotated.secret() != &refresh
         {
