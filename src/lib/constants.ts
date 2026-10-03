@@ -6,7 +6,10 @@
  * are Rust's to decide, and these only describe them until Rust answers.
  */
 
-import type { meet_ai_lib_calendar_TodaysMeetings as TodaysMeetings } from "@/ipc/bindings";
+import type {
+  meet_ai_lib_lifecycle_AppSettings as AppSettings,
+  meet_ai_lib_calendar_TodaysMeetings as TodaysMeetings,
+} from "@/ipc/bindings";
 
 /**
  * The meetings folder as written before `list_meetings` has answered, or when
@@ -31,3 +34,9 @@ export const NO_MEETINGS_TODAY: TodaysMeetings = {
   refreshMinutes: 15,
   minAttendees: 2,
 };
+
+/**
+ * The `app` section's defaults (TUR-76), for when there is no Rust side to
+ * ask: the Dock icon goes with the window.
+ */
+export const DEFAULT_APP_SETTINGS: AppSettings = { showInDockWhenClosed: false };

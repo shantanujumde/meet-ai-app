@@ -14,9 +14,10 @@
  */
 
 import { type Event, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { DEFAULT_ROOT_LABEL, NO_MEETINGS_TODAY } from "@/lib/constants";
+import { DEFAULT_APP_SETTINGS, DEFAULT_ROOT_LABEL, NO_MEETINGS_TODAY } from "@/lib/constants";
 import {
   AGENT_RUN_STATUS_EVENT,
+  type meet_ai_lib_lifecycle_AppSettings as AppSettings,
   commands,
   DETECTION_PROMPT_EVENT,
   MEETINGS_CHANGED_EVENT,
@@ -24,7 +25,6 @@ import {
   type meet_ai_lib_calendar_TodayEvent,
   type meet_ai_lib_calendar_TodaysMeetings,
   type meet_ai_lib_detection_notify_Prompt,
-  type meet_ai_lib_lifecycle_AppSettings,
   PERMISSION_STATUS_EVENT,
   QUIT_CONFIRM_EVENT,
   RECORDING_STATE_EVENT,
@@ -592,11 +592,6 @@ export async function meetingBrief(title: string): Promise<MeetingBrief> {
 // --- closing and quitting (TUR-76) -----------------------------------------
 
 /** How meet-ai behaves as an app: the `app` section of `config.jsonc`. */
-export type AppSettings = meet_ai_lib_lifecycle_AppSettings;
-
-/** What Settings shows when there is no Rust side to ask: the defaults. */
-const DEFAULT_APP_SETTINGS: AppSettings = { showInDockWhenClosed: false };
-
 export async function appSettings(): Promise<AppSettings> {
   if (!hasBackend()) return DEFAULT_APP_SETTINGS;
   return call(() => commands.appSettings());
@@ -607,10 +602,7 @@ export function setShowInDockWhenClosed(show: boolean): Promise<AppSettings> {
   return call(() => commands.setShowInDockWhenClosed(show));
 }
 
-/**
- * ⌘Q or the menu-bar Quit came in while recording, and Rust is holding it
- * until the user answers "Stop recording and quit?".
- */
+/** ⌘Q or the menu-bar Quit while recording: Rust holds it until the window answers. */
 export function onQuitConfirm(handler: () => void): () => void {
   return subscribe<null>(QUIT_CONFIRM_EVENT, () => handler());
 }
