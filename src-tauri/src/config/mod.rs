@@ -53,8 +53,11 @@ mod audio_section;
 mod calendar_section;
 mod detection_section;
 mod file;
+// TUR-76: `app.show_in_dock_when_closed`.
+mod app_section;
 
 pub use agent_section::ConfigError;
+pub use app_section::{AppConfig, app, set_app};
 pub use audio_section::audio;
 // TUR-28 (calendar refresh loop) uses these.
 #[allow(unused_imports)]

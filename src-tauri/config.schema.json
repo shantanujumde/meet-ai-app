@@ -9,6 +9,17 @@
       "description": "Path to this schema, so editors can autocomplete and check the file.",
       "default": "./config.schema.json"
     },
+    "app": {
+      "type": "object",
+      "description": "How meet-ai behaves as an app. Closing the main window hides it; meet-ai keeps running in the menu bar until you quit it.",
+      "properties": {
+        "show_in_dock_when_closed": {
+          "type": "boolean",
+          "description": "macOS: keep the Dock icon while the main window is closed. false = only the menu-bar item stays, like Granola.",
+          "default": false
+        }
+      }
+    },
     "transcription": {
       "type": "object",
       "description": "How speech is turned into text.",
