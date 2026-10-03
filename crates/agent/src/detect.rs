@@ -26,6 +26,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::claude::ClaudeHarness;
+use crate::platform::is_executable;
 use crate::process::{self, CliOutput, cli_command};
 use crate::{AgentError, Harness, Install, Job};
 
@@ -394,17 +395,6 @@ fn expand_home(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
         Err(_) => path.to_path_buf(),
     };
     path.is_absolute().then_some(path)
-}
-
-#[cfg(unix)]
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-}
-
-#[cfg(not(unix))]
-fn is_executable(path: &Path) -> bool {
-    path.is_file()
 }
 
 #[cfg(test)]
