@@ -10,6 +10,7 @@
 //! launch after onboarding switches to `.app/logs`.
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use tauri::{AppHandle, Manager as _, Runtime};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, log};
@@ -95,6 +96,22 @@ pub fn plugin<R: Runtime>(dir: Option<PathBuf>) -> tauri::plugin::TauriPlugin<R>
         .build()
 }
 
+/// The OS log folder, where a panic's file goes once this launch's logs
+/// folder is gone (the meetings folder moved). Set by [`set_crash_fallback`].
+static CRASH_FALLBACK: OnceLock<PathBuf> = OnceLock::new();
+
+/// Remember the OS log folder for crash files, and make it, so the panic path
+/// never has to create a folder (TUR-90). Called once from `setup`.
+pub fn set_crash_fallback<R: Runtime>(app: &AppHandle<R>) {
+    let Ok(dir) = app.path().app_log_dir() else {
+        return;
+    };
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(%error, dir = %dir.display(), "could not create the OS log folder");
+    }
+    let _ = CRASH_FALLBACK.set(dir);
+}
+
 /// Install the panic hook and the native crash handler, writing into `dir`.
 ///
 /// Called once from `setup`, after the log plugin, so the one line saying
@@ -104,7 +121,7 @@ pub fn install_crash_handlers(dir: PathBuf) {
         tracing::warn!(%error, dir = %dir.display(), "could not create the logs folder");
     }
     crash::prune(&dir, MAX_CRASH_FILES);
-    install_panic_hook(dir.clone());
+    install_panic_hook(dir.clone(), || CRASH_FALLBACK.get().cloned());
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     platform::attach(&dir);
     tracing::info!(dir = %dir.display(), "logs and crash files go here");

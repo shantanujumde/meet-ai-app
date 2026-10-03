@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::crash::{
-    CRASH_PREFIX, PanicReport, StackStr, Utc, crash_path, install_panic_hook, prune,
+    CRASH_PREFIX, PanicReport, StackStr, Utc, crash_path, install_panic_hook, panic_dir, prune,
     write_native_file, write_panic_file,
 };
 use super::*;
@@ -168,7 +168,7 @@ fn a_real_panic_leaves_a_crash_file() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = tempfile::tempdir().unwrap();
-    install_panic_hook(dir.path().to_path_buf());
+    install_panic_hook(dir.path().to_path_buf(), || None);
 
     let joined = std::thread::Builder::new()
         .name("tur46-forced-panic".into())
@@ -189,6 +189,59 @@ fn a_real_panic_leaves_a_crash_file() {
             && body.contains("backtrace:\n")
     });
     assert!(found, "no crash file for the forced panic");
+}
+
+#[test]
+fn a_panic_never_makes_the_logs_folder_again() {
+    // TUR-90: the logs folder is under the meetings root. Once the user moved
+    // that, making the folder again would bring back an empty old root.
+    let root = tempfile::tempdir().unwrap();
+    let gone = root.path().join("old-meetings/.app/logs");
+    let result = write_panic_file(&gone, Utc::from_unix(0), &report("boom"));
+    assert!(result.is_err());
+    assert!(!root.path().join("old-meetings").exists());
+}
+
+#[test]
+fn a_panic_goes_to_the_os_log_folder_once_the_logs_folder_is_gone() {
+    let here = tempfile::tempdir().unwrap();
+    let os_logs = tempfile::tempdir().unwrap();
+    let gone = here.path().join("moved-away");
+    assert_eq!(
+        panic_dir(here.path(), Some(os_logs.path())),
+        Some(here.path())
+    );
+    assert_eq!(panic_dir(&gone, Some(os_logs.path())), Some(os_logs.path()));
+    assert_eq!(panic_dir(&gone, None), None);
+    assert_eq!(panic_dir(&gone, Some(&gone)), None);
+}
+
+#[test]
+fn a_real_panic_after_a_folder_move_lands_in_the_fallback() {
+    let _serial = PANIC_HOOK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let root = tempfile::tempdir().unwrap();
+    let gone = root.path().join("old-meetings/.app/logs");
+    let os_logs = tempfile::tempdir().unwrap();
+    let fallback = os_logs.path().to_path_buf();
+    install_panic_hook(gone.clone(), move || Some(fallback.clone()));
+
+    let joined = std::thread::Builder::new()
+        .name("tur90-forced-panic".into())
+        .spawn(|| panic!("TUR-90 forced panic"))
+        .unwrap()
+        .join();
+    drop(std::panic::take_hook());
+    assert!(joined.is_err());
+
+    assert!(!root.path().join("old-meetings").exists());
+    let found = crash_files(os_logs.path()).into_iter().any(|name| {
+        std::fs::read_to_string(os_logs.path().join(name))
+            .unwrap()
+            .contains("message: TUR-90 forced panic\n")
+    });
+    assert!(found, "no crash file in the fallback folder");
 }
 
 #[test]

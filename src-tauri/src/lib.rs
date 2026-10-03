@@ -107,6 +107,8 @@ pub fn run() {
         .on_window_event(lifecycle::on_window_event)
         .setup(|_app| {
             // TUR-46: first, so a panic anywhere below leaves a crash file.
+            // TUR-90: and the OS log folder for it once the meetings one moves.
+            logs::set_crash_fallback(_app.handle());
             if let Some(dir) = logs::resolve(_app.handle()) {
                 logs::install_crash_handlers(dir);
             }
