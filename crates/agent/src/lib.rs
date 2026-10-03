@@ -25,6 +25,7 @@ pub mod detect;
 mod error;
 mod job;
 pub mod mcp;
+pub mod models;
 mod output;
 /// The OS seam (SPEC §8.2): the only module that names an operating system.
 mod platform;
@@ -40,6 +41,7 @@ pub use codex::CodexHarness;
 pub use error::AgentError;
 pub use job::{CancelHandle, DEFAULT_TIMEOUT_SECS, Job, JobKind};
 pub use mcp::{McpServer, McpStatus};
+pub use models::{ListCache, Model};
 pub use output::{OutputCheck, parse_json};
 
 /// An installed agent CLI, as found by [`Harness::detect`].

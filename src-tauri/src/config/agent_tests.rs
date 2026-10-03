@@ -11,7 +11,7 @@ use super::file::{SCHEMA, SCHEMA_FILE, with_agent, with_tickets};
 fn every_field_set() -> AgentConfig {
     AgentConfig {
         harness: Harness::Codex,
-        model: "gpt-5-codex".into(),
+        model: Some("gpt-5-codex".into()),
         binary_path: Some(PathBuf::from("/opt/homebrew/bin/codex")),
         auto_run: false,
         timeout_sec: 120,
@@ -22,7 +22,7 @@ fn every_field_set() -> AgentConfig {
 fn a_missing_file_or_section_is_the_a11_defaults() {
     let defaults = AgentConfig {
         harness: Harness::ClaudeCode,
-        model: "opus".into(),
+        model: None,
         binary_path: None,
         auto_run: true,
         timeout_sec: 300,
@@ -43,6 +43,27 @@ fn the_defaults_round_trip_through_an_empty_file() {
     assert!(written.contains(r#""$schema": "./config.schema.json""#));
     // `null`, not a missing key, so the file shows the user the key exists.
     assert!(written.contains(r#""binary_path": null"#));
+    // A new install stores no model: the CLI picks (A14).
+    assert!(written.contains(r#""model": null"#), "{written}");
+}
+
+#[test]
+fn a_null_or_blank_model_is_the_cli_s_own_and_a_stored_one_is_kept() {
+    for raw in [
+        r#"{ "agent": { "model": null } }"#,
+        r#"{ "agent": { "model": "" } }"#,
+        r#"{ "agent": { "model": "   " } }"#,
+    ] {
+        assert_eq!(parse_agent(raw).unwrap().model, None, "{raw}");
+    }
+    // An existing config keeps the model it already stores.
+    let raw = r#"{ "agent": { "model": "opus" } }"#;
+    assert_eq!(parse_agent(raw).unwrap().model.as_deref(), Some("opus"));
+    let written = with_agent(raw, &parse_agent(raw).unwrap()).unwrap();
+    assert_eq!(
+        parse_agent(&written).unwrap().model.as_deref(),
+        Some("opus")
+    );
 }
 
 #[test]
@@ -83,7 +104,11 @@ fn the_spec_3_5_example_parses() {
         "tickets": { "tracker": "linear", "tracker_mcp": "claude.ai Linear" },  // named in the Sync prompt
         "repos": { "default": "~/apps/api" }
     }"#;
-    assert_eq!(parse_agent(raw).unwrap(), AgentConfig::default());
+    let stored = AgentConfig {
+        model: Some("opus".into()),
+        ..AgentConfig::default()
+    };
+    assert_eq!(parse_agent(raw).unwrap(), stored);
     assert_eq!(parse_tickets(raw).unwrap(), TicketsConfig::default());
 }
 
@@ -322,7 +347,7 @@ fn the_schema_defaults_match_the_code_defaults() {
     let agent = &schema["properties"]["agent"]["properties"];
     let defaults = AgentConfig::default();
     assert_eq!(agent["harness"]["default"], defaults.harness.as_str());
-    assert_eq!(agent["model"]["default"], defaults.model.as_str());
+    assert_eq!(agent["model"]["default"], serde_json::json!(defaults.model));
     assert_eq!(agent["binary_path"]["default"], serde_json::Value::Null);
     assert_eq!(agent["auto_run"]["default"], defaults.auto_run);
     assert_eq!(agent["timeout_sec"]["default"], defaults.timeout_sec);

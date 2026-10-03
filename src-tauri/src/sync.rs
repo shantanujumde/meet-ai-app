@@ -132,7 +132,7 @@ pub(crate) struct RunSettings {
 impl RunSettings {
     fn new(agent: &AgentConfig, tickets: TicketsConfig) -> Self {
         Self {
-            model: Some(agent.model.trim().to_owned()).filter(|m| !m.is_empty()),
+            model: agent.model.clone(),
             timeout: Duration::from_secs(agent.timeout_sec.max(1)),
             tickets,
         }

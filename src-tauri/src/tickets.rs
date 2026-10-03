@@ -289,7 +289,7 @@ mod tests {
     fn write_notes(root: &Path, tasks: &[&str]) -> Vec<String> {
         let analysis = agent_notes::Analysis {
             by: agent_notes::AnalyzedBy::ClaudeCode,
-            model: "opus".to_owned(),
+            model: "sonnet".to_owned(),
             at: "2026-09-01T15:32:00+05:30".to_owned(),
         };
         let self_writes = store::watcher::SelfWrites::default();

@@ -146,9 +146,9 @@
           "default": "claude-code"
         },
         "model": {
-          "type": "string",
-          "description": "Model to use. Any model name the chosen CLI accepts.",
-          "default": "opus"
+          "type": ["string", "null"],
+          "description": "Model to use. Any model name the chosen CLI accepts. null = no --model flag, so the CLI uses its own default (for Claude Code, the model in its own settings).",
+          "default": null
         },
         "binary_path": {
           "type": ["string", "null"],
