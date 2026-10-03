@@ -34,7 +34,8 @@ Notes:
 - `macOSPrivateApi` is left on in the merged Windows/Linux config on purpose:
   tauri-build fails the build when the `macos-private-api` Cargo feature on
   `tauri` (always on in `src-tauri/Cargo.toml`) does not match that key. It has
-  no effect off macOS.
+  no effect off macOS. A macOS-only feature does not build either: tauri-build
+  checks every `tauri` entry, `[target.*]` tables included. Recorded in A13.
 - Tests gated to macOS for TUR-50 (each file starts with
   `#![cfg(target_os = "macos")]`, R10's integration-test exemption, or asks
   the platform module):
@@ -50,7 +51,8 @@ Notes:
   `/bin/sh`; on Windows they compile now (through
   `platform::make_executable`) and TUR-54 makes them run.
 - Tests that start a `/bin/sh` fake agent CLI (`agent::FakeHarness` or the
-  `sync/tests.rs` scripts) return early off Unix through
-  `platform::FAKE_CLI_RUNS`, so they pass without running on Windows; TUR-54
+  `sync/tests.rs` scripts) start with `platform::skip_without_fake_cli!()`: off Unix it
+  prints "skipped <module>: ..." to stderr and returns, so they pass without
+  running on Windows (the CI log shows each skip); TUR-54
   makes them run there. 27 in `src-tauri/src`: 16 in `agent_run/tests.rs`,
   4 in `agent_setup/tests.rs`, 7 in `sync/tests.rs`.

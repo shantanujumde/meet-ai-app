@@ -566,6 +566,8 @@ A13 is held by TUR-36 ([#83](https://github.com/shantanujumde/meet-ai-app/pull/8
 | §8.2 | "Windows (v1.1)", type-checked from the Mac | Windows and Linux, now. CI builds the whole workspace natively on `windows-latest` and `ubuntu-24.04` (src-tauri, store and modelfetch included), runs `cargo test` and clippy, and uploads the bundle. Per-OS Tauri config: `tauri.windows.conf.json`, `tauri.linux.conf.json` (no sidecar, no macOS window effects). OS code stays in per-crate `platform/` modules (R10, TUR-42) |
 | §5 | Windows deferred | Not deferred. Each phase's exit gate gains a Windows and a Linux run before that OS leaves preview; until then the app opens, lists meetings and says what it cannot do yet (no system-audio track, no Apple engine, no EventKit) |
 
+**One deviation from the ticket:** `app.macOSPrivateApi` stays `true` in the merged Windows and Linux config. tauri-build 2.6 checks every `tauri` entry in `src-tauri/Cargo.toml`, in `[dependencies]` and in each `[target.*]` table, against the merged config (`tauri-build/src/manifest.rs`, `find_dependency`). So neither a macOS-only `macos-private-api` feature nor `false` in the per-OS files builds. Off macOS the key and the feature do nothing.
+
 ### A12 — 2026-10-03 · Calendars: EventKit on macOS + Google and Microsoft sign-in on every OS; no ICS (amends L13, §2.7, §5 Phase 5b)
 
 **Decision (2026-10-03):** L13 becomes **"EventKit on macOS + Google + Microsoft sign-in; no ICS."** EventKit stays the zero-auth default on macOS. Google and Microsoft sign-in are built for macOS, Windows and Linux alike. The ICS URL tier (§2.7 tier 4, the `ics` provider, `calendar.ics_urls`) is dropped.
