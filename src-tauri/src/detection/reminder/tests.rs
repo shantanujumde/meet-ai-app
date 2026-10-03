@@ -33,6 +33,7 @@ fn invite(id: &str, start: DateTime<Utc>, attendees: usize) -> RawEvent {
         end: start + Duration::minutes(30),
         all_day: false,
         attendees: people(attendees),
+        ical_uid: None,
     }
 }
 
