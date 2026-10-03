@@ -162,6 +162,53 @@ Features confirmed present on 0.16.0: `metal`, `coreml`, `cuda`, `vulkan`, `hipb
 | `reqwest` | **0.12.28** | see §1.4. features `["json", "rustls-tls", "stream"]` |
 | `sha2` | **0.10.9** | see §1.4 |
 | `tokio-util` | **0.7.19** | download streaming |
+| `base64` | **0.22.1** | TUR-44: reads the account label out of the id_token. The version `oauth2` already pulls |
+
+TUR-44 (SPEC A12) added `oauth2` (no default features in `crates/calendar`;
+`reqwest-blocking` only in `src-tauri`, so the crate keeps no network client and
+still cross-checks for Windows), `keyring` 4.2 (default `v1` feature: Keychain,
+Windows Credential Manager, Secret Service through zbus, all pure Rust) and
+`tauri-plugin-oauth` 2.1.0 (§2.1; Rust API only, the JS plugin is not
+registered). `icalendar` is not added: A12 dropped ICS.
+
+#### Calendar sign-in (optional)
+
+Sign-in with Google or Microsoft needs an OAuth client of your own; without one
+the app still reads EventKit, and the sign-in commands answer
+`calendar-not-configured` naming the missing key.
+
+1. **Google.** In Google Cloud Console, create an OAuth client of type
+   **Desktop app**, and enable the Google Calendar API. On the OAuth consent
+   screen, set the publishing status to **In production**: in *Testing*,
+   refresh tokens die after 7 days (SPEC §7). Unverified is fine; users see a
+   one-time "Google hasn't verified this app" screen. Google gives a Desktop
+   client a client secret that it treats as non-secret; it must still be sent,
+   so copy it too.
+2. **Microsoft.** In Microsoft Entra, register an app for "Accounts in any
+   organizational directory and personal Microsoft accounts", with no client
+   secret, and turn on **Allow public client flows**. The portal rejects an
+   `http://127.0.0.1` redirect, so add it in the app's **Manifest** under
+   `replyUrlsWithType`:
+   `{ "url": "http://127.0.0.1", "type": "InstalledClient" }`. Microsoft
+   ignores the port when matching a loopback redirect, so the random port the
+   app picks matches. Do not use `[::1]`: Entra does not support it.
+3. Paste the ids into `~/Meetings/.app/config.jsonc`. No restart needed:
+
+   ```jsonc
+   "calendar": {
+     "google": {
+       "client_id": "123456789012-abc.apps.googleusercontent.com",
+       "client_secret": "GOCSPX-…"
+     },
+     "microsoft": { "client_id": "00000000-0000-0000-0000-000000000000" }
+   }
+   ```
+
+The refresh token is kept in the OS keystore under service
+`pro.saleschat.meetai`, user `calendar-google` / `calendar-microsoft`. On Linux
+that needs a running Secret Service (gnome-keyring or KWallet); without one,
+sign-in works until the app quits. Real sign-in, restart and refresh on each OS
+are in `docs/manual-checks/worktree-tur44.md`.
 
 ### 2.6 Runtime, logging, testing
 
