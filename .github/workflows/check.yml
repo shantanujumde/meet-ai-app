@@ -88,7 +88,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: macos-debug
-          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'pull_request' }} # TEMP TUR-40 measurement
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: taiki-e/install-action@v2
         with:
@@ -126,7 +126,7 @@ jobs:
         run: just sidecar
 
       - name: Save the sidecar
-        if: (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && steps.sidecar-cache.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.sidecar-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           key: ${{ steps.sidecar-key.outputs.key }}
@@ -193,7 +193,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: windows-seam
-          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'pull_request' }} # TEMP TUR-40 measurement
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: taiki-e/install-action@v2
         with:
