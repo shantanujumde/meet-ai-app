@@ -267,6 +267,12 @@ export const commands = {
 	 *  `git`.
 	 */
 	meetingBrief: (title: string) => typedError<meet_ai_lib_brief_MeetingBrief, meet_ai_lib_error_UiError>(__TAURI_INVOKE("meeting_brief", { title })),
+	/**
+	 *  `audio.retention_days` as the app uses it: `-1` keeps audio forever, `0`
+	 *  deletes it once the transcript is done, otherwise the days. A bad value
+	 *  reads as the default 7, as it does for the job itself.
+	 */
+	audioRetentionDays: () => __TAURI_INVOKE<number>("audio_retention_days"),
 };
 
 /* Constants */

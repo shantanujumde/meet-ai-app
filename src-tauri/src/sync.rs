@@ -101,6 +101,11 @@ impl SyncRuns {
             cancel.cancel();
         }
     }
+
+    /// The ticket ids with a Sync run going, for the retention job (TUR-45).
+    pub fn running_tickets(&self) -> Vec<String> {
+        self.lock().keys().cloned().collect()
+    }
 }
 
 /// One ticket's place in [`SyncRuns`]; dropping it frees the ticket.

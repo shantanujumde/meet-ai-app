@@ -70,6 +70,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::calendar::signin::calendar_sign_out,
             crate::calendar::signin::calendar_accounts,
             brief::meeting_brief,
+            crate::retention::audio_retention_days,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)

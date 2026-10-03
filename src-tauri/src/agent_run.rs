@@ -206,6 +206,8 @@ pub fn finish_then_run(app: &AppHandle, transcription: Transcription) {
         return;
     };
     let app = app.clone();
+    // TUR-45: busy for the retention job until the transcript is final.
+    let transcribing = crate::retention::Transcribing::begin(&app, &meeting_id);
     let spawned = std::thread::Builder::new()
         .name("meet-ai-notes-wait".to_owned())
         .spawn(move || {
@@ -228,6 +230,8 @@ pub fn finish_then_run(app: &AppHandle, transcription: Transcription) {
                     }
                 },
             );
+            // Instant when `after_stop` already saw it final.
+            transcribing.settled(transcript_final.wait(FINAL_WAIT));
         });
     if let Err(error) = spawned {
         tracing::warn!(%error, "could not wait for the transcript; no notes run");
@@ -390,6 +394,10 @@ impl Sink for AppSink {
     fn status(&self, status: &Status) {
         if let Err(error) = self.app.emit(crate::events::AGENT_RUN_STATUS_EVENT, status) {
             tracing::warn!(%error, "could not tell the window about the notes run");
+        }
+        // TUR-45: the meeting is no longer busy for the retention job.
+        if status.state != State::Running {
+            crate::retention::after_notes_run(&self.app);
         }
     }
 
