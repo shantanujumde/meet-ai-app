@@ -1,0 +1,54 @@
+[
+  {
+    "id": "STANDUP-SERIES@1791181800",
+    "title": "Platform Standup",
+    "start": "2026-10-05T04:30:00Z",
+    "end": "2026-10-05T04:45:00Z",
+    "attendees": [
+      { "name": "Me", "email": "me@example.com", "is_me": true },
+      { "name": "Priya", "email": "priya@example.com" },
+      { "email": "dev@example.com" }
+    ]
+  },
+  {
+    "id": "HOLIDAY-1",
+    "title": "Company holiday",
+    "start": "2026-10-05T00:00:00Z",
+    "end": "2026-10-06T00:00:00Z",
+    "all_day": true
+  },
+  {
+    "id": "DECLINED-1",
+    "title": "Vendor pitch",
+    "start": "2026-10-05T06:00:00Z",
+    "end": "2026-10-05T07:00:00Z",
+    "attendees": [
+      { "name": "Me", "email": "me@example.com", "is_me": true, "declined": true },
+      { "name": "Sam", "email": "sam@example.com" }
+    ]
+  },
+  {
+    "id": "GOOGLE-REVIEW-1",
+    "title": "Design review (Google calendar)",
+    "start": "2026-10-05T09:00:00Z",
+    "end": "2026-10-05T10:00:00Z",
+    "attendees": [
+      { "name": "Me", "email": "me@example.com", "is_me": true },
+      { "name": "Priya", "email": "priya@example.com", "declined": true },
+      { "name": "Room 4B", "resource": true }
+    ]
+  },
+  {
+    "id": "FOCUS-1",
+    "title": "Focus time",
+    "start": "2026-10-05T07:30:00Z",
+    "end": "2026-10-05T08:30:00Z"
+  },
+  {
+    "id": "TOMORROW-1",
+    "title": "Retro",
+    "start": "2026-10-06T09:00:00Z",
+    "end": "2026-10-06T10:00:00Z",
+    "attendees": [{ "name": "Priya", "email": "priya@example.com" }]
+  }
+]

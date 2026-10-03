@@ -6,12 +6,49 @@ rust-version.workspace = true
 license.workspace = true
 version.workspace = true
 
+[features]
+# `calendar::fake::FakeProvider`: fixture events or a denied calendar, for tests
+# that must not touch Calendar.app (SPEC §6). Never on in the app.
+fake = ["dep:serde_json"]
+
 [dependencies]
 chrono.workspace = true
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, optional = true }
 thiserror.workspace = true
 
-# The provider dependencies — objc2-event-kit, oauth2, icalendar, keyring,
-# reqwest, sha2 — are deliberately NOT here yet. SETUP.md §3.3: they are added at
-# Phase 5. There is no point compiling an OAuth stack and a TLS client for two
-# months before the first provider is written.
+# Tier 1, EventKit (TUR-26). SPEC §8.2: the only OS-specific code in this crate
+# is src/eventkit.rs, and gating the dependencies here is what keeps
+# `cargo check --target x86_64-pc-windows-msvc -p calendar` honest.
+#
+# ⚠️ `objc2` 0.6.4 alongside `objc2-*` 0.3.2 is CORRECT (SETUP.md §2.2).
+#    Framework crates version independently. Never "align" these.
+#
+# The cloud providers' dependencies (oauth2, icalendar, keyring, reqwest) are
+# still deliberately absent: SETUP.md §3.3 adds them at Phase 5b.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+objc2.workspace = true
+objc2-event-kit = { workspace = true, features = [
+    "std",
+    "block2",
+    "EKCalendar",
+    "EKCalendarItem",
+    "EKEvent",
+    "EKEventStore",
+    "EKObject",
+    "EKParticipant",
+    "EKTypes",
+] }
+objc2-foundation = { workspace = true, features = [
+    "NSArray",
+    "NSDate",
+    "NSError",
+    "NSString",
+    "NSURL",
+] }
+
+[dev-dependencies]
+# The integration tests in tests/ use the fake provider; a self dev-dependency
+# turns the feature on for `cargo test -p calendar` without making it default.
+calendar = { path = ".", features = ["fake"] }
