@@ -21,6 +21,8 @@ import {
   DETECTION_PROMPT_EVENT,
   MEETINGS_CHANGED_EVENT,
   MODEL_PROGRESS_EVENT,
+  type meet_ai_lib_calendar_TodayEvent,
+  type meet_ai_lib_calendar_TodaysMeetings,
   type meet_ai_lib_detection_notify_Prompt,
   PERMISSION_STATUS_EVENT,
   RECORDING_STATE_EVENT,
@@ -532,4 +534,26 @@ export type DetectionPrompt = meet_ai_lib_detection_notify_Prompt;
 
 export function onDetectionPrompt(handler: (prompt: DetectionPrompt) => void): () => void {
   return subscribe<DetectionPrompt>(DETECTION_PROMPT_EVENT, handler);
+}
+
+// --- today's meetings (TUR-28) ----------------------------------------------
+
+/** Today's calendar events, plus how often to re-read them and the solo cut-off. */
+export type TodaysMeetings = meet_ai_lib_calendar_TodaysMeetings;
+export type TodayEvent = meet_ai_lib_calendar_TodayEvent;
+
+/**
+ * Today's events from Calendar.app, local midnight to midnight. Rejects with
+ * kind `calendar-denied` when macOS has not granted calendar access — never
+ * an empty list. The first call can wait for the macOS prompt. Without a
+ * backend there is no calendar, so no events.
+ */
+export async function todaysMeetings(): Promise<TodaysMeetings> {
+  if (!hasBackend()) return { events: [], refreshMinutes: 15, minAttendees: 2 };
+  return call(() => commands.todaysMeetings());
+}
+
+/** Open System Settings at Privacy & Security → Calendars. */
+export async function openCalendarSettings(): Promise<void> {
+  await call(() => commands.openCalendarSettings());
 }

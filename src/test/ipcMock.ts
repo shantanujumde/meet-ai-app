@@ -208,6 +208,14 @@ export const ipc = {
 
   liveTranscript: vi.fn<typeof Client.liveTranscript>(async () => EMPTY_SNAPSHOT),
 
+  // TUR-28: a calendar that was read and has nothing today.
+  todaysMeetings: vi.fn<typeof Client.todaysMeetings>(async () => ({
+    events: [],
+    refreshMinutes: 15,
+    minAttendees: 2,
+  })),
+  openCalendarSettings: vi.fn<typeof Client.openCalendarSettings>(async () => {}),
+
   agentChoice: vi.fn<typeof Client.agentChoice>(async () => ({
     harness: "claude-code",
     model: "opus",

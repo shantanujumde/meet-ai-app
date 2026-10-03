@@ -33,6 +33,7 @@ import {
 import { SearchBox } from "@/ui/SearchBox";
 import { SearchResults } from "@/ui/SearchResults";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
+import { TodayPane } from "@/ui/TodayPane";
 
 export function Meetings() {
   const navigate = useNavigate();
@@ -67,6 +68,7 @@ export function Meetings() {
   if (meetings.length === 0) {
     return (
       <div className="page page--narrow">
+        <TodayPane />
         <EmptyState
           title="No meetings yet"
           body={
@@ -104,6 +106,8 @@ export function Meetings() {
           <span>{list?.root}</span>
         </p>
       </header>
+
+      <TodayPane />
 
       <SearchBox value={query} onChange={setQuery} />
 
