@@ -27,7 +27,9 @@ notifications from the plugin have no buttons, so the buttons are on the
 banner. A tick more than 30 s after the last one (a sleep) re-reads the
 calendar first; a meeting that has already started is never reminded about.
 The reminder never shows the calendar permission prompt itself: until access
-has been answered (the Today pane asks), it reads nothing.
+has been answered (the Today pane asks), it reads nothing and logs that once
+at debug. It starts reading on its next refresh after access is granted, with
+no restart.
 
 ## 1. A test invite with one other attendee → one reminder a minute before
 
@@ -79,7 +81,17 @@ has been answered (the Today pane asks), it reads nothing.
    the open banner changes to the reminder's text with **Open brief**. If the
    Zoom banner was dismissed first, nothing comes back.
 
-## 7. `detection.calendar = false`
+## 7. Calendar access granted after launch
+
+1. On a Mac where meet-ai has never been given calendar access, start the
+   app and do not open the Today pane. Create an invite starting in 3
+   minutes. Expected: no permission prompt from the reminder, and no
+   reminder.
+2. Open the Today pane and grant access. Create an invite starting
+   `calendar.refresh_minutes` + 2 minutes from now. Expected: its reminder
+   fires a minute before, with no restart.
+
+## 8. `detection.calendar = false`
 
 1. Set `"detection": { "calendar": false }` in
    `~/Meetings/.app/config.jsonc` and restart the app.

@@ -88,6 +88,9 @@ pub struct Reminders {
     last_tick: Option<DateTime<Utc>>,
     /// Every reminded `Event.id`, with the start it was reminded for.
     fired: HashMap<String, DateTime<Utc>>,
+    /// The last read failed and that was logged: an unreadable calendar is
+    /// one log line until it reads again, not one per refresh.
+    unreadable_logged: bool,
 }
 
 impl Reminders {
@@ -99,6 +102,7 @@ impl Reminders {
             read_at: None,
             last_tick: None,
             fired: HashMap::new(),
+            unreadable_logged: false,
         }
     }
 
@@ -163,9 +167,12 @@ impl Reminders {
                     .into_iter()
                     .filter(|event| event.attendees >= min_attendees)
                     .collect();
+                self.unreadable_logged = false;
             }
             Err(error) => {
-                tracing::debug!(%error, "could not read the calendar for meeting reminders");
+                if !std::mem::replace(&mut self.unreadable_logged, true) {
+                    tracing::debug!(%error, "could not read the calendar for meeting reminders");
+                }
             }
         }
     }
@@ -242,7 +249,7 @@ impl Upcoming for AppCalendar {
 
         // A reminder never asks for calendar access: the Today pane does,
         // where the user can see why. Until it has been answered, there is
-        // nothing to remind about.
+        // nothing to remind about; the first refresh after a grant reads.
         #[cfg(target_os = "macos")]
         if ::calendar::eventkit::access() == ::calendar::eventkit::Access::NotAsked {
             return Err(Error::PermissionDenied);

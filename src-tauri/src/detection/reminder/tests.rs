@@ -178,6 +178,26 @@ fn an_unreadable_calendar_keeps_the_last_read() {
 }
 
 #[test]
+fn a_calendar_granted_later_is_read_on_the_next_refresh() {
+    let calendar = Calendar::with(vec![invite("standup", at(9, 20, 0), 3)]);
+    calendar.fail(true);
+    let mut reminders = reminders();
+    assert!(run(&mut reminders, &calendar, at(9, 0, 0), at(9, 10, 0)).is_empty());
+    assert_eq!(
+        calendar.reads(),
+        1,
+        "an unreadable calendar waits for the refresh"
+    );
+    calendar.fail(false);
+    let fired = run(&mut reminders, &calendar, at(9, 10, 10), at(9, 25, 0));
+    assert_eq!(fired, [(at(9, 19, 0), "standup".to_string())]);
+    assert!(
+        !reminders.unreadable_logged,
+        "a good read clears the logged failure"
+    );
+}
+
+#[test]
 fn sleeping_across_the_reminder_skips_it() {
     let calendar = Calendar::with(vec![invite("standup", at(10, 0, 0), 3)]);
     let mut reminders = reminders();
