@@ -34,7 +34,7 @@
 #   2. Use the helpers below: `added_lines`, `added_text`, `test_start`,
 #      `is_rust_test_file`, `is_ts_test_file`, `is_new_file`.
 #   3. If the rule is not ready to fail builds yet, give it a level variable
-#      (like R2_LEVEL below) set to warn, and flip it to error later.
+#      (like R3_LEVEL below) set to warn, and flip it to error later.
 #   4. Add `rule_rN` to the RULES list below.
 #   5. Document it in docs/quality-rules.md and .claude/skills/quality-gate.
 #   A rule that needs to run once (not per file) goes in RUN_ONCE instead.
@@ -43,10 +43,9 @@
 set -u
 
 # Severity knobs. "warn" prints but never fails; "error" fails the gate.
-# R2 flips to error once src-tauri/src/events.rs exists (Phase 2).
 # R3 flips to error once crates/meeting-format exists (Phase 3).
 R1_MAX_LINES=${R1_MAX_LINES:-600}
-R2_LEVEL=warn
+R2_LEVEL=error
 R3_LEVEL=warn
 R5_LEVEL=warn
 
