@@ -84,6 +84,21 @@ impl SegmentsWriter {
         self.current_mut().anchors.push(anchor);
     }
 
+    /// The current segment's latest anchor, or its start (frame 0 on both
+    /// channels at `start_host_ns`) before it has one: the point the next
+    /// checkpoint's frame gains are measured from.
+    pub fn last_anchor(&self) -> Anchor {
+        let seg = self.segments.last();
+        let start = seg.map_or(0, |s| s.start_host_ns);
+        seg.and_then(|s| s.anchors.last().copied())
+            .unwrap_or(Anchor {
+                mic_host_ns: start,
+                mic_frames: 0,
+                sys_host_ns: start,
+                sys_frames: 0,
+            })
+    }
+
     /// Close the current segment and open the next one.
     ///
     /// `close_anchor` must be latched *after* the outgoing stream's ring
@@ -173,6 +188,28 @@ mod tests {
         let report = parsed.drift().expect("a fully-anchored segment measures");
         assert!(report.passes(DRIFT_GATE_MS));
         assert_eq!(report.mic.anchors, 1);
+    }
+
+    #[test]
+    fn last_anchor_is_the_segment_start_until_a_checkpoint_then_the_latest() {
+        let mut writer = SegmentsWriter::new(open(reason::START, 7));
+        let start = writer.last_anchor();
+        assert_eq!((start.mic_host_ns, start.sys_host_ns), (7, 7));
+        assert_eq!((start.mic_frames, start.sys_frames), (0, 0));
+
+        let a = Anchor {
+            mic_host_ns: 5_000_000_007,
+            mic_frames: 80_000,
+            sys_host_ns: 5_000_000_007,
+            sys_frames: 79_990,
+        };
+        writer.checkpoint_anchor(a);
+        assert_eq!(writer.last_anchor(), a);
+
+        // A new segment measures from its own start again.
+        writer.close_segment(a, open(reason::DEFAULT_OUTPUT_DEVICE_CHANGED, 9));
+        assert_eq!(writer.last_anchor().mic_frames, 0);
+        assert_eq!(writer.last_anchor().mic_host_ns, 9);
     }
 
     #[test]

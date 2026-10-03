@@ -271,10 +271,8 @@ fn reopen_segment(
     Ok(())
 }
 
-/// §7/§11's checkpoint order for one mid-recording checkpoint: fsync every
-/// channel's data, then let the caller write `segments.json`, then patch
-/// every channel's header. This function does steps 1 and 3 and the anchor
-/// bookkeeping; the caller supplies the write in between.
+/// §7/§11's checkpoint order: fsync every channel's data, write
+/// `segments.json`, then patch every header. Also warns if the tracks drift apart.
 fn checkpoint(
     mic: &mut dyn AudioSource,
     sys: &mut Option<Box<dyn AudioSource>>,
@@ -294,13 +292,15 @@ fn checkpoint(
         None => (0, 0),
     };
 
-    writer.update_frames(mic_frames, sys_frames);
-    writer.checkpoint_anchor(Anchor {
+    let anchor = Anchor {
         mic_host_ns,
         mic_frames,
         sys_host_ns,
         sys_frames,
-    });
+    };
+    segments::rate_guard::warn_if_out_of_step(&writer.last_anchor(), &anchor, sys.is_some());
+    writer.update_frames(mic_frames, sys_frames);
+    writer.checkpoint_anchor(anchor);
     writer
         .write_atomic(segments_path)
         .map_err(|e| format!("writing segments.json: {e}"))?;

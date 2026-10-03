@@ -39,6 +39,7 @@
 //!    duration, exactly — see [`BoundaryGap::asleep_ms`].
 
 mod drift;
+pub mod rate_guard;
 mod writer;
 
 pub use drift::{
