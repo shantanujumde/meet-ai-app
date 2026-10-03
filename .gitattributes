@@ -1,2 +1,5 @@
 # Test fixtures are byte-compared after round trips; keep them LF on every OS.
 crates/store/tests/fixtures/** text eol=lf
+# Prompt templates are compiled in with include_str! and their tests match exact
+# "\n" text; a CRLF checkout on Windows would change both (TUR-36).
+crates/prompts/templates/** text eol=lf
