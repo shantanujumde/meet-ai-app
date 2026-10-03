@@ -609,3 +609,44 @@ fn the_client_secret_is_not_printed() {
     let client = clients(ProviderId::Google).unwrap();
     assert!(!format!("{client:?}").contains("google-not-secret"));
 }
+
+#[test]
+fn a_rejected_access_token_is_refreshed_instead_of_handed_out_again() {
+    let (auth, _, http) = setup();
+    signed_in_google(&auth, &http, 3600);
+    assert_eq!(auth.access_token(ProviderId::Google).unwrap(), "access-1");
+    // A token that is no longer the cached one changes nothing.
+    auth.reject_access_token(ProviderId::Google, "some-older-token");
+    assert_eq!(auth.access_token(ProviderId::Google).unwrap(), "access-1");
+    assert_eq!(http.bodies().len(), 1);
+
+    let mut reply = token_reply(None, 3600, serde_json::json!({}));
+    reply["access_token"] = "access-2".into();
+    http.reply(200, reply);
+    auth.reject_access_token(ProviderId::Google, "access-1");
+    assert_eq!(auth.access_token(ProviderId::Google).unwrap(), "access-2");
+    let form = http.form(1);
+    assert_eq!(get(&form, "grant_type"), Some("refresh_token"));
+}
+
+#[test]
+fn has_sign_in_reads_the_keystore_and_never_the_network() {
+    let (auth, store, http) = setup();
+    assert!(!auth.has_sign_in(ProviderId::Microsoft));
+    store.save(ProviderId::Microsoft, "refresh-1").unwrap();
+    assert!(auth.has_sign_in(ProviderId::Microsoft));
+    assert!(!auth.has_sign_in(ProviderId::Google));
+    assert!(http.bodies().is_empty());
+
+    // An expired sign-in still counts: the provider reports it as expired.
+    http.reply(400, serde_json::json!({ "error": "invalid_grant" }));
+    assert!(auth.access_token(ProviderId::Microsoft).is_err());
+    assert!(auth.has_sign_in(ProviderId::Microsoft));
+
+    // Kept in memory only (no keystore) counts too.
+    let store = Arc::new(MemoryStore::unavailable());
+    let http = Arc::new(FakeHttp::default());
+    let auth = auth_with(&store, &http);
+    signed_in_google(&auth, &http, 3600);
+    assert!(auth.has_sign_in(ProviderId::Google));
+}

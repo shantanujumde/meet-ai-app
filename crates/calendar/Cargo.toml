@@ -23,6 +23,9 @@ keyring.workspace = true
 oauth2.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+# Microsoft Graph calendar (TUR-47, src/microsoft.rs): Windows zone → IANA →
+# offset. Requests still go through `oauth::HttpClient`, so no HTTP client here.
+chrono-tz.workspace = true
 
 # Tier 1, EventKit (TUR-26). SPEC §8.2: the only OS-specific code in this crate
 # is src/eventkit.rs, and gating the dependencies here is what keeps

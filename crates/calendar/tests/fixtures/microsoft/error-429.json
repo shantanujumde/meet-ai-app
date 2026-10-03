@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "TooManyRequests",
+    "message": "Please retry again later for priya@example.com."
+  }
+}

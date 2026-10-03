@@ -74,6 +74,7 @@ mod tests {
             end,
             attendees,
             attendee_names: Vec::new(),
+            ical_uid: None,
         }
     }
 

@@ -1,0 +1,71 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('me')/calendarView(id,subject,start,end,isAllDay,isCancelled,responseStatus,attendees,iCalUId,onlineMeeting)",
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-05T00%3A00%3A00Z&endDateTime=2026-10-06T00%3A00%3A00Z&%24select=id%2Csubject&%24top=50&%24skip=50",
+  "value": [
+    {
+      "@odata.etag": "W/\"standup-1\"",
+      "id": "AAMkAGStandup-occurrence-20261005",
+      "iCalUId": "040000008200E00074C5B7101A82E00807EA0A05STANDUP",
+      "subject": "Platform Standup",
+      "isAllDay": false,
+      "isCancelled": false,
+      "responseStatus": { "response": "accepted", "time": "2026-09-01T10:00:00Z" },
+      "start": { "dateTime": "2026-10-05T09:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T09:15:00.0000000", "timeZone": "UTC" },
+      "onlineMeeting": { "joinUrl": "https://teams.microsoft.com/l/meetup-join/standup" },
+      "attendees": [
+        {
+          "type": "required",
+          "status": { "response": "accepted", "time": "2026-09-01T10:00:00Z" },
+          "emailAddress": { "name": "Priya Raman", "address": "priya@example.com" }
+        },
+        {
+          "type": "optional",
+          "status": { "response": "none", "time": "0001-01-01T00:00:00Z" },
+          "emailAddress": { "address": "dev@example.com" }
+        },
+        {
+          "type": "resource",
+          "status": { "response": "accepted", "time": "2026-09-01T10:00:00Z" },
+          "emailAddress": { "name": "Room 4B", "address": "room4b@example.com" }
+        }
+      ]
+    },
+    {
+      "id": "AAMkAGStandup-occurrence-20261006",
+      "iCalUId": "040000008200E00074C5B7101A82E00807EA0A06STANDUP",
+      "subject": "Platform Standup",
+      "isAllDay": false,
+      "isCancelled": false,
+      "responseStatus": { "response": "accepted" },
+      "start": { "dateTime": "2026-10-06T09:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-06T09:15:00.0000000", "timeZone": "UTC" },
+      "attendees": []
+    },
+    {
+      "id": "AAMkAGCancelledReview",
+      "iCalUId": "cancelled-review",
+      "subject": "Canceled: Quarterly review",
+      "isAllDay": false,
+      "isCancelled": true,
+      "responseStatus": { "response": "accepted" },
+      "start": { "dateTime": "2026-10-05T11:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T12:00:00.0000000", "timeZone": "UTC" },
+      "attendees": [
+        { "type": "required", "emailAddress": { "name": "Sam", "address": "sam@example.com" } }
+      ]
+    },
+    {
+      "id": "AAMkAGDeclinedSync",
+      "subject": "Vendor sync",
+      "isAllDay": false,
+      "isCancelled": false,
+      "responseStatus": { "response": "declined" },
+      "start": { "dateTime": "2026-10-05T13:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T13:30:00.0000000", "timeZone": "UTC" },
+      "attendees": [
+        { "type": "required", "emailAddress": { "name": "Vendor", "address": "v@example.com" } }
+      ]
+    }
+  ]
+}

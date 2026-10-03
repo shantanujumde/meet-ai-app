@@ -16,6 +16,7 @@
 
 use std::sync::Arc;
 
+use ::calendar::oauth::ProviderId;
 use ::calendar::{CalendarProvider, Error, Event};
 use chrono::{DateTime, Duration, Local, NaiveDate, Offset as _, TimeZone, Utc};
 use serde::Serialize;
@@ -25,6 +26,8 @@ use crate::config::{self, Provider};
 use crate::error::UiError;
 
 pub mod signin;
+// TUR-47/48: Microsoft and Google, behind their sign-in.
+pub(crate) mod cloud;
 #[cfg(test)]
 mod tests;
 
@@ -83,8 +86,9 @@ fn provider_for(provider: Provider) -> Option<SharedProvider> {
         // On every OS: off macOS its reads are errors (SPEC §8.2 keeps the
         // `#[cfg]` inside `crates/calendar/src/eventkit.rs`).
         Provider::EventKit => Some(Arc::new(::calendar::eventkit::EventKitProvider::new())),
-        // Not built yet; `available_providers` already logged and dropped them.
-        Provider::Google | Provider::Microsoft => None,
+        // Only with a sign-in (`cloud`); Google is TUR-48.
+        Provider::Google => cloud::provider(ProviderId::Google).map(SharedProvider::from),
+        Provider::Microsoft => cloud::provider(ProviderId::Microsoft).map(SharedProvider::from),
     }
 }
 

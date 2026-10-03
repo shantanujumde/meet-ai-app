@@ -124,6 +124,8 @@ pub fn run() {
                     tracing::info!(rewritten, "made interrupted recordings' audio playable");
                 }
             }
+            // TUR-47/48: the cloud calendars read their sign-in through the app handle.
+            calendar::cloud::init(_app.handle());
             // TUR-27: watch for a meeting app opening, and ask before recording.
             let detection_config = crate::config::detection();
             detection::start(_app.handle(), detection_config.processes);
