@@ -28,6 +28,11 @@
 //! a [`ConfigError`] for the Setup screen to show. They also add the one thing
 //! `transcription` never needed: writing back ([`file`]), with the user's
 //! comments and unknown keys kept.
+//!
+//! TUR-25 added the `calendar` and `detection` readers ([`calendar_section`],
+//! [`detection_section`]) ahead of Phase 6 for the calendar refresh and
+//! detection loops. They behave like `transcription`: a bad value is logged
+//! and the defaults are used, so startup never fails on them.
 
 use std::path::PathBuf;
 
@@ -41,9 +46,16 @@ use crate::error::UiError;
 mod agent_section;
 #[cfg(test)]
 mod agent_tests;
+mod calendar_section;
+mod detection_section;
 mod file;
 
 pub use agent_section::ConfigError;
+// TUR-27 (detection loop) and TUR-28 (calendar refresh loop) use these.
+#[allow(unused_imports)]
+pub use calendar_section::{CalendarConfig, Provider, calendar, parse_calendar};
+#[allow(unused_imports)] // TUR-27, same
+pub use detection_section::{DetectionConfig, detection, parse_detection};
 // TUR-9 (Setup screens) adds the IPC commands that use these.
 #[allow(unused_imports)]
 pub use agent_section::{AgentConfig, Harness, TicketsConfig};
@@ -83,6 +95,15 @@ fn app_dir() -> Result<PathBuf, UiError> {
 
 fn path() -> Option<PathBuf> {
     app_dir().ok().map(|dir| dir.join(FILE))
+}
+
+/// The text of `config.jsonc`, or `""` (all defaults) when the meetings
+/// folder cannot be found or the file cannot be read. For the sections that,
+/// like `transcription`, must never stop the app from starting.
+fn raw_or_empty() -> String {
+    path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_default()
 }
 
 /// The one JSONC reader for `config.jsonc`: the top-level section `name`,
