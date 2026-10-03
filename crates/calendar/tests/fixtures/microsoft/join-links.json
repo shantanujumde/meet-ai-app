@@ -1,0 +1,47 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('me')/calendarView(id,subject,start,end,isAllDay,isCancelled,responseStatus,attendees,iCalUId,onlineMeeting,location,bodyPreview)",
+  "value": [
+    {
+      "id": "zoom-in-body",
+      "subject": "Zoom link in the body",
+      "isAllDay": false,
+      "isCancelled": false,
+      "start": { "dateTime": "2026-10-05T09:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T09:30:00.0000000", "timeZone": "UTC" },
+      "onlineMeeting": null,
+      "location": { "displayName": "Room 4B" },
+      "bodyPreview": "Hi all,\r\nJoin Zoom Meeting\r\nhttps://acme.zoom.us/j/5551234567?pwd=abc\r\nMeeting ID: 555 123 4567"
+    },
+    {
+      "id": "meet-in-location",
+      "subject": "Meet link in the location",
+      "isAllDay": false,
+      "isCancelled": false,
+      "start": { "dateTime": "2026-10-05T10:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T10:30:00.0000000", "timeZone": "UTC" },
+      "location": { "displayName": "meet.google.com/abc-defg-hij" },
+      "bodyPreview": ""
+    },
+    {
+      "id": "phishing-everywhere",
+      "subject": "An outside invite with look-alike links",
+      "isAllDay": false,
+      "isCancelled": false,
+      "start": { "dateTime": "2026-10-05T11:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T11:30:00.0000000", "timeZone": "UTC" },
+      "onlineMeeting": { "joinUrl": "https://evil.example\\@teams.microsoft.com/l/meetup-join/x" },
+      "location": { "displayName": "https://teams.microsoft.com@evil.example/l/meetup-join/x" },
+      "bodyPreview": "Join: https://evil.example\\@zoom.us/j/1"
+    },
+    {
+      "id": "bad-online-meeting-real-body",
+      "subject": "A bad online-meeting link, a real one in the body",
+      "isAllDay": false,
+      "isCancelled": false,
+      "start": { "dateTime": "2026-10-05T12:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T12:30:00.0000000", "timeZone": "UTC" },
+      "onlineMeeting": { "joinUrl": "https://evil.example/teams.microsoft.com/l/meetup-join/x" },
+      "bodyPreview": "Teams: https://teams.microsoft.com/l/meetup-join/real"
+    }
+  ]
+}

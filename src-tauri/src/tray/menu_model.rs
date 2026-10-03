@@ -190,7 +190,11 @@ where
         label: format!("{when}  {}", shorten(&event.title, MENU_TITLE_CHARS)),
         now: happening,
         solo: event.attendees < min_attendees,
-        join_url: event.join_url.clone(),
+        // TUR-86: a link the Join check refuses gets no Join at all.
+        join_url: event
+            .join_url
+            .clone()
+            .filter(|url| ::calendar::join_url::is_safe_join_url(url)),
     }
 }
 
@@ -357,6 +361,17 @@ mod tests {
         let listed = meetings(&entries);
         assert_eq!(listed[0].join_url.as_deref(), Some("https://zoom.us/j/1"));
         assert_eq!(listed[1].join_url, None);
+    }
+
+    #[test]
+    fn no_join_for_a_link_a_browser_would_open_elsewhere() {
+        let mut phish = event("phish", at(11, 0), 30, 2);
+        phish.join_url = Some("https://evil.example\\@meet.google.com/abc-defg-hij".into());
+        let mut userinfo = event("userinfo", at(12, 0), 30, 2);
+        userinfo.join_url = Some("https://meet.google.com@evil.example/abc".into());
+        let read = CalendarRead::Events(vec![phish, userinfo]);
+        let entries = build_menu_model(&read, &at(10, 0), 2);
+        assert!(meetings(&entries).iter().all(|m| m.join_url.is_none()));
     }
 
     #[test]

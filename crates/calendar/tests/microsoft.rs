@@ -18,6 +18,7 @@ const PAGE1: &str = include_str!("fixtures/microsoft/page1.json");
 const PAGE2: &str = include_str!("fixtures/microsoft/page2.json");
 const ERROR_401: &str = include_str!("fixtures/microsoft/error-401.json");
 const ERROR_429: &str = include_str!("fixtures/microsoft/error-429.json");
+const JOIN_LINKS: &str = include_str!("fixtures/microsoft/join-links.json");
 
 const TOKEN_URL: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 
@@ -186,6 +187,45 @@ fn fields_are_mapped_and_rooms_are_not_counted() {
     assert_eq!(focus.attendees, 0);
     assert_eq!(focus.ical_uid, None);
     assert_eq!(focus.join_url, None);
+}
+
+#[test]
+fn a_link_in_the_body_or_location_is_the_join_link() {
+    // TUR-86: with no (safe) online meeting, a Zoom link in the body or a
+    // Meet link in the location gets a Join; look-alikes never do.
+    let http = Arc::new(FakeHttp::default());
+    http.reply(200, JOIN_LINKS);
+    let (from, to) = day(5);
+    let events = provider(&http, &Arc::default())
+        .list_events(from, to)
+        .unwrap();
+    let links: Vec<(&str, Option<&str>)> = events
+        .iter()
+        .map(|e| (e.id.as_str(), e.join_url.as_deref()))
+        .collect();
+    assert_eq!(
+        links,
+        vec![
+            (
+                "zoom-in-body",
+                Some("https://acme.zoom.us/j/5551234567?pwd=abc")
+            ),
+            (
+                "meet-in-location",
+                Some("https://meet.google.com/abc-defg-hij")
+            ),
+            ("phishing-everywhere", None),
+            (
+                "bad-online-meeting-real-body",
+                Some("https://teams.microsoft.com/l/meetup-join/real")
+            ),
+        ]
+    );
+}
+
+#[test]
+fn the_read_selects_location_and_body_preview() {
+    assert!(SELECT.ends_with(",onlineMeeting,location,bodyPreview"));
 }
 
 #[test]

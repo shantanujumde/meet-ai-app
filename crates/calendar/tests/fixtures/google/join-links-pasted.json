@@ -1,0 +1,48 @@
+{
+  "items": [
+    {
+      "id": "zoom-in-location",
+      "summary": "Zoom link pasted into the location",
+      "start": { "dateTime": "2026-10-05T09:00:00Z" },
+      "end": { "dateTime": "2026-10-05T09:30:00Z" },
+      "location": "https://acme.zoom.us/j/5551234567?pwd=abc"
+    },
+    {
+      "id": "zoom-in-description",
+      "summary": "Zoom link in the HTML description",
+      "start": { "dateTime": "2026-10-05T10:00:00Z" },
+      "end": { "dateTime": "2026-10-05T10:30:00Z" },
+      "location": "Room 4B",
+      "description": "Agenda: <a href=\"https://docs.google.com/document/d/1\">doc</a><br>Join: <a href=\"https://zoom.us/j/98765\">https://zoom.us/j/98765</a>"
+    },
+    {
+      "id": "phishing-conference",
+      "summary": "An outside invite with look-alike links everywhere",
+      "start": { "dateTime": "2026-10-05T11:00:00Z" },
+      "end": { "dateTime": "2026-10-05T11:30:00Z" },
+      "hangoutLink": "https://meet.google.com@evil.example/abc-defg-hij",
+      "conferenceData": {
+        "entryPoints": [
+          {
+            "entryPointType": "video",
+            "uri": "https://evil.example\\@meet.google.com/abc-defg-hij"
+          }
+        ]
+      },
+      "location": "https://evil.example\\@zoom.us/j/1",
+      "description": "Join at https://zoom.us@evil.example/j/1"
+    },
+    {
+      "id": "phishing-then-real",
+      "summary": "A bad conference link, a real one in the location",
+      "start": { "dateTime": "2026-10-05T12:00:00Z" },
+      "end": { "dateTime": "2026-10-05T12:30:00Z" },
+      "conferenceData": {
+        "entryPoints": [
+          { "entryPointType": "video", "uri": "https://evil.example/meet.google.com/abc" }
+        ]
+      },
+      "location": "https://MEET.Google.com/xyz-abcd-efg"
+    }
+  ]
+}

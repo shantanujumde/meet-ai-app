@@ -285,10 +285,11 @@ fn join(app: &AppHandle, event_id: &str) {
         tracing::warn!("the meeting for Join has no link any more");
         return;
     };
-    // Only web links: the providers' fields are someone else's data.
-    let lower = url.to_ascii_lowercase();
-    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
-        tracing::warn!("refusing to open a meeting link that is not http(s)");
+    // The providers' fields are someone else's data: open only a link a
+    // browser would take to a known call service (TUR-86), checked again here
+    // so nothing between the read and the click can slip one in.
+    if !calendar::join_url::is_safe_join_url(&url) {
+        tracing::warn!("refusing to open a meeting link that is not a known call service");
         return;
     }
     if let Err(error) = app.opener().open_url(url, None::<&str>) {

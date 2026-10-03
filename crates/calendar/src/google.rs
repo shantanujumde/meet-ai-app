@@ -24,6 +24,7 @@ use oauth2::http::{Method, Request, StatusCode, header};
 use oauth2::url::Url;
 use oauth2::{HttpRequest, HttpResponse};
 
+use crate::join_url::{extract_join_url, is_safe_join_url};
 use crate::oauth::{CalendarAuth, HttpClient, ProviderId};
 use crate::raw::{RawAttendee, RawEvent, to_events};
 use crate::{CalendarProvider, Error, Event};
@@ -41,7 +42,7 @@ fn provider_name() -> &'static str {
 pub const EVENTS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
 
 /// Only the fields [`types::Event`] reads, so a busy calendar stays small.
-pub const FIELDS: &str = "nextPageToken,items(id,status,summary,start,end,recurringEventId,iCalUID,attendees(email,displayName,self,resource,responseStatus),hangoutLink,conferenceData(entryPoints(entryPointType,uri)))";
+pub const FIELDS: &str = "nextPageToken,items(id,status,summary,start,end,recurringEventId,iCalUID,attendees(email,displayName,self,resource,responseStatus),hangoutLink,conferenceData(entryPoints(entryPointType,uri)),location,description)";
 
 /// Events per page: Google's default is 250, its maximum 2500.
 pub const PAGE_SIZE: u32 = 250;
@@ -224,31 +225,38 @@ fn raw_event(event: types::Event) -> Option<RawEvent> {
         all_day: false,
         attendees,
         ical_uid: event.ical_uid,
-        join_url: join_url(event.hangout_link, event.conference_data),
+        join_url: join_url(
+            event.hangout_link,
+            event.conference_data,
+            event.location.as_deref(),
+            event.description.as_deref(),
+        ),
     };
     Some(raw)
 }
 
 /// The link that joins the call (TUR-77): `hangoutLink` for Meet, else the
-/// conference's `video` entry point (a Zoom or other add-on). Blank links are
-/// skipped.
+/// conference's `video` entry point (a Zoom or other add-on), else a link
+/// pasted into the location or description (TUR-86). Blank links, and links
+/// that fail [`is_safe_join_url`] (an organiser sets the conference too),
+/// are skipped.
 fn join_url(
     hangout_link: Option<String>,
     conference: Option<types::ConferenceData>,
+    location: Option<&str>,
+    description: Option<&str>,
 ) -> Option<String> {
     let video = conference
         .into_iter()
         .flat_map(|c| c.entry_points)
-        .find_map(|entry| {
-            (entry.entry_point_type.as_deref() == Some("video"))
-                .then_some(entry.uri)
-                .flatten()
-                .filter(|uri| !uri.trim().is_empty())
-        });
+        .filter(|entry| entry.entry_point_type.as_deref() == Some("video"))
+        .filter_map(|entry| entry.uri);
     hangout_link
-        .filter(|link| !link.trim().is_empty())
-        .or(video)
+        .into_iter()
+        .chain(video)
         .map(|url| url.trim().to_owned())
+        .find(|url| is_safe_join_url(url))
+        .or_else(|| extract_join_url(None, location, description))
 }
 
 fn unreachable(detail: impl Into<String>) -> Error {

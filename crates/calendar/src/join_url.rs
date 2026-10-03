@@ -7,7 +7,8 @@
 //! **Join** opens the call and never a random web page from the notes.
 //!
 //! Pure string work, no OS code: EventKit (`eventkit.rs`) hands it the three
-//! fields, and the cloud providers have a link field of their own.
+//! fields. The cloud providers have a link field of their own, checked with
+//! [`is_safe_join_url`], and fall back to their location and notes (TUR-86).
 
 /// A known video-call link: a host (or any subdomain of it, so
 /// `acme.zoom.us` matches `zoom.us`) and the path it must start with. The
@@ -99,7 +100,56 @@ pub fn extract_join_url(
 fn first_link_in(text: &str) -> Option<String> {
     text.split(|c: char| c.is_whitespace() || DELIMITERS.contains(&c))
         .filter_map(candidate)
-        .find(|link| is_video_link(link))
+        .find(|link| is_safe_join_url(link))
+}
+
+/// Whether `link` is safe to offer and open as **Join** (TUR-86): an
+/// `http(s)` link that a browser would open on a known video service's host.
+///
+/// The one check behind every Join: [`extract_join_url`], the cloud
+/// providers' own link fields, and each place that opens a link (the menu
+/// bar, the meeting prompt). `link` is read with the WHATWG URL parser every
+/// browser uses, so the host matched here is the host the browser goes to.
+/// Refused outright, before the allow-list:
+///
+/// - a link that does not parse, or is not `http`/`https`;
+/// - user info (`https://meet.google.com@evil.example/…`), the classic way
+///   to dress one host up as another;
+/// - a `\` before the path (`https://evil.example\@meet.google.com/…`):
+///   WHATWG reads it as `/`, other parsers (macOS `NSURL`, Windows
+///   `ShellExecute`) may not, so the two could disagree on the host.
+pub fn is_safe_join_url(link: &str) -> bool {
+    let link = link.trim();
+    if backslash_before_path(link) {
+        return false;
+    }
+    let Ok(parsed) = url::Url::parse(link) else {
+        return false;
+    };
+    if !matches!(parsed.scheme(), "https" | "http")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return false;
+    }
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    let path = parsed.path().to_ascii_lowercase();
+    SERVICES.iter().flat_map(|service| service.iter()).any(|p| {
+        host_matches(&host, p.host) && path.len() > p.path.len() && path.starts_with(p.path)
+    })
+}
+
+/// A `\` anywhere before the path starts: in the scheme's slashes or the
+/// authority. Read on the raw text, before any parser can turn it into `/`.
+fn backslash_before_path(link: &str) -> bool {
+    let after_scheme = link.find(':').map_or(0, |colon| colon + 1);
+    let authority = link[after_scheme..].trim_start_matches(['/', '\\']);
+    let start = link.len() - authority.len();
+    let end = start + authority.find(['/', '?', '#']).unwrap_or(authority.len());
+    link[..end].contains('\\')
 }
 
 /// `token` as a full `https://` link, if it looks like one at all.
@@ -116,31 +166,6 @@ fn candidate(token: &str) -> Option<String> {
     // No scheme: a bare `zoom.us/j/1` in a location field. Anything else with
     // a scheme of its own (`mailto:`, `tel:`) is not a link to a call.
     (!lower.contains("://") && !lower.contains(':')).then(|| format!("https://{token}"))
-}
-
-/// Whether `link` (with a scheme) points at a known video service.
-fn is_video_link(link: &str) -> bool {
-    let Some((host, path)) = host_and_path(link) else {
-        return false;
-    };
-    SERVICES.iter().flat_map(|service| service.iter()).any(|p| {
-        host_matches(&host, p.host)
-            && path.len() > p.path.len()
-            && path.to_ascii_lowercase().starts_with(p.path)
-    })
-}
-
-/// The lower-cased host and the path of `link`, without user info, port,
-/// query or fragment.
-fn host_and_path(link: &str) -> Option<(String, &str)> {
-    let (_, rest) = link.split_once("://")?;
-    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let authority = &rest[..end];
-    let host = authority.rsplit('@').next().unwrap_or(authority);
-    let host = host.split(':').next().unwrap_or(host).to_ascii_lowercase();
-    let after = &rest[end..];
-    let path_end = after.find(['?', '#']).unwrap_or(after.len());
-    Some((host, &after[..path_end]))
 }
 
 /// `host` is `want` or a subdomain of it: `acme.zoom.us` matches `zoom.us`,
@@ -223,6 +248,48 @@ mod tests {
         // A look-alike host is not the service.
         assert_eq!(notes("https://notzoom.us/j/1"), None);
         assert_eq!(notes("mailto:priya@zoom.us"), None);
+        // TUR-86: a browser reads `\` as `/`, so this opens evil.example.
+        assert_eq!(
+            notes("https://evil.example\\@meet.google.com/abc-defg-hij"),
+            None
+        );
+        // User info in front of a real host, and a real host as user info.
+        assert_eq!(notes("https://meet.google.com@evil.example/abc"), None);
+        assert_eq!(notes("https://user:pw@meet.google.com/abc-defg-hij"), None);
+    }
+
+    #[test]
+    fn the_safe_check_sees_the_host_a_browser_opens() {
+        for good in [
+            "https://meet.google.com/abc-defg-hij",
+            "HTTPS://MEET.Google.COM/abc-defg-hij",
+            "https://Acme.Zoom.US:443/J/5?pwd=x",
+            "http://zoom.us/j/1",
+            "https://teams.microsoft.com/l/meetup-join/19%3ameeting%40thread.v2/0",
+            // A `\` after the path started is only part of the path.
+            "https://zoom.us/j/1?q=a\\b",
+        ] {
+            assert!(is_safe_join_url(good), "{good}");
+        }
+        for bad in [
+            "https://evil.example\\@meet.google.com/abc-defg-hij",
+            "https:\\\\evil.example/@meet.google.com/abc",
+            "https://meet.google.com\\.evil.example/abc",
+            "https://meet.google.com@evil.example/abc-defg-hij",
+            "https://meet.google.com:x@evil.example/abc",
+            "https://user@meet.google.com/abc",
+            "https://evil.example/meet.google.com/abc",
+            "https://meet.google.com.evil.example/abc",
+            "https://evil.example#@meet.google.com/abc",
+            "https://evil.example?@meet.google.com/abc",
+            "javascript://meet.google.com/%0aalert(1)",
+            "file://meet.google.com/abc",
+            "zoom.us/j/1",
+            "not a link",
+            "",
+        ] {
+            assert!(!is_safe_join_url(bad), "{bad}");
+        }
     }
 
     #[test]
@@ -257,12 +324,16 @@ mod tests {
     }
 
     #[test]
-    fn hosts_and_paths_are_matched_without_case_ports_or_user_info() {
+    fn hosts_and_paths_are_matched_without_case_or_ports() {
         assert_eq!(
             notes("HTTPS://Acme.Zoom.US:443/J/5").as_deref(),
             Some("HTTPS://Acme.Zoom.US:443/J/5")
         );
-        assert!(is_video_link("https://user@meet.google.com/abc"));
-        assert!(!is_video_link("https://meet.google.com/?authuser=0"));
+        assert_eq!(
+            notes("Join: https://MEET.GOOGLE.COM/abc-defg-hij").as_deref(),
+            Some("https://MEET.GOOGLE.COM/abc-defg-hij")
+        );
+        assert!(!is_safe_join_url("https://user@meet.google.com/abc"));
+        assert!(!is_safe_join_url("https://meet.google.com/?authuser=0"));
     }
 }
