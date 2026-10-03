@@ -2,9 +2,11 @@ import { describe, expect, test } from "vitest";
 import {
   describeInterruption,
   formatBytes,
+  formatDuration,
   formatElapsed,
   formatLineCount,
   formatRelativeDate,
+  timestampToMs,
 } from "./format";
 
 describe("model sizes", () => {
@@ -97,5 +99,22 @@ describe("interrupted meetings (TUR-97)", () => {
       "Recording stopped unexpectedly, before any audio was saved.",
     );
     expect(describeInterruption(null)).toMatch(/before any audio was saved/);
+  });
+});
+
+describe("meeting length in the header (TUR-81)", () => {
+  test("rounds to the minute, and says hours past an hour", () => {
+    expect(formatDuration(0)).toBe("< 1 min");
+    expect(formatDuration(29_000)).toBe("< 1 min");
+    expect(formatDuration(50 * 60_000)).toBe("50 min");
+    expect(formatDuration(65 * 60_000)).toBe("1 h 5 min");
+    expect(formatDuration(120 * 60_000 + 10_000)).toBe("2 h");
+  });
+
+  test("reads a transcript timestamp, and nothing else", () => {
+    expect(timestampToMs("00:50:04")).toBe((50 * 60 + 4) * 1000);
+    expect(timestampToMs("01:00:00")).toBe(3_600_000);
+    expect(timestampToMs(null)).toBeNull();
+    expect(timestampToMs("50 min")).toBeNull();
   });
 });

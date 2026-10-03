@@ -33,6 +33,29 @@ export function formatElapsed(milliseconds: number): string {
 }
 
 /**
+ * A meeting's length as the header's meta line says it: "< 1 min", "50 min",
+ * "1 h 5 min", "2 h". Rounded to the minute — the exact second is the
+ * transcript's job, not the header's.
+ */
+export function formatDuration(milliseconds: number): string {
+  const minutes = Math.round(Math.max(0, milliseconds) / 60_000);
+  if (minutes === 0) return "< 1 min";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+}
+
+/** A transcript timestamp (`HH:MM:SS`) as milliseconds, or `null` if it is not one. */
+export function timestampToMs(timestamp: string | null): number | null {
+  if (!timestamp) return null;
+  const match = /^(\d+):(\d{2}):(\d{2})$/.exec(timestamp);
+  if (!match) return null;
+  const [, hours, minutes, seconds] = match;
+  return ((Number(hours) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000;
+}
+
+/**
  * A meeting's date, as short as it can be while staying unambiguous.
  *
  * `today` is a parameter rather than a call to `new Date()` so the result is
