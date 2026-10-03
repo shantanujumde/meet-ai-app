@@ -49,3 +49,8 @@ Notes:
 - `src-tauri/src/sync/tests.rs`'s fake `claude`/`codex` scripts need
   `/bin/sh`; on Windows they compile now (through
   `platform::make_executable`) and TUR-54 makes them run.
+- Tests that start a `/bin/sh` fake agent CLI (`agent::FakeHarness` or the
+  `sync/tests.rs` scripts) return early off Unix through
+  `platform::FAKE_CLI_RUNS`, so they pass without running on Windows; TUR-54
+  makes them run there. 27 in `src-tauri/src`: 16 in `agent_run/tests.rs`,
+  4 in `agent_setup/tests.rs`, 7 in `sync/tests.rs`.

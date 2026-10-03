@@ -223,6 +223,12 @@ pub(crate) fn make_executable(path: &Path) -> std::io::Result<()> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
 }
 
+/// Whether a test's fake agent CLI can run here: `agent::fake` and the
+/// `sync/tests.rs` scripts both need `/bin/sh`. Tests that start one return
+/// early where it is false, until TUR-54 makes the fakes portable.
+#[cfg(test)]
+pub(crate) const FAKE_CLI_RUNS: bool = cfg!(unix);
+
 /// See the Unix version: nothing to set here.
 #[cfg(all(test, not(unix)))]
 pub(crate) fn make_executable(_path: &Path) -> std::io::Result<()> {

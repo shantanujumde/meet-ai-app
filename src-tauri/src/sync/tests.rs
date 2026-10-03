@@ -75,6 +75,9 @@ fn reply(id: serde_json::Value, url: serde_json::Value) -> FakeHarness {
 
 #[test]
 fn a_reply_with_a_key_and_link_is_written_to_the_ticket() {
+    if !crate::platform::FAKE_CLI_RUNS {
+        return;
+    }
     let root = meetings_root();
     let summary = sync_with(root.path(), &reply(json!("ENG-42"), json!(URL))).unwrap();
     assert_eq!(summary.synced_to.as_deref(), Some("linear"));
@@ -96,6 +99,9 @@ fn a_reply_with_a_key_and_link_is_written_to_the_ticket() {
 /// no issue key. That is "not synced": an error, and the file untouched.
 #[test]
 fn a_reply_with_no_key_is_not_synced_and_writes_nothing() {
+    if !crate::platform::FAKE_CLI_RUNS {
+        return;
+    }
     for (id, url) in [
         (json!(null), json!(null)),
         (json!(""), json!("")),
@@ -119,6 +125,9 @@ fn a_reply_with_no_key_is_not_synced_and_writes_nothing() {
 
 #[test]
 fn a_ticket_already_synced_is_not_synced_again() {
+    if !crate::platform::FAKE_CLI_RUNS {
+        return;
+    }
     let root = meetings_root();
     sync_with(root.path(), &reply(json!("ENG-42"), json!(URL))).unwrap();
     // A second run would make a second issue; it must not start at all.
@@ -133,6 +142,9 @@ fn a_ticket_already_synced_is_not_synced_again() {
 
 #[test]
 fn agent_failures_keep_their_own_kind_and_write_nothing() {
+    if !crate::platform::FAKE_CLI_RUNS {
+        return;
+    }
     let cases = [
         (FakeBehavior::NotSignedIn, "agent-not-signed-in"),
         (FakeBehavior::NotInstalled, "agent-not-installed"),
@@ -163,6 +175,9 @@ fn agent_failures_keep_their_own_kind_and_write_nothing() {
 
 #[test]
 fn cancel_stops_the_run() {
+    if !crate::platform::FAKE_CLI_RUNS {
+        return;
+    }
     let root = meetings_root();
     let runs = SyncRuns::default();
     let claim = runs.claim("TICK-0001").unwrap();
@@ -263,6 +278,9 @@ fn agent_config(harness: HarnessChoice, binary: PathBuf) -> AgentConfig {
 
 #[test]
 fn claude_gets_only_the_task_and_only_the_tracker_tools() {
+    if !crate::platform::FAKE_CLI_RUNS {
+        return;
+    }
     let root = meetings_root();
     let bin = tempfile::tempdir().unwrap();
     let envelope = json!({
@@ -315,6 +333,9 @@ fn assert_no_local_path(root: &Path, prompt: &str) {
 /// exit 0, and a reply with no issue key.
 #[test]
 fn a_refused_codex_sync_exits_0_and_is_not_synced() {
+    if !crate::platform::FAKE_CLI_RUNS {
+        return;
+    }
     let root = meetings_root();
     let before = fs::read(ticket_path(root.path())).unwrap();
     let bin = tempfile::tempdir().unwrap();

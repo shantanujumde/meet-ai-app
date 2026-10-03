@@ -377,6 +377,9 @@ fn the_sample_prompt_uses_the_user_s_own_template() {
 
 #[test]
 fn a_good_reply_becomes_the_test_result() {
+    if !crate::platform::FAKE_CLI_RUNS {
+        return;
+    }
     let result = run_fake(FakeBehavior::Reply(good_notes()), Duration::from_secs(30)).unwrap();
     assert_eq!(result.summary, "The beta ships Friday.");
     assert_eq!(result.decisions, ["Ship the beta Friday"]);
@@ -434,6 +437,9 @@ fn the_test_runs_the_picked_model_and_default_passes_none() {
 
 #[test]
 fn a_failed_test_names_the_model_it_tried() {
+    if !crate::platform::FAKE_CLI_RUNS {
+        return;
+    }
     let fail = FakeBehavior::Fail {
         code: 1,
         stderr: "unknown model".into(),
@@ -459,6 +465,9 @@ fn a_failed_test_names_the_model_it_tried() {
 
 #[test]
 fn each_failed_run_has_its_own_kind() {
+    if !crate::platform::FAKE_CLI_RUNS {
+        return;
+    }
     let cases = [
         (FakeBehavior::NotInstalled, "agent-not-installed"),
         (FakeBehavior::NotSignedIn, "agent-not-signed-in"),
@@ -483,6 +492,9 @@ fn each_failed_run_has_its_own_kind() {
 
 #[test]
 fn a_run_past_the_time_limit_is_stopped() {
+    if !crate::platform::FAKE_CLI_RUNS {
+        return;
+    }
     let error = run_fake(
         FakeBehavior::Sleep(Duration::from_secs(10)),
         Duration::from_millis(300),
