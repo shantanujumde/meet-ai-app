@@ -122,6 +122,8 @@ fn show_window(app: &AppHandle) {
         tracing::warn!("no window to open from the menu bar");
         return;
     };
+    // TUR-76: the Dock icon went away with the window; bring it back first.
+    crate::platform::set_dock_visible(app, true);
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();

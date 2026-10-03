@@ -31,3 +31,8 @@ pub const AGENT_RUN_STATUS_EVENT: &str = "agent-run://status";
 /// A meeting looks like it started and meet-ai is asking whether to record it
 /// (TUR-27): `detection::notify::Prompt`, the `Signal` and the reason.
 pub const DETECTION_PROMPT_EVENT: &str = "detection://prompt";
+
+/// A quit (⌘Q, the menu-bar Quit) came in while recording, and Rust is
+/// holding it until the window's "Stop recording and quit?" is answered
+/// (TUR-76). No payload.
+pub const QUIT_CONFIRM_EVENT: &str = "app://confirm-quit";

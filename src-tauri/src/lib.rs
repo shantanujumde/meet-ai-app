@@ -21,6 +21,8 @@ mod engine;
 mod error;
 mod events;
 mod folder_move;
+// TUR-76: closing the window hides it; quitting asks first while recording.
+mod lifecycle;
 mod live_transcript;
 mod lock;
 mod meetings;
@@ -66,6 +68,8 @@ pub fn run() {
         // launch must focus the existing window rather than start a new app.
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             use tauri::Manager as _;
+            // TUR-76: the window may be hidden, with no Dock icon.
+            lifecycle::show_main_window(app);
             if let Some(window) = app.webview_windows().values().next() {
                 let _ = window.set_focus();
             }
@@ -103,6 +107,9 @@ pub fn run() {
         // TUR-44: Google and Microsoft sign-in; TUR-47/48 read access tokens from it.
         .manage(calendar::signin::auth())
         .manage(retention::AudioRetention::default())
+        // TUR-76: closing the main window hides it rather than quitting.
+        .manage(lifecycle::Lifecycle::default())
+        .on_window_event(lifecycle::on_window_event)
         .setup(|_app| {
             // TUR-97: before the record shortcut exists, so nothing can be
             // mid-recording while this rewrites a header. Fast — two 44-byte
@@ -138,6 +145,8 @@ pub fn run() {
             {
                 register_record_shortcut(_app.handle());
                 tray::init(_app.handle());
+                // TUR-76: after the tray, which decides whether close can hide.
+                lifecycle::init(_app.handle());
             }
             Ok(())
         })
@@ -145,6 +154,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("meet-ai failed to start")
         .run(|app, event| {
+            // TUR-76: hold ⌘Q / the menu-bar Quit while recording, and
+            // reopen the hidden window on a Dock click.
+            lifecycle::on_run_event(app, &event);
             // TUR-97: a normal quit mid-recording (⌘Q, the menu bar's Quit, a
             // logout asking apps to quit) used to leave the files exactly as a
             // `kill -9` does — up to one checkpoint of audio past the header

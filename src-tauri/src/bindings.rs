@@ -12,6 +12,7 @@ use crate::agent_setup;
 use crate::brief;
 use crate::events::AGENT_RUN_STATUS_EVENT;
 use crate::events::DETECTION_PROMPT_EVENT;
+use crate::events::QUIT_CONFIRM_EVENT;
 use crate::events::{
     MEETINGS_CHANGED_EVENT, MODEL_PROGRESS_EVENT, PERMISSION_STATUS_EVENT, RECORDING_STATE_EVENT,
     TRANSCRIPT_STATUS_EVENT, TRANSCRIPT_UPDATE_EVENT,
@@ -71,6 +72,9 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::calendar::signin::calendar_accounts,
             brief::meeting_brief,
             crate::retention::audio_retention_days,
+            crate::lifecycle::confirm_quit,
+            crate::lifecycle::app_settings,
+            crate::lifecycle::set_show_in_dock_when_closed,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)
@@ -80,6 +84,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         .constant("MEETINGS_CHANGED_EVENT", MEETINGS_CHANGED_EVENT)
         .constant("AGENT_RUN_STATUS_EVENT", AGENT_RUN_STATUS_EVENT)
         .constant("DETECTION_PROMPT_EVENT", DETECTION_PROMPT_EVENT)
+        .constant("QUIT_CONFIRM_EVENT", QUIT_CONFIRM_EVENT)
         .typ::<crate::detection::notify::Prompt>()
 }
 
