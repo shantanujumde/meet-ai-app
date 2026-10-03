@@ -41,8 +41,14 @@ mod span_assembler;
 mod transcribe;
 pub mod vad;
 
-#[cfg(target_os = "macos")]
-pub mod whisper;
+/// The OS seam (SPEC §8.2): the only module that names an operating system.
+mod platform;
+
+/// `stt::whisper` on macOS, the whisper-rs fallback engine. Declared in
+/// `platform`, since whisper-rs is only built for macOS so far.
+// Empty, so unused, on every other OS.
+#[allow(unused_imports)]
+pub use platform::public::*;
 
 pub use session::{
     LiveEmitter, LiveLine, LiveListener, LiveUpdate, NoListener, ReadySpan, SeqCounter,

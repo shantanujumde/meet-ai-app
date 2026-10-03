@@ -18,10 +18,9 @@ use crate::{Error, SttEngine};
 // whisper-rs compiles whisper.cpp for the target, so the engine itself is
 // macOS-only for now (SPEC §8.2 turns on `vulkan`/`cuda` at Windows port
 // time). Selection *logic* is not platform-specific and must keep compiling
-// everywhere, so only the construction below is gated — that is what keeps
-// `just check-windows` meaningful instead of excluding this crate from it.
-#[cfg(target_os = "macos")]
-use crate::whisper::{WhisperConfig, WhisperEngine};
+// everywhere, so only the construction below goes through `crate::platform`
+// — that is what keeps `just check-windows` meaningful instead of excluding
+// this crate from it.
 
 /// Which engine the user asked for, from `config.jsonc`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -269,21 +268,9 @@ pub fn select(
                 .clone()
                 .ok_or_else(|| Error::EngineUnavailable("no whisper model is downloaded".into()))?;
 
-            #[cfg(target_os = "macos")]
-            {
-                Box::new(WhisperEngine::load(&model, WhisperConfig::default())?)
-            }
-            // The Windows port (SPEC §8.2) turns whisper-rs back on with the
-            // `vulkan`/`cuda` features and deletes this arm. Until then the
-            // seam guard needs the crate to compile for Windows, and it can
-            // only do that if there is no whisper engine to construct.
-            #[cfg(not(target_os = "macos"))]
-            {
-                let _ = model;
-                return Err(Error::EngineUnavailable(
-                    "the whisper engine is not built for this platform yet".into(),
-                ));
-            }
+            // `Error::EngineUnavailable` on a platform whisper is not built
+            // for yet (SPEC §8.2).
+            crate::platform::load_whisper(&model)?
         }
     };
 
