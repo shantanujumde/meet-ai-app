@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::time::{Duration as StdDuration, Instant};
 
-use ::calendar::Event;
+use ::calendar::{Error, Event};
 use chrono::{Local, NaiveDate, Timelike as _};
 use tauri::menu::{
     IsMenuItem, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder,
@@ -26,7 +26,7 @@ use tauri_plugin_opener::OpenerExt as _;
 use super::menu_model::{
     self, BRIEF_LABEL, CalendarRead, JOIN_LABEL, MeetingEntry, MenuEntry, RECORD_LABEL,
 };
-use crate::config::{self, Provider};
+use crate::config;
 use crate::lifecycle::{self, NavigateTo};
 use crate::recording::auto_title::PinnedEvent;
 
@@ -168,6 +168,9 @@ pub fn redraw_soon(app: &AppHandle) {
 
 fn run(app: &AppHandle, tray_id: &str, fixed: &Fixed, rx: &mpsc::Receiver<Nudge>) {
     let mut last_read: Option<(Instant, NaiveDate)> = None;
+    // The day of the last read that worked: a failed read may keep its
+    // events, never yesterday's (TUR-88).
+    let mut good_day: Option<NaiveDate> = None;
     let mut shown: Option<(Vec<MenuEntry>, Option<String>)> = None;
     let mut reread = true;
     loop {
@@ -176,11 +179,19 @@ fn run(app: &AppHandle, tray_id: &str, fixed: &Fixed, rx: &mpsc::Receiver<Nudge>
         let stale =
             last_read.is_none_or(|(at, day)| at.elapsed() >= every || day != now.date_naive());
         if reread || stale {
-            let read = read_today(app, &now);
-            *app.state::<Today>()
-                .read
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = Some(read);
+            let result = read_today(app, &now);
+            if result.is_ok() {
+                good_day = Some(now.date_naive());
+            }
+            let today = app.state::<Today>();
+            let mut shown_read = today.read.lock().unwrap_or_else(|e| e.into_inner());
+            let next = settle(
+                shown_read.as_ref(),
+                good_day == Some(now.date_naive()),
+                result,
+            );
+            *shown_read = Some(next);
+            drop(shown_read);
             last_read = Some((Instant::now(), now.date_naive()));
             reread = false;
         }
@@ -216,24 +227,45 @@ fn run(app: &AppHandle, tray_id: &str, fixed: &Fixed, rx: &mpsc::Receiver<Nudge>
     }
 }
 
-/// Today's events, local midnight to midnight, or why there are none.
+/// Today's events, local midnight to midnight, from every calendar that can
+/// be read now.
 ///
 /// Never asks for calendar access, like the reminders: the Today pane does,
-/// where the user can see why. Until it has been answered the menu says the
-/// calendar is not connected.
-fn read_today(app: &AppHandle, now: &chrono::DateTime<Local>) -> CalendarRead {
-    let providers = config::calendar().available_providers();
-    if providers.is_empty()
-        || (providers.contains(&Provider::EventKit) && !::calendar::eventkit::access_answered())
-    {
-        return CalendarRead::NotConnected;
-    }
+/// where the user can see why. Until Calendar.app's prompt is answered the
+/// other calendars are still read (TUR-88, `calendar::readable`); with none
+/// left, the read is `PermissionDenied`.
+fn read_today(app: &AppHandle, now: &chrono::DateTime<Local>) -> Result<Vec<Event>, Error> {
     let Some(state) = app.try_state::<crate::calendar::CalendarState>() else {
-        return CalendarRead::NotConnected;
+        return Err(Error::PermissionDenied);
     };
     let (from, to) = crate::calendar::today_bounds(now);
-    match state.events_between(from, to) {
+    state.events_between_unprompted(from, to)
+}
+
+/// What the menu shows after a read, given what it showed before.
+///
+/// An unreachable calendar (offline, a Wi-Fi blip, Graph's 429 or 503) is
+/// passing, so the last good list stays while it is still today's (TUR-88),
+/// the way the reminders keep theirs. "Not connected" is for what the user
+/// has to fix (access denied, an expired sign-in, nothing set up) and for an
+/// unreachable calendar with nothing read yet today.
+fn settle(
+    previous: Option<&CalendarRead>,
+    previous_is_today: bool,
+    read: Result<Vec<Event>, Error>,
+) -> CalendarRead {
+    match read {
         Ok(events) => CalendarRead::Events(events),
+        Err(error @ Error::Unreachable { .. }) => match previous {
+            Some(CalendarRead::Events(events)) if previous_is_today => {
+                tracing::debug!(%error, "the menu bar could not read the calendar; keeping the last read");
+                CalendarRead::Events(events.clone())
+            }
+            _ => {
+                tracing::debug!(%error, "the menu bar could not read the calendar");
+                CalendarRead::NotConnected
+            }
+        },
         Err(error) => {
             tracing::debug!(%error, "the menu bar could not read the calendar");
             CalendarRead::NotConnected
@@ -323,5 +355,89 @@ fn record(app: &AppHandle, event_id: &str) {
         })
     {
         tracing::error!(%error, "could not spawn a worker thread for Record");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{TimeZone as _, Utc};
+
+    use super::*;
+
+    fn standup() -> Event {
+        let start = Utc
+            .with_ymd_and_hms(2026, 10, 5, 9, 0, 0)
+            .single()
+            .expect("valid test time");
+        Event {
+            id: "standup".into(),
+            title: "Standup".into(),
+            start,
+            end: start + chrono::Duration::minutes(15),
+            attendees: 3,
+            attendee_names: Vec::new(),
+            ical_uid: None,
+            join_url: None,
+        }
+    }
+
+    fn offline() -> Result<Vec<Event>, Error> {
+        Err(Error::Unreachable {
+            provider: "Microsoft",
+            detail: "Graph answered 503".into(),
+        })
+    }
+
+    #[test]
+    fn a_network_blip_keeps_todays_list() {
+        let shown = CalendarRead::Events(vec![standup()]);
+        assert_eq!(settle(Some(&shown), true, offline()), shown);
+    }
+
+    #[test]
+    fn a_network_blip_with_nothing_read_yet_is_not_connected() {
+        for previous in [
+            None,
+            Some(CalendarRead::Pending),
+            Some(CalendarRead::NotConnected),
+        ] {
+            assert_eq!(
+                settle(previous.as_ref(), true, offline()),
+                CalendarRead::NotConnected
+            );
+        }
+    }
+
+    #[test]
+    fn a_network_blip_never_keeps_yesterdays_list() {
+        let yesterday = CalendarRead::Events(vec![standup()]);
+        assert_eq!(
+            settle(Some(&yesterday), false, offline()),
+            CalendarRead::NotConnected
+        );
+    }
+
+    #[test]
+    fn what_the_user_must_fix_is_not_connected_at_once() {
+        let shown = CalendarRead::Events(vec![standup()]);
+        for error in [
+            Error::PermissionDenied,
+            Error::SignInExpired { provider: "Google" },
+        ] {
+            assert_eq!(
+                settle(Some(&shown), true, Err(error)),
+                CalendarRead::NotConnected
+            );
+        }
+    }
+
+    #[test]
+    fn a_good_read_replaces_whatever_was_shown() {
+        let read = settle(
+            Some(&CalendarRead::NotConnected),
+            false,
+            Ok(vec![standup()]),
+        );
+        assert_eq!(read, CalendarRead::Events(vec![standup()]));
     }
 }
