@@ -594,4 +594,6 @@ export async function meetingBrief(title: string): Promise<MeetingBrief> {
 // `subscribe` are exported for such modules.
 export * from "./lifecycle";
 export * from "./logs";
+// The Settings speech engine picker (TUR-75).
+export * from "./speech";
 export { call, subscribe };

@@ -99,6 +99,8 @@ prompts.workspace = true
 sha2.workspace = true
 store = { workspace = true, features = ["specta"] }
 stt = { workspace = true, features = ["specta"] }
+# Total memory, for which whisper model Settings marks "Recommended" (TUR-79).
+sysinfo.workspace = true
 
 # Desktop-only plugins. A global shortcut, a single-instance guard and an
 # updater have no meaning on mobile, and Tauri's own template gates them the

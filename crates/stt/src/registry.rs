@@ -15,6 +15,10 @@ use std::path::{Path, PathBuf};
 use crate::apple::{AppleEngine, Probe};
 use crate::{Error, SttEngine};
 
+// The Settings picker's view of every choice at once (TUR-75).
+mod options;
+pub use options::{Availability, EngineOptions, WHISPER_NEEDS_A_MODEL, options};
+
 // whisper-rs compiles whisper.cpp for the target, so the engine itself is
 // macOS-only for now (SPEC §8.2 turns on `vulkan`/`cuda` at Windows port
 // time). Selection *logic* is not platform-specific and must keep compiling
@@ -177,15 +181,29 @@ fn apple_unavailable_detail(apple: &Option<Result<Probe, Error>>, locale: &str) 
 /// Split out from [`select`] so the UI can show "will use X" on the settings
 /// screen without paying to load a 574 MB model.
 pub fn resolve(preference: Preference, environment: &Environment) -> Result<Selection, Error> {
+    decide(preference, environment, &probe_apple(environment))
+}
+
+/// Run `meet-stt --probe` once, if there is a sidecar to run.
+fn probe_apple(environment: &Environment) -> Option<Result<Probe, Error>> {
     // Probing runs the sidecar, so do it once and reuse the answer.
-    let apple = environment.sidecar.as_ref().map(|binary| {
+    environment.sidecar.as_ref().map(|binary| {
         let probe = AppleEngine::probe(binary, &environment.locale);
         if let Err(error) = &probe {
             tracing::warn!(%error, "meet-stt --probe failed; treating Apple's engine as unavailable");
         }
         probe
-    });
-    let apple_usable = matches!(&apple, Some(Ok(probe)) if probe.is_usable_offline());
+    })
+}
+
+/// [`resolve`] with the probe already run, so [`options`] can ask about every
+/// preference without probing once per question.
+fn decide(
+    preference: Preference,
+    environment: &Environment,
+    apple: &Option<Result<Probe, Error>>,
+) -> Result<Selection, Error> {
+    let apple_usable = matches!(apple, Some(Ok(probe)) if probe.is_usable_offline());
 
     match preference {
         Preference::AppleSpeech => {
@@ -195,7 +213,7 @@ pub fn resolve(preference: Preference, environment: &Environment) -> Result<Sele
                     reason: "config asked for Apple's on-device speech engine".into(),
                 });
             }
-            let detail = apple_unavailable_detail(&apple, &environment.locale);
+            let detail = apple_unavailable_detail(apple, &environment.locale);
             Err(Error::EngineUnavailable(format!(
                 "Apple's speech engine cannot be used: {detail}"
             )))
@@ -223,7 +241,7 @@ pub fn resolve(preference: Preference, environment: &Environment) -> Result<Sele
                         .into(),
                 })
             } else if environment.whisper_model.is_some() {
-                let detail = apple_unavailable_detail(&apple, &environment.locale);
+                let detail = apple_unavailable_detail(apple, &environment.locale);
                 Ok(Selection {
                     engine: Kind::Whisper,
                     reason: format!(
@@ -236,7 +254,7 @@ pub fn resolve(preference: Preference, environment: &Environment) -> Result<Sele
                 // that can never run Apple's engine, and one that just hasn't
                 // downloaded a whisper model yet — so name which one this is
                 // rather than collapsing both into "Apple's is unavailable".
-                let detail = apple_unavailable_detail(&apple, &environment.locale);
+                let detail = apple_unavailable_detail(apple, &environment.locale);
                 let missing = environment.missing_whisper_model();
                 Err(Error::EngineUnavailable(format!(
                     "no speech engine is ready: Apple's speech engine cannot be used ({detail}), \
