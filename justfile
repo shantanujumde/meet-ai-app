@@ -67,9 +67,12 @@ check: check-windows sidecar
 # toolchain. `calendar` is here for the same reason, ahead of its Phase 5 deps.
 #
 # Since TUR-42 every crate keeps its OS code in `src/platform/` (quality rule
-# R10), and `agent` joined the list: it has no C dependency at all. The second
-# `cargo check` builds `audio` with `stub-audio`, the no-device sources CI on
-# Windows and Linux runs tests with. The target is only added when missing.
+# R10; `store` since TUR-89, and three unix-only test gates in `agent` wait for
+# TUR-54), and `agent` joined the list: it has no C dependency at all. The second
+# `cargo check` builds `audio` with `stub-audio`, the no-device sources for
+# running the tests on Windows and Linux. No CI job does that yet (TUR-36, #83,
+# adds them); until then it is a manual check. The target is only added when
+# missing.
 check-windows:
     rustup target list --installed | grep -qx x86_64-pc-windows-msvc || rustup target add x86_64-pc-windows-msvc
     cargo check --target x86_64-pc-windows-msvc -p audio -p calendar -p stt -p prompts -p detect -p meeting-format -p agent

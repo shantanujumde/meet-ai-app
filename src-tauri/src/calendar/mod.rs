@@ -2,8 +2,9 @@
 //! item 38): no login, no setup.
 //!
 //! [`CalendarState`] is the app's one way to read calendar events. It asks
-//! every provider `config.jsonc` names (only EventKit is built so far, see
-//! `config::calendar`) and merges the answers. The window's Today pane reads
+//! every provider `config.jsonc` names (EventKit on macOS, Google and
+//! Microsoft sign-in on every OS; see `config::calendar`) and merges the
+//! answers. The window's Today pane reads
 //! it through [`todays_meetings`]; the recorder's event matching (TUR-29)
 //! reads it through [`CalendarState::events_between`].
 //!

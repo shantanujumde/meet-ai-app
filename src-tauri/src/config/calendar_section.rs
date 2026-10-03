@@ -271,7 +271,6 @@ fn calendar_or_defaults(raw: &str) -> CalendarConfig {
 
 /// `calendar` from `~/Meetings/.app/config.jsonc`, or the SPEC §3.5 defaults
 /// if the file or section is missing or not valid (logged).
-#[allow(dead_code)] // TUR-27/TUR-28 (calendar refresh loop) call this.
 pub fn calendar() -> CalendarConfig {
     calendar_or_defaults(&super::raw_or_empty())
 }

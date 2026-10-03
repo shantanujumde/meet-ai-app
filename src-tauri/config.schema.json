@@ -71,7 +71,7 @@
     },
     "calendar": {
       "type": "object",
-      "description": "Where upcoming meetings are read from. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
+      "description": "Where upcoming meetings are read from.",
       "properties": {
         "providers": {
           "type": "array",
@@ -128,7 +128,7 @@
     },
     "detection": {
       "type": "object",
-      "description": "Signals used to notice that a meeting has started. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
+      "description": "Signals used to notice that a meeting has started.",
       "properties": {
         "calendar": {
           "type": "boolean",

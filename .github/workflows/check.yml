@@ -167,7 +167,7 @@ jobs:
           changed=()
           while IFS= read -r file; do
             changed+=("$file")
-          done < <(git diff --name-only --diff-filter=ACMR "origin/$BASE_REF...HEAD")
+          done < <(git diff --name-only --diff-filter=ACMRD "origin/$BASE_REF...HEAD")
           if [ "${#changed[@]}" -eq 0 ]; then
             echo "No changed files."
             exit 0
@@ -239,6 +239,13 @@ jobs:
       # only bash, git and awk, so it runs here and not on the Mac.
       - name: Quality rules self-test
         run: scripts/quality-rules-selftest.sh
+
+      # R10 over every tracked .rs file and every line, not only the lines a
+      # branch added: two branches that each pass on their own can still add
+      # up to an OS cfg in shared code once both merge (TUR-89). Same allowed
+      # paths as the gate; the known-debt lines (R10_DEBT) print a warning.
+      - name: R10 over the whole tree
+        run: scripts/quality-rules.sh --r10-tree
 
   # Frontend checks. Nothing here touches Rust or macOS APIs; the bindings file
   # they compile against is the committed one, and the `rust` job proves it

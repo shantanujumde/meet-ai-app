@@ -32,7 +32,7 @@ This spec is the reconciled version. Every change is traceable to evidence in `d
 | L10 | Agent instructions | **Self-contained in the prompt the app passes to the agent.** App writes nothing outside `~/Meetings/` | ⚠️ amended — "copied" prompt is now "passed" prompt, see **A11** |
 | L11 | Trackers | Agent pushes via its **own** Jira/Linear/GitHub connections. App stores zero tokens | ✅ was 3 native sync engines |
 | L12 | MCP server | **v1.1**, not v1 | ✅ was v1 |
-| L13 | Calendar | **EventKit + Google OAuth + Microsoft Graph OAuth + ICS URL.** EventKit is the zero-auth default; OAuth covers users with no local mail client configured | ⚠️ partly — OAuth restored on top of EventKit |
+| L13 | Calendar | **EventKit + Google OAuth + Microsoft Graph OAuth + ICS URL.** EventKit is the zero-auth default; OAuth covers users with no local mail client configured | ⚠️ partly — OAuth restored on top of EventKit ⚠️ amended — see A12 |
 | L14 | Start Work | **Copy prompt to clipboard** | — unchanged; A11 confirms it stays a copied prompt, since starting work needs the user's own interactive session in the repo |
 | L15 | Recording trigger | Auto-detect → notify → user confirms | — unchanged |
 | L16 | Audio retention | **7 days**, then auto-delete. Configurable | ✅ explicit now |
@@ -104,11 +104,11 @@ Every plugin above is installed on the Rust side. Its `@tauri-apps/plugin-*` JS 
 | Agent runs | `std::process` / `tokio::process` + `serde_json` + a JSON Schema check | 🟡 `crates/agent` (A11). Spawns `claude` / `codex`, prompt on stdin, time limit, cancel. No network client, no SDK |
 | Calendar — local | `objc2-event-kit` | 🟡 EventKit via objc2; read-only. Zero-auth default |
 | Calendar — OAuth | `oauth2` 5.x + `tauri-plugin-oauth` (loopback listener) | 🟡 **PKCE, no client secret in the binary.** Google + Microsoft both |
-| Calendar — ICS | `reqwest` + `icalendar` 0.16 | 🟢 Paste a private ICS URL; no auth at all. Universal fallback |
-| Token storage | `keyring` 3.x (macOS Keychain) | Refresh tokens only. Never in `config.jsonc` |
+| Calendar — ICS | `reqwest` + `icalendar` 0.16 | 🟢 Paste a private ICS URL; no auth at all. Universal fallback ⚠️ amended — see A12 |
+| Token storage | `keyring` 3.x (macOS Keychain) | Refresh tokens only. Never in `config.jsonc` ⚠️ amended — see A12 |
 | Meeting-app detection | `sysinfo` 0.32 | Process names: `zoom.us`, `Microsoft Teams`, `Webex`, `Slack`, `Discord` |
 | Browser-meeting detection | **skipped in v1** | Google Meet in a tab is not detectable without a browser extension. Calendar + audio-activity covers it |
-| Logging | `tracing`, `tracing-subscriber`, `tracing-appender` | Rolling file at `.app/logs/` |
+| Logging | `tracing`, `tracing-subscriber`, `tracing-appender` | Rolling file at `.app/logs/` ⚠️ amended — see A15 |
 | Errors | `thiserror` (libs), `anyhow` (top) | |
 | Snapshot tests | `insta` | Transcript formatting, frontmatter round-trip |
 | Task runner | `just` | `just dev`, `just rec`, `just sign` |
@@ -177,7 +177,7 @@ All four sit behind one trait — `CalendarProvider { list_events(range) -> Vec<
 | 1 (default) | **EventKit** | One macOS permission prompt | 🟢 ~2 days | Reads *every* account already in Calendar.app — iCloud, Google, Exchange, Outlook, CalDAV. Zero OAuth. Fails only if the user never configured Calendar.app |
 | 2 | **Microsoft Graph** (`Calendars.Read`, delegated) | OAuth + PKCE, loopback redirect | 🟡 ~2 days | No app review needed. Personal *and* work accounts. Refresh tokens persist |
 | 3 | **Google Calendar** (`calendar.readonly`) | OAuth + PKCE, loopback redirect | 🟡 ~2 days + config chores | **Sensitive scope.** Two hard rules: (a) set the OAuth app to *In production* — leaving it in *Testing* makes refresh tokens die every **7 days**; (b) unverified apps show a one-time "Google hasn't verified this app" screen → Advanced → Go to app. 100-user cap while unverified, irrelevant at L17 |
-| 4 | **ICS URL** | None | 🟢 ~0.5 day | Paste a private `.ics` link. Read-only, refresh on a timer. Covers Zoho, Fastmail, self-hosted, anything |
+| 4 | **ICS URL** | None | 🟢 ~0.5 day | Paste a private `.ics` link. Read-only, refresh on a timer. Covers Zoho, Fastmail, self-hosted, anything ⚠️ amended — see A12 |
 
 **Security notes:** desktop OAuth uses PKCE with no client secret (Google and Microsoft both treat desktop client secrets as non-secret; PKCE is the required flow). Redirect is `http://127.0.0.1:<random>/callback` via `tauri-plugin-oauth`, never a custom URL scheme. Refresh tokens go to the macOS Keychain via `keyring`; access tokens stay in memory only. Scopes are read-only — the app never writes to a calendar.
 
@@ -193,7 +193,7 @@ All four sit behind one trait — `CalendarProvider { list_events(range) -> Vec<
 | Results reach disk | **Background run:** the agent returns JSON matching a schema; the app checks it and writes `meeting.md` + `tickets/`. **Clipboard fallback:** the agent writes into the meeting folder directly |
 | App notices results | `notify` watcher → index update → UI re-render |
 | Tracker push | A separate Sync run per task; the agent uses its own Linear/Jira/GitHub MCP connection and returns the issue key and URL |
-| Agent + model choice | Picked at setup from the CLIs found on the machine; default model **Opus** (A11) |
+| Agent + model choice | Picked at setup from the CLIs found on the machine; default model **Opus** (A11) ⚠️ amended — see A14 |
 | Ticket ID allocation | Prompt instructs: scan `~/Meetings/*/tickets/TICK-*.md`, take max+1, zero-pad to 4 |
 
 ### 2.9 Build, sign, verify
@@ -355,7 +355,7 @@ Timestamps derive from `segment.start_host_ns + frame_index / rate` — never fr
   },
   "agent": {                          // A11
     "harness": "claude-code",         // "codex" | "none" (= copy-prompt fallback)
-    "model": "opus",
+    "model": "opus",  // ⚠️ amended — see A14
     "binary_path": null,
     "auto_run": true,
     "timeout_sec": 300
@@ -419,7 +419,7 @@ Miss a gate → stop, don't stack work on a broken layer.
 | **3. Store + index** ~1wk 🟢 | Markdown read/write, watcher, SQLite FTS5, search box, ticket UI, manual ticket create | Delete `index.db` → everything still works after rescan |
 | **4. Agent loop** ~1wk 🟢 | Re-scoped by **A11**: `crates/agent` runs the user's Claude Code or Codex CLI; setup picks agent + model; notes run starts on its own when a call ends (per-meeting opt-out); app writes notes + tasks from the agent's JSON; per-task **Sync** + **Sync all**; `[Start Work]` and the no-agent fallback stay as copied prompts; prompt templates | 5 consecutive meetings → usable tickets appear in UI with zero hand-repair |
 | **5a. Detection + local calendar** ~1.5wk 🟡 | `CalendarProvider` trait + **EventKit**, auto-title, 1-min reminder, process detect, confirm-to-start, **U5 pre-meeting brief with `git log`** | You open the app before meetings without being prompted |
-| **5b. Cloud calendars** ~1wk 🟡 | PKCE loopback flow, Keychain tokens, **Microsoft Graph first** (no review), then **Google** (production-unverified), then ICS URL | Fresh Mac with Calendar.app untouched still shows today's meetings |
+| **5b. Cloud calendars** ~1wk 🟡 | PKCE loopback flow, Keychain tokens, **Microsoft Graph first** (no review), then **Google** (production-unverified), then ICS URL | Fresh Mac with Calendar.app untouched still shows today's meetings ⚠️ amended — see A12 |
 | **6. Polish** ~1wk 🟢 | Retention job, headphone warning, config + JSON schema, 3 hooks (`on_transcript_ready`, `on_analysis_complete`, `on_meeting_end`), logs | Two weeks of daily use, no manual file surgery |
 
 **≈10.5 weeks.** Deferred by design: MCP server (L12), semantic search (L8), Windows, N-speaker diarization (`sherpa-rs`), U2 drift detection, U4 calibration UI, U6 ownership map, notarization.
@@ -544,9 +544,12 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+A13 is held by TUR-36 ([#83](https://github.com/shantanujumde/meet-ai-app/pull/83), Windows and Linux as targets), which is not merged yet; until it is, the numbers skip from A14 to A12.
+
 ### A15 — 2026-10-03 · The log file comes from tauri-plugin-log, not tracing-appender (amends §2's Logging row; TUR-46)
 
 §2 lists `tracing`, `tracing-subscriber`, `tracing-appender` for logging, with a rolling file at `.app/logs/`. The rolling file is now written by `tauri-plugin-log` (already in §2.2, so frontend and Rust lines share one file): `<meetings root>/.app/logs/meet-ai.log`, capped at 1 MB with one rotated copy. `tracing` events reach it through its `log` feature. `tracing-appender` was never used and is removed. Before onboarding, with no meetings root yet, the log stays in the OS log folder until the next launch. Crash files (`crash-<ts>.log`, `crash-<ts>-native.log`, at most 5) sit next to it; nothing is sent anywhere (§8.1).
+
 ### A14 — 2026-10-03 · Agent model defaults to the CLI's own choice (amends A11's §3.5 `agent.model`; TUR-74)
 
 **Decision:** `agent.model` defaults to `null`, not `"opus"`. Null (or blank) means meet-ai passes no `--model`, so the CLI picks: for Claude Code, the `model` in its own `settings.json`, else its built-in default; Codex the same. Opus was slow and costly for meeting notes. New installs store `null`; an existing config keeps the model it already stores, and choosing "Default" in Settings stores `null`.

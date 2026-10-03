@@ -11,7 +11,8 @@
 //! [`stt::registry::Preference::Auto`][crate::engine], so trying whisper meant
 //! rebuilding, not editing a file.
 //!
-//! `meetings_root` is the one §3.5 key that jumped ahead of Phase 6 (TUR-82):
+//! `meetings_root` is the one §3.5 key that jumped ahead of Phase 6 (old
+//! TUR-82, 145d886):
 //! it lives in `meetings.rs`, not here, and not in `config.jsonc` at all —
 //! finding the root has to work *before* `config.jsonc` can be located, since
 //! that file is itself under the root.

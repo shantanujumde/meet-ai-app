@@ -509,38 +509,30 @@ fn permission_denied_counts_as_locked_on_every_os() {
     assert!(is_locked(&io::Error::from(io::ErrorKind::PermissionDenied)));
     assert!(!is_locked(&io::Error::from(io::ErrorKind::NotFound)));
     // Windows' sharing (32) and lock (33) violations; elsewhere those numbers
-    // are unrelated errors.
+    // are unrelated errors. The platform module says which (its own tests pin
+    // the codes per OS); this checks `is_locked` asks it.
     for code in [32, 33] {
         assert_eq!(
             is_locked(&io::Error::from_raw_os_error(code)),
-            cfg!(windows)
+            crate::platform::is_lock_violation(code)
         );
     }
 }
 
 /// A WAV that cannot be deleted right now is skipped, counted, and deleted by
-/// the next run. On Unix a read-only `audio/` folder refuses the delete with
-/// `PermissionDenied`.
-#[cfg(unix)]
+/// the next run. How a WAV is held is the platform's: a read-only `audio/`
+/// folder on Unix (`PermissionDenied`), an open file with no sharing on
+/// Windows (a sharing violation).
 #[test]
 fn a_locked_wav_is_skipped_and_deleted_on_the_next_run() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = meeting(tmp.path(), "2026-09-01-1000-a", None, Some(TRANSCRIPT));
-    let audio = dir.join("audio");
-    let writable = std::fs::metadata(&audio).unwrap().permissions();
-    let mut read_only = writable.clone();
-    read_only.set_readonly(true);
-    std::fs::set_permissions(&audio, read_only).unwrap();
-
-    let planned = plan_root(tmp.path(), now(), Retention::Days(7), &none_busy());
-    let report = apply(&planned);
-    std::fs::set_permissions(&audio, writable).unwrap();
-    if report.deleted.len() == 2 {
+    let Some(held) = crate::platform::test_lock::hold(&dir.join("audio")) else {
         // Running as root, which ignores the folder's mode: nothing to test.
         return;
-    }
-    assert_eq!(report.skipped_locked, wavs(&dir), "{report:?}");
-    assert!(report.errors.is_empty());
+    };
+    let locked = held.locked().to_vec();
+    assert!(!locked.is_empty());
 
     let report = apply(&plan_root(
         tmp.path(),
@@ -548,38 +540,10 @@ fn a_locked_wav_is_skipped_and_deleted_on_the_next_run() {
         Retention::Days(7),
         &none_busy(),
     ));
-    assert_eq!(report.deleted.len(), 2);
-}
-
-/// On Windows, a WAV another program has open without delete sharing is
-/// refused with a sharing violation: skipped, counted, deleted next time.
-#[cfg(windows)]
-#[test]
-fn a_locked_wav_is_skipped_and_deleted_on_the_next_run() {
-    use std::os::windows::fs::OpenOptionsExt as _;
-
-    let tmp = tempfile::tempdir().unwrap();
-    let dir = meeting(tmp.path(), "2026-09-01-1000-a", None, Some(TRANSCRIPT));
-    let held = std::fs::File::options()
-        .read(true)
-        .share_mode(0)
-        .open(dir.join("audio/mic.wav"))
-        .unwrap();
-
-    let report = apply(&plan_root(
-        tmp.path(),
-        now(),
-        Retention::Days(7),
-        &none_busy(),
-    ));
-    assert_eq!(
-        report.skipped_locked,
-        vec![dir.join("audio/mic.wav")],
-        "{report:?}"
-    );
-    assert_eq!(report.deleted.len(), 1);
-    assert!(report.errors.is_empty());
     drop(held);
+    assert_eq!(report.skipped_locked, locked, "{report:?}");
+    assert_eq!(report.deleted.len(), wavs(&dir).len() - locked.len());
+    assert!(report.errors.is_empty());
 
     let report = apply(&plan_root(
         tmp.path(),
@@ -587,5 +551,5 @@ fn a_locked_wav_is_skipped_and_deleted_on_the_next_run() {
         Retention::Days(7),
         &none_busy(),
     ));
-    assert_eq!(report.deleted.len(), 1);
+    assert_eq!(report.deleted.len(), locked.len());
 }
