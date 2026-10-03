@@ -60,8 +60,10 @@ impl SelfWrites {
     /// Was `path` noted less than [`SELF_WRITE_SUPPRESSION`] before `now`?
     ///
     /// `path` is compared in its stored form, so pass the same kind of path
-    /// that was given to [`SelfWrites::note`] (or its canonical form). `now` is
-    /// a parameter so tests can move time without sleeping.
+    /// that was given to [`SelfWrites::note`] (or its canonical form). The
+    /// watcher passes the time the event was seen as `now`, not the time it
+    /// handles the debounced burst. `now` is a parameter so tests can move
+    /// time without sleeping.
     pub fn is_suppressed(&self, path: &Path, now: Instant) -> bool {
         lock(&self.noted).get(path).is_some_and(|at| {
             // An entry noted after `now` counts as fresh, not as an underflow.
@@ -110,11 +112,19 @@ impl Watcher {
             None,
             move |result: DebounceEventResult| match result {
                 Ok(events) => {
+                    // Each path carries the time its event reached the
+                    // debouncer, not the time this burst is handed over. The
+                    // debouncer holds an event for WATCH_DEBOUNCE plus up to a
+                    // tick before calling us; measuring the suppression window
+                    // from here would leave a busy Mac about 125 ms of slack,
+                    // and our own write would be reported (TUR-83).
                     let paths = events
                         .iter()
                         .filter(|event| !matches!(event.kind, EventKind::Access(_)))
-                        .flat_map(|event| event.paths.iter().cloned());
-                    let changed = filter_paths(paths, &filter_root, &self_writes, Instant::now());
+                        .flat_map(|event| {
+                            event.paths.iter().map(|path| (path.clone(), event.time))
+                        });
+                    let changed = filter_paths(paths, &filter_root, &self_writes);
                     if !changed.is_empty() {
                         on_change(changed);
                     }
@@ -144,16 +154,20 @@ fn to_io(error: notify::Error) -> crate::Error {
 
 /// Apply every filter to a batch of event paths: noise out, own writes out,
 /// then sorted and de-duplicated.
+///
+/// Each path comes with the moment its event was seen, and suppression is
+/// judged at that moment (SPEC §4: drop events matching an entry newer than
+/// 750 ms), so the debounce delay does not eat into the window.
 fn filter_paths(
-    paths: impl IntoIterator<Item = PathBuf>,
+    paths: impl IntoIterator<Item = (PathBuf, Instant)>,
     root: &Path,
     self_writes: &SelfWrites,
-    now: Instant,
 ) -> Vec<PathBuf> {
     let mut kept: Vec<PathBuf> = paths
         .into_iter()
-        .filter(|path| !is_noise(path, root))
-        .filter(|path| !self_writes.is_suppressed(path, now))
+        .filter(|(path, _)| !is_noise(path, root))
+        .filter(|(path, seen)| !self_writes.is_suppressed(path, *seen))
+        .map(|(path, _)| path)
         .collect();
     kept.sort();
     kept.dedup();
@@ -228,6 +242,39 @@ mod tests {
         assert!(is_noise(&root.join("index.db"), root));
         assert!(is_noise(&root.join("index.db-wal"), root));
         assert!(!is_noise(&root.join("m1/notes.md"), root));
+    }
+
+    #[test]
+    fn suppression_is_judged_when_the_event_was_seen_not_when_the_burst_is_handed_over() {
+        // TUR-83. The debouncer hands a burst over WATCH_DEBOUNCE plus up to a
+        // tick after the event arrived; a busy runner adds more. Measured from
+        // hand-over, that ate the window and our own write was reported.
+        let _dir_guard = scratch_dir("selfwrites-seen");
+        let root = std::fs::canonicalize(_dir_guard.path()).unwrap();
+        let file = root.join("notes.md");
+        let other = root.join("meeting.md");
+        std::fs::write(&file, "x").unwrap();
+
+        let writes = SelfWrites::default();
+        writes.note(&file);
+        let noted = lock(&writes.noted)[&file];
+        // Seen 50 ms after the note. `filter_paths` reads no clock, so however
+        // late the burst is handed over, only this time counts.
+        let seen = noted + Duration::from_millis(50);
+
+        let kept = filter_paths(
+            [(file.clone(), seen), (other.clone(), seen)],
+            &root,
+            &writes,
+        );
+        assert_eq!(kept, vec![other]);
+
+        // An edit seen after the window is someone else's and is reported.
+        let late = noted + SELF_WRITE_SUPPRESSION + Duration::from_millis(1);
+        assert_eq!(
+            filter_paths([(file.clone(), late)], &root, &writes),
+            vec![file]
+        );
     }
 
     #[test]
