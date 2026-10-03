@@ -35,6 +35,8 @@ pub const APP_DIR: &str = ".app";
 /// Not read by anything yet: `crates/stt/src/model.rs`
 /// (`default_model_dir`) switches to this and [`models_dir`] in the next pass.
 pub const MODELS_DIR: &str = "models";
+/// The app's log file and local crash files, inside [`APP_DIR`] (SPEC §3.1).
+pub const LOGS_DIR: &str = "logs";
 
 /// `meeting.md` — frontmatter plus the four fixed sections (§3.2).
 pub const MEETING_FILE: &str = "meeting.md";
@@ -61,6 +63,11 @@ pub fn app_dir(root: &Path) -> PathBuf {
 /// `<root>/.app/models`. For the next pass, like [`MODELS_DIR`].
 pub fn models_dir(root: &Path) -> PathBuf {
     app_dir(root).join(MODELS_DIR)
+}
+
+/// `<root>/.app/logs`: `meet-ai.log`, its one rotated copy, and crash files.
+pub fn logs_dir(root: &Path) -> PathBuf {
+    app_dir(root).join(LOGS_DIR)
 }
 
 /// `<meeting>/audio`.
@@ -92,6 +99,7 @@ mod tests {
         let root = Path::new("home").join("Meetings");
         assert_eq!(default_root(Path::new("home")), root);
         assert_eq!(models_dir(&root), root.join(".app").join("models"));
+        assert_eq!(logs_dir(&root), root.join(".app").join("logs"));
 
         let meeting = root.join("2026-09-01-1430-standup");
         assert_eq!(
