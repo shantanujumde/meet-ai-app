@@ -15,6 +15,7 @@
  * it so clicks keep working.
  */
 
+import { useRef } from "react";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 import type { PrivacyPane } from "@/ipc/types";
 import { openPermissionScreen } from "@/lib/permissionRoute";
@@ -24,6 +25,7 @@ import { useRecordingStore } from "@/state/recording";
 import { Button } from "./primitives";
 import { RecordControl } from "./RecordControl";
 import { Sidebar } from "./Sidebar";
+import { useResetScrollOnRouteChange } from "./useResetScrollOnRouteChange";
 
 export function Shell() {
   const location = useLocation();
@@ -42,6 +44,11 @@ export function Shell() {
   // Onboarding owns the whole window: a half-set-up app should not look
   // browsable, and there is nothing in the sidebar to browse to yet.
   const focused = isOnboardingPath(location.pathname);
+
+  // Every route renders into the one content pane, so its scroll offset would
+  // otherwise carry from one route into the next (TUR-82).
+  const pane = useRef<HTMLElement>(null);
+  useResetScrollOnRouteChange(pane);
 
   return (
     <div className={focused ? "shell shell--focused" : "shell"}>
@@ -69,7 +76,7 @@ export function Shell() {
         />
       ) : null}
 
-      <main className="content">
+      <main className="content" ref={pane}>
         {/* Two banners, and deliberately in this order: a refused recording is
             something the user just did, and outranks a standing warning. */}
         {error ? (
