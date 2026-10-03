@@ -23,9 +23,11 @@ use chrono::{DateTime, Duration, Local, NaiveDate, Offset as _, TimeZone, Utc};
 use serde::Serialize;
 use tauri::{AppHandle, Manager as _};
 
+use self::readable::Prompt;
 use crate::config::{self, Provider};
 use crate::error::UiError;
 
+pub mod readable;
 pub mod signin;
 // TUR-49: the Settings card's sources.
 pub mod sources;
@@ -37,6 +39,9 @@ mod tests;
 /// A provider that can be shared with the blocking pool.
 type SharedProvider = Arc<dyn CalendarProvider + Send + Sync>;
 
+/// Which providers a read asks, for a read that may or may not prompt.
+type Picker = Box<dyn Fn(Prompt) -> Vec<SharedProvider> + Send + Sync>;
+
 /// Managed state: where calendar events come from.
 ///
 /// By default the providers are picked from `config.jsonc` on every read, so
@@ -44,15 +49,31 @@ type SharedProvider = Arc<dyn CalendarProvider + Send + Sync>;
 #[derive(Default)]
 pub struct CalendarState {
     /// Fixed providers instead of the configured ones (tests).
-    fixed: Option<Vec<SharedProvider>>,
+    fixed: Option<Picker>,
 }
 
 impl CalendarState {
     /// A state that reads only `providers`, whatever the config says.
     #[cfg(test)]
     pub fn with_providers(providers: Vec<SharedProvider>) -> Self {
+        Self::with_picker(move |_| providers.clone())
+    }
+
+    /// A state whose providers come from `pick` (tests): say,
+    /// [`readable::pick`] over fakes, with Calendar.app's answer made up.
+    #[cfg(test)]
+    pub fn with_picker(
+        pick: impl Fn(Prompt) -> Vec<SharedProvider> + Send + Sync + 'static,
+    ) -> Self {
         Self {
-            fixed: Some(providers),
+            fixed: Some(Box::new(pick)),
+        }
+    }
+
+    fn providers(&self, prompt: Prompt) -> Vec<SharedProvider> {
+        match &self.fixed {
+            Some(pick) => pick(prompt),
+            None => configured_providers(prompt),
         }
     }
 
@@ -67,21 +88,39 @@ impl CalendarState {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> Result<Vec<Event>, Error> {
-        let providers = match &self.fixed {
-            Some(fixed) => fixed.clone(),
-            None => configured_providers(),
-        };
+        merge(&self.providers(Prompt::Allowed), from, to)
+    }
+
+    /// [`Self::events_between`] for a reader in the background (the menu
+    /// bar, the reminders), which never shows the macOS prompt: every
+    /// calendar that can be read now ([`readable`], TUR-88), so a Google or
+    /// Microsoft sign-in is read while Calendar.app waits for its answer.
+    ///
+    /// Nothing left to read (no calendar set up, signed out, or only
+    /// Calendar.app, unanswered) is [`Error::PermissionDenied`]: nothing is
+    /// connected, which is not an empty day. Blocking, like the other read.
+    pub fn events_between_unprompted(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<Vec<Event>, Error> {
+        let providers = self.providers(Prompt::Never);
+        if providers.is_empty() {
+            return Err(Error::PermissionDenied);
+        }
         merge(&providers, from, to)
     }
 }
 
-/// The providers `config.jsonc` names that this build can read.
-fn configured_providers() -> Vec<SharedProvider> {
-    let mut providers = config::calendar().available_providers();
-    // TUR-49: EventKit first, so a meeting it shares with a sign-in keeps
-    // EventKit's id (`merge_events` keeps the first source's).
-    providers.sort_by_key(|provider| *provider != Provider::EventKit);
-    providers.into_iter().filter_map(provider_for).collect()
+/// The providers `config.jsonc` names that this build can read, and this
+/// read may ask ([`readable::pick`]).
+fn configured_providers(prompt: Prompt) -> Vec<SharedProvider> {
+    readable::pick(
+        &config::calendar().available_providers(),
+        ::calendar::eventkit::access_answered(),
+        prompt,
+        provider_for,
+    )
 }
 
 fn provider_for(provider: Provider) -> Option<SharedProvider> {
