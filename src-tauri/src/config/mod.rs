@@ -36,6 +36,8 @@
 //!
 //! TUR-45 added the `audio` reader ([`audio_section`]) for the retention job,
 //! with the same rule.
+//! TUR-85 changed that one: a file that cannot be read or parsed, or a bad
+//! `audio` section, pauses the retention job rather than using the default.
 
 use std::path::PathBuf;
 
@@ -60,7 +62,10 @@ mod transcription_tests;
 
 pub use agent_section::ConfigError;
 pub use app_section::{AppConfig, app, set_app};
+pub use audio_section::Policy as RetentionPolicy;
 pub use audio_section::audio;
+#[cfg(test)]
+pub(crate) use audio_section::policy_at as retention_policy_at;
 // TUR-28 (calendar refresh loop) uses these.
 #[allow(unused_imports)]
 pub use calendar_section::{CalendarConfig, Provider, calendar, parse_calendar};

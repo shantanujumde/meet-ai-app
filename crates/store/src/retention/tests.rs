@@ -50,6 +50,11 @@ fn wavs(dir: &Path) -> Vec<PathBuf> {
     vec![dir.join("audio/mic.wav"), dir.join("audio/system.wav")]
 }
 
+/// Every recording in these fixtures ended cleanly, unless a test says not.
+fn clean(_audio: &Path) -> bool {
+    true
+}
+
 fn none_busy() -> HashSet<String> {
     HashSet::new()
 }
@@ -60,7 +65,7 @@ fn plan_root(
     retention: Retention,
     busy: &HashSet<String>,
 ) -> Vec<PathBuf> {
-    let mut planned = plan(&survey(root).unwrap(), now, retention, busy);
+    let mut planned = plan(&survey(root, &clean).unwrap(), now, retention, busy);
     planned.sort();
     planned
 }
@@ -235,6 +240,111 @@ fn a_missing_or_empty_transcript_is_skipped() {
     }
 }
 
+// --- TUR-85: never delete audio that is the only way to a whole transcript
+
+/// An old meeting, otherwise ready to lose its audio, with the marker a
+/// recording start writes and nothing to remove it: what a failed or timed-out
+/// live transcription leaves, and a crash or `kill -9` too.
+#[test]
+fn a_meeting_marked_incomplete_is_kept_however_old() {
+    let tmp = tempfile::tempdir().unwrap();
+    let partial = meeting(
+        tmp.path(),
+        "2026-09-01-1000-partial",
+        Some("2026-09-01T10:00:00+00:00"),
+        Some(TRANSCRIPT),
+    );
+    mark_incomplete(&partial).unwrap();
+    assert!(partial.join("audio/.incomplete").is_file());
+
+    for retention in [Retention::Days(0), Retention::Days(7)] {
+        assert!(
+            plan_root(tmp.path(), now(), retention, &none_busy()).is_empty(),
+            "{retention:?}"
+        );
+    }
+
+    // A clean final transcript removes it, and the audio goes as usual.
+    mark_complete(&partial).unwrap();
+    assert!(!partial.join("audio/.incomplete").exists());
+    assert_eq!(
+        plan_root(tmp.path(), now(), Retention::Days(7), &none_busy()),
+        wavs(&partial)
+    );
+    // Removing it twice is fine.
+    mark_complete(&partial).unwrap();
+}
+
+#[test]
+fn mark_incomplete_makes_the_audio_folder_and_does_not_count_as_a_wav() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("2026-09-01-1000-new");
+    mark_incomplete(&dir).unwrap();
+    let surveyed = survey_meeting(&dir, &clean);
+    assert!(surveyed.transcript_incomplete);
+    assert!(surveyed.wavs.is_empty());
+}
+
+#[test]
+fn an_interrupted_recording_is_kept_however_old() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cut = meeting(
+        tmp.path(),
+        "2026-09-01-1000-cut",
+        Some("2026-09-01T10:00:00+00:00"),
+        Some(TRANSCRIPT),
+    );
+    let stopped = meeting(
+        tmp.path(),
+        "2026-09-02-1000-stopped",
+        Some("2026-09-02T10:00:00+00:00"),
+        Some(TRANSCRIPT),
+    );
+    let cut_audio = cut.join("audio");
+    let ended_cleanly = move |audio: &Path| audio != cut_audio;
+
+    for retention in [Retention::Days(0), Retention::Days(7)] {
+        let mut planned = plan(
+            &survey(tmp.path(), &ended_cleanly).unwrap(),
+            now(),
+            retention,
+            &none_busy(),
+        );
+        planned.sort();
+        assert_eq!(planned, wavs(&stopped), "{retention:?}");
+    }
+}
+
+#[test]
+fn transcript_done_needs_text_no_marker_and_a_clean_end() {
+    let done = MeetingAudio {
+        id: "x".to_owned(),
+        happened_at: Some(at("2026-01-01T00:00:00+00:00")),
+        has_transcript: true,
+        transcript_incomplete: false,
+        ended_cleanly: true,
+        wavs: vec![PathBuf::from("x/audio/mic.wav")],
+    };
+    assert!(done.transcript_done());
+    for not_done in [
+        MeetingAudio {
+            has_transcript: false,
+            ..done.clone()
+        },
+        MeetingAudio {
+            transcript_incomplete: true,
+            ..done.clone()
+        },
+        MeetingAudio {
+            ended_cleanly: false,
+            ..done.clone()
+        },
+    ] {
+        assert!(!not_done.transcript_done(), "{not_done:?}");
+        assert!(plan(&[not_done], now(), Retention::Days(0), &none_busy()).is_empty());
+    }
+}
+
 #[test]
 fn the_folder_name_dates_a_meeting_with_no_meeting_md() {
     let tmp = tempfile::tempdir().unwrap();
@@ -246,7 +356,7 @@ fn the_folder_name_dates_a_meeting_with_no_meeting_md() {
         Some(TRANSCRIPT),
     );
 
-    let surveyed = survey_meeting(&old);
+    let surveyed = survey_meeting(&old, &clean);
     assert!(surveyed.happened_at.is_some());
     assert_eq!(
         plan_root(tmp.path(), now(), Retention::Days(7), &none_busy()),
@@ -266,7 +376,7 @@ fn the_meeting_end_counts_not_its_start() {
     .unwrap();
 
     assert_eq!(
-        survey_meeting(&dir).happened_at,
+        survey_meeting(&dir, &clean).happened_at,
         Some(at("2026-09-28T10:00:00+00:00"))
     );
     assert!(plan_root(tmp.path(), now(), Retention::Days(7), &none_busy()).is_empty());
@@ -288,7 +398,7 @@ fn a_hand_named_folder_is_dated_by_its_newest_wav() {
             .unwrap();
     }
 
-    assert!(survey_meeting(&fresh).happened_at.is_some());
+    assert!(survey_meeting(&fresh, &clean).happened_at.is_some());
     assert_eq!(
         plan_root(tmp.path(), now, Retention::Days(7), &none_busy()),
         wavs(&old)
@@ -301,6 +411,8 @@ fn a_meeting_whose_age_cannot_be_told_is_kept_unless_retention_is_zero() {
         id: "x".to_owned(),
         happened_at: None,
         has_transcript: true,
+        transcript_incomplete: false,
+        ended_cleanly: true,
         wavs: vec![PathBuf::from("x/audio/mic.wav")],
     }];
     assert!(plan(&meetings, now(), Retention::Days(7), &none_busy()).is_empty());
@@ -321,7 +433,7 @@ fn survey_skips_the_app_folder_and_lists_only_wavs() {
     std::fs::create_dir(dir.join("audio").join("nested.wav")).unwrap();
     std::fs::write(dir.join("audio").join("EXTRA.WAV"), "x").unwrap();
 
-    let surveyed = survey(tmp.path()).unwrap();
+    let surveyed = survey(tmp.path(), &clean).unwrap();
     assert_eq!(surveyed.len(), 1);
     assert_eq!(
         surveyed[0].wavs,
@@ -331,7 +443,11 @@ fn survey_skips_the_app_folder_and_lists_only_wavs() {
             dir.join("audio/system.wav"),
         ]
     );
-    assert!(survey(&tmp.path().join("missing")).unwrap().is_empty());
+    assert!(
+        survey(&tmp.path().join("missing"), &clean)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

@@ -20,6 +20,18 @@
 //! transcript is missing or empty is never touched: its audio is the only
 //! way to make one.
 //!
+//! Nor is one whose transcript or recording cannot be shown to be whole
+//! (TUR-85), since the WAV is the only way to re-transcribe it:
+//!
+//! * [`INCOMPLETE_MARKER`] (`audio/.incomplete`) is written when a recording
+//!   starts ([`mark_incomplete`]) and removed only when its live transcript
+//!   ended cleanly ([`mark_complete`]). A failed or timed-out transcription,
+//!   a crash or a `kill -9` leaves it in place, on disk, across relaunches.
+//! * A recording that did not end cleanly (the meeting list's "Interrupted")
+//!   is kept too. Telling that is `audio`'s job, so the caller passes the
+//!   check in to [`survey`]. A meeting from before the marker existed counts
+//!   as done only when its recording ended cleanly.
+//!
 //! Plain `std::fs` only, and no `#[cfg(target_os)]`: the same code runs on
 //! every OS (SPEC §8.2).
 
@@ -41,6 +53,34 @@ const DAY: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// The extension of the files retention deletes.
 const WAV_EXTENSION: &str = "wav";
+
+/// `audio/.incomplete`: this meeting's transcript is not known to be whole,
+/// so its audio is never deleted. A dot-file, so the folder watcher and the
+/// meeting list ignore it.
+pub const INCOMPLETE_MARKER: &str = ".incomplete";
+
+/// `<meeting>/audio/.incomplete`.
+pub fn incomplete_marker(meeting_dir: &Path) -> PathBuf {
+    layout::audio_dir(meeting_dir).join(INCOMPLETE_MARKER)
+}
+
+/// Mark a meeting's transcript as not (yet) complete. Called when its
+/// recording starts; creates `audio/` if needed and syncs the file, so a
+/// crash a moment later still leaves it.
+pub fn mark_incomplete(meeting_dir: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(layout::audio_dir(meeting_dir))?;
+    let marker = std::fs::File::create(incomplete_marker(meeting_dir))?;
+    marker.sync_all()
+}
+
+/// The meeting's transcript finished cleanly: its audio may be deleted once
+/// it is old enough. A marker already gone is not an error.
+pub fn mark_complete(meeting_dir: &Path) -> io::Result<()> {
+    match std::fs::remove_file(incomplete_marker(meeting_dir)) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
 
 /// How long a meeting's audio is kept, from `audio.retention_days`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +133,12 @@ pub struct MeetingAudio {
     pub happened_at: Option<SystemTime>,
     /// `transcript.md` exists and has more than whitespace in it.
     pub has_transcript: bool,
+    /// [`INCOMPLETE_MARKER`] is there: the transcript is not known to be
+    /// whole.
+    pub transcript_incomplete: bool,
+    /// The recording was stopped, not cut short (not "Interrupted"), as the
+    /// caller's check of `audio/` said.
+    pub ended_cleanly: bool,
     /// Every `audio/*.wav` in the folder.
     pub wavs: Vec<PathBuf>,
 }
@@ -100,15 +146,22 @@ pub struct MeetingAudio {
 /// Every meeting folder under `root`, read for [`plan`]. A missing root has
 /// none. One unreadable folder or file does not stop the rest: it is read as
 /// best it can be, and an unreadable transcript counts as no transcript.
-pub fn survey(root: &Path) -> Result<Vec<MeetingAudio>, Error> {
+///
+/// `ended_cleanly` is given a meeting's `audio/` folder and says whether its
+/// recording was stopped rather than cut short (the app passes the meeting
+/// list's classifier).
+pub fn survey(
+    root: &Path,
+    ended_cleanly: &dyn Fn(&Path) -> bool,
+) -> Result<Vec<MeetingAudio>, Error> {
     Ok(meeting_dirs(root)?
         .iter()
-        .map(|dir| survey_meeting(dir))
+        .map(|dir| survey_meeting(dir, ended_cleanly))
         .collect())
 }
 
 /// One meeting folder, read for [`plan`].
-pub fn survey_meeting(dir: &Path) -> MeetingAudio {
+pub fn survey_meeting(dir: &Path, ended_cleanly: &dyn Fn(&Path) -> bool) -> MeetingAudio {
     let id = dir
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -117,6 +170,9 @@ pub fn survey_meeting(dir: &Path) -> MeetingAudio {
     let happened_at = written_time(dir, &id).or_else(|| newest_mtime(&wavs));
     MeetingAudio {
         has_transcript: has_text(&layout::transcript_path(dir)),
+        // A marker that cannot be checked counts as there.
+        transcript_incomplete: !matches!(incomplete_marker(dir).try_exists(), Ok(false)),
+        ended_cleanly: ended_cleanly(&layout::audio_dir(dir)),
         happened_at,
         wavs,
         id,
@@ -132,7 +188,8 @@ pub fn survey_meeting(dir: &Path) -> MeetingAudio {
 /// * retention is not [`Retention::KeepForever`],
 /// * the meeting is not in `busy` (recording, being transcribed, an agent
 ///   run going),
-/// * its transcript has text in it,
+/// * its transcript has text in it, and is not marked incomplete,
+/// * its recording ended cleanly (not Interrupted),
 /// * it is more than `days × 24 h` old. With `0` days, age does not matter:
 ///   the transcript being done is enough. With more, a meeting whose age
 ///   cannot be told is kept.
@@ -147,10 +204,18 @@ pub fn plan(
     };
     meetings
         .iter()
-        .filter(|meeting| meeting.has_transcript && !busy.contains(&meeting.id))
+        .filter(|meeting| meeting.transcript_done() && !busy.contains(&meeting.id))
         .filter(|meeting| days == 0 || is_older_than(meeting.happened_at, now, days))
         .flat_map(|meeting| meeting.wavs.iter().cloned())
         .collect()
+}
+
+impl MeetingAudio {
+    /// The transcript is there and known to be whole, and so is the
+    /// recording: the audio is no longer the only copy of anything.
+    pub fn transcript_done(&self) -> bool {
+        self.has_transcript && !self.transcript_incomplete && self.ended_cleanly
+    }
 }
 
 /// `happened_at` is more than `days` whole days before `now`.

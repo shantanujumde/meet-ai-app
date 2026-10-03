@@ -15,16 +15,28 @@
 //! line per meeting it freed audio in and one summary line. Nothing is shown
 //! in the window beyond Settings' "Audio is kept for N days"
 //! ([`audio_retention_days`]).
+//!
+//! TUR-85: two more things keep audio, both on disk so they survive a
+//! relaunch. A meeting whose recording was cut short (the list's
+//! "Interrupted", `audio::wav_repair::classify_audio`), and one still marked
+//! `audio/.incomplete`: the marker is written with the meeting folder and
+//! removed here ([`transcript_finished`]) only when live transcription ended
+//! cleanly, with no failure and no timeout. And when `config.jsonc` cannot be
+//! read or parsed, or its `audio` section is not valid, no pass runs at all
+//! (logged, and Settings says "Audio cleanup paused").
 
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
+use serde::Serialize;
 use store::retention::{self, MeetingAudio, Report, Retention};
 use tauri::{AppHandle, Manager as _};
 
+use crate::config::RetentionPolicy;
 use crate::error::UiError;
+use crate::live_transcript;
 use crate::lock::lock_or_recover;
 
 /// How long after launch the first pass runs: long enough to stay out of the
@@ -94,6 +106,24 @@ impl Drop for Transcribing {
     }
 }
 
+/// Live transcription of the meeting in `meeting_dir` is over, with
+/// `status`. Only a clean end (`stopped`: no failure, no timeout) removes the
+/// `audio/.incomplete` marker and so lets retention delete its audio later.
+pub fn transcript_finished(meeting_dir: &Path, status: &live_transcript::Status) {
+    if status.state != live_transcript::State::Stopped {
+        tracing::warn!(
+            meeting = %meeting_dir.display(),
+            state = ?status.state,
+            "the transcript is not complete; keeping this meeting's audio"
+        );
+        return;
+    }
+    if let Err(error) = retention::mark_complete(meeting_dir) {
+        // Left marked, so kept: the safe way to be wrong.
+        tracing::warn!(%error, meeting = %meeting_dir.display(), "could not mark the transcript complete");
+    }
+}
+
 /// Start the schedule: a pass [`FIRST_RUN_DELAY`] after launch, then every
 /// [`RUN_EVERY`].
 pub fn start(app: &AppHandle) {
@@ -127,7 +157,7 @@ fn run_now_if_immediate(app: &AppHandle) {
     let spawned = std::thread::Builder::new()
         .name("meet-ai-audio-retention".to_owned())
         .spawn(move || {
-            if crate::config::audio().retention == Retention::Days(0) {
+            if crate::config::audio() == RetentionPolicy::Run(Retention::Days(0)) {
                 run_pass(&app);
             }
         });
@@ -138,17 +168,22 @@ fn run_now_if_immediate(app: &AppHandle) {
 
 /// One pass over the meetings folder, through the folder gate.
 fn run_pass(app: &AppHandle) {
-    let retention = crate::config::audio().retention;
-    if retention == Retention::KeepForever {
-        tracing::debug!("audio retention is -1: keeping all audio");
-        return;
+    // A pause is logged by `config::audio` itself.
+    let policy = crate::config::audio();
+    match policy {
+        RetentionPolicy::Pause(_) => return,
+        RetentionPolicy::Run(Retention::KeepForever) => {
+            tracing::debug!("audio retention is -1: keeping all audio");
+            return;
+        }
+        RetentionPolicy::Run(Retention::Days(_)) => {}
     }
     let Some(state) = app.try_state::<AudioRetention>() else {
         return;
     };
     let _one_at_a_time = lock_or_recover(&state.pass);
     let result = crate::folder_move::writing_in_root(app, |root| {
-        run_in(root, retention, SystemTime::now(), &busy_now(app))
+        pass_in(root, &policy, SystemTime::now(), &busy_now(app))
             .map_err(|error| UiError::app("retention-failed", error.to_string()))
     });
     if let Err(error) = result {
@@ -222,6 +257,20 @@ impl Busy {
     }
 }
 
+/// One pass under `root` if `policy` allows it; `None` (nothing read or
+/// deleted) when it is paused.
+pub(crate) fn pass_in(
+    root: &Path,
+    policy: &RetentionPolicy,
+    now: SystemTime,
+    busy: &Busy,
+) -> Result<Option<Report>, store::Error> {
+    match policy {
+        RetentionPolicy::Run(retention) => run_in(root, *retention, now, busy).map(Some),
+        RetentionPolicy::Pause(_) => Ok(None),
+    }
+}
+
 /// One pass under `root`: survey, plan, delete, log.
 pub(crate) fn run_in(
     root: &Path,
@@ -229,7 +278,9 @@ pub(crate) fn run_in(
     now: SystemTime,
     busy: &Busy,
 ) -> Result<Report, store::Error> {
-    let meetings = retention::survey(root)?;
+    // The meeting list's own rule for Interrupted (TUR-97).
+    let ended_cleanly = |audio: &Path| audio::wav_repair::classify_audio(audio).ended_cleanly;
+    let meetings = retention::survey(root, &ended_cleanly)?;
     let busy = busy.meetings(root, &meetings);
     let planned = retention::plan(&meetings, now, retention, &busy);
     let report = retention::apply(&planned);
@@ -265,30 +316,109 @@ fn log(report: &Report, retention: Retention, busy: usize) {
     );
 }
 
-/// `audio.retention_days` as the app uses it: `-1` keeps audio forever, `0`
-/// deletes it once the transcript is done, otherwise the days. A bad value
-/// reads as the default 7, as it does for the job itself.
+/// What Settings' retention line says.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum AudioRetentionSetting {
+    /// The job runs. `days`: `-1` keeps audio forever, `0` deletes it once
+    /// the transcript is done, otherwise the days.
+    Running { days: i32 },
+    /// No audio is deleted: `config.jsonc` could not be read or parsed, or
+    /// its `audio` section is not valid. `reason` says which.
+    Paused { reason: String },
+}
+
+impl From<RetentionPolicy> for AudioRetentionSetting {
+    fn from(policy: RetentionPolicy) -> Self {
+        match policy {
+            RetentionPolicy::Run(retention) => Self::Running {
+                days: i32::try_from(retention.as_days()).unwrap_or(i32::MAX),
+            },
+            RetentionPolicy::Pause(reason) => Self::Paused { reason },
+        }
+    }
+}
+
+/// `audio.retention_days` as the retention job reads it, for Settings.
 #[tauri::command]
 #[specta::specta]
-pub async fn audio_retention_days() -> i32 {
-    let days = crate::config::audio().retention.as_days();
-    i32::try_from(days).unwrap_or(i32::MAX)
+pub async fn audio_retention_days() -> AudioRetentionSetting {
+    crate::config::audio().into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use audio::segments::{Anchor, SegmentOpen, SegmentsWriter};
+    use audio::wav_writer::WavWriter;
+
     const TRANSCRIPT: &str = "[00:00:04] You: Hello.\n";
 
+    /// One second of the recorder's 16 kHz mono.
+    const SECOND: u64 = 16_000;
+
+    /// A meeting whose recording was stopped with Stop and whose live
+    /// transcript ended cleanly: written by the recorder's own writers, the
+    /// way `RecordingSession::stop` leaves it, with no `audio/.incomplete`.
     fn meeting(root: &Path, id: &str) -> std::path::PathBuf {
         let dir = root.join(id);
-        std::fs::create_dir_all(dir.join("audio")).unwrap();
+        let audio = dir.join("audio");
+        std::fs::create_dir_all(&audio).unwrap();
         std::fs::create_dir_all(dir.join("tickets")).unwrap();
         std::fs::write(dir.join("transcript.md"), TRANSCRIPT).unwrap();
-        std::fs::write(dir.join("audio/mic.wav"), [0u8; 10]).unwrap();
-        std::fs::write(dir.join("audio/segments.json"), "{}").unwrap();
+        let mut wav = WavWriter::create(&audio.join("mic.wav")).unwrap();
+        wav.append(&vec![7i16; SECOND as usize]).unwrap();
+        wav.fsync_data().unwrap();
+        wav.patch_header().unwrap();
+        segments_json(&audio, SECOND);
         dir
+    }
+
+    fn segments_json(audio: &Path, mic_frames: u64) {
+        let mut writer = SegmentsWriter::new(SegmentOpen {
+            start_host_ns: 1_000_000_000,
+            start_continuous_ns: Some(1_000_000_000),
+            start_unix_ns: None,
+            mic_rate: 16_000,
+            sys_rate: 0,
+            mic_device_rate: None,
+            sys_device_rate: None,
+            reason: audio::segments::reason::START.into(),
+        });
+        writer.update_frames(mic_frames, 0);
+        writer.checkpoint_anchor(Anchor {
+            mic_host_ns: 2_000_000_000,
+            mic_frames,
+            sys_host_ns: 2_000_000_000,
+            sys_frames: 0,
+        });
+        writer.write_atomic(&audio.join("segments.json")).unwrap();
+    }
+
+    /// A meeting `kill -9`'d mid-recording, after lines had settled: the
+    /// folder as `create_meeting_folder` made it (marker included), samples
+    /// past a header never patched, and no `segments.json`.
+    fn killed(root: &Path, id: &str) -> std::path::PathBuf {
+        let dir = root.join(id);
+        std::fs::create_dir_all(dir.join("audio")).unwrap();
+        store::retention::mark_incomplete(&dir).unwrap();
+        std::fs::write(dir.join("transcript.md"), TRANSCRIPT).unwrap();
+        let mut wav = WavWriter::create(&dir.join("audio/mic.wav")).unwrap();
+        wav.append(&vec![7i16; SECOND as usize]).unwrap();
+        dir
+    }
+
+    fn status(state: live_transcript::State) -> live_transcript::Status {
+        live_transcript::Status {
+            state,
+            engine: Some("apple-speech".to_owned()),
+            detail: None,
+        }
+    }
+
+    fn mic(dir: &Path) -> std::path::PathBuf {
+        dir.join("audio/mic.wav")
     }
 
     fn idle() -> Busy {
@@ -350,6 +480,174 @@ mod tests {
         }
         let report = run_in(tmp.path(), Retention::Days(0), SystemTime::now(), &idle()).unwrap();
         assert_eq!(report.deleted.len(), 1);
+    }
+
+    // --- TUR-85 -------------------------------------------------------------
+
+    #[test]
+    fn a_clean_meeting_loses_its_audio_after_n_days_and_not_before() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old = meeting(tmp.path(), "2026-01-01-1000-old");
+        let today = chrono::Local::now().format("%Y-%m-%d-%H%M").to_string();
+        let fresh = meeting(tmp.path(), &format!("{today}-fresh"));
+
+        let report = run_in(tmp.path(), Retention::Days(7), SystemTime::now(), &idle()).unwrap();
+
+        assert_eq!(report.deleted.len(), 1, "{report:?}");
+        assert!(!mic(&old).exists());
+        assert!(mic(&fresh).exists());
+        assert!(old.join("audio/segments.json").exists());
+    }
+
+    #[test]
+    fn an_interrupted_meeting_keeps_its_audio() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = killed(tmp.path(), "2026-01-01-1000-killed");
+        // Even with the marker gone, the recording itself says Interrupted.
+        store::retention::mark_complete(&dir).unwrap();
+        assert!(!audio::wav_repair::classify_audio(&dir.join("audio")).ended_cleanly);
+
+        for retention in [Retention::Days(0), Retention::Days(7)] {
+            let report = run_in(tmp.path(), retention, SystemTime::now(), &idle()).unwrap();
+            assert!(report.deleted.is_empty(), "{retention:?}: {report:?}");
+        }
+        assert!(mic(&dir).exists());
+    }
+
+    #[test]
+    fn a_failed_or_timed_out_live_transcription_keeps_the_audio() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Stopped cleanly with Stop, but transcription failed mid-meeting (or
+        // Stop's wait timed out): `finish_final` reports `failed`. The lines
+        // that settled are in transcript.md.
+        let partial = meeting(tmp.path(), "2026-01-01-1000-partial");
+        store::retention::mark_incomplete(&partial).unwrap();
+        transcript_finished(&partial, &status(live_transcript::State::Failed));
+        assert!(partial.join("audio/.incomplete").exists());
+
+        let report = run_in(tmp.path(), Retention::Days(0), SystemTime::now(), &idle()).unwrap();
+        assert!(report.deleted.is_empty(), "{report:?}");
+        assert!(mic(&partial).exists());
+    }
+
+    #[test]
+    fn a_clean_final_transcript_lets_the_audio_go() {
+        let tmp = tempfile::tempdir().unwrap();
+        let done = meeting(tmp.path(), "2026-01-01-1000-done");
+        store::retention::mark_incomplete(&done).unwrap();
+
+        for not_clean in [
+            live_transcript::State::Idle,
+            live_transcript::State::Running,
+        ] {
+            transcript_finished(&done, &status(not_clean));
+            assert!(done.join("audio/.incomplete").exists(), "{not_clean:?}");
+        }
+        transcript_finished(&done, &status(live_transcript::State::Stopped));
+        assert!(!done.join("audio/.incomplete").exists());
+
+        let report = run_in(tmp.path(), Retention::Days(0), SystemTime::now(), &idle()).unwrap();
+        assert_eq!(report.deleted.len(), 1, "{report:?}");
+    }
+
+    #[test]
+    fn a_crash_then_a_relaunch_keeps_the_audio() {
+        // The app died mid-recording, so nothing in memory survives: the
+        // launch pass sees an idle app and, with `0`, deletes whatever it may.
+        let tmp = tempfile::tempdir().unwrap();
+        let crashed = killed(tmp.path(), "2026-01-01-1000-crashed");
+        // A crash that landed where the WAVs still look finished (TUR-97's
+        // blind spot) is kept by the marker alone.
+        let blind = meeting(tmp.path(), "2026-01-02-1000-blind");
+        store::retention::mark_incomplete(&blind).unwrap();
+
+        let report = run_in(tmp.path(), Retention::Days(0), SystemTime::now(), &idle()).unwrap();
+
+        assert!(report.deleted.is_empty(), "{report:?}");
+        assert!(mic(&crashed).exists());
+        assert!(mic(&blind).exists());
+    }
+
+    #[test]
+    fn an_unreadable_or_invalid_config_deletes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Meetings");
+        let old = meeting(&root, "2026-01-01-1000-old");
+        let config = tmp.path().join("config.jsonc");
+
+        // Unreadable: something in the file's place that cannot be read.
+        std::fs::create_dir(&config).unwrap();
+        let unreadable = crate::config::retention_policy_at(&config);
+        std::fs::remove_dir(&config).unwrap();
+        let mut paused = vec![unreadable];
+        for raw in [
+            "{ not json",
+            r#"{ "audio": { "retention_days": -1 }, "agent": { , } }"#,
+            r#"{ "audio": { "retention_days": -5 } }"#,
+            r#"{ "audio": { "retention_days": "7" } }"#,
+            r#"{ "audio": null }"#,
+        ] {
+            std::fs::write(&config, raw).unwrap();
+            paused.push(crate::config::retention_policy_at(&config));
+        }
+
+        for policy in &paused {
+            assert!(matches!(policy, RetentionPolicy::Pause(_)), "{policy:?}");
+            let report = pass_in(&root, policy, SystemTime::now(), &idle()).unwrap();
+            assert_eq!(report, None, "{policy:?}");
+            assert!(mic(&old).exists(), "{policy:?}");
+            assert!(matches!(
+                AudioRetentionSetting::from(policy.clone()),
+                AudioRetentionSetting::Paused { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn an_absent_config_or_key_keeps_audio_for_seven_days() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Meetings");
+        let old = meeting(&root, "2026-01-01-1000-old");
+        let config = tmp.path().join("config.jsonc");
+
+        let absent_file = crate::config::retention_policy_at(&config);
+        std::fs::write(&config, r#"{ "audio": { "warn_no_headphones": true } }"#).unwrap();
+        let absent_key = crate::config::retention_policy_at(&config);
+
+        for policy in [absent_file, absent_key] {
+            assert_eq!(policy, RetentionPolicy::Run(Retention::Days(7)));
+            assert_eq!(
+                AudioRetentionSetting::from(policy),
+                AudioRetentionSetting::Running { days: 7 }
+            );
+        }
+        let report = pass_in(
+            &root,
+            &RetentionPolicy::Run(Retention::Days(7)),
+            SystemTime::now(),
+            &idle(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(report.deleted.len(), 1, "{report:?}");
+        assert!(!mic(&old).exists());
+    }
+
+    #[test]
+    fn the_settings_line_crosses_the_wire_tagged() {
+        let running = serde_json::to_value(AudioRetentionSetting::Running { days: -1 }).unwrap();
+        assert_eq!(
+            running,
+            serde_json::json!({ "state": "running", "days": -1 })
+        );
+        let paused = serde_json::to_value(AudioRetentionSetting::Paused {
+            reason: "config.jsonc: x".to_owned(),
+        })
+        .unwrap();
+        assert_eq!(
+            paused,
+            serde_json::json!({ "state": "paused", "reason": "config.jsonc: x" })
+        );
     }
 
     #[test]

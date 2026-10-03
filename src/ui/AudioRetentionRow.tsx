@@ -2,12 +2,17 @@
  * Settings → Files: how long recorded audio is kept (SPEC L16, TUR-45).
  *
  * Read-only: `audio.retention_days` is changed in `config.jsonc`. Transcripts,
- * notes and tasks are never deleted, so the line is only about audio.
+ * notes and tasks are never deleted, so the line is only about audio. When
+ * the config cannot be trusted the job deletes nothing, and the line says so
+ * rather than showing a default (TUR-85).
  */
 
 import { useEffect, useState } from "react";
-import { audioRetentionDays } from "@/ipc/client";
+import { type AudioRetention, audioRetentionDays } from "@/ipc/client";
 import { Row, RowLabel } from "./primitives";
+
+/** The line while the retention job is paused (TUR-85). */
+export const RETENTION_PAUSED = "Audio cleanup paused: config.jsonc could not be read";
 
 /** What `retention_days` means, in one sentence. */
 export function retentionSentence(days: number): string {
@@ -16,14 +21,22 @@ export function retentionSentence(days: number): string {
   return `Audio is kept for ${days} ${days === 1 ? "day" : "days"}`;
 }
 
+/** The whole line: the retention sentence, or why it is paused. */
+export function retentionDetail(retention: AudioRetention): string {
+  if (retention.state === "paused") {
+    return `${RETENTION_PAUSED} (${retention.reason}). No audio is deleted until it is fixed.`;
+  }
+  return `${retentionSentence(retention.days)}. Transcripts and notes are always kept.`;
+}
+
 export function AudioRetentionRow() {
-  const [days, setDays] = useState<number | null>(null);
+  const [retention, setRetention] = useState<AudioRetention | null>(null);
 
   useEffect(() => {
     let live = true;
     audioRetentionDays()
       .then((value) => {
-        if (live) setDays(value);
+        if (live) setRetention(value);
       })
       // A read that failed says nothing rather than something untrue.
       .catch(() => {});
@@ -32,14 +45,10 @@ export function AudioRetentionRow() {
     };
   }, []);
 
-  if (days === null) return null;
+  if (retention === null) return null;
   return (
     <Row>
-      <RowLabel
-        name="Audio"
-        detail={`${retentionSentence(days)}. Transcripts and notes are always kept.`}
-        mono={false}
-      />
+      <RowLabel name="Audio" detail={retentionDetail(retention)} mono={false} />
     </Row>
   );
 }

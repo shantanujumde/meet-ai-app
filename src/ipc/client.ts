@@ -24,6 +24,7 @@ import {
   type meet_ai_lib_calendar_TodayEvent,
   type meet_ai_lib_calendar_TodaysMeetings,
   type meet_ai_lib_detection_notify_Prompt,
+  type meet_ai_lib_retention_AudioRetentionSetting,
   PERMISSION_STATUS_EVENT,
   RECORDING_STATE_EVENT,
   TRANSCRIPT_STATUS_EVENT,
@@ -570,12 +571,15 @@ export async function calendarRefreshMinutes(): Promise<number> {
 const DEFAULT_RETENTION_DAYS = 7;
 
 /**
- * `audio.retention_days` as the app uses it: `-1` keeps audio forever, `0`
- * deletes it once the transcript is done, otherwise the days. A bad value in
- * the config reads as the default 7.
+ * `audio.retention_days` as the retention job reads it (TUR-85): `running`
+ * with the days (`-1` keeps audio forever, `0` deletes it once the transcript
+ * is done), or `paused` when `config.jsonc` could not be read or parsed, or its
+ * `audio` section is not valid. Nothing is deleted while paused.
  */
-export async function audioRetentionDays(): Promise<number> {
-  if (!hasBackend()) return DEFAULT_RETENTION_DAYS;
+export type AudioRetention = meet_ai_lib_retention_AudioRetentionSetting;
+
+export async function audioRetentionDays(): Promise<AudioRetention> {
+  if (!hasBackend()) return { state: "running", days: DEFAULT_RETENTION_DAYS };
   return call(() => commands.audioRetentionDays());
 }
 
