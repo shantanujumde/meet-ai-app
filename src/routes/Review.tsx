@@ -10,9 +10,10 @@
  * there looking stale. Once the recording ends the meeting is re-read, so what
  * shows next is the finished `transcript.md`.
  *
- * The header holds the "Make notes for this meeting" switch (TUR-12, SPEC
- * A11), recording or not, so a private call can be switched off before it
- * ends. One {@link useNotesRun} serves the switch and the notes pane below it.
+ * The header is the title, one meta line and the folder actions (TUR-81).
+ * The "Make notes for this meeting" switch (TUR-12, SPEC A11) heads the
+ * meeting-notes section, recording or not, so a private call can be switched
+ * off before it ends. One {@link useNotesRun} serves the switch and the run.
  */
 
 import { memo, useCallback, useEffect, useState } from "react";
@@ -22,18 +23,18 @@ import { copyPromptFallback, readMeeting, revealMeeting, wrapUpPrompt } from "@/
 import type { MeetingDetail, TranscriptLine, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { showsCopyPrompt } from "@/lib/copyPrompt";
-import { describeInterruption, formatRelativeDate, INTERRUPTED_LABEL } from "@/lib/format";
 import { MEETINGS } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
 import { useTranscriptStore } from "@/state/transcript";
 import { CopyPromptButton } from "@/ui/CopyPromptButton";
 import { LiveTranscript } from "@/ui/LiveTranscript";
+import { MeetingHeader } from "@/ui/MeetingHeader";
 import { MeetingTasks } from "@/ui/MeetingTasks";
 import { NotesPane } from "@/ui/NotesPane";
 import { NotesRun } from "@/ui/NotesRun";
 import { NotesSwitch } from "@/ui/NotesSwitch";
-import { Button, ButtonRow, rowDetailVariants } from "@/ui/primitives";
+import { Card, Row } from "@/ui/primitives";
 import { SpeakerLabel } from "@/ui/SpeakerLabel";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
@@ -57,7 +58,7 @@ function MeetingReview({ id }: { id: string }) {
   const [error, setError] = useState<UiError | null>(null);
   const [loading, setLoading] = useState(true);
   // Finder failing to open the folder is its own, smaller problem: the
-  // meeting is still readable, so it gets a message under the button rather
+  // meeting is still readable, so it gets a message under the header rather
   // than replacing the screen.
   const [revealError, setRevealError] = useState<UiError | null>(null);
 
@@ -155,62 +156,51 @@ function MeetingReview({ id }: { id: string }) {
   if (!detail) return null;
 
   const { summary, lines, transcriptMissing, unparsedLineCount, path } = detail;
-  const interrupted = summary.recordingState === "interrupted";
   // The notes as last read are the newest word; the list's summary stands in
   // until they arrive, so a switched-off meeting never flashes on.
   const notesOn = !(notesRun.notes?.notesOff ?? summary.notesOff);
 
   return (
     <div className="page">
-      <header className="page__header">
-        <h1 className="page__title">{summary.title}</h1>
-        <p className="page__meta">
-          <span>{formatRelativeDate(summary.date)}</span>
-          {summary.time ? <span>{summary.time}</span> : null}
-          {summary.lastTimestamp ? <span>Last line at {summary.lastTimestamp}</span> : null}
-          {summary.hasAnalysis ? <span>Wrapped up</span> : null}
-          {interrupted ? <span>{INTERRUPTED_LABEL}</span> : null}
-        </p>
-        {/* TUR-97: an interrupted meeting opens like any other — everything
-            below still renders — but says in one line that it did not end on
-            purpose, and how much of it was kept. */}
-        {interrupted ? (
-          <p className="page__notice">{describeInterruption(summary.audioMs)}</p>
-        ) : null}
-        <ButtonRow>
-          <Button size="small" onClick={() => void reveal(summary.id)}>
-            Show in Finder
-          </Button>
-          <span className={rowDetailVariants()}>{path}</span>
-        </ButtonRow>
-        {revealError ? <ErrorState error={revealError} /> : null}
-        {/* Not while recording: the transcript is not finished, so the
-            prompt would wrap up half a meeting. Not with notes off either:
-            the user has said this one is not for an agent. */}
-        {copyPrompt && !isLive && notesOn ? (
-          <CopyPromptButton
-            label="Copy prompt"
-            size="small"
-            hint="No agent set up — paste this into Claude Code or Codex and it will write the notes."
-            render={() => wrapUpPrompt(summary.id)}
-          />
-        ) : null}
-        <NotesSwitch
-          on={notesOn}
-          busy={notesRun.switching}
-          error={notesRun.switchError}
-          onChange={notesRun.setNotesOn}
-        />
-      </header>
+      <MeetingHeader
+        summary={summary}
+        path={path}
+        live={isLive ? recording : null}
+        onReveal={() => void reveal(summary.id)}
+        revealError={revealError}
+      />
 
-      {/* TUR-10: the agent's notes. Not while recording — the run starts on
-          its own when this recording stops, and its status event arrives. */}
-      {isLive ? null : (
-        <NotesRun
-          run={notesRun}
-          canStart={harnessIsNone !== null && !copyPrompt && lines.length > 0}
-        />
-      )}
+      {/* The agent's notes (TUR-10), headed by their switch (TUR-12). While
+          recording only the switch shows: the run starts on its own when this
+          recording stops, and its status event arrives. */}
+      <NotesRun
+        run={notesRun}
+        live={isLive}
+        canStart={harnessIsNone !== null && !copyPrompt && lines.length > 0}
+        toggle={
+          <Card flush>
+            <NotesSwitch
+              on={notesOn}
+              busy={notesRun.switching}
+              error={notesRun.switchError}
+              onChange={notesRun.setNotesOn}
+            />
+            {/* Not while recording: the transcript is not finished, so the
+                prompt would wrap up half a meeting. Not with notes off
+                either: the user has said this one is not for an agent. */}
+            {copyPrompt && !isLive && notesOn ? (
+              <Row>
+                <CopyPromptButton
+                  label="Copy prompt"
+                  size="small"
+                  hint="No agent set up — paste this into Claude Code or Codex and it will write the notes."
+                  render={() => wrapUpPrompt(summary.id)}
+                />
+              </Row>
+            ) : null}
+          </Card>
+        }
+      />
 
       {isLive ? (
         <LiveTranscript live={live} />

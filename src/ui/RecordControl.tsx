@@ -38,7 +38,7 @@ function labelFor(phase: RecordingStatus["phase"]): string {
  * message per second for the entire length of a meeting, to render something
  * the webview can work out itself.
  */
-function useElapsed(startedAtMs: number | null): number {
+export function useElapsed(startedAtMs: number | null): number {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
