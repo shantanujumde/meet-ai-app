@@ -10,7 +10,10 @@ under macOS `/bin/bash` 3.2 (45 of 45 cases, 25 of them R10), and the quality
 gate (result in the PR body). With R10 taken out of `RULES`, 12 of the R10
 cases fail, so the cases do test the rule. A scan of every tracked `.rs` file
 on this branch, every line counted, finds only the three test gates in
-section 4.
+section 4. That held on this branch only: TUR-45, merged alongside, added four
+OS cfgs to `crates/store` (retention's Windows lock check and its tests), which
+R10 never saw because it checks added lines. TUR-89 moved them into
+`crates/store/src/platform/`, and CI now runs R10 over the whole tree.
 
 None of that records audio, so the app itself was not run. Nothing on macOS
 should behave differently; section 1 is how to confirm it.
@@ -77,8 +80,9 @@ lines, so they pass until someone edits them.
   it. `just check-windows` does not build examples, so it is green. TUR-36
   needs to deal with it when CI builds all targets on Windows (for example
   `required-features`, or moving it under `src/macos/`).
-- `crates/store` has no OS code (the ticket's grep hit is a doc comment), so
-  it got no `platform` module.
+- `crates/store` had no OS code on this branch (the ticket's grep hit is a doc
+  comment), so it got no `platform` module here. TUR-45 added some in
+  parallel; TUR-89 gave `store` its `platform` module.
 - `src-tauri/src/lib.rs` and `notify.rs` keep Tauri's
   `cfg(not(any(target_os = "android", target_os = "ios")))` desktop gates.
   R10 exempts conditions whose only OS names are android/ios (decision A2).

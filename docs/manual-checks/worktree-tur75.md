@@ -38,18 +38,19 @@ run here. What is covered headless:
    is still there.
 6. Record about 1 minute of speech and stop.
 7. Expected: the transcript is written, and `meet-ai.log` has an
-   `opening live transcription` line with `engine=whisper`.
+   `opening live transcription` line with `engine="whisper"` (the log quotes
+   the value).
 8. Pick "Automatic (recommended)" again. Expected: config says
    `"engine": "auto"`, the models list shows the "Used only when the engine is
    Whisper." note again, and no row says "In use". The next recording's log
-   line says `engine=apple-speech`.
+   line says `engine="apple-speech"`.
 
 ## 2. A recording is never switched mid-way
 
 1. Start a recording with Automatic picked.
 2. While it runs, open Settings → Speech and pick Whisper.
 3. Expected: the running recording keeps transcribing with Apple's engine
-   (log still shows `engine=apple-speech` for it); the next recording opens
+   (log still shows `engine="apple-speech"` for it); the next recording opens
    whisper.
 
 ## 3. Disabled states on a real Mac

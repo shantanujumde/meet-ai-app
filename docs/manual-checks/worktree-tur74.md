@@ -30,8 +30,10 @@ list was captured from a real CLI. The headless parts are covered by tests:
    and the Default button is pressed.
 3. Press **Test**. Expected: "It works. Claude Code wrote these notes…".
    `ps -ax -o args | grep "claude -p"` during the run shows no `--model`.
-4. Pick Claude Code again in Settings (any change saves), then open
-   `config.jsonc`. Expected: `"model": null`.
+4. Open `config.jsonc`. Expected: `"model": null` (a fresh config writes it;
+   do not pick Claude Code again first, picking the agent already chosen
+   writes nothing). On an install whose config still stores `"opus"`, press
+   **Default** first: that saves `null`.
 
 ## 2. Test with Haiku writes notes
 
