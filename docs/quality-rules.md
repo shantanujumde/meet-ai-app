@@ -113,7 +113,7 @@ keeps diffs small.
 
 **Fix:** move the new code into its own module and import it.
 
-### R2: Tauri event name spelled out (WARN for now)
+### R2: Tauri event name spelled out (ERROR)
 
 A string like `"recording://state"` appears outside `src-tauri/src/events.rs`
 or `src/ipc/bindings.ts`. Real URLs (`http://`, `https://`, `file://` and so
@@ -124,9 +124,6 @@ If one side renames an event, the other side goes quiet and nothing reports an
 error. With a single list of names, a rename becomes a compile error.
 
 **Fix:** use the constant from `events.rs` (Rust) or `bindings.ts` (TS).
-
-**Flip to ERROR** once `src-tauri/src/events.rs` exists: set
-`R2_LEVEL=error` at the top of `scripts/quality-rules.sh`.
 
 ### R3: meeting folder name spelled out (WARN for now)
 
