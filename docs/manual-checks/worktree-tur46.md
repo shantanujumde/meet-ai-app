@@ -8,7 +8,7 @@ writer with a stand-in exception) and `crates/meeting-format/src/layout.rs`
 (`logs_dir`).
 
 What was run by hand on this Mac (macOS 26, arm64), outside the app: a
-throwaway binary built from `src-tauri/src/logs/crash.rs` and `native.rs`,
+throwaway binary built from `src-tauri/src/logs/crash.rs` and `native/`,
 attaching the same handler, then crashing three ways. Each left one file:
 
 ```text
@@ -71,6 +71,16 @@ panic -> crash-<ts>.log         message: forced panic, location, backtrace
 
 ## 5. Windows and Linux
 
-Not available here. CI runs the panic tests on all three OSes; a real native
-crash on Windows (expected `exception code 0xc0000005` for an access
-violation) and Linux (`signal 11, code …`) is unverified.
+Not available here. CI runs the panic tests (`logs::tests`, including
+`a_real_panic_leaves_a_crash_file`) on macOS today; Windows and Linux once
+TUR-36 adds those test jobs. Until then the panic file on those OSes is
+unverified. A real native crash on Windows (expected `exception code
+0xc0000005` for an access violation) and Linux (`signal 11, code …`) is
+unverified too.
+
+## 6. Known gap: a crash before `setup`
+
+The panic hook and the native handler are installed at the start of Tauri's
+`setup`, so a panic or crash while the plugins initialise (before `setup`
+runs) leaves no crash file. The OS's own crash report still covers it. The
+ticket does not ask for more.
