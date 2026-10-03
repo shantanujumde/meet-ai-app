@@ -7,8 +7,10 @@
 //! answered for `stt`. Behaviour is unchanged from the binary's old loop:
 //! segment reopen on a device change ([`reopen_segment`]), the drift
 //! checkpoints ([`checkpoint`]), the gap padding ([`align_and_pad`]), and the
-//! first-position wait ([`wait_first_position`]) all moved verbatim; only the
-//! caller-facing shape changed.
+//! first-position wait all moved verbatim; only the caller-facing shape
+//! changed. The segment-opening half now lives in [`segment`], where TUR-87
+//! made a slow or silent system track degrade the recording to
+//! microphone-only instead of ending it.
 //!
 //! [`RecordingSession::start`] takes the two [`AudioSource`]s already
 //! constructed rather than building them itself, so a caller without real
@@ -17,11 +19,12 @@
 //! a microphone TCC grant.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use crate::segments::{
-    self, Anchor, CHECKPOINT_INTERVAL_S, SAMPLE_RATE_HZ, SegmentOpen, SegmentsWriter,
-};
+mod segment;
+
+use self::segment::{Paths, align_and_pad, reopen_segment, segment_open};
+use crate::segments::{self, Anchor, CHECKPOINT_INTERVAL_S, SegmentsWriter};
 use crate::tee::Tee;
 use crate::{AudioSource, Channel, Error as AudioError};
 
@@ -57,13 +60,6 @@ impl Tees {
     }
 }
 
-/// How long to wait for each channel's very first resampled buffer before
-/// giving up on head-pad alignment (contract §6) and reporting that channel
-/// as broken rather than hanging. Generous relative to the ~50ms warm-path
-/// setup Tess measured (TUR-4), because a cold run — first launch after a
-/// permission grant — can still show that dialog's latency on top of it.
-const FIRST_BUFFER_TIMEOUT: Duration = Duration::from_secs(10);
-
 /// How often a caller should call [`RecordingSession::tick`]. Coarse next to
 /// [`CHECKPOINT_INTERVAL_S`] — it only bounds how late a due checkpoint or a
 /// default-device change is noticed — and cheap, since a tick with nothing
@@ -94,183 +90,6 @@ pub fn default_system_source() -> Option<Box<dyn AudioSource>> {
 /// segment reopen ([`reopen_segment`]) rebuilds the microphone with.
 pub fn default_mic_source() -> Box<dyn AudioSource> {
     crate::platform::mic_source()
-}
-
-/// Poll `source.position()` until it reports its first resampled buffer, or
-/// give up after `budget`. Busy-polls at 1ms rather than sleeping longer,
-/// because the whole point is to catch the *first* buffer as close to its
-/// arrival as this process can — sleeping coarsely here would reintroduce the
-/// same flush-latency error contract §11 rejects for anchors.
-fn wait_first_position(source: &dyn AudioSource, budget: Duration) -> Result<(u64, u64), String> {
-    let started = Instant::now();
-    loop {
-        if let Some(pos) = source.position() {
-            return Ok(pos);
-        }
-        if started.elapsed() >= budget {
-            return Err(format!(
-                "no audio arrived within {:.1}s of starting capture",
-                budget.as_secs_f64()
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
-}
-
-fn pad_frames_for_gap(gap_ns: u64) -> u64 {
-    ((gap_ns as f64 / 1e9) * SAMPLE_RATE_HZ as f64).round() as u64
-}
-
-/// Contract §6's head-pad: measure each channel's first resampled buffer,
-/// take the earlier one as the segment's `start_host_ns`, and pad whichever
-/// channel came up later with that much silence so frame 0 of both channels
-/// lands on the same instant.
-///
-/// Factored out so both the recording's first segment and every later reopen
-/// ([`reopen_segment`]) go through the identical alignment logic instead of
-/// two copies that could drift apart.
-fn align_and_pad(
-    mic: &mut dyn AudioSource,
-    sys: &mut Option<Box<dyn AudioSource>>,
-) -> Result<u64, String> {
-    let mic_first = wait_first_position(mic, FIRST_BUFFER_TIMEOUT)
-        .map_err(|e| format!("microphone produced no audio: {e}"))?;
-    let sys_first = match sys.as_deref() {
-        Some(source) => Some(
-            wait_first_position(source, FIRST_BUFFER_TIMEOUT)
-                .map_err(|e| format!("system audio produced no audio: {e}"))?,
-        ),
-        None => None,
-    };
-
-    let start_host_ns = match sys_first {
-        Some((sys_ns, _)) => mic_first.0.min(sys_ns),
-        None => mic_first.0,
-    };
-
-    if mic_first.0 > start_host_ns {
-        let pad = pad_frames_for_gap(mic_first.0 - start_host_ns);
-        tracing::info!("padding microphone head with {pad} frames of silence");
-        mic.pad_leading_silence(pad)
-            .map_err(|e| format!("padding microphone head: {e}"))?;
-    }
-    if let (Some(source), Some((sys_ns, _))) = (sys.as_deref_mut(), sys_first)
-        && sys_ns > start_host_ns
-    {
-        let pad = pad_frames_for_gap(sys_ns - start_host_ns);
-        tracing::info!("padding system-audio head with {pad} frames of silence");
-        source
-            .pad_leading_silence(pad)
-            .map_err(|e| format!("padding system-audio head: {e}"))?;
-    }
-
-    Ok(start_host_ns)
-}
-
-/// Close the current segment and open a new one, rebuilding whichever
-/// channel(s) need a fresh OS-level stream after a default-device change
-/// (contract §5/§11's F1; SPEC §5's AirPods-swap gate).
-///
-/// Always rebuilds *both* channels — a spurious restart on the unaffected
-/// channel is the right trade against the alternative (a per-channel
-/// segment-relative baseline offset).
-///
-/// Stops both channels *first*, then reads their final position — never the
-/// other order. `stop()` halts the capture stream and joins its worker
-/// thread before its own internal `fsync_data`/`patch_header`, so once it
-/// returns, `position()` and the just-patched header are guaranteed to agree
-/// exactly. Reading `position()` first and calling `stop()` after would
-/// leave a window where the (still-running) worker thread appends more audio
-/// that `stop()`'s internal fsync then picks up — so the header would end up
-/// declaring more frames than the close anchor this function commits to
-/// `segments.json`, reproducing the exact header-ahead-of-segments bug
-/// `WavWriter::patch_header`'s `synced_frames` freeze was built to prevent
-/// one layer down (TUR-54; `crate::wav_writer`). Caught by running this
-/// function against real hardware and checking `drift-check`'s own invariant
-/// check, not by inspection.
-#[allow(clippy::too_many_arguments)]
-fn reopen_segment(
-    mic: &mut Box<dyn AudioSource>,
-    sys: &mut Option<Box<dyn AudioSource>>,
-    writer: &mut SegmentsWriter,
-    segments_path: &Path,
-    mic_path: &Path,
-    sys_path: &Path,
-    reason: &str,
-    tees: &Tees,
-) -> Result<(), String> {
-    mic.stop()
-        .map_err(|e| format!("stopping microphone for reopen: {e}"))?;
-    if let Some(s) = sys.as_mut() {
-        s.stop()
-            .map_err(|e| format!("stopping system audio for reopen: {e}"))?;
-    }
-
-    let mic_close = mic
-        .position()
-        .ok_or_else(|| "microphone stopped producing audio before a segment reopen".to_string())?;
-    let sys_close = match sys.as_deref() {
-        Some(s) => s.position().unwrap_or((0, 0)),
-        None => (0, 0),
-    };
-
-    let mut new_mic: Box<dyn AudioSource> = default_mic_source();
-    tees.attach_mic(&mut *new_mic);
-    new_mic
-        .start(mic_path.to_path_buf())
-        .map_err(|e| format!("restarting microphone after reopen: {e}"))?;
-
-    let mut new_sys: Option<Box<dyn AudioSource>> = if sys.is_some() {
-        match default_system_source() {
-            Some(mut source) => match tees.attach_sys(&mut *source).start(sys_path.to_path_buf()) {
-                Ok(()) => Some(source),
-                Err(e) => {
-                    tracing::warn!(
-                        "system audio unavailable after reopen ({e}); continuing microphone-only"
-                    );
-                    None
-                }
-            },
-            None => None,
-        }
-    } else {
-        None
-    };
-
-    let new_start_host_ns = align_and_pad(&mut *new_mic, &mut new_sys)?;
-
-    let start_unix_ns = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .ok();
-    let next_open = SegmentOpen {
-        start_host_ns: new_start_host_ns,
-        start_continuous_ns: None,
-        start_unix_ns,
-        mic_rate: SAMPLE_RATE_HZ,
-        sys_rate: if new_sys.is_some() { SAMPLE_RATE_HZ } else { 0 },
-        mic_device_rate: None,
-        sys_device_rate: None,
-        reason: reason.to_string(),
-    };
-
-    writer.update_frames(mic_close.1, sys_close.1);
-    writer.close_segment(
-        Anchor {
-            mic_host_ns: mic_close.0,
-            mic_frames: mic_close.1,
-            sys_host_ns: sys_close.0,
-            sys_frames: sys_close.1,
-        },
-        next_open,
-    );
-    writer
-        .write_atomic(segments_path)
-        .map_err(|e| format!("writing segments.json at segment reopen: {e}"))?;
-
-    *mic = new_mic;
-    *sys = new_sys;
-    Ok(())
 }
 
 /// §7/§11's checkpoint order: fsync every channel's data, write
@@ -388,7 +207,8 @@ impl RecordingSession {
     ///
     /// `sys` is `None` outright on a platform with no system-audio tap
     /// (SPEC §8.2's Windows stub); when `Some` but that source fails to
-    /// start, the session falls back to microphone-only (contract §9: absent
+    /// start, or starts but delivers no first frame in time (TUR-87), the
+    /// session falls back to microphone-only (contract §9: absent
     /// track, `sys_rate` 0 in `segments.json`) rather than failing the whole
     /// recording over a channel that was never required.
     ///
@@ -450,23 +270,25 @@ impl RecordingSession {
         // Head-pad (contract §6): align frame 0 of both channels to whichever
         // channel's hardware came up first, by padding the other with silence.
         tracing::info!("measuring channel start alignment");
-        let start_host_ns = align_and_pad(&mut *mic, &mut sys)?;
-
-        let start_unix_ns = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .ok();
-
-        let open = SegmentOpen {
-            start_host_ns,
-            start_continuous_ns: None,
-            start_unix_ns,
-            mic_rate: SAMPLE_RATE_HZ,
-            sys_rate: if sys.is_some() { SAMPLE_RATE_HZ } else { 0 },
-            mic_device_rate: None,
-            sys_device_rate: None,
-            reason: segments::reason::START.to_string(),
+        // A system track with no first frame in time is dropped here and the
+        // recording goes on microphone-only (TUR-87); only the mic can fail it.
+        let start_host_ns = match align_and_pad(&mut *mic, &mut sys) {
+            Ok(start) => start,
+            Err(e) => {
+                segment::stop_quietly(&mut *mic, "microphone after a failed start");
+                if let Some(source) = sys.as_deref_mut() {
+                    segment::stop_quietly(source, "system audio after a failed start");
+                }
+                return Err(e);
+            }
         };
+
+        let open = segment_open(
+            start_host_ns,
+            &*mic,
+            sys.as_deref(),
+            segments::reason::START,
+        );
         let writer = SegmentsWriter::new(open);
         // First segments.json write happens at the first checkpoint, not
         // here — nothing has been fsynced yet for it to honestly describe.
@@ -494,6 +316,25 @@ impl RecordingSession {
         })
     }
 
+    /// [`reopen_segment`] onto the platform's default devices.
+    fn reopen(&mut self, reason: &str) -> Result<(), String> {
+        let paths = Paths {
+            segments: &self.segments_path,
+            mic: &self.mic_path,
+            sys: &self.sys_path,
+        };
+        reopen_segment(
+            &mut self.mic,
+            &mut self.sys,
+            &mut self.writer,
+            &paths,
+            reason,
+            &self.tees,
+            default_mic_source,
+            default_system_source,
+        )
+    }
+
     /// Ask the session how it is doing, without touching disk.
     pub fn status(&self) -> SessionStatus {
         SessionStatus {
@@ -514,16 +355,7 @@ impl RecordingSession {
             if let Ok(current) = crate::platform::default_output_device() {
                 if self.last_output_device.is_some_and(|prev| prev != current) {
                     tracing::info!("default output device changed — reopening segment");
-                    reopen_segment(
-                        &mut self.mic,
-                        &mut self.sys,
-                        &mut self.writer,
-                        &self.segments_path,
-                        &self.mic_path,
-                        &self.sys_path,
-                        segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED,
-                        &self.tees,
-                    )?;
+                    self.reopen(segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED)?;
                     self.last_input_device = crate::platform::default_input_device().ok();
                     self.last_checkpoint = Instant::now();
                 }
@@ -532,16 +364,7 @@ impl RecordingSession {
             if let Ok(current) = crate::platform::default_input_device() {
                 if self.last_input_device.is_some_and(|prev| prev != current) {
                     tracing::info!("default input device changed — reopening segment");
-                    reopen_segment(
-                        &mut self.mic,
-                        &mut self.sys,
-                        &mut self.writer,
-                        &self.segments_path,
-                        &self.mic_path,
-                        &self.sys_path,
-                        segments::reason::DEFAULT_INPUT_DEVICE_CHANGED,
-                        &self.tees,
-                    )?;
+                    self.reopen(segments::reason::DEFAULT_INPUT_DEVICE_CHANGED)?;
                     self.last_output_device = crate::platform::default_output_device().ok();
                     self.last_checkpoint = Instant::now();
                 }

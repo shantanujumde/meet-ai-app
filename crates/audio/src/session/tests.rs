@@ -18,6 +18,8 @@ struct FakeSource {
     channel: Channel,
     position: Option<(u64, u64)>,
     padded_frames: Arc<Mutex<Option<u64>>>,
+    /// Set by `stop()`, so a test can check a given-up source was stopped.
+    stopped: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FakeSource {
@@ -26,6 +28,7 @@ impl FakeSource {
             channel,
             position,
             padded_frames: Arc::new(Mutex::new(None)),
+            stopped: Arc::default(),
         }
     }
 }
@@ -35,6 +38,8 @@ impl AudioSource for FakeSource {
         Ok(())
     }
     fn stop(&mut self) -> Result<(), AudioError> {
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
     fn channel(&self) -> Channel {
@@ -42,6 +47,9 @@ impl AudioSource for FakeSource {
     }
     fn position(&self) -> Option<(u64, u64)> {
         self.position
+    }
+    fn device_rate(&self) -> Option<u32> {
+        Some(44_100)
     }
     fn fsync_data(&mut self) -> Result<(), AudioError> {
         Ok(())
@@ -213,6 +221,10 @@ impl AudioSource for StubSource {
 
     fn tee(&mut self, tee: Tee) {
         self.tee = Some(tee);
+    }
+
+    fn device_rate(&self) -> Option<u32> {
+        Some(48_000)
     }
 }
 
@@ -423,4 +435,173 @@ fn a_session_with_no_system_source_still_produces_a_complete_mic_only_recording(
         !report.sys_path.exists(),
         "no system-audio source means system.wav is never created"
     );
+}
+
+fn stopped(flag: &Arc<std::sync::atomic::AtomicBool>) -> bool {
+    flag.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+fn read_segments(path: &Path) -> crate::segments::Segments {
+    let json = std::fs::read_to_string(path).expect("segments.json is written");
+    crate::segments::Segments::from_json(&json).expect("segments.json parses")
+}
+
+/// TUR-87 C3: a tap that starts but never delivers a first frame within the
+/// budget is stopped and dropped, and alignment goes on with the mic alone.
+#[test]
+fn align_and_pad_drops_a_system_track_whose_first_frame_is_late() {
+    let mut mic = FakeSource::new(Channel::Mic, Some((1_000_000_000, 0)));
+    let late = FakeSource::new(Channel::System, None);
+    let late_stopped = Arc::clone(&late.stopped);
+    let mut sys: Option<Box<dyn AudioSource>> = Some(Box::new(late));
+
+    let start = align_and_pad(&mut mic, &mut sys).expect("a late system track is not an error");
+
+    assert_eq!(start, 1_000_000_000);
+    assert!(sys.is_none(), "the late system track is dropped");
+    assert!(stopped(&late_stopped), "and stopped, so its worker ends");
+}
+
+/// TUR-87 C3, at the session level: Record still records the mic.
+#[test]
+fn a_late_system_track_at_start_records_microphone_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mic: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::Mic));
+    let late = FakeSource::new(Channel::System, None);
+    let late_stopped = Arc::clone(&late.stopped);
+
+    let session = RecordingSession::start(tmp.path().to_path_buf(), mic, Some(Box::new(late)))
+        .expect("the recording starts microphone-only");
+    assert!(!session.status().has_system_audio);
+    assert!(stopped(&late_stopped));
+
+    let report = session.stop().expect("stops cleanly");
+    assert!(!report.has_system_audio);
+    let segments = read_segments(&report.segments_path);
+    assert_eq!(
+        segments.segments[0].sys_rate, 0,
+        "absent track (contract §9)"
+    );
+    assert!(crate::wav_writer::read_header_frames(&report.mic_path).unwrap() > 0);
+}
+
+/// A microphone with no first frame still fails the start, and nothing
+/// started is left running.
+#[test]
+fn a_silent_microphone_fails_the_start_and_stops_both_sources() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mic = FakeSource::new(Channel::Mic, None);
+    let mic_stopped = Arc::clone(&mic.stopped);
+    let sys = FakeSource::new(Channel::System, Some((1, 0)));
+    let sys_stopped = Arc::clone(&sys.stopped);
+
+    let result =
+        RecordingSession::start(tmp.path().to_path_buf(), Box::new(mic), Some(Box::new(sys)));
+
+    assert!(result.is_err());
+    assert!(stopped(&mic_stopped) && stopped(&sys_stopped));
+}
+
+/// TUR-87 L4: each segment records the device rates it resampled from.
+#[test]
+fn segments_json_records_both_device_rates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mic: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::Mic));
+    let sys: Box<dyn AudioSource> = Box::new(FakeSource::new(Channel::System, Some((1, 0))));
+    let session = RecordingSession::start(tmp.path().to_path_buf(), mic, Some(sys)).unwrap();
+    let report = session.stop().unwrap();
+
+    let segment = &read_segments(&report.segments_path).segments[0];
+    assert_eq!(segment.mic_device_rate, Some(48_000));
+    assert_eq!(segment.sys_device_rate, Some(44_100));
+}
+
+/// A started session's parts, for driving [`reopen_segment`] by hand.
+struct Reopen {
+    _tmp: tempfile::TempDir,
+    mic: Box<dyn AudioSource>,
+    sys: Option<Box<dyn AudioSource>>,
+    writer: SegmentsWriter,
+    dir: PathBuf,
+}
+
+impl Reopen {
+    fn new() -> Self {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let mut mic: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::Mic));
+        mic.start(dir.join("mic.wav")).unwrap();
+        let mut sys: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::System));
+        sys.start(dir.join("system.wav")).unwrap();
+        let open = segment_open(1, &*mic, Some(&*sys), segments::reason::START);
+        Self {
+            _tmp: tmp,
+            mic,
+            sys: Some(sys),
+            writer: SegmentsWriter::new(open),
+            dir,
+        }
+    }
+
+    fn run(
+        &mut self,
+        new_mic: Box<dyn AudioSource>,
+        new_sys: Option<Box<dyn AudioSource>>,
+    ) -> Result<(), String> {
+        let (segments, mic, sys) = (
+            self.dir.join("segments.json"),
+            self.dir.join("mic.wav"),
+            self.dir.join("system.wav"),
+        );
+        let paths = Paths {
+            segments: &segments,
+            mic: &mic,
+            sys: &sys,
+        };
+        reopen_segment(
+            &mut self.mic,
+            &mut self.sys,
+            &mut self.writer,
+            &paths,
+            segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED,
+            &Tees::default(),
+            || new_mic,
+            || new_sys,
+        )
+    }
+}
+
+/// TUR-87 C3: an AirPods swap whose new tap is slow keeps recording the mic.
+#[test]
+fn a_reopen_whose_new_tap_is_late_continues_microphone_only() {
+    let mut r = Reopen::new();
+    let late = FakeSource::new(Channel::System, None);
+    let late_stopped = Arc::clone(&late.stopped);
+
+    r.run(
+        Box::new(StubSource::new(Channel::Mic)),
+        Some(Box::new(late)),
+    )
+    .expect("a late tap does not end the recording");
+
+    assert!(r.sys.is_none());
+    assert!(stopped(&late_stopped));
+    let segments = read_segments(&r.dir.join("segments.json"));
+    assert_eq!(segments.segments.len(), 2);
+    assert_eq!(segments.segments[1].sys_rate, 0);
+}
+
+/// A reopen whose new microphone never delivers fails, but stops every
+/// source it started first (the old code dropped them running).
+#[test]
+fn a_failed_reopen_stops_the_sources_it_started() {
+    let mut r = Reopen::new();
+    let mic = FakeSource::new(Channel::Mic, None);
+    let mic_stopped = Arc::clone(&mic.stopped);
+    let sys = FakeSource::new(Channel::System, Some((5, 0)));
+    let sys_stopped = Arc::clone(&sys.stopped);
+
+    assert!(r.run(Box::new(mic), Some(Box::new(sys))).is_err());
+    assert!(stopped(&mic_stopped), "new mic stopped");
+    assert!(stopped(&sys_stopped), "new tap stopped");
 }

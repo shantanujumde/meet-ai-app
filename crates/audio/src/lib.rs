@@ -206,6 +206,13 @@ pub trait AudioSource: Send {
     fn rate_report(&self) -> Option<String> {
         None
     }
+
+    /// The device rate this source is resampling from right now, for
+    /// `segments.json`'s `mic_device_rate`/`sys_device_rate` (TUR-87).
+    /// Informational only. `None` when not running or not known.
+    fn device_rate(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// Everything that can go wrong during capture.

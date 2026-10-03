@@ -638,4 +638,8 @@ impl AudioSource for SystemSource {
     fn rate_report(&self) -> Option<String> {
         self.built.as_ref().map(|built| built.rates.describe())
     }
+
+    fn device_rate(&self) -> Option<u32> {
+        self.built.as_ref().map(|built| built.rates.effective())
+    }
 }
