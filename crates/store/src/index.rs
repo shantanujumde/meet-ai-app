@@ -21,6 +21,9 @@ use crate::folder::{self, MeetingFolder};
 use crate::{Error, TICKETS_DIR, is_plain_name};
 use meeting_format::layout::{MEETING_FILE, NOTES_FILE, TRANSCRIPT_FILE, app_dir};
 
+mod titled;
+pub use titled::{IndexedMeeting, same_title_key};
+
 /// Bump when the tables below change. A file with another number is dropped
 /// and rebuilt, never migrated: the markdown is the truth, so rebuilding is
 /// always safe.

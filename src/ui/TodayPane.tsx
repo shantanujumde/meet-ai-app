@@ -17,11 +17,12 @@
  * restart. The interval follows the config even while reads fail.
  *
  * Solo blocks (fewer than `detection.min_attendees` people) are greyed, not
- * hidden, so the day still reads true. Nothing here acts on them; nothing here
- * acts on any event yet — the click to open a brief is TUR-32's.
+ * hidden, so the day still reads true, and nothing here acts on them. Every
+ * other event is a link to its pre-meeting brief (TUR-32).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import {
   calendarRefreshMinutes,
   type TodayEvent,
@@ -31,6 +32,7 @@ import {
 import { toUiError, type UiError } from "@/ipc/types";
 import { cn } from "@/lib/cn";
 import { NO_MEETINGS_TODAY } from "@/lib/constants";
+import { briefPath } from "@/lib/routes";
 import { openSettings } from "./PrivacyButtons";
 import { Button, ButtonRow, cardVariants, RowLabel, RowValue, rowVariants } from "./primitives";
 import { Checking, ErrorState } from "./states";
@@ -136,22 +138,37 @@ function TodayBody({ state, onRetry }: { state: State; onRetry: () => void }) {
 }
 
 function TodayRow({ event, minAttendees }: { event: TodayEvent; minAttendees: number }) {
-  return (
-    <li
-      className={cn(rowVariants({ divided: false }), event.solo && "opacity-50")}
-      aria-disabled={event.solo || undefined}
-      title={
-        event.solo
-          ? `Fewer than ${minAttendees} people, so meet-ai treats it as a solo block`
-          : undefined
-      }
-    >
+  const body = (
+    <>
       <RowLabel
         name={event.title}
         detail={`${formatTime(event.startMs)} – ${formatTime(event.endMs)}`}
         mono={false}
       />
       <RowValue>{formatAttendees(event.attendees)}</RowValue>
+    </>
+  );
+  if (event.solo) {
+    return (
+      <li
+        className={cn(rowVariants({ divided: false }), "opacity-50")}
+        aria-disabled
+        title={`Fewer than ${minAttendees} people, so meet-ai treats it as a solo block`}
+      >
+        {body}
+      </li>
+    );
+  }
+  // TUR-32: a real meeting opens its pre-meeting brief. A link, so Tab and
+  // Enter reach it like any other.
+  return (
+    <li>
+      <Link
+        to={briefPath(event.title)}
+        className={cn(rowVariants({ divided: false }), "hover:bg-row-hover")}
+      >
+        {body}
+      </Link>
     </li>
   );
 }

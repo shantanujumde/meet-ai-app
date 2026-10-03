@@ -244,6 +244,13 @@ export const commands = {
 	 *  timer follows the config even while access is denied.
 	 */
 	calendarRefreshMinutes: () => __TAURI_INVOKE<number>("calendar_refresh_minutes"),
+	/**
+	 *  The brief for the meeting called `title`.
+	 * 
+	 *  Runs on the blocking pool: it reads the index, a meeting folder and runs
+	 *  `git`.
+	 */
+	meetingBrief: (title: string) => typedError<meet_ai_lib_brief_MeetingBrief, meet_ai_lib_error_UiError>(__TAURI_INVOKE("meeting_brief", { title })),
 };
 
 /* Constants */
@@ -345,6 +352,21 @@ export type meet_ai_lib_agent_setup_AgentTestTask = {
 	due: string | null,
 };
 
+/**  One ticket still open from last time. */
+export type meet_ai_lib_brief_BriefTicket = {
+	id: string,
+	title: string,
+	/**  `open` or `in_progress`; `None` when the file has no valid status. */
+	status: string | null,
+};
+
+/**  One `git log` line. */
+export type meet_ai_lib_brief_Commit = {
+	/**  The short hash. */
+	hash: string,
+	subject: string,
+};
+
 /**  What the filesystem says, with no subprocess involved. */
 export type meet_ai_lib_engine_EnvironmentView = {
 	/**
@@ -435,6 +457,22 @@ export type stt_session_LiveLine = {
 	start_sec: number,
 	/**  Already whitespace-collapsed and known non-empty. */
 	text: string,
+};
+
+/**  Everything the brief view shows for one meeting title. */
+export type meet_ai_lib_brief_MeetingBrief = {
+	/**  The title asked for, as given. */
+	title: string,
+	/**
+	 *  The last meeting with this title before today; `None` when there is
+	 *  none.
+	 */
+	previous: meet_ai_lib_brief_PreviousMeeting | null,
+	/**
+	 *  Commits since `previous`; `None` when there is no previous meeting, no
+	 *  repo, or the repo cannot be read.
+	 */
+	commits: meet_ai_lib_brief_RepoCommits | null,
 };
 
 /**  A finished meeting, opened for review. */
@@ -577,6 +615,21 @@ export type meet_ai_lib_permission_Pane =
  */
 export type meet_ai_lib_recording_phase_Phase = "idle" | "starting" | "recording" | "stopping";
 
+/**  What was said last time. */
+export type meet_ai_lib_brief_PreviousMeeting = {
+	/**  The folder name, e.g. `2026-09-01-1430-standup`. */
+	id: string,
+	title: string,
+	/**  The `date` key as written, `None` when the file has none. */
+	date: string | null,
+	/**  The `## Summary` text, `None` when blank or missing. */
+	summary: string | null,
+	/**  The `## Decisions` text, `None` when blank or missing. */
+	decisions: string | null,
+	/**  Its tickets that are not done or dropped. */
+	openTickets: meet_ai_lib_brief_BriefTicket[],
+};
+
 /**  What the window hears on [`DETECTION_PROMPT_EVENT`]. */
 export type meet_ai_lib_detection_notify_Prompt = {
 	/**  What was noticed. */
@@ -621,6 +674,16 @@ export type meet_ai_lib_recording_state_RecordingState =
  *  *yet*, so it must never be labelled interrupted.
  */
 "recording";
+
+/**  The repo the meeting is about and what landed in it since last time. */
+export type meet_ai_lib_brief_RepoCommits = {
+	/**  The repo path as configured, e.g. `~/apps/api`. */
+	repo: string,
+	/**  What `git log --since` was given. */
+	since: string,
+	/**  Newest first, at most [`BRIEF_MAX_COMMITS`]. */
+	commits: meet_ai_lib_brief_Commit[],
+};
 
 /**  Which engine this Mac will actually use, and why. */
 export type meet_ai_lib_engine_SelectionView = {

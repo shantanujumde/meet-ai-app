@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { TodayEvent, TodaysMeetings } from "@/ipc/client";
 import type { UiError } from "@/ipc/types";
@@ -36,9 +37,27 @@ const DENIED: UiError = {
   message: "meet-ai does not have permission to read your calendar",
 };
 
+/** Where a click landed: the path and query the router is now at. */
+function Location() {
+  const location = useLocation();
+  return <p>at {`${location.pathname}${location.search}`}</p>;
+}
+
+/** The pane inside a router (its rows link to the brief, TUR-32). */
+function renderPane() {
+  return render(
+    <MemoryRouter>
+      <Routes>
+        <Route path="/" element={<TodayPane />} />
+        <Route path="/brief" element={<Location />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
 /** Render, then let the first read land. */
 async function show() {
-  render(<TodayPane />);
+  renderPane();
   await act(async () => {});
 }
 
@@ -48,7 +67,7 @@ describe("TodayPane", () => {
   test("says it is reading until the calendar answers", async () => {
     let answer: (today: TodaysMeetings) => void = () => {};
     todaysMeetings.mockReturnValue(new Promise((resolve) => (answer = resolve)));
-    render(<TodayPane />);
+    renderPane();
 
     expect(screen.getByRole("status")).toHaveTextContent("Reading your calendar…");
 
@@ -121,8 +140,18 @@ describe("TodayPane", () => {
     expect(rows[2]).toHaveTextContent("1 person");
     expect(rows[2]).toHaveAttribute("aria-disabled", "true");
 
-    // Nothing in the list is clickable yet (TUR-32 adds the brief).
-    expect(screen.queryByRole("button")).toBeNull();
+    // Only the real meeting links to a brief; solo blocks are not clickable.
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(rows[1]?.querySelector("a")).toBeFalsy();
+    expect(rows[2]?.querySelector("a")).toBeFalsy();
+  });
+
+  test("clicking a meeting opens its pre-meeting brief (TUR-32)", async () => {
+    todaysMeetings.mockResolvedValue(day([event({ title: "R&D sync" })]));
+    await show();
+
+    fireEvent.click(screen.getByRole("link", { name: /R&D sync/ }));
+    expect(screen.getByText("at /brief?title=R%26D+sync")).toBeTruthy();
   });
 
   test("another read error shows the error screen", async () => {
