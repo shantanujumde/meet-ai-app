@@ -23,6 +23,7 @@
 use chrono::{DateTime, Utc};
 
 pub mod eventkit;
+pub mod matching;
 #[cfg(feature = "fake")]
 pub mod fake;
 pub mod raw;
