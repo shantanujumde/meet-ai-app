@@ -483,6 +483,11 @@ export type meet_ai_lib_meetings_view_MeetingSummary = {
 	id: string,
 	/**  What to show in the list. */
 	title: string,
+	/**
+	 *  Who was invited, from `meeting.md`'s `attendees` (filled from the
+	 *  calendar event, TUR-29). Empty when it names nobody.
+	 */
+	attendees: string[],
 	/**  `YYYY-MM-DD`, parsed from the folder name. `None` if it does not match. */
 	date: string | null,
 	/**  `HH:MM`, parsed from the folder name. */

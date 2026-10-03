@@ -30,6 +30,7 @@ export function meetingSummary(overrides: Partial<MeetingSummary> = {}): Meeting
   return {
     id: "2026-09-30-1015-meeting",
     title: "Meeting",
+    attendees: [],
     date: "2026-09-30",
     time: "10:15",
     lineCount: 1,

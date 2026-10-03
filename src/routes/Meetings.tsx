@@ -127,7 +127,17 @@ export function Meetings() {
               onClick={() => navigate(meetingPath(meeting.id))}
             >
               <RowLabel
-                name={meeting.title}
+                name={
+                  <>
+                    {meeting.title}
+                    {/* TUR-29: who was invited, from the calendar event. */}
+                    {meeting.attendees.length > 0 ? (
+                      <span className="block text-footnote font-normal text-fg-secondary">
+                        {meeting.attendees.join(", ")}
+                      </span>
+                    ) : null}
+                  </>
+                }
                 detail={`${formatRelativeDate(meeting.date)}${meeting.time ? ` at ${meeting.time}` : ""}`}
                 mono={false}
               />

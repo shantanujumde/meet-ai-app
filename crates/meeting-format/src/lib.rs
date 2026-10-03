@@ -10,6 +10,7 @@
 //! re-export what they used to own, so their old paths still work.
 //!
 //! * [`layout`] — file and folder names inside the meetings root (§3.1).
+//! * [`meeting_md`] — the `meeting.md` frontmatter keys several writers set (§3.2).
 //! * [`segments`] — the `segments.json` schema (§3.4 + SPEC A5).
 //! * [`transcript`] — the `transcript.md` line format (§3.4).
 //! * [`Channel`], [`Speaker`], [`SAMPLE_RATE`] — L5 and SPEC §2.3.
@@ -27,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub mod layout;
+pub mod meeting_md;
 pub mod segments;
 pub mod transcript;
 
