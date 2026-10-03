@@ -21,6 +21,7 @@ const DAY_PAGE_2: &str = include_str!("fixtures/google/day-page2.json");
 const RECURRING: &str = include_str!("fixtures/google/recurring.json");
 const ERROR_401: &str = include_str!("fixtures/google/error-401.json");
 const ERROR_403: &str = include_str!("fixtures/google/error-403.json");
+const JOIN_LINKS: &str = include_str!("fixtures/google/join-links.json");
 
 const TOKEN_HOST: &str = "oauth2.googleapis.com";
 
@@ -262,6 +263,51 @@ fn recurring_occurrences_each_have_their_own_id() {
         events
             .iter()
             .all(|e| e.ical_uid.as_deref() == Some("oneonone@google.com"))
+    );
+}
+
+#[test]
+fn the_join_link_is_the_hangout_link_else_the_video_entry_point() {
+    let fake = Arc::new(FakeGoogle::default());
+    fake.token("access-1")
+        .page(200, DAY_PAGE_1)
+        .page(200, DAY_PAGE_2);
+    let (from, to) = day(5);
+    let events = provider(&fake).list_events(from, to).unwrap();
+    let links: Vec<Option<&str>> = events.iter().map(|e| e.join_url.as_deref()).collect();
+    // Standup: Meet's hangoutLink. Design review: no hangoutLink, so the
+    // Zoom add-on's `video` entry point, not its phone or "more" one.
+    // Focus time: no conference at all.
+    assert_eq!(
+        links,
+        vec![
+            Some("https://meet.google.com/abc-defg-hij"),
+            Some("https://example.zoom.us/j/123456789"),
+            None,
+        ]
+    );
+}
+
+#[test]
+fn a_blank_hangout_link_falls_back_and_a_dial_in_is_no_join_link() {
+    let fake = Arc::new(FakeGoogle::default());
+    fake.token("access-1").page(200, JOIN_LINKS);
+    let (from, to) = day(5);
+    let events = provider(&fake).list_events(from, to).unwrap();
+    let links: Vec<(&str, Option<&str>)> = events
+        .iter()
+        .map(|e| (e.id.as_str(), e.join_url.as_deref()))
+        .collect();
+    assert_eq!(
+        links,
+        vec![
+            ("meet-only", Some("https://meet.google.com/xyz-abcd-efg")),
+            (
+                "blank-hangout",
+                Some("https://teams.microsoft.com/l/meetup-join/x")
+            ),
+            ("phone-only", None),
+        ]
     );
 }
 

@@ -41,7 +41,7 @@ fn provider_name() -> &'static str {
 pub const EVENTS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
 
 /// Only the fields [`types::Event`] reads, so a busy calendar stays small.
-pub const FIELDS: &str = "nextPageToken,items(id,status,summary,start,end,recurringEventId,iCalUID,attendees(email,displayName,self,resource,responseStatus))";
+pub const FIELDS: &str = "nextPageToken,items(id,status,summary,start,end,recurringEventId,iCalUID,attendees(email,displayName,self,resource,responseStatus),hangoutLink,conferenceData(entryPoints(entryPointType,uri)))";
 
 /// Events per page: Google's default is 250, its maximum 2500.
 pub const PAGE_SIZE: u32 = 250;
@@ -224,9 +224,31 @@ fn raw_event(event: types::Event) -> Option<RawEvent> {
         all_day: false,
         attendees,
         ical_uid: event.ical_uid,
-        join_url: None,
+        join_url: join_url(event.hangout_link, event.conference_data),
     };
     Some(raw)
+}
+
+/// The link that joins the call (TUR-77): `hangoutLink` for Meet, else the
+/// conference's `video` entry point (a Zoom or other add-on). Blank links are
+/// skipped.
+fn join_url(
+    hangout_link: Option<String>,
+    conference: Option<types::ConferenceData>,
+) -> Option<String> {
+    let video = conference
+        .into_iter()
+        .flat_map(|c| c.entry_points)
+        .find_map(|entry| {
+            (entry.entry_point_type.as_deref() == Some("video"))
+                .then_some(entry.uri)
+                .flatten()
+                .filter(|uri| !uri.trim().is_empty())
+        });
+    hangout_link
+        .filter(|link| !link.trim().is_empty())
+        .or(video)
+        .map(|url| url.trim().to_owned())
 }
 
 fn unreachable(detail: impl Into<String>) -> Error {

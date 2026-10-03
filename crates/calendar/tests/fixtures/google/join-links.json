@@ -1,0 +1,32 @@
+{
+  "items": [
+    {
+      "id": "meet-only",
+      "summary": "Meet, hangoutLink only",
+      "start": { "dateTime": "2026-10-05T09:00:00Z" },
+      "end": { "dateTime": "2026-10-05T09:30:00Z" },
+      "hangoutLink": "https://meet.google.com/xyz-abcd-efg"
+    },
+    {
+      "id": "blank-hangout",
+      "summary": "Blank hangoutLink, video entry point",
+      "start": { "dateTime": "2026-10-05T10:00:00Z" },
+      "end": { "dateTime": "2026-10-05T10:30:00Z" },
+      "hangoutLink": "  ",
+      "conferenceData": {
+        "entryPoints": [
+          { "entryPointType": "video", "uri": "https://teams.microsoft.com/l/meetup-join/x" }
+        ]
+      }
+    },
+    {
+      "id": "phone-only",
+      "summary": "Dial-in only",
+      "start": { "dateTime": "2026-10-05T11:00:00Z" },
+      "end": { "dateTime": "2026-10-05T11:30:00Z" },
+      "conferenceData": {
+        "entryPoints": [{ "entryPointType": "phone", "uri": "tel:+1-555-0100" }]
+      }
+    }
+  ]
+}
