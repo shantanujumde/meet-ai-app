@@ -20,6 +20,9 @@
 //! - [`oauth`] (TUR-44, SPEC A12): sign in with Google or Microsoft on every
 //!   OS. PKCE over a loopback redirect, the refresh token in the OS keystore,
 //!   and [`oauth::CalendarAuth::access_token`] for the cloud providers.
+//! - [`microsoft`] (TUR-47, SPEC §2.7 tier 2): a Microsoft account's calendar
+//!   through Graph `calendarView`, on every OS, and [`windows_tz`], the
+//!   Windows → IANA time-zone table it reads Graph's zone names with.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
@@ -29,8 +32,10 @@ pub mod eventkit;
 #[cfg(feature = "fake")]
 pub mod fake;
 pub mod matching;
+pub mod microsoft;
 pub mod oauth;
 pub mod raw;
+pub mod windows_tz;
 
 /// One calendar entry, flattened to the fields meet-ai actually uses.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -52,6 +57,11 @@ pub struct Event {
     /// name, else the email address. Someone with neither is counted in
     /// [`Event::attendees`] but not named here.
     pub attendee_names: Vec<String>,
+    /// The iCalendar UID, shared by every copy of one meeting across
+    /// calendars, so the same meeting read from two providers can be shown
+    /// once (TUR-49). `None` when the provider does not give one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ical_uid: Option<String>,
 }
 
 /// A source of calendar events.

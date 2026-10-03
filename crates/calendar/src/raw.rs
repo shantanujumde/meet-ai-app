@@ -63,6 +63,7 @@ pub fn to_events(
                 title: e.title,
                 start: e.start,
                 end: e.end,
+                ical_uid: None,
             }
         })
         .collect();
@@ -166,6 +167,7 @@ mod tests {
                 end: at(9, 30),
                 attendees: 1,
                 attendee_names: vec!["Priya".into()],
+                ical_uid: None,
             }]
         );
     }

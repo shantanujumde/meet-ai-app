@@ -1,0 +1,46 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('me')/calendarView",
+  "value": [
+    {
+      "id": "AAMkAGHoliday",
+      "subject": "Company holiday",
+      "isAllDay": true,
+      "isCancelled": false,
+      "responseStatus": { "response": "organizer" },
+      "start": { "dateTime": "2026-10-05T00:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-06T00:00:00.0000000", "timeZone": "UTC" }
+    },
+    {
+      "id": "AAMkAGPacificDesignReview",
+      "iCalUId": "design-review-pacific",
+      "subject": "Design review (Seattle)",
+      "isAllDay": false,
+      "isCancelled": false,
+      "responseStatus": { "response": "tentativelyAccepted" },
+      "start": { "dateTime": "2026-10-05T08:00:00.0000000", "timeZone": "Pacific Standard Time" },
+      "end": { "dateTime": "2026-10-05T09:00:00.0000000", "timeZone": "Pacific Standard Time" },
+      "attendees": [
+        { "type": "required", "status": { "response": "declined" }, "emailAddress": { "name": "Dev", "address": "dev@example.com" } },
+        { "type": "required", "emailAddress": { "name": "  ", "address": "sam@example.com" } }
+      ]
+    },
+    {
+      "id": "AAMkAGFocus",
+      "subject": "Focus time",
+      "isAllDay": false,
+      "isCancelled": false,
+      "responseStatus": { "response": "organizer" },
+      "start": { "dateTime": "2026-10-05T14:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T16:00:00.0000000", "timeZone": "UTC" },
+      "attendees": [],
+      "onlineMeeting": null
+    },
+    {
+      "id": "AAMkAGNoSubject",
+      "start": { "dateTime": "2026-10-05T17:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T17:30:00.0000000", "timeZone": "UTC" },
+      "someFieldGraphAddsLater": { "x": 1 },
+      "responseStatus": { "response": "somethingNew" }
+    }
+  ]
+}

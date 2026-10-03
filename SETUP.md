@@ -163,6 +163,7 @@ Features confirmed present on 0.16.0: `metal`, `coreml`, `cuda`, `vulkan`, `hipb
 | `sha2` | **0.10.9** | see §1.4 |
 | `tokio-util` | **0.7.19** | download streaming |
 | `base64` | **0.22.1** | TUR-44: reads the account label out of the id_token. The version `oauth2` already pulls |
+| `chrono-tz` | **0.10.4** | TUR-47: a Windows zone name from Microsoft Graph, mapped to IANA, becomes a real offset. Pure Rust, tz database compiled in |
 
 TUR-44 (SPEC A12) added `oauth2` (no default features in `crates/calendar`;
 `reqwest-blocking` only in `src-tauri`, so the crate keeps no network client and

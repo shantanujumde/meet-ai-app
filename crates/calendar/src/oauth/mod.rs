@@ -426,6 +426,38 @@ impl CalendarAuth {
         self.refresh(provider, &mut session)
     }
 
+    /// The calendar API answered 401 with `rejected`: forget it, so the next
+    /// [`Self::access_token`] refreshes instead of handing it out again
+    /// (TUR-47). A token that was already replaced is left alone, so two
+    /// reads that both saw a 401 refresh only once.
+    pub fn reject_access_token(&self, provider: ProviderId, rejected: &str) {
+        let mut session = self.session(provider);
+        if session
+            .access
+            .as_ref()
+            .is_some_and(|(token, _)| token == rejected)
+        {
+            session.access = None;
+        }
+    }
+
+    /// Whether `provider` has a sign-in at all, working or expired: a
+    /// refresh token in the keystore or in memory. No network, so the app can
+    /// ask before every read which calendars to read (TUR-47).
+    pub fn has_sign_in(&self, provider: ProviderId) -> bool {
+        let session = self.session(provider);
+        if session.unsaved_refresh.is_some() || session.access.is_some() {
+            return true;
+        }
+        match self.store.load(provider) {
+            Ok(token) => token.is_some(),
+            Err(error) => {
+                tracing::debug!(%provider, %error, "could not read the OS keystore");
+                false
+            }
+        }
+    }
+
     fn refresh(&self, provider: ProviderId, session: &mut Session) -> Result<String, Error> {
         let expired = Error::SignInExpired {
             provider: provider.display_name(),
