@@ -13,7 +13,7 @@ use tauri_plugin_opener::OpenerExt as _;
 
 use super::Detection;
 use crate::config::{self, DetectionConfig};
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::folder_move::FolderGate;
 
 /// The fewest attendees the card offers for "Only for meetings with at
@@ -77,14 +77,6 @@ impl NotificationSettings {
             remind_before_minutes: self.remind_before_minutes,
         })
     }
-}
-
-async fn on_blocking_pool<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, UiError> {
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|error| UiError::app("task-failed", error.to_string()))
 }
 
 /// `detection` from `config.jsonc`, defaults when missing or not valid.

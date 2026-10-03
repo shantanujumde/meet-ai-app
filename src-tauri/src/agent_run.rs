@@ -20,7 +20,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter as _, Manager as _};
 
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::live_transcript::{self, Transcription};
 
 mod failure;
@@ -141,11 +141,11 @@ pub async fn notes_run_status(app: AppHandle, meeting_id: String) -> Result<Stat
 #[tauri::command]
 #[specta::specta]
 pub async fn start_notes_run(app: AppHandle, meeting_id: String) -> Result<Status, UiError> {
-    blocking(move || {
+    on_blocking_pool(move || {
         let root = crate::meetings::root()?;
         start(&app, root, &meeting_id)
     })
-    .await
+    .await?
 }
 
 /// Cancel this meeting's running notes run. A no-op when none is running.
@@ -159,7 +159,7 @@ pub async fn cancel_notes_run(app: AppHandle, meeting_id: String) -> Result<Stat
 #[tauri::command]
 #[specta::specta]
 pub async fn meeting_notes(meeting_id: String) -> Result<MeetingNotes, UiError> {
-    blocking(move || read_meeting_notes(&crate::meetings::root()?, &meeting_id)).await
+    on_blocking_pool(move || read_meeting_notes(&crate::meetings::root()?, &meeting_id)).await?
 }
 
 /// Switch "Make notes for this meeting" on or off (SPEC A11, "Skip one
@@ -176,7 +176,7 @@ pub async fn set_meeting_notes(
     meeting_id: String,
     on: bool,
 ) -> Result<MeetingNotes, UiError> {
-    blocking(move || {
+    on_blocking_pool(move || {
         let root = crate::meetings::root()?;
         let agent_runs = app.try_state::<AgentRuns>();
         switch_notes(
@@ -187,7 +187,7 @@ pub async fn set_meeting_notes(
             &own_writes(&app),
         )
     })
-    .await
+    .await?
 }
 
 /// Finish the meeting's transcription, then start its notes run if
@@ -377,15 +377,6 @@ fn read_meeting_notes(root: &Path, meeting_id: &str) -> Result<MeetingNotes, UiE
         analyzed_by: meeting.frontmatter.get_str("analyzed_by"),
         sections,
     })
-}
-
-/// Runs `work` on the blocking pool, off the thread the window waits on.
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, UiError> + Send + 'static,
-) -> Result<T, UiError> {
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|error| UiError::app("task-failed", error.to_string()))?
 }
 
 /// The window and the notification, as a [`Sink`].

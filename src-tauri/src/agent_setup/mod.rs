@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager as _};
 
 use crate::config::{self, AgentConfig, ConfigError, Harness};
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::folder_move::FolderGate;
 
 mod test_run;
@@ -180,16 +180,6 @@ pub async fn save_agent_choice(
 #[specta::specta]
 pub async fn test_agent(choice: AgentChoice) -> Result<AgentTestResult, UiError> {
     on_blocking_pool(move || test_run::run(&choice)).await?
-}
-
-/// Run blocking work on Tauri's blocking pool, as `commands.rs` does: every
-/// command here reads the disk or starts a process.
-async fn on_blocking_pool<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, UiError> {
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|error| UiError::app("task-failed", error.to_string()))
 }
 
 // --- between the screen and the config -------------------------------------

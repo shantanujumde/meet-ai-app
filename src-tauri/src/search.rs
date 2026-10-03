@@ -15,7 +15,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use store::index::{Hit, Index, IndexedMeeting};
 use tauri::{AppHandle, Manager as _};
 
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::meetings;
 
 /// The open index and the meetings folder it was built for.
@@ -113,7 +113,5 @@ pub fn state(app: &AppHandle) -> tauri::State<'_, SearchIndex> {
 #[tauri::command]
 #[specta::specta]
 pub async fn search(app: AppHandle, query: String) -> Result<Vec<Hit>, UiError> {
-    tauri::async_runtime::spawn_blocking(move || state(&app).search(&query))
-        .await
-        .map_err(|error| UiError::app("task-failed", error.to_string()))?
+    on_blocking_pool(move || state(&app).search(&query)).await?
 }

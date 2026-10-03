@@ -25,7 +25,7 @@ use store::ticket::Status;
 use tauri::AppHandle;
 
 use crate::config;
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::{meetings, search};
 
 /// The most commits the brief lists.
@@ -100,7 +100,7 @@ pub struct Commit {
 #[tauri::command]
 #[specta::specta]
 pub async fn meeting_brief(app: AppHandle, title: String) -> Result<MeetingBrief, UiError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    on_blocking_pool(move || {
         let matches = search::state(&app).meetings_titled(&title)?;
         let today = chrono::Local::now().date_naive();
         brief_from(
@@ -111,8 +111,7 @@ pub async fn meeting_brief(app: AppHandle, title: String) -> Result<MeetingBrief
             config::default_repo()?,
         )
     })
-    .await
-    .map_err(|error| UiError::app("task-failed", error.to_string()))?
+    .await?
 }
 
 /// The brief for `title`, given the index's `matches` for it (newest first),

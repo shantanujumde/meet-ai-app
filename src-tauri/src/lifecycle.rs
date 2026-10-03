@@ -26,7 +26,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter as _, Manager as _, RunEvent, Window, WindowEvent};
 
 use crate::config::{self, AppConfig};
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::events::NAVIGATE_EVENT;
 use crate::events::QUIT_CONFIRM_EVENT;
 use crate::folder_move::FolderGate;
@@ -353,14 +353,6 @@ pub async fn set_menu_bar_countdown(app: AppHandle, show: bool) -> Result<bool, 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     crate::tray::redraw_soon(&app);
     Ok(saved)
-}
-
-async fn on_blocking_pool<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, UiError> {
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|error| UiError::app("task-failed", error.to_string()))
 }
 
 #[cfg(test)]

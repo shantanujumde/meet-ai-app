@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager as _, Runtime};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, log};
 use tauri_plugin_opener::OpenerExt as _;
 
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 
 mod crash;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -115,7 +115,7 @@ pub fn install_crash_handlers(dir: PathBuf) {
 #[tauri::command]
 #[specta::specta]
 pub async fn open_logs_folder(app: AppHandle) -> Result<(), UiError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    on_blocking_pool(move || {
         let dir = resolve(&app).ok_or_else(|| {
             UiError::app(
                 "no-logs-dir",
@@ -127,8 +127,7 @@ pub async fn open_logs_folder(app: AppHandle) -> Result<(), UiError> {
             .open_path(dir.display().to_string(), None::<&str>)
             .map_err(|error| UiError::app("open-failed", error.to_string()))
     })
-    .await
-    .map_err(|error| UiError::app("task-failed", error.to_string()))?
+    .await?
 }
 
 #[cfg(test)]
