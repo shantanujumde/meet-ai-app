@@ -2,7 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import type { AgentCli, AgentTestResult } from "@/ipc/types";
-import { ipc } from "@/test/ipcMock";
+import { CLAUDE_MODELS, ipc } from "@/test/ipcMock";
 import { AgentSetup } from "./AgentSetup";
 
 /**
@@ -31,8 +31,8 @@ function claude(overrides: Partial<AgentCli> = {}): AgentCli {
     path: "/usr/local/bin/claude",
     version: "2.1.286",
     signInCommand: "claude auth login",
-    models: ["opus", "sonnet", "haiku"],
-    defaultModel: "opus",
+    models: CLAUDE_MODELS,
+    cliDefault: null,
     canTest: true,
     ...overrides,
   };
@@ -48,7 +48,7 @@ function codex(overrides: Partial<AgentCli> = {}): AgentCli {
     version: null,
     signInCommand: "codex login",
     models: [],
-    defaultModel: null,
+    cliDefault: null,
     canTest: false,
     ...overrides,
   };
@@ -118,7 +118,7 @@ describe("AgentSetup", () => {
     await waitFor(() =>
       expect(saveAgentChoice).toHaveBeenCalledWith({
         harness: "none",
-        model: "opus",
+        model: "",
         binaryPath: null,
       }),
     );
@@ -137,10 +137,12 @@ describe("AgentSetup", () => {
     ).toBeInTheDocument();
   });
 
-  test("the model starts on opus, and free text saves on blur, not per key", async () => {
+  test("the model starts on Default, and free text saves on blur, not per key", async () => {
     await renderSetup();
     const field = screen.getByRole("textbox", { name: /Model/ }) as HTMLInputElement;
-    expect(field.value).toBe("opus");
+    expect(field.value).toBe("");
+    expect(field.placeholder).toBe("Default (Claude Code picks)");
+    expect(screen.getByRole("button", { name: "Default" })).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.change(field, { target: { value: "claude-opus-4-1" } });
     expect(saveAgentChoice).not.toHaveBeenCalled();
@@ -166,7 +168,7 @@ describe("AgentSetup", () => {
       expect(saveAgentChoice).toHaveBeenLastCalledWith(expect.objectContaining({ model: "haiku" })),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "sonnet" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sonnet" }));
     await waitFor(() =>
       expect(saveAgentChoice).toHaveBeenLastCalledWith(
         expect.objectContaining({ model: "sonnet" }),
@@ -183,7 +185,7 @@ describe("AgentSetup", () => {
     await waitFor(() =>
       expect(saveAgentChoice).toHaveBeenCalledWith({
         harness: "claude-code",
-        model: "opus",
+        model: "",
         binaryPath: "/opt/tools/claude",
       }),
     );
@@ -218,7 +220,7 @@ describe("AgentSetup", () => {
     expect(await screen.findByText("Testing… this can take up to a minute.")).toBeInTheDocument();
     expect(testAgent).toHaveBeenCalledWith({
       harness: "claude-code",
-      model: "opus",
+      model: "",
       binaryPath: null,
     });
 
@@ -274,7 +276,7 @@ describe("AgentSetup", () => {
         state: "ready",
         path: "/opt/homebrew/bin/codex",
         version: "0.50.0",
-        models: ["gpt-5-codex"],
+        models: [{ name: "gpt-5-codex", label: "gpt-5-codex", note: null }],
         canTest: true,
       }),
     ]);
@@ -290,7 +292,7 @@ describe("AgentSetup", () => {
     );
     const field = screen.getByRole("textbox", { name: /Model/ }) as HTMLInputElement;
     expect(field.value).toBe("");
-    expect(field.placeholder).toBe("Codex's own default");
+    expect(field.placeholder).toBe("Default (Codex picks)");
     expect(screen.getByText(/to OpenAI through your own Codex account/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Test" }));
@@ -319,7 +321,7 @@ describe("AgentSetup", () => {
     await waitFor(() =>
       expect(saveAgentChoice).toHaveBeenCalledWith({
         harness: "claude-code",
-        model: "opus",
+        model: "",
         binaryPath: null,
       }),
     );

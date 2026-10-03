@@ -5,6 +5,10 @@
  * meet-ai has never heard of. It saves when the field loses focus or on
  * Enter, not on every key, so typing "sonnet" does not write "s", "so"…
  *
+ * Blank is "Default": meet-ai passes no model and the agent picks its own
+ * (SPEC A14). The buttons are Default and the agent's first two models; every
+ * other model it offers is in the dropdown.
+ *
  * The path is for an app opened from Finder that cannot find a CLI which
  * works fine in Terminal (SPEC A11, "Finding the binary").
  */
@@ -17,6 +21,7 @@ import type { AgentChoice, AgentCli, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { Button, Row, RowLabel, RowValue, rowDetailVariants } from "@/ui/primitives";
 import { ErrorState } from "@/ui/states";
+import { defaultModelText, modelChoices, modelText } from "./agents";
 
 export function ModelField({
   choice,
@@ -30,28 +35,38 @@ export function ModelField({
   onSave: (model: string) => void;
 }) {
   const id = useId();
+  const statusId = useId();
   const [draft, setDraft] = useState(choice.model);
 
   // A save, or a pick of another agent, replaces what is in the field.
   useEffect(() => setDraft(choice.model), [choice.model]);
 
-  const suggestions = cli?.models ?? [];
-  const placeholder = cli?.defaultModel ?? `${name}'s own default`;
+  const models = cli?.models ?? [];
+  const { chips, more } = modelChoices(models);
+  const defaultText = defaultModelText(name, cli);
+  const picked = models.find((model) => model.name === choice.model);
+  // What the saved model is, in words: the Default sentence, or the list's note.
+  const status = choice.model === "" ? defaultText : picked?.note ? modelText(picked) : null;
+  const inMore = more.some((model) => model.name === choice.model);
+
+  function choose(model: string) {
+    setDraft(model);
+    onSave(model);
+  }
 
   return (
     <Row stacked>
       <label htmlFor={id} className="flex flex-col gap-1">
         <span className="text-body font-medium">Model</span>
         <span className={rowDetailVariants({ mono: false })}>
-          {cli?.defaultModel
-            ? `Any model name ${name} accepts. Leave it blank for ${cli.defaultModel}.`
-            : `Any model name ${name} accepts. Leave it blank to use ${name}'s own default.`}
+          {`Any model name ${name} accepts. Leave it blank to let ${name} pick.`}
         </span>
       </label>
       <input
         id={id}
         value={draft}
-        placeholder={placeholder}
+        placeholder={defaultText}
+        aria-describedby={status ? statusId : undefined}
         autoComplete="off"
         spellCheck={false}
         onChange={(event) => setDraft(event.target.value)}
@@ -61,26 +76,54 @@ export function ModelField({
         }}
         className="w-full rounded-control border-[0.5px] border-separator bg-glass-sunken px-4 py-2 font-mono text-body text-fg-primary placeholder:text-fg-tertiary"
       />
-      {suggestions.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={rowDetailVariants({ mono: false })}>Suggestions:</span>
-          {suggestions.map((model) => (
-            <Button
-              key={model}
-              size="small"
-              tone="quiet"
-              aria-pressed={choice.model === model}
-              className="aria-pressed:bg-glass-sunken aria-pressed:text-fg-primary"
-              onClick={() => {
-                setDraft(model);
-                onSave(model);
-              }}
-            >
-              {model}
-            </Button>
-          ))}
-        </div>
+      {status ? (
+        <p id={statusId} className={rowDetailVariants({ mono: false })}>
+          {status}
+        </p>
       ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={rowDetailVariants({ mono: false })}>Suggestions:</span>
+        <Button
+          size="small"
+          tone="quiet"
+          aria-pressed={choice.model === ""}
+          title={defaultText}
+          className="aria-pressed:bg-glass-sunken aria-pressed:text-fg-primary"
+          onClick={() => choose("")}
+        >
+          Default
+        </Button>
+        {chips.map((model) => (
+          <Button
+            key={model.name}
+            size="small"
+            tone="quiet"
+            aria-pressed={choice.model === model.name}
+            title={modelText(model)}
+            className="aria-pressed:bg-glass-sunken aria-pressed:text-fg-primary"
+            onClick={() => choose(model.name)}
+          >
+            {model.label}
+          </Button>
+        ))}
+        {more.length > 0 ? (
+          <select
+            aria-label="More models"
+            value={inMore ? choice.model : ""}
+            onChange={(event) => {
+              if (event.target.value) choose(event.target.value);
+            }}
+            className="rounded-control border-[0.5px] border-separator bg-glass-sunken px-3 py-1 text-body text-fg-primary"
+          >
+            <option value="">More models…</option>
+            {more.map((model) => (
+              <option key={model.name} value={model.name}>
+                {modelText(model)}
+              </option>
+            ))}
+          </select>
+        ) : null}
+      </div>
     </Row>
   );
 }
