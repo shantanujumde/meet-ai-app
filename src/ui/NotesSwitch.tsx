@@ -11,17 +11,14 @@
  * Laid out as a Settings row: the label with its helper text under it on the
  * left, the switch on the right. The caller puts it in a flush `Card`.
  *
- * A real switch: a button with `role="switch"` and `aria-checked`, named by
- * its visible label (a `<label>` for a button, so clicking the words flips it
- * too). On and off differ in the knob's side as well as the fill, never by
- * colour alone. The "on" fill is green rather than the accent: the accent is
- * kept for the one primary control per window (Record, or Stop).
+ * The switch is {@link Switch}, named by its label and described by the
+ * helper text.
  */
 
 import { useId } from "react";
 import type { UiError } from "@/ipc/types";
-import { cn } from "@/lib/cn";
 import { Row, rowDetailVariants } from "./primitives";
+import { Switch } from "./SettingSwitch";
 import { ErrorState } from "./states";
 
 export const NOTES_SWITCH_LABEL = "Make notes for this meeting";
@@ -55,31 +52,7 @@ export function NotesSwitch({
               : "Off: the transcript is not sent to your agent. For private calls."}
           </span>
         </span>
-        <button
-          type="button"
-          role="switch"
-          id={id}
-          aria-checked={on}
-          aria-describedby={hintId}
-          disabled={busy}
-          onClick={() => onChange(!on)}
-          className={cn(
-            "inline-flex h-(--control-h-small) w-[36px] shrink-0 cursor-default items-center rounded-capsule p-1",
-            "border-[0.5px] [transition:background-color_var(--dur-fast)_var(--ease-out)]",
-            "disabled:cursor-not-allowed disabled:opacity-40",
-            "contrast-more:border contrast-more:border-separator-strong",
-            on ? "border-transparent bg-success" : "border-rim bg-glass-sunken",
-          )}
-        >
-          <span
-            aria-hidden="true"
-            className={cn(
-              "size-6 rounded-capsule bg-on-accent shadow-raised",
-              "[transition:translate_var(--dur-fast)_var(--ease-out)] motion-reduce:transition-none",
-              on ? "translate-x-6" : "translate-x-0",
-            )}
-          />
-        </button>
+        <Switch id={id} on={on} disabled={busy} describedBy={hintId} onChange={onChange} />
       </Row>
       {error ? <ErrorState error={error} /> : null}
     </Row>
