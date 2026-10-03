@@ -131,7 +131,8 @@ pub fn from_settings(settings: &config::AgentConfig) -> Result<Agent, Failure> {
     };
     Ok(Agent {
         harness,
-        model: Some(settings.model.clone()).filter(|model| !model.trim().is_empty()),
+        // Already trimmed, and `None` for blank, by the config reader.
+        model: settings.model.clone(),
         timeout: Duration::from_secs(settings.timeout_sec),
         work_root: std::env::temp_dir(),
     })

@@ -476,8 +476,8 @@ fn id_and_models() {
     let harness = ClaudeHarness::default();
     assert_eq!(harness.id(), "claude-code");
     assert_eq!(harness.id(), agent::claude::ID);
-    assert_eq!(harness.models(), ["opus", "sonnet", "haiku"]);
-    assert_eq!(agent::claude::DEFAULT_MODEL, "opus");
+    // From models.json: Sonnet and Haiku first (the setup screen's buttons).
+    assert_eq!(&harness.models()[..3], ["sonnet", "haiku", "opus"]);
     assert_eq!(agent::claude::DISPLAY_NAME, "Claude Code");
 }
 

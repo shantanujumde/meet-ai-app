@@ -54,8 +54,9 @@ impl Harness {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentConfig {
     pub harness: Harness,
-    /// Any model name the chosen CLI accepts.
-    pub model: String,
+    /// Any model name the chosen CLI accepts. `None` (`null` or blank in the
+    /// file) passes no `--model`, so the CLI picks its own (SPEC A14).
+    pub model: Option<String>,
     /// Set when auto-detect cannot find the CLI on the login shell's `PATH`.
     pub binary_path: Option<PathBuf>,
     /// Notes start on their own when a call ends.
@@ -68,7 +69,7 @@ impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             harness: Harness::default(),
-            model: "opus".to_string(),
+            model: None,
             binary_path: None,
             auto_run: true,
             timeout_sec: 300,
@@ -196,7 +197,12 @@ pub fn parse_agent(raw: &str) -> Result<AgentConfig, ConfigError> {
             Some(name) => Harness::from_config(&name)?,
             None => defaults.harness,
         },
-        model: agent.model.unwrap_or(defaults.model),
+        // Blank is "not set", like `null`: the CLI's own default (A14).
+        model: agent
+            .model
+            .map(|model| model.trim().to_owned())
+            .filter(|model| !model.is_empty())
+            .or(defaults.model),
         // `""` is "not set", like `null`: the schema asks for at least one
         // character, and an empty path would only fail later, at spawn time.
         binary_path: agent

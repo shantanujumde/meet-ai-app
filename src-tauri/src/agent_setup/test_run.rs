@@ -41,7 +41,7 @@ pub(super) fn run(choice: &AgentChoice) -> Result<AgentTestResult, UiError> {
     let root = meetings::root().ok();
     run_sample(
         harness.as_ref(),
-        &choice.model(),
+        choice.model().as_deref(),
         timeout,
         std::env::temp_dir(),
         root.as_deref(),
@@ -110,20 +110,20 @@ fn timeout() -> Duration {
 /// is looked for; `None` uses the built-in one.
 pub(super) fn run_sample(
     harness: &dyn agent::Harness,
-    model: &str,
+    model: Option<&str>,
     timeout: Duration,
     work_root: PathBuf,
     meetings_root: Option<&Path>,
 ) -> Result<AgentTestResult, UiError> {
     let mut job = Job::notes(sample_prompt(meetings_root)?, notes_schema().clone());
-    let model = model.trim();
-    job.model = (!model.is_empty()).then(|| model.to_owned());
+    let model = model.map(str::trim).filter(|model| !model.is_empty());
+    job.model = model.map(str::to_owned);
     job.timeout = timeout;
     job.work_root = work_root;
 
     let started = Instant::now();
     let reply = harness.run(&job).map_err(|error| {
-        let error = agent_error(error);
+        let error = with_model(agent_error(error), model);
         tracing::warn!(
             harness = harness.id(),
             kind = error.kind,
@@ -182,6 +182,18 @@ fn result(notes: Notes, seconds: u32) -> AgentTestResult {
             .collect(),
         seconds,
     }
+}
+
+/// `error` with the model the test ran, for a failure a wrong model name can
+/// cause, so "Test" says which name failed. Nothing is added with no model:
+/// the CLI picked its own.
+fn with_model(mut error: UiError, model: Option<&str>) -> UiError {
+    if let Some(model) = model
+        && matches!(error.kind, "agent-failed" | "agent-could-not-start")
+    {
+        error.message = format!("{} (model: {model})", error.message);
+    }
+    error
 }
 
 /// An agent run's error as the screen gets it: one `app` kind per thing the

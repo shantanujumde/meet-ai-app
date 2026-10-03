@@ -414,12 +414,28 @@ export type AgentCli = {
   version: string | null;
   /** What to run in Terminal to sign in, e.g. `claude auth login`. */
   signInCommand: string;
-  /** Model names to suggest. Free text is still allowed. */
-  models: string[];
-  /** "opus" for Claude Code. Null means the CLI's own default. */
-  defaultModel: string | null;
+  /**
+   * Models to offer, in order: the first two are buttons next to "Default",
+   * the rest go in a dropdown. Free text is still allowed.
+   */
+  models: AgentModel[];
+  /**
+   * The model the CLI runs on its own when no model is set, if its settings
+   * say (Claude Code's `~/.claude/settings.json`). Null when they do not.
+   */
+  cliDefault: string | null;
   /** Whether the Test button can run this agent. False when it is missing. */
   canTest: boolean;
+};
+
+/** One model the picker offers. */
+export type AgentModel = {
+  /** What is saved and passed as `--model`: "sonnet", "gpt-5.6-terra". */
+  name: string;
+  /** What the screen shows: "Sonnet". The name when there is no label. */
+  label: string;
+  /** One line on when to pick it ("fastest, cheapest"), if there is one. */
+  note: string | null;
 };
 
 /** One task from a test run. */

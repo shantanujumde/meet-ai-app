@@ -1,0 +1,18 @@
+{
+  "claude-code": [
+    { "name": "sonnet", "label": "Sonnet", "note": "balanced, good default for notes" },
+    { "name": "haiku", "label": "Haiku", "note": "fastest, cheapest" },
+    { "name": "opus", "label": "Opus", "note": "most capable, slowest" },
+    { "name": "claude-sonnet-5-5" },
+    { "name": "claude-opus-5-5" },
+    { "name": "claude-haiku-4-5" },
+    { "name": "claude-fable-5-1" }
+  ],
+  "codex": [
+    { "name": "gpt-5.6-sol" },
+    { "name": "gpt-5.6-terra" },
+    { "name": "gpt-5.6-luna" },
+    { "name": "gpt-5.5" },
+    { "name": "gpt-5.2" }
+  ]
+}

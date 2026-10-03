@@ -99,12 +99,17 @@ pub fn with_agent(raw: &str, agent: &AgentConfig) -> Result<String, ConfigError>
             })?
             .into(),
     };
+    // `null`, not a missing key, so the file shows the key exists (A14).
+    let model = match agent.model.as_deref() {
+        Some(model) if !model.trim().is_empty() => model.into(),
+        _ => CstInputValue::Null,
+    };
     with_section(
         raw,
         "agent",
         vec![
             ("harness", agent.harness.as_str().into()),
-            ("model", agent.model.as_str().into()),
+            ("model", model),
             ("binary_path", binary_path),
             ("auto_run", agent.auto_run.into()),
             ("timeout_sec", agent.timeout_sec.into()),

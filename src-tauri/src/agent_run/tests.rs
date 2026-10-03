@@ -771,7 +771,7 @@ fn the_switch_refuses_a_bad_meeting_id() {
 fn settings(auto_run: bool, harness: crate::config::Harness) -> crate::config::AgentConfig {
     crate::config::AgentConfig {
         harness,
-        model: "fake-small".into(),
+        model: Some("fake-small".into()),
         binary_path: None,
         auto_run,
         timeout_sec: 30,

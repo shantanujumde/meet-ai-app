@@ -10,10 +10,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { agentChoice, detectAgents, saveAgentChoice } from "@/ipc/client";
 import type { AgentChoice, AgentCli, AgentHarness, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
-import { agentInfo, CLAUDE_DEFAULT_MODEL, detectKey } from "./agents";
+import { detectKey } from "./agents";
 
 /** What detection is asked when config.jsonc could not be read: no path for either agent. */
-const NO_CHOICE: AgentChoice = { harness: "none", model: CLAUDE_DEFAULT_MODEL, binaryPath: null };
+const NO_CHOICE: AgentChoice = { harness: "none", model: "", binaryPath: null };
 
 export function useAgentSetup() {
   // Null until config.jsonc answers, and while it names an agent meet-ai
@@ -91,19 +91,19 @@ export function useAgentSetup() {
     [apply, detect],
   );
 
-  /** Pick an agent, or `none`. A new agent starts on its own default model and path. */
+  /**
+   * Pick an agent, or `none`. A new agent starts on Default (a blank model:
+   * the agent picks its own) and its own path. `none` keeps the model, so
+   * switching back finds it.
+   */
   const pick = useCallback(
     (harness: AgentHarness) => {
       const was = current.current;
       if (was?.harness === harness) return;
-      const model =
-        harness === "none"
-          ? (was?.model ?? CLAUDE_DEFAULT_MODEL)
-          : (agentInfo(harness, agents).cli?.defaultModel ??
-            (harness === "claude-code" ? CLAUDE_DEFAULT_MODEL : ""));
+      const model = harness === "none" ? (was?.model ?? "") : "";
       void save({ harness, model, binaryPath: null });
     },
-    [agents, save],
+    [save],
   );
 
   /** Save a model name. Blank means the CLI's own default. */

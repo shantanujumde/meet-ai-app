@@ -31,6 +31,7 @@ import { vi } from "vitest";
 import type * as Client from "@/ipc/client";
 import type {
   AgentCli,
+  AgentModel,
   LiveTranscriptSnapshot,
   MeetingList,
   MeetingNotes,
@@ -66,6 +67,17 @@ const EMPTY_SNAPSHOT: LiveTranscriptSnapshot = {
   volatile: [],
 };
 
+/** Claude Code's models as `crates/agent/models.json` lists them (TUR-74). */
+export const CLAUDE_MODELS: AgentModel[] = [
+  { name: "sonnet", label: "Sonnet", note: "balanced, good default for notes" },
+  { name: "haiku", label: "Haiku", note: "fastest, cheapest" },
+  { name: "opus", label: "Opus", note: "most capable, slowest" },
+  { name: "claude-sonnet-5-5", label: "claude-sonnet-5-5", note: null },
+  { name: "claude-opus-5-5", label: "claude-opus-5-5", note: null },
+  { name: "claude-haiku-4-5", label: "claude-haiku-4-5", note: null },
+  { name: "claude-fable-5-1", label: "claude-fable-5-1", note: null },
+];
+
 /** What agent detection finds by default: Claude Code signed in, Codex not installed. */
 const DETECTED_AGENTS: AgentCli[] = [
   {
@@ -76,8 +88,8 @@ const DETECTED_AGENTS: AgentCli[] = [
     path: "/usr/local/bin/claude",
     version: "2.1.286",
     signInCommand: "claude auth login",
-    models: ["opus", "sonnet", "haiku"],
-    defaultModel: "opus",
+    models: CLAUDE_MODELS,
+    cliDefault: null,
     canTest: true,
   },
   {
@@ -89,7 +101,7 @@ const DETECTED_AGENTS: AgentCli[] = [
     version: null,
     signInCommand: "codex login",
     models: [],
-    defaultModel: null,
+    cliDefault: null,
     canTest: false,
   },
 ];
@@ -234,7 +246,7 @@ export const ipc = {
 
   agentChoice: vi.fn<typeof Client.agentChoice>(async () => ({
     harness: "claude-code",
-    model: "opus",
+    model: "",
     binaryPath: null,
   })),
   detectAgents: vi.fn<typeof Client.detectAgents>(async () => DETECTED_AGENTS),

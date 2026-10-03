@@ -26,9 +26,6 @@ use crate::folder_move::FolderGate;
 mod test_run;
 mod view;
 
-/// The model a blank Claude Code pick is saved as (SPEC A11's default).
-const CLAUDE_DEFAULT_MODEL: &str = agent::claude::DEFAULT_MODEL;
-
 // --- what crosses the IPC boundary -----------------------------------------
 
 /// `agent.harness`: which CLI runs the notes, or none (copy prompt instead).
@@ -46,8 +43,8 @@ pub enum AgentHarness {
 #[serde(rename_all = "camelCase")]
 pub struct AgentChoice {
     pub harness: AgentHarness,
-    /// Any model name the CLI accepts. Blank for Codex means "Codex's own
-    /// default".
+    /// Any model name the CLI accepts. Blank means "Default": no `--model`,
+    /// the CLI picks its own (SPEC A14), and `null` in `config.jsonc`.
     pub model: String,
     /// Where the CLI is, when the app cannot find it by itself. `null` (or
     /// blank) means "look for it".
@@ -91,13 +88,38 @@ pub struct AgentCli {
     pub version: Option<String>,
     /// What to type in Terminal to sign in.
     pub sign_in_command: String,
-    /// Model names for the picker. The user can still type any other.
-    pub models: Vec<String>,
-    /// The model picked when the user picks none. `null` for Codex, which
-    /// then uses its own default.
-    pub default_model: Option<String>,
+    /// Models for the picker, in order: the first two are the suggestion
+    /// buttons next to "Default", the rest go in the dropdown. The user can
+    /// still type any other name.
+    pub models: Vec<AgentModel>,
+    /// The model the CLI runs when meet-ai passes none, when its own settings
+    /// say which (Claude Code's `~/.claude/settings.json`). `null` when they
+    /// do not; the CLI then uses its built-in default.
+    pub cli_default: Option<String>,
     /// Whether the Test button can run. False only when the CLI is missing.
     pub can_test: bool,
+}
+
+/// One model the picker offers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModel {
+    /// What is saved and passed as `--model`: `sonnet`, `gpt-5.6-terra`.
+    pub name: String,
+    /// What the screen shows: `Sonnet`. The name when there is no label.
+    pub label: String,
+    /// One line on when to pick it, if meet-ai's list has one.
+    pub note: Option<String>,
+}
+
+impl From<agent::Model> for AgentModel {
+    fn from(model: agent::Model) -> Self {
+        Self {
+            name: model.name,
+            label: model.label,
+            note: model.note,
+        }
+    }
 }
 
 /// One task from the test run.
@@ -197,7 +219,7 @@ impl AgentChoice {
     fn from_config(agent: &AgentConfig) -> Self {
         Self {
             harness: agent.harness.into(),
-            model: agent.model.clone(),
+            model: agent.model.clone().unwrap_or_default(),
             binary_path: agent
                 .binary_path
                 .as_ref()
@@ -214,16 +236,12 @@ impl AgentChoice {
             .map(PathBuf::from)
     }
 
-    /// `model` as it is saved and run: trimmed, and blank becomes `opus` for
-    /// Claude Code. For Codex blank stays blank, which runs Codex's own
-    /// default (the config allows an empty model). For `none` it is kept as
-    /// typed, so switching back later finds it.
-    fn model(&self) -> String {
+    /// `model` as it is saved and run: trimmed, and `None` when blank, which
+    /// passes no `--model` so the CLI picks its own (SPEC A14). The same for
+    /// every harness; for `none` it is kept, so switching back finds it.
+    fn model(&self) -> Option<String> {
         let model = self.model.trim();
-        if model.is_empty() && self.harness == AgentHarness::ClaudeCode {
-            return CLAUDE_DEFAULT_MODEL.to_owned();
-        }
-        model.to_owned()
+        (!model.is_empty()).then(|| model.to_owned())
     }
 }
 

@@ -14,7 +14,7 @@
 //! warns "no stdin data received" (measured 2026-10-01).
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::process::{self, CliExit};
@@ -26,18 +26,28 @@ pub const ID: &str = "claude-code";
 /// The CLI's name as the user knows it, for errors and logs.
 pub const DISPLAY_NAME: &str = "Claude Code";
 
-/// The model picked at setup unless the user picks another (SPEC A11).
-pub const DEFAULT_MODEL: &str = "opus";
+/// Claude Code's own settings file, inside its config folder. Its `model`
+/// key is the model a run with no `--model` gets (SPEC A14).
+const SETTINGS_FILE: &str = "settings.json";
 
-/// Model aliases the CLI accepts, for the setup picker. The user can also type
-/// any full model name the CLI knows.
-const MODELS: &[&str] = &[DEFAULT_MODEL, "sonnet", "haiku"];
+/// Largest settings file read for its `model` key. A real one is a few KiB.
+const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
 
 /// The binary looked up on `PATH` when no `agent.binary_path` is set.
 const BINARY: &str = "claude";
 
 /// Turns off every hook the user has set up, so none runs on a transcript.
 const NO_HOOKS: &str = r#"{"disableAllHooks":true}"#;
+
+/// Words in the CLI's error text that mean the model name is wrong, or the
+/// account cannot use it.
+const MODEL_HINTS: &[&str] = &[
+    "issue with the selected model",
+    "may not exist or you may not have access",
+    "model not found",
+    "invalid model",
+    "not_found_error",
+];
 
 /// Words in the CLI's error text that mean nobody is signed in.
 const SIGN_IN_HINTS: &[&str] = &[
@@ -130,8 +140,13 @@ impl Harness for ClaudeHarness {
         crate::detect::claude(self.binary.as_deref())
     }
 
+    /// The list in `models.json`: Claude Code cannot list its models
+    /// without starting a session. Nothing is run for it.
     fn models(&self) -> Vec<String> {
-        MODELS.iter().map(|&model| model.to_owned()).collect()
+        crate::models::listed(ID)
+            .into_iter()
+            .map(|model| model.name)
+            .collect()
     }
 
     fn run(&self, job: &Job) -> Result<serde_json::Value, AgentError> {
@@ -142,6 +157,43 @@ impl Harness for ClaudeHarness {
         drop(dir);
         check.check(reply(exit)?)
     }
+}
+
+/// The model Claude Code runs when meet-ai passes no `--model`, as far as
+/// its user settings say: the `model` key of `settings.json` in its config
+/// folder (`$CLAUDE_CONFIG_DIR`, else `~/.claude`). `None` when there is no
+/// such file or key; Claude Code then uses its built-in default, which it
+/// does not write anywhere. Only read, never written. `ANTHROPIC_MODEL` and
+/// project settings can still override it; a notes run has no project.
+pub fn settings_model() -> Option<String> {
+    let dir = match std::env::var_os("CLAUDE_CONFIG_DIR").filter(|dir| !dir.is_empty()) {
+        Some(dir) => PathBuf::from(dir),
+        None => home_dir()?.join(".claude"),
+    };
+    settings_model_in(&dir)
+}
+
+/// [`settings_model`] for the config folder `dir`. A missing, unreadable,
+/// oversized or invalid file is `None`, as is a blank or non-text `model`.
+pub fn settings_model_in(dir: &Path) -> Option<String> {
+    let path = dir.join(SETTINGS_FILE);
+    let size = std::fs::metadata(&path).ok()?.len();
+    if size > MAX_SETTINGS_BYTES {
+        return None;
+    }
+    let text = std::fs::read_to_string(&path).ok()?;
+    let settings: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let model = settings.get("model")?.as_str()?.trim();
+    (!model.is_empty()).then(|| model.to_owned())
+}
+
+/// The user's home folder: `HOME`, or `USERPROFILE` on Windows.
+fn home_dir() -> Option<PathBuf> {
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .find(|dir| !dir.is_empty())
+        .map(PathBuf::from)
 }
 
 /// `job.allowed_tools` as one comma-separated `--allowedTools` value.
@@ -210,12 +262,27 @@ impl Envelope {
         SIGN_IN_HINTS.iter().any(|hint| text.contains(hint))
     }
 
+    /// Whether the error text says the model is unknown or not allowed.
+    fn says_bad_model(&self) -> bool {
+        let text = self.result.as_deref().unwrap_or_default().to_lowercase();
+        MODEL_HINTS.iter().any(|hint| text.contains(hint))
+    }
+
     /// The error for an envelope that reports one. Its `result` text is only
     /// read, never quoted: it can carry model text.
     fn error(&self, exit: &CliExit) -> AgentError {
         if self.says_not_signed_in() {
             return AgentError::NotSignedIn {
                 harness: DISPLAY_NAME.to_owned(),
+            };
+        }
+        if self.says_bad_model() {
+            return AgentError::CliFailed {
+                status: exit.code,
+                stderr: format!(
+                    "{DISPLAY_NAME} cannot use this model: the name is wrong, or this \
+                     account has no access to it. Pick another model, or Default"
+                ),
             };
         }
         let stderr = if exit.stderr.is_empty() {
@@ -295,6 +362,40 @@ mod tests {
         assert!(!err.contains("SECRET"), "{err}");
         assert!(err.contains("error_during_execution"), "{err}");
         assert!(err.contains("exit code 1"), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_model_says_so_without_quoting_the_result() {
+        let stdout = r#"{"type":"result","subtype":"success","is_error":true,
+            "result":"There's an issue with the selected model (claude-nope). It may not exist or you may not have access to it."}"#;
+        let err = reply(exit(1, stdout, "")).unwrap_err().to_string();
+        assert!(err.contains("cannot use this model"), "{err}");
+        assert!(!err.contains("claude-nope"), "{err}");
+    }
+
+    #[test]
+    fn the_settings_model_is_read_and_anything_odd_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(settings_model_in(dir.path()), None, "no file");
+
+        let file = dir.path().join(SETTINGS_FILE);
+        for (text, want) in [
+            (r#"{"model":"sonnet"}"#, Some("sonnet")),
+            (
+                r#"{"model":"  claude-haiku-4-5 "}"#,
+                Some("claude-haiku-4-5"),
+            ),
+            (r#"{"theme":"dark"}"#, None),
+            (r#"{"model":""}"#, None),
+            (r#"{"model":42}"#, None),
+            ("not json {", None),
+            ("[]", None),
+        ] {
+            std::fs::write(&file, text).unwrap();
+            assert_eq!(settings_model_in(dir.path()).as_deref(), want, "{text}");
+        }
+        // Read only: the file is as it was written.
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "[]");
     }
 
     #[test]

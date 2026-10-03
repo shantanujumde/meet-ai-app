@@ -142,8 +142,8 @@ impl Harness for CodexHarness {
     ///
     /// Starts Codex and blocks until it answers, for up to 15 s (it makes no
     /// model call); call it off the UI thread. Empty when Codex cannot be
-    /// asked; the setup picker then offers only
-    /// "Codex's default". When [`Job::model`] is `None`, Codex picks its own
+    /// asked; the setup picker then offers Codex's entries in `models.json`
+    /// ([`crate::models`]). When [`Job::model`] is `None`, Codex picks its own
     /// default: on 2026-10-01 that was `gpt-5.6-terra` (Codex 0.152.1).
     fn models(&self) -> Vec<String> {
         self.list_models().unwrap_or_else(|e| {

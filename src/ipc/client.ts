@@ -326,10 +326,11 @@ export async function meetingNotes(meetingId: string): Promise<MeetingNotes> {
 /**
  * The agent the user picked to write notes (`agent` in config.jsonc). Rejects
  * with `app/unknown-harness` when the file names an agent meet-ai does not
- * know. Without a backend, the default: Claude Code on Opus.
+ * know. Without a backend, the default: Claude Code, on the model Claude Code
+ * picks itself (blank model).
  */
 export async function agentChoice(): Promise<AgentChoice> {
-  if (!hasBackend()) return { harness: "claude-code", model: "opus", binaryPath: null };
+  if (!hasBackend()) return { harness: "claude-code", model: "", binaryPath: null };
   return call(() => commands.agentChoice());
 }
 
