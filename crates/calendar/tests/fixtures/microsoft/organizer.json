@@ -46,7 +46,10 @@
       "organizer": { "emailAddress": { "name": "Sam", "address": "SAM@contoso.com" } },
       "attendees": [
         { "type": "required", "emailAddress": { "name": "Sam", "address": "sam@contoso.com" } },
-        { "type": "required", "emailAddress": { "name": "Ada Lovelace", "address": "ada@contoso.com" } }
+        {
+          "type": "required",
+          "emailAddress": { "name": "Ada Lovelace", "address": "ada@contoso.com" }
+        }
       ]
     },
     {
