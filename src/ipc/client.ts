@@ -589,6 +589,7 @@ export async function meetingBrief(title: string): Promise<MeetingBrief> {
 
 // --- command groups in their own modules ------------------------------------
 
+export * from "./calendar";
 // Closing and quitting (TUR-76). Re-exported, so every caller (and
 // `@/test/ipcMock`) keeps the one `@/ipc/client` import; `call` and
 // `subscribe` are exported for such modules.

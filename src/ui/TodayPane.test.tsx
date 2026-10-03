@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { TodayEvent, TodaysMeetings } from "@/ipc/client";
 import type { UiError } from "@/ipc/types";
 import { ipc } from "@/test/ipcMock";
+import { SIGN_IN_TO_SEE_TODAY } from "./calendar/copy";
 import { CALENDAR_DENIED_COPY, formatAttendees, formatTime, TodayPane } from "./TodayPane";
 
 vi.mock("@/ipc/client", async (importOriginal) =>
@@ -206,5 +207,66 @@ describe("TodayPane", () => {
 
   test("attendee counts read as words", () => {
     expect([0, 1, 7].map(formatAttendees)).toEqual(["Just you", "1 person", "7 people"]);
+  });
+});
+
+// TUR-49: Windows and Linux have no Calendar app, so with no sign-in there is
+// nothing to read, and the pane says how to fix that instead of "no meetings".
+describe("TodayPane with no calendar to read", () => {
+  const OFF_MAC = {
+    calendarAppAvailable: false,
+    calendarApp: false,
+    configured: ["google" as const, "microsoft" as const],
+    connected: [],
+  };
+
+  test("off macOS with no sign-in, it asks to sign in with either provider", async () => {
+    ipc.calendarSources.mockResolvedValue(OFF_MAC);
+    await show();
+
+    expect(screen.getByText(SIGN_IN_TO_SEE_TODAY)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sign in with Google" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sign in with Microsoft" })).toBeTruthy();
+    expect(screen.queryByText("No meetings on your calendar today.")).toBeNull();
+    expect(todaysMeetings).not.toHaveBeenCalled();
+  });
+
+  test("signing in from the empty state reads the calendar", async () => {
+    ipc.calendarSources.mockResolvedValue(OFF_MAC);
+    await show();
+
+    ipc.calendarSources.mockResolvedValue({ ...OFF_MAC, connected: ["microsoft"] });
+    todaysMeetings.mockResolvedValue(day([event()]));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Sign in with Microsoft" }));
+    });
+
+    expect(ipc.calendarConnect).toHaveBeenCalledWith("microsoft");
+    expect(screen.getByText("Standup")).toBeTruthy();
+    expect(screen.queryByText(SIGN_IN_TO_SEE_TODAY)).toBeNull();
+  });
+
+  test("a missing client id names the config key", async () => {
+    ipc.calendarSources.mockResolvedValue(OFF_MAC);
+    ipc.calendarConnect.mockRejectedValue({
+      domain: "app",
+      kind: "calendar-not-configured",
+      message: "Google sign-in is not set up",
+    });
+    await show();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Add calendar.google.client_id to config.jsonc (see SETUP.md)",
+    );
+  });
+
+  test("off macOS with a sign-in, the day is read as usual", async () => {
+    ipc.calendarSources.mockResolvedValue({ ...OFF_MAC, connected: ["google"] });
+    todaysMeetings.mockResolvedValue(day([]));
+    await show();
+    expect(screen.getByText("No meetings on your calendar today.")).toBeTruthy();
+    expect(screen.queryByText(SIGN_IN_TO_SEE_TODAY)).toBeNull();
   });
 });
