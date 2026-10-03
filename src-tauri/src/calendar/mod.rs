@@ -27,6 +27,8 @@ use self::readable::Prompt;
 use crate::config::{self, Provider};
 use crate::error::UiError;
 
+// TUR-88: the sign-in's own loopback listener.
+mod loopback;
 pub mod readable;
 pub mod signin;
 // TUR-49: the Settings card's sources.

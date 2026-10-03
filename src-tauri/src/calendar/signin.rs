@@ -3,7 +3,7 @@
 //!
 //! The provider-neutral flow (PKCE, `state`, the code exchange, the keystore)
 //! lives in `crates/calendar/src/oauth/`. This file adds what needs the app:
-//! the loopback listener (`tauri-plugin-oauth`, Rust API only), the browser
+//! the loopback listener (`super::loopback`, TUR-88), the browser
 //! (the opener plugin), the one HTTP client (`reqwest`, blocking, on the
 //! blocking pool), the client ids from `config.jsonc`, and three commands for
 //! the Settings card (TUR-49).
@@ -12,7 +12,6 @@
 //! `app.state::<CalendarAuth>()` and call
 //! [`CalendarAuth::access_token`](::calendar::oauth::CalendarAuth::access_token).
 
-use std::borrow::Cow;
 use std::sync::OnceLock;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -182,47 +181,23 @@ pub fn sign_in_blocking(
     open: impl FnOnce(&str) -> Result<(), String>,
     timeout: Duration,
 ) -> Result<Account, SignInError> {
-    let (sender, receiver) = mpsc::channel();
-    let config = tauri_plugin_oauth::OauthConfig {
-        ports: None,
-        response: Some(Cow::Borrowed(CALLBACK_PAGE)),
-        redirect_uri: None,
-    };
-    let port = tauri_plugin_oauth::start_with_config(config, move |url| {
-        // The receiver is gone only when the wait already gave up.
-        let _ = sender.send(url);
-    })
-    .map_err(|error| SignInError::Failed {
+    // Stopped when it goes out of scope, on every path.
+    let listener = super::loopback::listen(CALLBACK_PAGE).map_err(|error| SignInError::Failed {
         provider,
         detail: format!("could not listen on 127.0.0.1: {error}"),
     })?;
-    let stop = || {
-        if let Err(error) = tauri_plugin_oauth::cancel(port) {
-            tracing::debug!(%error, port, "could not stop the sign-in listener");
-        }
-    };
-
-    let pending = match auth.begin_sign_in(provider, oauth::redirect_uri(port)) {
-        Ok(pending) => pending,
-        Err(error) => {
-            stop();
-            return Err(error);
-        }
-    };
+    let pending = auth.begin_sign_in(provider, oauth::redirect_uri(listener.port()))?;
     if let Err(detail) = open(pending.authorize_url()) {
-        stop();
         return Err(SignInError::Failed {
             provider,
             detail: format!("could not open the browser: {detail}"),
         });
     }
-    match receiver.recv_timeout(timeout) {
+    match listener.next_callback(timeout) {
         Ok(url) => auth.finish_sign_in(pending, &url),
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            stop();
+        Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
             Err(SignInError::Cancelled { provider })
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(SignInError::Cancelled { provider }),
     }
 }
 
@@ -355,19 +330,14 @@ mod tests {
             .unwrap()
     }
 
-    /// What the plugin's page script does in the browser: tell the listener
-    /// the full URL the browser landed on. Any local process can do this.
+    /// What the browser does after the provider: ask for the redirect URI
+    /// with the reply in the query. Any local process can do this.
     fn send_to_listener(authorize_url: &str, callback_query: impl Fn(&str) -> String) {
         let redirect = param(authorize_url, "redirect_uri");
         let port = Url::parse(&redirect).unwrap().port().unwrap();
-        let full_url = format!(
-            "{redirect}?{}",
-            callback_query(&param(authorize_url, "state"))
-        );
-        // One write, like a browser: the listener reads the request once,
-        // and `write!` would send it in pieces.
-        let request =
-            format!("GET /cb HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nFull-Url: {full_url}\r\n\r\n");
+        let path = Url::parse(&redirect).unwrap().path().to_owned();
+        let query = callback_query(&param(authorize_url, "state"));
+        let request = format!("GET {path}?{query} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n");
         std::thread::spawn(move || {
             let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
             stream.write_all(request.as_bytes()).unwrap();
@@ -498,7 +468,7 @@ mod tests {
         assert!(
             CALLBACK_PAGE.contains("Signed in. You can close this tab and go back to meet-ai.")
         );
-        // The plugin injects its script after `<head>`.
-        assert!(CALLBACK_PAGE.contains("<head>"));
+        // A static page: nothing from the request is echoed back into it.
+        assert!(!CALLBACK_PAGE.contains("<script"));
     }
 }
