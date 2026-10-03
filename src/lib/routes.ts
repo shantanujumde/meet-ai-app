@@ -23,8 +23,26 @@ export const BRIEF = "/brief";
 export const ONBOARDING = "/onboarding";
 
 /** The wizard's steps, in order. The route's `:step` is one of these. */
-export const ONBOARDING_STEPS = ["welcome", "permission", "speech", "folder", "agent"] as const;
+export const ONBOARDING_STEPS = [
+  "welcome",
+  "permission",
+  "speech",
+  "folder",
+  // TUR-49: the optional calendar sign-in, only off macOS (`onboardingSteps`).
+  "calendar",
+  "agent",
+] as const;
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+
+/**
+ * The wizard's steps on this OS. The calendar step is only for Windows and
+ * Linux: a Mac reads the Calendar app with no setup (TUR-49).
+ */
+export function onboardingSteps(calendarAppAvailable: boolean): readonly OnboardingStep[] {
+  return calendarAppAvailable
+    ? ONBOARDING_STEPS.filter((step) => step !== "calendar")
+    : ONBOARDING_STEPS;
+}
 
 /** Whether a `:step` param names a real step, rather than a typo or a stale URL. */
 export function isOnboardingStep(value: string | undefined): value is OnboardingStep {
