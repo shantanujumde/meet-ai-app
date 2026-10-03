@@ -25,12 +25,13 @@
 //!   has no HTTP stack and the tests answer for Graph from fixture JSON.
 
 use chrono::{DateTime, LocalResult, NaiveDateTime, Offset as _, SecondsFormat, TimeZone, Utc};
-use oauth2::http::{Method, Request, StatusCode, header};
+use oauth2::HttpResponse;
+use oauth2::http::StatusCode;
 use oauth2::url::Url;
-use oauth2::{HttpRequest, HttpResponse};
 
+use crate::cloud::{self, Api, IntoTokenSource};
 use crate::join_url::{extract_join_url, is_safe_join_url};
-use crate::oauth::{CalendarAuth, HttpClient, ProviderId};
+use crate::oauth::{HttpClient, ProviderId};
 use crate::raw::{RawAttendee, RawEvent, to_events};
 use crate::windows_tz::windows_tz_to_iana;
 use crate::{CalendarProvider, Error, Event};
@@ -39,8 +40,18 @@ pub mod types;
 
 use types::{AttendeeType, DateTimeTimeZone, ResponseType};
 
+pub use crate::cloud::TokenSource;
+
 /// The name in errors and on the settings screen.
 const PROVIDER: &str = "Microsoft";
+
+/// How [`cloud::read_pages`] calls Graph.
+const API: Api = Api {
+    provider: PROVIDER,
+    request_name: "Graph",
+    pages_name: "Graph",
+    headers: &[("Prefer", PREFER_UTC)],
+};
 
 /// The first page of a read. The range and `$select` go in the query.
 pub const CALENDAR_VIEW_URL: &str = "https://graph.microsoft.com/v1.0/me/calendarView";
@@ -57,41 +68,6 @@ pub const PAGE_SIZE: &str = "50";
 /// Asks Graph for every time in UTC instead of each event's own zone.
 pub const PREFER_UTC: &str = "outlook.timezone=\"UTC\"";
 
-/// A cap on pages per read (2,000 events), so a server that keeps sending
-/// `@odata.nextLink` cannot keep a read going forever.
-const MAX_PAGES: usize = 40;
-
-/// Where the Microsoft provider gets its access token.
-pub trait TokenSource: Send + Sync {
-    /// A token that should work now. [`Error::SignInExpired`] when there is
-    /// no sign-in or it was rejected.
-    fn access_token(&self) -> Result<String, Error>;
-
-    /// Graph answered 401 with `rejected`: a fresh token, refreshed rather
-    /// than cached.
-    fn renew_access_token(&self, rejected: &str) -> Result<String, Error>;
-}
-
-impl TokenSource for CalendarAuth {
-    fn access_token(&self) -> Result<String, Error> {
-        CalendarAuth::access_token(self, ProviderId::Microsoft)
-    }
-
-    fn renew_access_token(&self, rejected: &str) -> Result<String, Error> {
-        CalendarAuth::renew_access_token(self, ProviderId::Microsoft, rejected)
-    }
-}
-
-impl<T: TokenSource + ?Sized> TokenSource for std::sync::Arc<T> {
-    fn access_token(&self) -> Result<String, Error> {
-        (**self).access_token()
-    }
-
-    fn renew_access_token(&self, rejected: &str) -> Result<String, Error> {
-        (**self).renew_access_token(rejected)
-    }
-}
-
 /// The signed-in Microsoft account's calendar.
 pub struct MicrosoftProvider {
     tokens: Box<dyn TokenSource>,
@@ -99,25 +75,14 @@ pub struct MicrosoftProvider {
 }
 
 impl MicrosoftProvider {
-    pub fn new(tokens: Box<dyn TokenSource>, http: Box<dyn HttpClient>) -> Self {
-        Self { tokens, http }
-    }
-
-    /// One GET with the bearer token. Transport failures are
-    /// [`Error::Unreachable`]; every HTTP status comes back as is.
-    fn get(&self, url: &Url, token: &str) -> Result<HttpResponse, Error> {
-        let request: HttpRequest = Request::builder()
-            .method(Method::GET)
-            .uri(url.as_str())
-            .header(header::AUTHORIZATION, format!("Bearer {token}"))
-            .header(header::ACCEPT, "application/json")
-            .header("Prefer", PREFER_UTC)
-            .body(Vec::new())
-            // The detail never includes the request: it holds the token.
-            .map_err(|_| unreachable("could not build the Graph request"))?;
-        self.http
-            .execute(request)
-            .map_err(|error| unreachable(error.to_string()))
+    /// `tokens`: any [`TokenSource`], or the app's
+    /// [`CalendarAuth`](crate::oauth::CalendarAuth), which answers for
+    /// Microsoft.
+    pub fn new<T: IntoTokenSource + ?Sized>(tokens: Box<T>, http: Box<dyn HttpClient>) -> Self {
+        Self {
+            tokens: tokens.into_token_source(ProviderId::Microsoft),
+            http,
+        }
     }
 }
 
@@ -127,28 +92,22 @@ impl CalendarProvider for MicrosoftProvider {
     }
 
     fn list_events(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Event>, Error> {
-        let mut url = calendar_view_url(from, to)?;
-        let mut token = self.tokens.access_token()?;
-        let mut renewed = false;
-        let mut found = Vec::new();
-        for _ in 0..MAX_PAGES {
-            let mut response = self.get(&url, &token)?;
-            if response.status() == StatusCode::UNAUTHORIZED && !renewed {
-                // Revoked, or expired early: refresh once and try again.
-                renewed = true;
-                token = self.tokens.renew_access_token(&token)?;
-                response = self.get(&url, &token)?;
-            }
-            let page = read_page(&response)?;
-            found.extend(page.value);
-            match page.odata_next_link {
-                Some(next) => url = next_page_url(&next)?,
-                None => return Ok(to_events(found.into_iter().filter_map(raw_event), from, to)),
-            }
-        }
-        Err(unreachable(format!(
-            "Graph sent more than {MAX_PAGES} pages of events"
-        )))
+        let first = calendar_view_url(from, to)?;
+        let found = cloud::read_pages(
+            &API,
+            self.tokens.as_ref(),
+            self.http.as_ref(),
+            first,
+            |response| {
+                let page = read_page(response)?;
+                let next = match page.odata_next_link {
+                    Some(next) => Some(next_page_url(&next)?),
+                    None => None,
+                };
+                Ok((page.value, next))
+            },
+        )?;
+        Ok(to_events(found.into_iter().filter_map(raw_event), from, to))
     }
 }
 
@@ -347,10 +306,7 @@ pub fn graph_time(value: &DateTimeTimeZone) -> Option<DateTime<Utc>> {
 }
 
 fn unreachable(detail: impl Into<String>) -> Error {
-    Error::Unreachable {
-        provider: PROVIDER,
-        detail: detail.into(),
-    }
+    cloud::unreachable(PROVIDER, detail)
 }
 
 #[cfg(test)]

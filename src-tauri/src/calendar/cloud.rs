@@ -12,12 +12,13 @@ use std::sync::OnceLock;
 
 use ::calendar::CalendarProvider;
 use ::calendar::Error;
-use ::calendar::google::{self, GoogleProvider};
-use ::calendar::microsoft::{self, MicrosoftProvider};
+use ::calendar::cloud::TokenSource;
+use ::calendar::google::GoogleProvider;
+use ::calendar::microsoft::MicrosoftProvider;
 use ::calendar::oauth::{CalendarAuth, ProviderId};
 use tauri::{AppHandle, Manager as _};
 
-use super::signin::ReqwestHttp;
+use super::signin::SharedHttp;
 
 static APP: OnceLock<AppHandle> = OnceLock::new();
 
@@ -39,7 +40,7 @@ pub(crate) fn provider(id: ProviderId) -> Option<Box<dyn CalendarProvider + Send
         app: app.clone(),
         provider: id,
     };
-    let http = Box::new(ReqwestHttp::default());
+    let http = Box::new(SharedHttp);
     match id {
         ProviderId::Microsoft => Some(Box::new(MicrosoftProvider::new(Box::new(tokens), http))),
         ProviderId::Google => Some(Box::new(GoogleProvider::new(Box::new(tokens), http))),
@@ -60,35 +61,17 @@ impl AppTokens {
                 provider: self.provider.display_name(),
             })
     }
+}
 
+// Both providers take the one `TokenSource`; the renewal itself is
+// `CalendarAuth::renew_access_token`.
+impl TokenSource for AppTokens {
     fn access_token(&self) -> Result<String, Error> {
         self.auth()?.access_token(self.provider)
     }
 
     fn renew_access_token(&self, rejected: &str) -> Result<String, Error> {
         self.auth()?.renew_access_token(self.provider, rejected)
-    }
-}
-
-// The two providers' token traits have the same shape; both answer from the
-// one `AppTokens`, and the renewal itself is `CalendarAuth::renew_access_token`.
-impl microsoft::TokenSource for AppTokens {
-    fn access_token(&self) -> Result<String, Error> {
-        AppTokens::access_token(self)
-    }
-
-    fn renew_access_token(&self, rejected: &str) -> Result<String, Error> {
-        AppTokens::renew_access_token(self, rejected)
-    }
-}
-
-impl google::TokenSource for AppTokens {
-    fn access_token(&self) -> Result<String, Error> {
-        AppTokens::access_token(self)
-    }
-
-    fn renew_access_token(&self, rejected: &str) -> Result<String, Error> {
-        AppTokens::renew_access_token(self, rejected)
     }
 }
 
