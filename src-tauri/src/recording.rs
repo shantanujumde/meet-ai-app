@@ -40,6 +40,7 @@
 //! arrive apart or out of order, and the interrupted-recording notification
 //! is built from that status too.
 
+mod auto_title;
 mod phase;
 mod ticker;
 
@@ -317,6 +318,7 @@ impl Recorder {
                     Box::new(live_transcript::open_configured_engine),
                 );
                 self.enter_recording(app, &id, started, session, transcription)
+                    .inspect(|_| auto_title::spawn(app, &id, started))
                     .map_err(|error| self.fail_start(app, Some(&id), error))
             }
             Err(message) => {
@@ -645,11 +647,8 @@ fn tick_session(session: &mut RecordingSession) -> Result<(), String> {
     )
 }
 
-/// Build a SPEC §3.1 meeting id: `YYYY-MM-DD-HHMM-slug`.
-///
-/// The slug is `meeting` until Phase 5a can name it from the calendar event.
-/// A fixed slug is better than a guessed one — the list falls back to showing
-/// the date and time, which is true, instead of a title nobody chose.
+/// Build a SPEC §3.1 meeting id: `YYYY-MM-DD-HHMM-meeting`. The slug never
+/// changes; the calendar names the meeting in `meeting.md` ([`auto_title`]).
 fn meeting_id(at: chrono::DateTime<chrono::Local>) -> String {
     store::folder_name::meeting_id(&at.format("%Y-%m-%d-%H%M").to_string())
 }

@@ -110,3 +110,5 @@ agent = { workspace = true, features = ["test-support"] }
 calendar = { workspace = true, features = ["fake"] }
 # A throwaway meetings folder for each notes-run test.
 tempfile.workspace = true
+# Recordings named from fixture calendar events, without Calendar.app (TUR-29).
+calendar = { workspace = true, features = ["fake"] }
