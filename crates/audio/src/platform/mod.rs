@@ -64,6 +64,8 @@ use other as os;
 // watch behind the AirPods-swap reopen, and the device-activity read.
 #[cfg(test)]
 pub(crate) use os::DEVICE_ACTIVITY;
+#[cfg(test)]
+pub(crate) use os::F32_GOLDEN_HASHES;
 pub(crate) use os::{
     DeviceId, default_input_device, default_output_device, device_activity, host_now_ns,
 };

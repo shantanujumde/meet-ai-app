@@ -18,6 +18,12 @@ pub(crate) type DeviceId = u32;
 #[cfg(test)]
 pub(crate) const DEVICE_ACTIVITY: bool = false;
 
+/// The resampler's f32 golden hashes (`resample.rs` tests) were taken on
+/// macOS. Another libm rounds `sin` differently, so the synthetic input and
+/// the hash differ there; TUR-50 makes those tests portable.
+#[cfg(test)]
+pub(crate) const F32_GOLDEN_HASHES: bool = false;
+
 /// No default-device watch yet, so a recording never reopens its segment on a
 /// device change.
 pub(crate) fn default_output_device() -> Result<DeviceId, Error> {
