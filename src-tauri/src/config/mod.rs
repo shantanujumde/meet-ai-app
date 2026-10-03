@@ -65,6 +65,8 @@ pub use audio_section::audio;
 #[allow(unused_imports)]
 pub use calendar_section::{CalendarConfig, Provider, calendar, parse_calendar};
 pub use detection_section::detection;
+// TUR-49: the Settings card connects and disconnects calendar sources.
+pub use calendar_section::set_providers as set_calendar_providers;
 // TUR-9 (Setup screens) adds the IPC commands that use these.
 #[allow(unused_imports)]
 pub use agent_section::{AgentConfig, Harness, TicketsConfig};

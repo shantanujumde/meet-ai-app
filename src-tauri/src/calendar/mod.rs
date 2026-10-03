@@ -26,6 +26,8 @@ use crate::config::{self, Provider};
 use crate::error::UiError;
 
 pub mod signin;
+// TUR-49: the Settings card's sources.
+pub mod sources;
 // TUR-47/48: Microsoft and Google, behind their sign-in.
 pub(crate) mod cloud;
 #[cfg(test)]
@@ -78,10 +80,7 @@ fn configured_providers() -> Vec<SharedProvider> {
     // TUR-49: EventKit first, so a meeting it shares with a sign-in keeps
     // EventKit's id (`merge_events` keeps the first source's).
     providers.sort_by_key(|provider| *provider != Provider::EventKit);
-    providers
-        .into_iter()
-        .filter_map(provider_for)
-        .collect()
+    providers.into_iter().filter_map(provider_for).collect()
 }
 
 fn provider_for(provider: Provider) -> Option<SharedProvider> {

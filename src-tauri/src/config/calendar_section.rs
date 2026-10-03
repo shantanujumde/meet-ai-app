@@ -18,12 +18,22 @@
 //! Sign-in (TUR-44) reads [`CalendarConfig::google`] and
 //! [`CalendarConfig::microsoft`] on every sign-in and refresh, so pasting a
 //! client id needs no restart.
+//!
+//! TUR-49 made the sources depend on the OS. EventKit is the macOS Calendar
+//! app, so `providers` defaults to `["eventkit"]` on macOS and to `[]` on
+//! Windows and Linux, where only the two sign-ins exist; there `"eventkit"`
+//! is an error that says so. The OS question goes to
+//! [`crate::platform::HAS_CALENDAR_APP`] (rule R10), and [`set_providers`]
+//! is how the Settings card adds or removes a source.
 
 use std::fmt;
 
 use serde::Deserialize;
 
+use jsonc_parser::cst::CstInputValue;
+
 use super::agent_section::ConfigError;
+use super::file::{read_in, with_section, write_in};
 use super::read_section;
 
 /// One calendar source (SPEC L13, §2.7).
@@ -134,9 +144,24 @@ fn non_blank(value: Option<String>) -> Option<String> {
 }
 
 impl Default for CalendarConfig {
+    /// The defaults for this OS: see [`CalendarConfig::defaults_for`].
     fn default() -> Self {
+        Self::defaults_for(crate::platform::HAS_CALENDAR_APP)
+    }
+}
+
+impl CalendarConfig {
+    /// The SPEC §3.5 defaults on an OS that has (`calendar_app`) or lacks a
+    /// Calendar app: EventKit on macOS, no source at all elsewhere until the
+    /// user signs in.
+    pub fn defaults_for(calendar_app: bool) -> Self {
+        let providers = if calendar_app {
+            vec![Provider::EventKit]
+        } else {
+            Vec::new()
+        };
         Self {
-            providers: vec![Provider::EventKit],
+            providers,
             ics_urls: Vec::new(),
             refresh_minutes: 15,
             google: OAuthClientConfig::default(),
@@ -177,13 +202,19 @@ struct RawCalendar {
 }
 
 /// `calendar` from the text of `config.jsonc`. Empty text, or no `calendar`
-/// key, is all defaults. An unknown provider name or a `refresh_minutes` of 0
-/// is an error.
+/// key, is all defaults. An unknown provider name, `"eventkit"` off macOS, or
+/// a `refresh_minutes` of 0 is an error.
 pub fn parse_calendar(raw: &str) -> Result<CalendarConfig, ConfigError> {
+    parse_calendar_on(raw, crate::platform::HAS_CALENDAR_APP)
+}
+
+/// [`parse_calendar`] on an OS that has (`calendar_app`) or lacks a Calendar
+/// app, so both are tested on any machine.
+fn parse_calendar_on(raw: &str, calendar_app: bool) -> Result<CalendarConfig, ConfigError> {
     let calendar: RawCalendar = read_section(raw, "calendar")
         .map_err(ConfigError::Invalid)?
         .unwrap_or_default();
-    let defaults = CalendarConfig::default();
+    let defaults = CalendarConfig::defaults_for(calendar_app);
     let providers = match calendar.providers {
         None => defaults.providers,
         Some(names) => {
@@ -197,6 +228,11 @@ pub fn parse_calendar(raw: &str) -> Result<CalendarConfig, ConfigError> {
             providers
         }
     };
+    if !calendar_app && providers.contains(&Provider::EventKit) {
+        return Err(ConfigError::Invalid(
+            "calendar.providers \"eventkit\" is the macOS Calendar app, which this system does not have; use \"google\" or \"microsoft\" and sign in from Settings".into(),
+        ));
+    }
     let refresh_minutes = calendar.refresh_minutes.unwrap_or(defaults.refresh_minutes);
     if refresh_minutes == 0 {
         return Err(ConfigError::Invalid(
@@ -240,9 +276,52 @@ pub fn calendar() -> CalendarConfig {
     calendar_or_defaults(&super::raw_or_empty())
 }
 
+/// `raw` with `calendar.providers` set to `providers`, comments and every
+/// other key kept.
+pub fn with_providers(raw: &str, providers: &[Provider]) -> Result<String, ConfigError> {
+    let names = providers
+        .iter()
+        .map(|provider| CstInputValue::String(provider.as_str().to_owned()))
+        .collect();
+    with_section(
+        raw,
+        "calendar",
+        vec![("providers", CstInputValue::Array(names))],
+    )
+}
+
+/// Change `calendar.providers` in `~/Meetings/.app/config.jsonc` with `edit`
+/// and return the section as read back. A section that does not parse is
+/// refused, never overwritten, so the message reaches the Settings card.
+pub fn set_providers(edit: impl FnOnce(&mut Vec<Provider>)) -> Result<CalendarConfig, ConfigError> {
+    let dir = super::app_dir().map_err(ConfigError::Root)?;
+    write_in(&dir, |raw| edit_providers(raw, edit))?;
+    parse_calendar(&read_in(&dir)?)
+}
+
+/// `raw` with `edit` applied to its providers, without repeats. The OS
+/// check stays with [`parse_calendar`], so the result is checked on read.
+fn edit_providers(raw: &str, edit: impl FnOnce(&mut Vec<Provider>)) -> Result<String, ConfigError> {
+    let mut providers = parse_calendar(raw)?.providers;
+    edit(&mut providers);
+    let mut unique = Vec::with_capacity(providers.len());
+    for provider in providers {
+        if !unique.contains(&provider) {
+            unique.push(provider);
+        }
+    }
+    with_providers(raw, &unique)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tests below read as on a Mac; the off-macOS ones call
+    /// [`parse_calendar_on`] themselves.
+    fn parse_calendar(raw: &str) -> Result<CalendarConfig, ConfigError> {
+        parse_calendar_on(raw, true)
+    }
 
     #[test]
     fn no_section_is_the_spec_3_5_defaults() {
@@ -253,7 +332,7 @@ mod tests {
             google: OAuthClientConfig::default(),
             microsoft: OAuthClientConfig::default(),
         };
-        assert_eq!(CalendarConfig::default(), defaults);
+        assert_eq!(CalendarConfig::defaults_for(true), defaults);
         for raw in [
             "",
             "// only a comment\n",
@@ -445,5 +524,102 @@ mod tests {
         let listed = &schema["properties"]["calendar"]["properties"]["providers"]["items"]["enum"];
         let names: Vec<_> = Provider::ALL.map(Provider::as_str).into();
         assert_eq!(listed, &serde_json::json!(names));
+    }
+    #[test]
+    fn off_macos_the_default_is_no_calendar_until_a_sign_in() {
+        let defaults = CalendarConfig::defaults_for(false);
+        assert!(defaults.providers.is_empty());
+        assert_eq!(defaults.refresh_minutes, 15);
+        for raw in ["", "{}", r#"{ "calendar": { "refresh_minutes": 15 } }"#] {
+            assert_eq!(parse_calendar_on(raw, false).unwrap(), defaults, "{raw:?}");
+        }
+        let signed_in = parse_calendar_on(
+            r#"{ "calendar": { "providers": ["google", "microsoft"] } }"#,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            signed_in.providers,
+            vec![Provider::Google, Provider::Microsoft]
+        );
+    }
+
+    #[test]
+    fn eventkit_off_macos_is_an_error_that_says_why() {
+        let error = parse_calendar_on(
+            r#"{ "calendar": { "providers": ["eventkit", "google"] } }"#,
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(&error, ConfigError::Invalid(_)), "{error:?}");
+        let message = error.to_string();
+        assert!(message.contains("\"eventkit\""), "{message}");
+        assert!(message.contains("macOS Calendar app"), "{message}");
+        assert!(message.contains("\"google\" or \"microsoft\""), "{message}");
+        // The same list is fine on a Mac.
+        assert!(
+            parse_calendar_on(
+                r#"{ "calendar": { "providers": ["eventkit", "google"] } }"#,
+                true
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn the_defaults_follow_the_platform_module() {
+        assert_eq!(
+            CalendarConfig::default(),
+            CalendarConfig::defaults_for(crate::platform::HAS_CALENDAR_APP)
+        );
+    }
+
+    #[test]
+    fn saving_providers_keeps_comments_and_the_client_ids() {
+        let raw = r#"{
+  // mine
+  "calendar": {
+    "google": { "client_id": "g-id" },
+    "refresh_minutes": 5
+  }
+}"#;
+        let written = with_providers(raw, &[Provider::EventKit, Provider::Google]).unwrap();
+        assert!(written.contains("// mine"), "{written}");
+        let calendar = parse_calendar(&written).unwrap();
+        assert_eq!(
+            calendar.providers,
+            vec![Provider::EventKit, Provider::Google]
+        );
+        assert_eq!(calendar.google.client_id.as_deref(), Some("g-id"));
+        assert_eq!(calendar.refresh_minutes, 5);
+
+        // Replaced in place, not added a second time.
+        let back = with_providers(&written, &[]).unwrap();
+        assert!(parse_calendar(&back).unwrap().providers.is_empty());
+        assert_eq!(back.matches("providers").count(), 1, "{back}");
+    }
+
+    #[test]
+    fn editing_providers_drops_repeats_and_refuses_a_broken_file() {
+        let written = edit_providers(r#"{ "calendar": { "providers": ["google"] } }"#, |list| {
+            list.push(Provider::Google);
+            list.push(Provider::Microsoft);
+        })
+        .unwrap();
+        assert_eq!(
+            parse_calendar(&written).unwrap().providers,
+            vec![Provider::Google, Provider::Microsoft]
+        );
+        assert!(edit_providers("{ not json", |_| {}).is_err());
+        assert!(edit_providers(r#"{ "calendar": { "providers": ["googel"] } }"#, |_| {}).is_err());
+    }
+
+    #[test]
+    fn saving_providers_to_disk_round_trips() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("app-dir");
+        write_in(&dir, |raw| with_providers(raw, &[Provider::Microsoft])).unwrap();
+        let calendar = parse_calendar(&read_in(&dir).unwrap()).unwrap();
+        assert_eq!(calendar.providers, vec![Provider::Microsoft]);
     }
 }

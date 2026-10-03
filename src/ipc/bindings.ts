@@ -272,6 +272,29 @@ export const commands = {
 	 */
 	calendarAccounts: () => typedError<meet_ai_lib_calendar_signin_CalendarAccount[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("calendar_accounts")),
 	/**
+	 *  Which calendar sources this OS offers and which are set up. A config
+	 *  read only; never the network or the keystore.
+	 */
+	calendarSources: () => __TAURI_INVOKE<meet_ai_lib_calendar_sources_CalendarSources>("calendar_sources"),
+	/**
+	 *  Turn the Calendar app on or off (macOS). On first, so its ids win when a
+	 *  meeting is also in a signed-in calendar. Off macOS, turning it on is the
+	 *  error kind `calendar-app-unavailable`.
+	 */
+	setCalendarApp: (on: boolean) => typedError<meet_ai_lib_calendar_sources_CalendarSources, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_calendar_app", { on })),
+	/**
+	 *  Sign in to Google or Microsoft in the browser, then read that calendar:
+	 *  [`signin::calendar_sign_in`] and the provider added to
+	 *  `calendar.providers`. Its errors, plus the config writer's.
+	 */
+	calendarConnect: (provider: meet_ai_lib_calendar_signin_SignInProvider) => typedError<meet_ai_lib_calendar_signin_CalendarAccount, meet_ai_lib_error_UiError>(__TAURI_INVOKE("calendar_connect", { provider })),
+	/**
+	 *  Sign out and stop reading that calendar: [`signin::calendar_sign_out`],
+	 *  then the provider removed from `calendar.providers`. The sign-out runs
+	 *  first, so a config that cannot be written never leaves a token behind.
+	 */
+	calendarDisconnect: (provider: meet_ai_lib_calendar_signin_SignInProvider) => typedError<meet_ai_lib_calendar_sources_CalendarSources, meet_ai_lib_error_UiError>(__TAURI_INVOKE("calendar_disconnect", { provider })),
+	/**
 	 *  The brief for the meeting called `title`.
 	 * 
 	 *  Runs on the blocking pool: it reads the index, a meeting folder and runs
@@ -459,6 +482,21 @@ export type meet_ai_lib_calendar_signin_CalendarAccount = {
 	 *  Service), so this sign-in lasts until the app quits.
 	 */
 	remembered: boolean,
+};
+
+/**  What the Settings card shows before any account is read. */
+export type meet_ai_lib_calendar_sources_CalendarSources = {
+	/**  This OS has a Calendar app to read (macOS only). */
+	calendarAppAvailable: boolean,
+	/**  `"eventkit"` is in `calendar.providers`. */
+	calendarApp: boolean,
+	/**
+	 *  The sign-ins with a client id in `config.jsonc`. One without it
+	 *  cannot sign in, and the card says which key to add instead.
+	 */
+	configured: meet_ai_lib_calendar_signin_SignInProvider[],
+	/**  The sign-ins named in `calendar.providers`, so read when signed in. */
+	connected: meet_ai_lib_calendar_signin_SignInProvider[],
 };
 
 /**  One `git log` line. */

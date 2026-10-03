@@ -174,3 +174,8 @@ fn macos_quit_menu(app: &AppHandle, quit_id: &str, on_quit: fn(&AppHandle)) -> t
 pub(crate) fn is_apple_silicon() -> bool {
     cfg!(all(target_os = "macos", target_arch = "aarch64"))
 }
+
+/// Whether this OS has a Calendar app for EventKit to read (macOS), the one
+/// calendar source that needs no sign-in (TUR-49, SPEC A12). Windows and
+/// Linux read calendars only through the Google and Microsoft sign-ins.
+pub const HAS_CALENDAR_APP: bool = cfg!(target_os = "macos");
