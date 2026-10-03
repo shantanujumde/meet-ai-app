@@ -250,8 +250,7 @@ impl Upcoming for AppCalendar {
         // A reminder never asks for calendar access: the Today pane does,
         // where the user can see why. Until it has been answered, there is
         // nothing to remind about; the first refresh after a grant reads.
-        #[cfg(target_os = "macos")]
-        if ::calendar::eventkit::access() == ::calendar::eventkit::Access::NotAsked {
+        if !::calendar::eventkit::access_answered() {
             return Err(Error::PermissionDenied);
         }
         match self.0.try_state::<crate::calendar::CalendarState>() {
