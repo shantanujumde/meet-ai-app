@@ -340,4 +340,33 @@ mod tests {
         p.set_rate(16_000, &mut |c: &[i16]| out.extend_from_slice(c));
         assert_eq!(p.pending, vec![0.2]);
     }
+
+    /// TUR-87 M1: `cpal` reports 48 kHz, the headset mic delivers 16 kHz.
+    /// The microphone's meter and this pipeline put the track at wall time.
+    #[test]
+    fn a_microphone_reported_at_48_khz_delivering_16_khz_keeps_wall_time() {
+        use crate::rate_meter::{CallbackMeter, FixedRates};
+        use std::sync::Arc;
+
+        const SECS: f64 = 3.0;
+        let rates = FixedRates::new("microphone", 48_000);
+        let mut meter = CallbackMeter::new(Arc::clone(&rates), 2);
+        let mut p = Pipeline::new("microphone", 2, 48_000);
+        let input = stereo_tone(16_000, SECS);
+        let mut out = Vec::new();
+        for (n, block) in input.chunks(320).enumerate() {
+            let host_ns = (n as f64 * 160.0 * 1e9 / 16_000.0) as u64;
+            meter.observe(host_ns, block.len());
+            let mut sink = |c: &[i16]| out.extend_from_slice(c);
+            p.follow(&*rates, &mut sink);
+            p.push(block, &mut sink);
+        }
+        assert_eq!(p.rate(), 16_000, "the measured rate wins");
+        let wall = (SAMPLE_RATE_HZ as f64 * SECS) as usize;
+        assert!(
+            out.len().abs_diff(wall) < 1024,
+            "{} frames for {SECS} s, expected ~{wall}",
+            out.len()
+        );
+    }
 }
