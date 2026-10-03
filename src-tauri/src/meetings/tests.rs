@@ -76,6 +76,23 @@ fn the_agent_written_title_wins_over_the_folder_slug() {
 }
 
 #[test]
+fn the_attendees_in_meeting_md_reach_the_list_row() {
+    let folder = load_fixture(
+        "attendees",
+        &[(
+            "meeting.md",
+            b"---\nid: 2026-09-01-1430-meeting\ntitle: Platform Standup\nattendees: [Shantanu, Priya]\n---\n",
+        )],
+    );
+    let summary = summarize(&folder, false);
+    assert_eq!(summary.attendees, ["Shantanu", "Priya"]);
+    assert!(!summary.has_analysis, "a title and attendees are not notes");
+
+    let bare = load_fixture("no-attendees", &[]);
+    assert!(summarize(&bare, false).attendees.is_empty());
+}
+
+#[test]
 fn broken_frontmatter_falls_back_to_the_slug_instead_of_failing_the_list() {
     // SPEC §7: an agent writing sloppy YAML is expected. The row still
     // shows, under the name the folder already gives it.

@@ -489,3 +489,26 @@ test("a change made outside the app refreshes the list quietly and leaves the op
   expect(window.location.hash).toBe(hash);
   expect(screen.getByText("Still here")).toBeInTheDocument();
 });
+
+// --- TUR-29: a meeting named from its calendar event ------------------------
+
+test("a meeting's attendees show under its title, and a meeting with none shows no line", async () => {
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  const standup = meetingSummary({
+    id: "2026-09-30-1300-meeting",
+    title: "Platform Standup",
+    time: "13:00",
+    attendees: ["Shantanu", "Priya", "dev@example.com"],
+  });
+  listMeetings.mockResolvedValue({
+    root: "/Users/test/Meetings",
+    rootExists: true,
+    meetings: [standup, FINISHED],
+  });
+
+  render(<App />);
+
+  const names = await screen.findByText("Shantanu, Priya, dev@example.com");
+  expect(names.closest("button")?.textContent).toMatch(/Platform Standup/);
+  expect(screen.getAllByText(/Shantanu, Priya/)).toHaveLength(1);
+});

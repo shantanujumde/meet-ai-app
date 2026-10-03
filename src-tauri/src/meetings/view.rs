@@ -25,6 +25,9 @@ pub struct MeetingSummary {
     pub id: String,
     /// What to show in the list.
     pub title: String,
+    /// Who was invited, from `meeting.md`'s `attendees` (filled from the
+    /// calendar event, TUR-29). Empty when it names nobody.
+    pub attendees: Vec<String>,
     /// `YYYY-MM-DD`, parsed from the folder name. `None` if it does not match.
     pub date: Option<String>,
     /// `HH:MM`, parsed from the folder name.
@@ -187,6 +190,11 @@ pub(super) fn summarize(folder: &store::folder::MeetingFolder, is_live: bool) ->
         audio_ms: audio.header_frames.map(|frames| duration_ms(frames) as u64),
         id: folder.id.clone(),
         title,
+        attendees: folder
+            .meeting
+            .as_ref()
+            .map(store::meeting::Meeting::attendees)
+            .unwrap_or_default(),
         date,
         time,
         line_count,

@@ -30,6 +30,8 @@ export type MeetingSummary = {
   /** The folder name, e.g. `2026-09-01-1430-standup`. Also the route param. */
   id: string;
   title: string;
+  /** Who was invited, from `meeting.md` (the calendar event, TUR-29). May be empty. */
+  attendees: string[];
   /** `YYYY-MM-DD`, or null for a folder that was renamed by hand. */
   date: string | null;
   /** `HH:MM`. */
