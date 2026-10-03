@@ -100,6 +100,9 @@ pub struct Event {
     pub online_meeting: Option<OnlineMeetingInfo>,
     #[serde(default)]
     pub response_status: Option<ResponseStatus>,
+    /// TUR-88: Graph lists the organizer here, not among `attendees`.
+    #[serde(default)]
+    pub organizer: Option<Recipient>,
     /// Where a call link is often pasted when there is no online meeting
     /// (TUR-86).
     #[serde(default)]
@@ -119,6 +122,14 @@ pub struct ListEventsResponse {
 }
 
 // End of the adapted code.
+
+/// A person on an event outside `attendees`: the organizer (TUR-88).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Recipient {
+    #[serde(default)]
+    pub email_address: Option<EmailAddress>,
+}
 
 /// An event's location; only the text shown for it is read (TUR-86).
 #[derive(Debug, Clone, Default, Deserialize)]

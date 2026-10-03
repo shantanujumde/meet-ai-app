@@ -19,6 +19,7 @@ const PAGE2: &str = include_str!("fixtures/microsoft/page2.json");
 const ERROR_401: &str = include_str!("fixtures/microsoft/error-401.json");
 const ERROR_429: &str = include_str!("fixtures/microsoft/error-429.json");
 const JOIN_LINKS: &str = include_str!("fixtures/microsoft/join-links.json");
+const ORGANIZER: &str = include_str!("fixtures/microsoft/organizer.json");
 
 const TOKEN_URL: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 
@@ -226,6 +227,33 @@ fn a_link_in_the_body_or_location_is_the_join_link() {
 #[test]
 fn the_read_selects_location_and_body_preview() {
     assert!(SELECT.ends_with(",onlineMeeting,location,bodyPreview"));
+}
+
+#[test]
+fn the_organizer_counts_once_so_a_one_on_one_is_not_solo() {
+    // TUR-88: Graph sends the organizer apart from `attendees`. Both kinds
+    // of Teams 1:1 are two people; a focus block of my own is still one.
+    assert!(SELECT.split(',').any(|field| field == "organizer"));
+    let http = Arc::new(FakeHttp::default());
+    http.reply(200, ORGANIZER);
+    let (from, to) = day(5);
+    let events = provider(&http, &Arc::default())
+        .list_events(from, to)
+        .unwrap();
+    let counts: Vec<(&str, usize)> = events
+        .iter()
+        .map(|e| (e.id.as_str(), e.attendees))
+        .collect();
+    assert_eq!(
+        counts,
+        vec![
+            ("invited-one-on-one", 2),
+            ("organized-one-on-one", 2),
+            ("organizer-already-listed", 2),
+            ("my-focus-block", 1),
+        ]
+    );
+    assert_eq!(events[0].attendee_names, vec!["Ada Lovelace", "Bob Okafor"]);
 }
 
 #[test]

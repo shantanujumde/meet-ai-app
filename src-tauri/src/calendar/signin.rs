@@ -3,7 +3,7 @@
 //!
 //! The provider-neutral flow (PKCE, `state`, the code exchange, the keystore)
 //! lives in `crates/calendar/src/oauth/`. This file adds what needs the app:
-//! the loopback listener (`tauri-plugin-oauth`, Rust API only), the browser
+//! the loopback listener (`super::loopback`, TUR-88), the browser
 //! (the opener plugin), the one HTTP client (`reqwest`, blocking, on the
 //! blocking pool), the client ids from `config.jsonc`, and three commands for
 //! the Settings card (TUR-49).
@@ -12,7 +12,6 @@
 //! `app.state::<CalendarAuth>()` and call
 //! [`CalendarAuth::access_token`](::calendar::oauth::CalendarAuth::access_token).
 
-use std::borrow::Cow;
 use std::sync::OnceLock;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -182,47 +181,24 @@ pub fn sign_in_blocking(
     open: impl FnOnce(&str) -> Result<(), String>,
     timeout: Duration,
 ) -> Result<Account, SignInError> {
-    let (sender, receiver) = mpsc::channel();
-    let config = tauri_plugin_oauth::OauthConfig {
-        ports: None,
-        response: Some(Cow::Borrowed(CALLBACK_PAGE)),
-        redirect_uri: None,
-    };
-    let port = tauri_plugin_oauth::start_with_config(config, move |url| {
-        // The receiver is gone only when the wait already gave up.
-        let _ = sender.send(url);
-    })
-    .map_err(|error| SignInError::Failed {
+    // Stopped when it goes out of scope, on every path.
+    let listener = super::loopback::listen(CALLBACK_PAGE).map_err(|error| SignInError::Failed {
         provider,
         detail: format!("could not listen on 127.0.0.1: {error}"),
     })?;
-    let stop = || {
-        if let Err(error) = tauri_plugin_oauth::cancel(port) {
-            tracing::debug!(%error, port, "could not stop the sign-in listener");
-        }
-    };
-
-    let pending = match auth.begin_sign_in(provider, oauth::redirect_uri(port)) {
-        Ok(pending) => pending,
-        Err(error) => {
-            stop();
-            return Err(error);
-        }
-    };
+    let pending = auth.begin_sign_in(provider, oauth::redirect_uri(listener.port()))?;
+    listener.expect_state(pending.state());
     if let Err(detail) = open(pending.authorize_url()) {
-        stop();
         return Err(SignInError::Failed {
             provider,
             detail: format!("could not open the browser: {detail}"),
         });
     }
-    match receiver.recv_timeout(timeout) {
+    match listener.next_callback(timeout) {
         Ok(url) => auth.finish_sign_in(pending, &url),
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            stop();
+        Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
             Err(SignInError::Cancelled { provider })
         }
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(SignInError::Cancelled { provider }),
     }
 }
 
@@ -241,8 +217,9 @@ async fn on_blocking_pool<T: Send + 'static>(
 ///
 /// Errors: `calendar-not-configured` (no client id; the message names the
 /// `config.jsonc` key), `calendar-sign-in-cancelled` (said no, or no reply in
-/// 5 minutes), `calendar-sign-in-failed` (a bad reply, such as a `state`
-/// mismatch; nothing is stored), `calendar-unreachable`.
+/// 5 minutes; a callback without this sign-in's `state` is refused and does
+/// not end the wait), `calendar-sign-in-failed` (a bad reply, such as a
+/// provider error; nothing is stored), `calendar-unreachable`.
 #[tauri::command]
 #[specta::specta]
 pub async fn calendar_sign_in(
@@ -289,7 +266,7 @@ pub async fn calendar_accounts(app: AppHandle) -> Result<Vec<CalendarAccount>, U
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write as _;
+    use std::io::{Read as _, Write as _};
     use std::net::TcpStream;
     use std::sync::Arc;
 
@@ -355,19 +332,14 @@ mod tests {
             .unwrap()
     }
 
-    /// What the plugin's page script does in the browser: tell the listener
-    /// the full URL the browser landed on. Any local process can do this.
+    /// What the browser does after the provider: ask for the redirect URI
+    /// with the reply in the query. Any local process can do this.
     fn send_to_listener(authorize_url: &str, callback_query: impl Fn(&str) -> String) {
         let redirect = param(authorize_url, "redirect_uri");
         let port = Url::parse(&redirect).unwrap().port().unwrap();
-        let full_url = format!(
-            "{redirect}?{}",
-            callback_query(&param(authorize_url, "state"))
-        );
-        // One write, like a browser: the listener reads the request once,
-        // and `write!` would send it in pieces.
-        let request =
-            format!("GET /cb HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nFull-Url: {full_url}\r\n\r\n");
+        let path = Url::parse(&redirect).unwrap().path().to_owned();
+        let query = callback_query(&param(authorize_url, "state"));
+        let request = format!("GET {path}?{query} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n");
         std::thread::spawn(move || {
             let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
             stream.write_all(request.as_bytes()).unwrap();
@@ -399,8 +371,25 @@ mod tests {
         );
     }
 
+    /// Send one callback with `query` and return the reply the listener
+    /// gave.
+    fn callback_reply(authorize_url: &str, query: &str) -> String {
+        let redirect = Url::parse(&param(authorize_url, "redirect_uri")).unwrap();
+        let port = redirect.port().unwrap();
+        let path = redirect.path();
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .write_all(
+                format!("GET {path}?{query} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").as_bytes(),
+            )
+            .unwrap();
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).unwrap();
+        reply
+    }
+
     #[test]
-    fn a_local_process_with_the_wrong_state_is_rejected_and_nothing_stored() {
+    fn a_local_process_with_the_wrong_state_does_not_end_the_sign_in_and_nothing_is_stored() {
         let (auth, store) = test_auth(true);
         let error = sign_in_blocking(
             &auth,
@@ -409,27 +398,76 @@ mod tests {
                 send_to_listener(url, |_| "state=forged&code=evil".into());
                 Ok(())
             },
-            WAIT,
+            Duration::from_millis(500),
         )
         .unwrap_err();
-        assert!(matches!(error, SignInError::Failed { .. }), "{error:?}");
-        assert_eq!(UiError::from(error).kind, "calendar-sign-in-failed");
+        // Refused by the listener, which kept waiting until the timeout.
+        assert!(matches!(error, SignInError::Cancelled { .. }), "{error:?}");
         assert_eq!(store.stored(ProviderId::Google), None);
+    }
+
+    #[test]
+    fn a_wrong_state_callback_then_the_right_one_still_signs_in() {
+        let (auth, store) = test_auth(true);
+        let mut browser = None;
+        let account = sign_in_blocking(
+            &auth,
+            ProviderId::Microsoft,
+            |url| {
+                let url = url.to_owned();
+                browser = Some(std::thread::spawn(move || {
+                    let forged = callback_reply(&url, "state=forged&code=evil");
+                    assert!(forged.starts_with("HTTP/1.1 400"), "{forged}");
+                    assert!(!forged.contains(CALLBACK_PAGE), "{forged}");
+                    let stray = callback_reply(&url, "");
+                    assert!(stray.starts_with("HTTP/1.1 400"), "{stray}");
+                    let state = param(&url, "state");
+                    let ours = callback_reply(&url, &format!("state={state}&code=the-code"));
+                    assert!(ours.ends_with(CALLBACK_PAGE), "{ours}");
+                }));
+                Ok(())
+            },
+            WAIT,
+        )
+        .unwrap();
+        // The browser's own checks on each reply.
+        browser.unwrap().join().unwrap();
+        assert_eq!(account.state, AccountState::SignedIn);
+        assert_eq!(
+            store.stored(ProviderId::Microsoft).as_deref(),
+            Some("refresh")
+        );
     }
 
     #[test]
     fn no_reply_in_time_is_cancelled() {
         let (auth, store) = test_auth(true);
+        let mut port = 0;
         let error = sign_in_blocking(
             &auth,
             ProviderId::Google,
-            |_| Ok(()),
+            |url| {
+                port = Url::parse(&param(url, "redirect_uri"))
+                    .unwrap()
+                    .port()
+                    .unwrap();
+                Ok(())
+            },
             Duration::from_millis(200),
         )
         .unwrap_err();
         assert!(matches!(error, SignInError::Cancelled { .. }), "{error:?}");
         assert_eq!(UiError::from(error).kind, "calendar-sign-in-cancelled");
         assert_eq!(store.stored(ProviderId::Google), None);
+        // TUR-88: the listener is closed once the sign-in gives up.
+        let deadline = std::time::Instant::now() + WAIT;
+        while TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "port {port} still open"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     #[test]
@@ -498,7 +536,7 @@ mod tests {
         assert!(
             CALLBACK_PAGE.contains("Signed in. You can close this tab and go back to meet-ai.")
         );
-        // The plugin injects its script after `<head>`.
-        assert!(CALLBACK_PAGE.contains("<head>"));
+        // A static page: nothing from the request is echoed back into it.
+        assert!(!CALLBACK_PAGE.contains("<script"));
     }
 }

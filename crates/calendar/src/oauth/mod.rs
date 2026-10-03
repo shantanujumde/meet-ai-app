@@ -42,7 +42,7 @@ mod callback;
 mod providers;
 mod token_store;
 
-pub use callback::{account_label, check_callback};
+pub use callback::{account_label, carries_state, check_callback};
 pub use providers::{Endpoints, ProviderId};
 #[cfg(any(test, feature = "fake"))]
 pub use token_store::MemoryStore;
@@ -174,6 +174,12 @@ impl PendingSignIn {
     pub fn authorize_url(&self) -> &str {
         &self.authorize_url
     }
+
+    /// The `state` the reply must carry, for the loopback listener's
+    /// [`carries_state`] check.
+    pub fn state(&self) -> &str {
+        self.state.secret()
+    }
 }
 
 /// The id_token next to the access token: only read for the account label.
@@ -214,6 +220,9 @@ struct Session {
     label: Option<String>,
     /// The provider rejected the stored refresh token.
     expired: bool,
+    /// The client id that was rejected, so a corrected `config.jsonc` gets
+    /// one more try without a restart (TUR-88).
+    expired_client: Option<String>,
 }
 
 /// Sign-in state for both cloud calendars. One per app, shared.
@@ -392,7 +401,7 @@ impl CalendarAuth {
         let state = if !stored {
             session.expired = false;
             AccountState::SignedOut
-        } else if session.expired {
+        } else if self.still_expired(provider, &mut session) {
             AccountState::Expired
         } else if session.access.is_some() {
             AccountState::SignedIn
@@ -464,26 +473,51 @@ impl CalendarAuth {
         }
         match self.store.load(provider) {
             Ok(token) => token.is_some(),
+            // TUR-88: a locked or refusing keystore is not "signed out". Say
+            // yes, so the read goes ahead and reports the keystore as
+            // unreachable ([`Self::access_token`]) instead of the calendar
+            // quietly vanishing.
             Err(error) => {
                 tracing::debug!(%provider, %error, "could not read the OS keystore");
-                false
+                true
             }
         }
+    }
+
+    /// `session.expired`, cleared first when the rejection was for another
+    /// client id than the one configured now: the user fixed a mistyped
+    /// `client_id`, and pasting one needs no restart (TUR-88).
+    fn still_expired(&self, provider: ProviderId, session: &mut Session) -> bool {
+        if session.expired {
+            let now = self.client(provider).map(|c| c.client_id.trim().to_owned());
+            if session.expired_client.is_some() && session.expired_client != now {
+                tracing::info!(%provider, "the calendar client id changed; trying the sign-in again");
+                session.expired = false;
+                session.expired_client = None;
+            }
+        }
+        session.expired
     }
 
     fn refresh(&self, provider: ProviderId, session: &mut Session) -> Result<String, Error> {
         let expired = Error::SignInExpired {
             provider: provider.display_name(),
         };
-        if session.expired {
+        if self.still_expired(provider, session) {
             return Err(expired);
         }
+        let unreachable = |detail: String| Error::Unreachable {
+            provider: provider.display_name(),
+            detail,
+        };
         let stored = match &session.unsaved_refresh {
             Some(token) => Some(token.clone()),
-            None => self.store.load(provider).unwrap_or_else(|error| {
+            // TUR-88: a keystore that cannot be read says nothing about the
+            // sign-in, so it is not `SignInExpired` ("sign in again").
+            None => self.store.load(provider).map_err(|error| {
                 tracing::debug!(%provider, %error, "could not read the OS keystore");
-                None
-            }),
+                unreachable(error.to_string())
+            })?,
         };
         let Some(refresh) = stored else {
             session.access = None;
@@ -492,10 +526,6 @@ impl CalendarAuth {
         let Some(client) = self.client(provider) else {
             tracing::warn!(%provider, key = provider.client_id_key(), "cannot refresh a calendar sign-in: no client id in config.jsonc");
             return Err(expired);
-        };
-        let unreachable = |detail: String| Error::Unreachable {
-            provider: provider.display_name(),
-            detail,
         };
         let oauth = build_client(provider, &client, None)
             .map_err(|error| unreachable(error.to_string()))?;
@@ -514,6 +544,7 @@ impl CalendarAuth {
                 tracing::warn!(%provider, error = %error.error(), "the calendar sign-in was rejected; sign in again");
                 session.access = None;
                 session.expired = true;
+                session.expired_client = Some(client.client_id.trim().to_owned());
                 return Err(expired);
             }
             Err(error) => return Err(unreachable(request_error_detail(&error))),

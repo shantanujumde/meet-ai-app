@@ -495,3 +495,77 @@ fn the_loop_reads_the_lead_time_on_every_tick() {
     );
     running.stop();
 }
+
+/// Calendar.app with its prompt unanswered: reading it would show the
+/// prompt, which a reminder must never do.
+struct UnansweredEventKit;
+
+impl ::calendar::CalendarProvider for UnansweredEventKit {
+    fn name(&self) -> &'static str {
+        "Calendar.app (unanswered)"
+    }
+
+    fn list_events(&self, _: DateTime<Utc>, _: DateTime<Utc>) -> Result<Vec<Event>, Error> {
+        panic!("a reminder read Calendar.app before its prompt was answered");
+    }
+}
+
+/// The app's [`crate::calendar::CalendarState`] over fakes: `configured` as
+/// `calendar.providers`, Calendar.app's prompt never answered, and every
+/// cloud provider signed in with `events`.
+fn app_calendar(
+    configured: Vec<crate::config::Provider>,
+    events: Vec<RawEvent>,
+) -> crate::calendar::CalendarState {
+    use crate::calendar::readable;
+    use crate::config::Provider;
+    crate::calendar::CalendarState::with_picker(move |prompt| {
+        readable::pick(&configured, false, prompt, |provider| {
+            Some(match provider {
+                Provider::EventKit => Arc::new(UnansweredEventKit),
+                Provider::Google | Provider::Microsoft => {
+                    Arc::new(FakeProvider::with_events(events.clone()))
+                }
+            })
+        })
+    })
+}
+
+#[test]
+fn a_mac_with_only_cloud_calendars_gets_its_reminders() {
+    // TUR-88: `calendar.providers = ["google"]` or `["microsoft"]`, and the
+    // Calendar.app prompt never shown because nothing reads Calendar.app.
+    for provider in [
+        crate::config::Provider::Google,
+        crate::config::Provider::Microsoft,
+    ] {
+        let calendar = app_calendar(vec![provider], vec![invite("standup", at(10, 0, 0), 3)]);
+        let mut reminders = reminders();
+        let mut fired = Vec::new();
+        let mut now = at(9, 58, 0);
+        while now <= at(10, 0, 0) {
+            fired.extend(reminders.tick(now, &calendar).into_iter().map(|e| e.id));
+            now += Duration::seconds(10);
+        }
+        assert_eq!(fired, ["standup"], "{provider}");
+    }
+}
+
+#[test]
+fn a_sign_in_next_to_an_unanswered_calendar_app_still_reminds() {
+    use crate::config::Provider;
+    let calendar = app_calendar(
+        vec![Provider::EventKit, Provider::Google],
+        vec![invite("standup", at(10, 0, 0), 3)],
+    );
+    let mut reminders = reminders();
+    let fired = reminders.tick(at(9, 59, 30), &calendar);
+    assert_eq!(fired.len(), 1);
+    // Calendar.app alone, unanswered: nothing to read, nothing fires.
+    let calendar = app_calendar(vec![Provider::EventKit], Vec::new());
+    assert!(matches!(
+        Upcoming::events_between(&calendar, at(9, 0, 0), at(10, 0, 0)),
+        Err(Error::PermissionDenied)
+    ));
+    assert!(reminders.tick(at(9, 59, 40), &calendar).is_empty());
+}

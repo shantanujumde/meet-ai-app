@@ -29,9 +29,7 @@ pub fn check_callback(
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.into_owned())
     };
-    let state_matches = param("state")
-        .is_some_and(|state| constant_time_eq(state.as_bytes(), expected_state.as_bytes()));
-    if !state_matches {
+    if !state_in(&url, expected_state) {
         return Err(failed(
             "the reply did not carry this sign-in's state, so it was ignored and nothing was saved",
         ));
@@ -51,13 +49,27 @@ pub fn check_callback(
         .ok_or_else(|| failed("the reply had no authorization code"))
 }
 
+/// Whether `callback_url` carries `expected_state`, compared in constant
+/// time. The loopback listener asks this before it ends, so a request
+/// without our `state` (a stray tab, another local process) cannot end the
+/// sign-in.
+pub fn carries_state(callback_url: &str, expected_state: &str) -> bool {
+    Url::parse(callback_url).is_ok_and(|url| state_in(&url, expected_state))
+}
+
+fn state_in(url: &Url, expected_state: &str) -> bool {
+    url.query_pairs()
+        .find(|(key, _)| key == "state")
+        .is_some_and(|(_, state)| constant_time_eq(state.as_bytes(), expected_state.as_bytes()))
+}
+
 /// Equal bytes, compared without stopping at the first difference.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// The account to show: the `email` claim (Google) or `preferred_username`
-/// (Microsoft) from the id_token's payload.
+/// The account to show: the `email` claim (Google) or `preferred_username`,
+/// else `email` (Microsoft), from the id_token's payload.
 ///
 /// The signature is **not** checked: this is a label on the settings screen
 /// and is never used to decide anything. The token came straight from the
@@ -66,10 +78,16 @@ pub fn account_label(provider: ProviderId, id_token: Option<&str>) -> Option<Str
     let payload = id_token?.split('.').nth(1)?;
     let bytes = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
     let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    claims
-        .get(provider.endpoints().account_claim)?
-        .as_str()
-        .map(str::trim)
-        .filter(|label| !label.is_empty())
-        .map(str::to_owned)
+    provider
+        .endpoints()
+        .account_claims
+        .iter()
+        .find_map(|claim| {
+            claims
+                .get(claim)?
+                .as_str()
+                .map(str::trim)
+                .filter(|label| !label.is_empty())
+                .map(str::to_owned)
+        })
 }

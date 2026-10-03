@@ -67,8 +67,9 @@ pub struct Endpoints {
     pub scopes: &'static [&'static str],
     /// Extra query parameters on the authorization URL.
     pub extra_auth_params: &'static [(&'static str, &'static str)],
-    /// The id_token claim shown as the account label.
-    pub account_claim: &'static str,
+    /// The id_token claims shown as the account label, in order: the first
+    /// one the token carries wins.
+    pub account_claims: &'static [&'static str],
 }
 
 /// Google's installed-app flow. `access_type=offline` is what returns a
@@ -83,20 +84,24 @@ static GOOGLE: Endpoints = Endpoints {
         "https://www.googleapis.com/auth/calendar.events.readonly",
     ],
     extra_auth_params: &[("access_type", "offline"), ("prompt", "consent")],
-    account_claim: "email",
+    account_claims: &["email"],
 };
 
 /// Microsoft identity platform, `common` tenant: personal and work accounts.
-/// `offline_access` is what returns a refresh token.
+/// `offline_access` is what returns a refresh token. `profile` is what puts
+/// `preferred_username` in the id_token at all (TUR-88): Microsoft's id_token
+/// reference says the claim needs it. `email` is the fallback; most work
+/// accounts leave it out unless their admin adds it as an optional claim.
 static MICROSOFT: Endpoints = Endpoints {
     auth_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
     token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
     scopes: &[
         "openid",
+        "profile",
         "email",
         "offline_access",
         "https://graph.microsoft.com/Calendars.Read",
     ],
     extra_auth_params: &[],
-    account_claim: "preferred_username",
+    account_claims: &["preferred_username", "email"],
 };

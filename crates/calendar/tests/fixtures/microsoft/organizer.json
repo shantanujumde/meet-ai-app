@@ -1,0 +1,67 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('me')/calendarView(id,subject,start,end,isAllDay,isCancelled,responseStatus,attendees,organizer,iCalUId,onlineMeeting)",
+  "value": [
+    {
+      "id": "invited-one-on-one",
+      "subject": "1:1 with Bob",
+      "isAllDay": false,
+      "isCancelled": false,
+      "responseStatus": { "response": "accepted" },
+      "start": { "dateTime": "2026-10-05T09:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T09:30:00.0000000", "timeZone": "UTC" },
+      "organizer": { "emailAddress": { "name": "Bob Okafor", "address": "bob@contoso.com" } },
+      "attendees": [
+        {
+          "type": "required",
+          "status": { "response": "accepted" },
+          "emailAddress": { "name": "Ada Lovelace", "address": "ada@contoso.com" }
+        }
+      ]
+    },
+    {
+      "id": "organized-one-on-one",
+      "subject": "1:1 with Priya",
+      "isAllDay": false,
+      "isCancelled": false,
+      "responseStatus": { "response": "organizer" },
+      "start": { "dateTime": "2026-10-05T10:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T10:30:00.0000000", "timeZone": "UTC" },
+      "organizer": { "emailAddress": { "name": "Ada Lovelace", "address": "ada@contoso.com" } },
+      "attendees": [
+        {
+          "type": "required",
+          "status": { "response": "none" },
+          "emailAddress": { "name": "Priya Raman", "address": "priya@contoso.com" }
+        }
+      ]
+    },
+    {
+      "id": "organizer-already-listed",
+      "subject": "Planning",
+      "isAllDay": false,
+      "isCancelled": false,
+      "responseStatus": { "response": "accepted" },
+      "start": { "dateTime": "2026-10-05T11:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T11:30:00.0000000", "timeZone": "UTC" },
+      "organizer": { "emailAddress": { "name": "Sam", "address": "SAM@contoso.com" } },
+      "attendees": [
+        { "type": "required", "emailAddress": { "name": "Sam", "address": "sam@contoso.com" } },
+        {
+          "type": "required",
+          "emailAddress": { "name": "Ada Lovelace", "address": "ada@contoso.com" }
+        }
+      ]
+    },
+    {
+      "id": "my-focus-block",
+      "subject": "Focus",
+      "isAllDay": false,
+      "isCancelled": false,
+      "responseStatus": { "response": "organizer" },
+      "start": { "dateTime": "2026-10-05T14:00:00.0000000", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-10-05T15:00:00.0000000", "timeZone": "UTC" },
+      "organizer": { "emailAddress": { "name": "Ada Lovelace", "address": "ada@contoso.com" } },
+      "attendees": []
+    }
+  ]
+}

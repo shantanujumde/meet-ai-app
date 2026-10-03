@@ -306,16 +306,20 @@ impl Upcoming for AppCalendar {
     fn events_between(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Event>, Error> {
         use tauri::Manager as _;
 
-        // A reminder never asks for calendar access: the Today pane does,
-        // where the user can see why. Until it has been answered, there is
-        // nothing to remind about; the first refresh after a grant reads.
-        if !::calendar::eventkit::access_answered() {
-            return Err(Error::PermissionDenied);
-        }
         match self.0.try_state::<crate::calendar::CalendarState>() {
-            Some(state) => state.events_between(from, to),
+            Some(state) => Upcoming::events_between(state.inner(), from, to),
             None => Ok(Vec::new()),
         }
+    }
+}
+
+impl Upcoming for crate::calendar::CalendarState {
+    /// A reminder never asks for calendar access: the Today pane does, where
+    /// the user can see why. Until Calendar.app's prompt is answered, the
+    /// other calendars (a Google or Microsoft sign-in) are still read
+    /// (TUR-88); the first refresh after a grant reads Calendar.app too.
+    fn events_between(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Event>, Error> {
+        self.events_between_unprompted(from, to)
     }
 }
 

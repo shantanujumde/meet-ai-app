@@ -59,7 +59,6 @@ tauri-plugin-opener.workspace = true
 # run on the blocking pool, never on the async runtime.
 oauth2 = { workspace = true, features = ["reqwest-blocking"] }
 reqwest = { workspace = true, features = ["blocking"] }
-tauri-plugin-oauth.workspace = true
 tokio = { workspace = true, features = [
   "rt-multi-thread",
   "macros",
