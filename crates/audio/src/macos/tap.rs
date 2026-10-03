@@ -293,9 +293,7 @@ impl SystemSource {
         }
     }
 
-    /// Pops the IO proc's raw samples and runs them through [`TapPipeline`],
-    /// switching resampler at a chunk boundary whenever [`RateWatch`] reports
-    /// a new input rate (TUR-80: Bluetooth A2DP -> HFP mid-recording).
+    /// Raw IO-proc samples → [`TapPipeline`], at the rate [`RateWatch`] reports.
     fn worker_loop(
         mut consumer: HeapCons<f32>,
         mut pipeline: TapPipeline,
@@ -307,7 +305,10 @@ impl SystemSource {
     ) {
         let mut sink = |frames: &[i16]| {
             let host_ns = last_cb_host_ns.load(Ordering::Relaxed);
-            let mut guard = shared.lock().expect("system writer mutex poisoned");
+            let Ok(mut guard) = shared.lock() else {
+                tracing::warn!("system writer mutex poisoned; dropping this chunk");
+                return;
+            };
             if guard.writer.append(frames).is_err() {
                 tracing::warn!("system wav writer append failed; dropping this chunk");
                 return;
