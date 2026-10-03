@@ -49,6 +49,9 @@ are new awk programs.
 2. Expected: "Quality rules self-test" prints `N/N passed`, and
    "R10 over the whole tree" exits 0 with the three `R10_DEBT` WARN lines.
 
+Seen on PR #96's first CI run: `78/78 passed`, and the whole-tree step passed
+with exactly those three WARNs. Nothing left to check here.
+
 ## 3. The manual steps this ticket corrected
 
 TUR-74 §1 step 4 and TUR-75's `engine="whisper"` log lines were corrected from
