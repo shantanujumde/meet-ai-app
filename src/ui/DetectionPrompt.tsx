@@ -2,13 +2,19 @@
  * "Record this meeting?" — the in-app half of detection's one prompt path
  * (TUR-27).
  *
- * Rust notices a meeting (a meeting app opening, for now), posts a system
- * notification saying why, and sends the same prompt here on
- * `detection://prompt`. macOS notifications from the plugin cannot carry
- * buttons, so this banner is where the user answers: **Record** starts a
- * recording through the same command as the record button, **Dismiss** closes
- * it. Rust has already counted the prompt, so neither answer is sent back —
- * the app does not ask again until it quits and reopens.
+ * Rust notices a meeting (a meeting app opening, the mic and speakers both in
+ * use, or a calendar invite starting in a minute), posts a system notification
+ * saying why, and sends the same prompt here on `detection://prompt`. macOS
+ * notifications from the plugin cannot carry buttons, so this banner is where
+ * the user answers: **Record** starts a recording through the same command as
+ * the record button (so a reminded meeting names itself from its invite,
+ * TUR-29), **Dismiss** closes it. A calendar reminder (TUR-30) adds **Open
+ * brief**, which shows that meeting's brief and leaves the banner up. Rust has
+ * already counted the prompt, so no answer is sent back.
+ *
+ * A prompt with `updateOnly` is the same call noticed a second way (a reminder
+ * right after Zoom opened): it replaces the banner on screen, and never brings
+ * back one the user dismissed.
  *
  * Detection never records on its own (L15): nothing here runs without a click.
  * A recording that starts any other way (the button, ⌘⇧R, the menu bar)
@@ -16,9 +22,9 @@
  */
 
 import { useEffect, useState } from "react";
-import { useLocation } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { onDetectionPrompt, type DetectionPrompt as Prompt } from "@/ipc/client";
-import { isOnboardingPath } from "@/lib/routes";
+import { briefPath, isOnboardingPath } from "@/lib/routes";
 import { useRecordingStore } from "@/state/recording";
 import { Button, ButtonRow } from "./primitives";
 
@@ -26,10 +32,17 @@ export function DetectionPrompt() {
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const phase = useRecordingStore((state) => state.status.phase);
   const busy = useRecordingStore((state) => state.busy);
+  const navigate = useNavigate();
   // Onboarding owns the whole window, the same as the shell's record control.
   const onboarding = isOnboardingPath(useLocation().pathname);
 
-  useEffect(() => onDetectionPrompt(setPrompt), []);
+  useEffect(
+    () =>
+      onDetectionPrompt((next) =>
+        setPrompt((current) => (next.updateOnly && current === null ? null : next)),
+      ),
+    [],
+  );
 
   useEffect(() => {
     if (phase !== "idle") setPrompt(null);
@@ -45,6 +58,8 @@ export function DetectionPrompt() {
     if (recorder.status.phase === "idle") void recorder.toggle();
   };
 
+  const briefTitle = prompt.signal.kind === "calendar" ? prompt.signal.title : null;
+
   return (
     <section
       aria-labelledby="detection-prompt-title"
@@ -59,6 +74,11 @@ export function DetectionPrompt() {
         <Button tone="primary" size="small" disabled={busy} onClick={record}>
           Record
         </Button>
+        {briefTitle !== null && (
+          <Button size="small" onClick={() => navigate(briefPath(briefTitle))}>
+            Open brief
+          </Button>
+        )}
         <Button size="small" onClick={() => setPrompt(null)}>
           Dismiss
         </Button>
