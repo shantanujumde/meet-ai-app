@@ -164,3 +164,30 @@ fn the_state_can_be_managed() {
     fn managed<T: Send + Sync + 'static>() {}
     managed::<CalendarState>();
 }
+
+#[test]
+fn a_meeting_in_two_calendars_is_read_once_with_the_first_providers_id() {
+    // TUR-49: Calendar.app and a Google sign-in both hold the 10:00.
+    let mut google = raw("g-1", "2026-10-03T10:00:00Z", "2026-10-03T10:30:00Z", 3);
+    google.title = "Event ek-1".into();
+    google.ical_uid = Some("uid-1".into());
+    let state = CalendarState::with_providers(vec![
+        shared(FakeProvider::with_events([raw(
+            "ek-1",
+            "2026-10-03T10:00:00Z",
+            "2026-10-03T10:30:00Z",
+            2,
+        )])),
+        shared(FakeProvider::with_events([
+            google,
+            raw("g-2", "2026-10-03T12:00:00Z", "2026-10-03T13:00:00Z", 2),
+        ])),
+    ]);
+    let events = state
+        .events_between(at(DAY_FROM), at(DAY_TO))
+        .expect("readable");
+    let ids: Vec<&str> = events.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids, ["ek-1", "g-2"]);
+    assert_eq!(events[0].attendees, 3);
+    assert_eq!(events[0].ical_uid.as_deref(), Some("uid-1"));
+}

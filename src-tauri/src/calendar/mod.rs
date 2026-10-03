@@ -74,8 +74,11 @@ impl CalendarState {
 
 /// The providers `config.jsonc` names that this build can read.
 fn configured_providers() -> Vec<SharedProvider> {
-    config::calendar()
-        .available_providers()
+    let mut providers = config::calendar().available_providers();
+    // TUR-49: EventKit first, so a meeting it shares with a sign-in keeps
+    // EventKit's id (`merge_events` keeps the first source's).
+    providers.sort_by_key(|provider| *provider != Provider::EventKit);
+    providers
         .into_iter()
         .filter_map(provider_for)
         .collect()
@@ -99,14 +102,14 @@ fn merge(
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> Result<Vec<Event>, Error> {
-    let mut events = Vec::new();
+    let mut sources = Vec::new();
     let mut answered = providers.is_empty();
     let mut first_error = None;
     for provider in providers {
         match provider.list_events(from, to) {
             Ok(found) => {
                 answered = true;
-                events.extend(found);
+                sources.push(found);
             }
             Err(error) => {
                 tracing::warn!(provider = provider.name(), %error, "could not read a calendar");
@@ -117,8 +120,8 @@ fn merge(
     if let (false, Some(error)) = (answered, first_error) {
         return Err(error);
     }
-    events.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.id.cmp(&b.id)));
-    Ok(events)
+    // TUR-49: one sorted list, a meeting in two calendars shown once.
+    Ok(::calendar::merge::merge_events(sources))
 }
 
 /// Local midnight today and local midnight tomorrow, as UTC instants.
