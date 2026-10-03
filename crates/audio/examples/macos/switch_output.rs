@@ -6,9 +6,15 @@
 //! AirPods on hand. Used to verify TUR-4's AirPods-survival exit-gate
 //! condition on real hardware; kept for Tess's TUR-7 fixture/QA work, which
 //! needs the same repeatable trigger.
+// Core Audio only exists on macOS. Off macOS (CI builds every target on Windows
+// and Linux, TUR-36) the example is a one-line `main` that says so; it lives
+// under `examples/macos/` so these `cfg`s sit in an OS folder (rule R10).
+#[cfg(target_os = "macos")]
 use objc2_core_audio::{self as ca, AudioObjectID, AudioObjectPropertyAddress};
+#[cfg(target_os = "macos")]
 use objc2_core_foundation::CFString;
 
+#[cfg(target_os = "macos")]
 fn device_uid_to_id(uid: &str) -> AudioObjectID {
     unsafe {
         let mut address = AudioObjectPropertyAddress {
@@ -63,6 +69,7 @@ fn device_uid_to_id(uid: &str) -> AudioObjectID {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn list_devices() {
     unsafe {
         let mut address = AudioObjectPropertyAddress {
@@ -114,6 +121,7 @@ fn list_devices() {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("list") {
@@ -143,4 +151,10 @@ fn main() {
         );
         println!("set default output to {target_uid} (id {id}): status {status}");
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn main() {
+    eprintln!("switch_output drives Core Audio and only runs on macOS");
+    std::process::exit(1);
 }
