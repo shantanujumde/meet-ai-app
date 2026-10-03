@@ -7,6 +7,8 @@
  * two cannot drift.
  */
 
+import type { meet_ai_lib_lifecycle_NavigateTo as NavigateTo } from "@/ipc/bindings";
+
 /** The meeting list, and where a four-route app lands when a hash matches nothing. */
 export const MEETINGS = "/meetings";
 
@@ -61,4 +63,12 @@ export function isOnboardingPath(pathname: string): boolean {
  */
 export function briefPath(title: string): string {
   return `${BRIEF}?${new URLSearchParams({ title }).toString()}`;
+}
+
+/**
+ * Where a navigation Rust asked for (TUR-77: the menu bar's "Open brief" and
+ * "Calendar not connected") lands.
+ */
+export function navigationPath(to: NavigateTo): string {
+  return to.to === "brief" ? briefPath(to.title) : SETTINGS;
 }

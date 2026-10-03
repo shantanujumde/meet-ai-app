@@ -235,6 +235,9 @@ export const ipc = {
     showInDockWhenClosed: show,
   })),
   confirmQuit: vi.fn<typeof Client.confirmQuit>(async () => {}),
+  // TUR-77: no countdown next to the menu-bar icon.
+  menuBarCountdown: vi.fn<typeof Client.menuBarCountdown>(async () => false),
+  setMenuBarCountdown: vi.fn<typeof Client.setMenuBarCountdown>(async (show) => show),
 
   // TUR-28: a calendar that was read and has nothing today.
   todaysMeetings: vi.fn<typeof Client.todaysMeetings>(async () => NO_MEETINGS_TODAY),
@@ -306,6 +309,7 @@ export function mockClient(actual: typeof Client): typeof Client {
     onNotesRunStatus: subscriber(actual.AGENT_RUN_STATUS_EVENT),
     onDetectionPrompt: subscriber(actual.DETECTION_PROMPT_EVENT),
     onQuitConfirm: subscriber(actual.QUIT_CONFIRM_EVENT),
+    onNavigate: subscriber(actual.NAVIGATE_EVENT),
   };
 }
 

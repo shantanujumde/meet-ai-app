@@ -40,3 +40,6 @@ export const NO_MEETINGS_TODAY: TodaysMeetings = {
  * ask: the Dock icon goes with the window.
  */
 export const DEFAULT_APP_SETTINGS: AppSettings = { showInDockWhenClosed: false };
+
+/** `app.menu_bar_countdown`'s default (TUR-77): no countdown next to the icon. */
+export const DEFAULT_MENU_BAR_COUNTDOWN = false;

@@ -17,6 +17,7 @@ import { DockSetting } from "@/ui/DockSetting";
 import { EngineSummary } from "@/ui/engine/EngineSummary";
 import { FolderRow } from "@/ui/FolderRow";
 import { LogsFolderRow } from "@/ui/LogsFolderRow";
+import { MenuBarCountdownSetting } from "@/ui/MenuBarCountdownSetting";
 import { Button, Card, Row, RowLabel } from "@/ui/primitives";
 import { ErrorState } from "@/ui/states";
 import { TrackerSettings } from "@/ui/TrackerSettings";
@@ -67,6 +68,8 @@ export function Settings() {
         </h2>
         <Card flush>
           <DockSetting />
+          {/* TUR-77: the next meeting's countdown next to the icon. */}
+          <MenuBarCountdownSetting />
         </Card>
       </section>
 
