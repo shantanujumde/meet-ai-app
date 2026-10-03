@@ -53,20 +53,45 @@ pub struct Status {
 }
 
 impl Status {
+    /// Whether this answer refuses a recording: only a denied microphone
+    /// does (TUR-87). With only System Audio Recording off the microphone
+    /// still works, and a microphone-only recording is the documented
+    /// degraded mode (contract §9), so that records instead of refusing.
+    pub fn blocks_recording(&self) -> bool {
+        self.state == State::Denied && !self.system_audio_off()
+    }
+
+    /// Whether system audio, and only system audio, is denied: the
+    /// recording then starts microphone-only and the window shows the
+    /// "System audio is off" banner.
+    pub fn system_audio_off(&self) -> bool {
+        self.state == State::Denied && self.denied == [Pane::AudioCapture]
+    }
+
+    /// The system-audio source a recording under this answer should use:
+    /// none when system audio is denied (a tap would only deliver zeros),
+    /// otherwise the platform's default.
+    pub fn system_source(&self) -> Option<Box<dyn audio::AudioSource>> {
+        if self.system_audio_off() {
+            tracing::warn!("system audio is denied; recording the microphone only");
+            return None;
+        }
+        audio::session::default_system_source()
+    }
+
     /// Why a recording was refused, naming the switch that is off.
     pub fn refusal_message(&self) -> String {
         let names: Vec<&str> = self.denied.iter().map(|pane| pane.label()).collect();
         match names.as_slice() {
-            [] => "meet-ai is not allowed to record this Mac's audio, so starting a recording \
-                   would capture nothing but silence."
+            [] => "meet-ai did not start recording: it is not allowed to record this Mac's audio."
                 .to_string(),
             [one] => format!(
                 "meet-ai did not start recording: {one} is switched off for meet-ai in System \
-                 Settings, so the recording would capture nothing but silence."
+                 Settings, so it cannot record you."
             ),
             _ => format!(
                 "meet-ai did not start recording: {} are switched off for meet-ai in System \
-                 Settings, so the recording would capture nothing but silence.",
+                 Settings, so it cannot record you.",
                 names.join(" and ")
             ),
         }
@@ -151,7 +176,8 @@ pub fn quick() -> Status {
 ///
 /// Denied wins over everything else — if either channel is definitely off,
 /// the meeting will be half-recorded regardless of what the other channel
-/// says. Granted requires *both* channels to have measured cleanly; anything
+/// says, and the screen has to name that switch. Only a denied microphone
+/// refuses a recording, though ([`Status::blocks_recording`]). Granted requires *both* channels to have measured cleanly; anything
 /// else (a device missing, a read failing) is `Unknown`, never a guess in
 /// either direction, because guessing wrong sends someone to instructions
 /// that cannot help them (a false denial) or lets a broken check pass silently
@@ -345,6 +371,46 @@ mod tests {
             reading(ChannelState::Granted),
         );
         assert!(status.denied.is_empty());
+    }
+
+    #[test]
+    fn only_a_denied_microphone_blocks_recording() {
+        // TUR-87 H2: system audio alone denied still records the microphone.
+        let system_only = combine(
+            reading(ChannelState::Granted),
+            reading(ChannelState::Denied),
+        );
+        assert_eq!(system_only.state, State::Denied, "the screen still says so");
+        assert!(system_only.system_audio_off());
+        assert!(!system_only.blocks_recording());
+        assert!(system_only.system_source().is_none(), "mic-only recording");
+
+        let mic_only = combine(
+            reading(ChannelState::Denied),
+            reading(ChannelState::Granted),
+        );
+        assert!(mic_only.blocks_recording());
+        assert!(!mic_only.system_audio_off());
+
+        let both = combine(reading(ChannelState::Denied), reading(ChannelState::Denied));
+        assert!(both.blocks_recording());
+
+        let unknown = combine(
+            reading(ChannelState::Granted),
+            reading(ChannelState::Unmeasurable),
+        );
+        assert!(!unknown.blocks_recording() && !unknown.system_audio_off());
+    }
+
+    #[test]
+    fn a_refusal_never_claims_the_recording_would_be_silent() {
+        let status = combine(
+            reading(ChannelState::Denied),
+            reading(ChannelState::Granted),
+        );
+        let refusal = status.refusal_message();
+        assert!(!refusal.contains("silence"), "{refusal}");
+        assert!(refusal.contains("Microphone"), "{refusal}");
     }
 
     #[test]

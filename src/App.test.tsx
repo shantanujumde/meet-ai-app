@@ -180,15 +180,15 @@ test("a refusal at Record time disables recording and names the switch that is o
     emit(PERMISSION_STATUS_EVENT, {
       state: "denied",
       measured: true,
-      detail: "system audio: the check tone did not come back",
-      denied: ["audio-capture"],
+      detail: "microphone: switched off",
+      denied: ["microphone"],
     } satisfies PermissionStatus);
   });
 
   expect(
     await screen.findByRole("button", { name: /recording is unavailable because/i }),
   ).toBeDisabled();
-  expect(screen.getByRole("status")).toHaveTextContent(/System Audio Recording/);
+  expect(screen.getByRole("status")).toHaveTextContent(/Microphone/);
   expect(screen.getByRole("button", { name: /fix this/i })).toBeInTheDocument();
 
   // Switched back on in Settings: the next check's grant clears it.
@@ -203,6 +203,32 @@ test("a refusal at Record time disables recording and names the switch that is o
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: /fix this/i })).not.toBeInTheDocument(),
   );
+});
+
+test("only system audio off keeps Record enabled and says it records the microphone", async () => {
+  // TUR-87: the microphone still works, so the recording goes ahead
+  // microphone-only and the banner says "System audio is off".
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  render(<App />);
+  await screen.findByRole("heading", { name: /no meetings yet/i });
+  await waitFor(() => expect(listening(PERMISSION_STATUS_EVENT)).toBe(true));
+
+  act(() => {
+    emit(PERMISSION_STATUS_EVENT, {
+      state: "denied",
+      measured: true,
+      detail: "system audio: the check tone did not come back",
+      denied: ["audio-capture"],
+    } satisfies PermissionStatus);
+  });
+
+  expect(await screen.findByRole("status")).toHaveTextContent(/System audio is off/);
+  expect(screen.getByRole("status")).toHaveTextContent(/only your microphone/);
+  // Both the titlebar control and the empty list's button.
+  const starts = screen.getAllByRole("button", { name: /^start recording$/i });
+  expect(starts).toHaveLength(2);
+  for (const button of starts) expect(button).toBeEnabled();
+  expect(screen.queryByRole("button", { name: /recording is unavailable because/i })).toBeNull();
 });
 
 test("a ⌘⇧R press that is refused says why in the window", async () => {
