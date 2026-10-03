@@ -67,6 +67,7 @@ impl ProcessSource for SysinfoProcesses {
 enum Message {
     Stop,
     CallSignal(Instant),
+    AudioActivity(Instant),
 }
 
 /// A running detection loop. Dropping it stops the loop and waits for it.
@@ -81,6 +82,14 @@ impl DetectionLoop {
     /// once rather than waiting out the interval.
     pub fn call_signal(&self) {
         let _ = self.tx.send(Message::CallSignal(Instant::now()));
+    }
+
+    /// The mic and speakers have both been in use for a while (see
+    /// [`crate::activity`]). Polls at once, and prompts for a meeting app it
+    /// explains or else for [`Signal::AudioActivity`] (see
+    /// [`Detector::audio_activity`]).
+    pub fn audio_activity(&self) {
+        let _ = self.tx.send(Message::AudioActivity(Instant::now()));
     }
 
     /// Stop the loop and wait for its thread.
@@ -123,10 +132,17 @@ where
         .name("meet-ai-detection".to_string())
         .spawn(move || {
             let mut detector = Detector::new();
+            // Audio activity waiting for a process list to be weighed against;
+            // kept across a failed read, so it is not lost.
+            let mut audio_activity: Option<Instant> = None;
             loop {
                 match source.running() {
                     Ok(running) => {
-                        for signal in detector.observe(&running, recording(), Instant::now()) {
+                        let signals = match audio_activity.take() {
+                            Some(at) => detector.audio_activity(&running, recording(), at),
+                            None => detector.observe(&running, recording(), Instant::now()),
+                        };
+                        for signal in signals {
                             emit(signal);
                         }
                     }
@@ -135,6 +151,7 @@ where
                 match rx.recv_timeout(interval) {
                     Err(RecvTimeoutError::Timeout) => {}
                     Ok(Message::CallSignal(at)) => detector.call_signal(at),
+                    Ok(Message::AudioActivity(at)) => audio_activity = Some(at),
                     Ok(Message::Stop) | Err(RecvTimeoutError::Disconnected) => break,
                 }
             }
@@ -267,6 +284,38 @@ mod tests {
             }
         );
         drop(running);
+    }
+
+    #[test]
+    fn audio_activity_prompts_once_with_no_meeting_app() {
+        let (polled_tx, polled) = mpsc::channel();
+        let source = Scripted {
+            polls: vec![vec![RunningProcess::new(1, "Google Chrome")]],
+            polled: polled_tx,
+        };
+        let (signal_tx, signals) = mpsc::channel();
+        let running = spawn(
+            source,
+            Duration::from_secs(3600),
+            || false,
+            move |signal| {
+                let _ = signal_tx.send(signal);
+            },
+        )
+        .expect("spawns");
+        wait_polls(&polled, 1);
+        running.audio_activity();
+        wait_polls(&polled, 1);
+        assert_eq!(
+            signals
+                .recv_timeout(Duration::from_secs(10))
+                .expect("audio activity prompts"),
+            Signal::AudioActivity
+        );
+        running.audio_activity();
+        wait_polls(&polled, 1);
+        running.stop();
+        assert!(signals.try_recv().is_err(), "asked only once");
     }
 
     #[test]

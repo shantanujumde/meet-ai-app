@@ -19,6 +19,11 @@
 //!    signal later in the same session can still prompt once. Until calendar
 //!    (TUR-26) and audio activity feed [`Detector::call_signal`], they never
 //!    prompt alone.
+//! 4. **One prompt per call, from any signal.** Audio activity (TUR-31,
+//!    [`Detector::audio_activity`]) counts as a call signal first, so a Slack
+//!    call is named as Slack. It prompts on its own only when no meeting app
+//!    prompts for it and nothing prompted in the last [`CALL_SIGNAL_WINDOW`]
+//!    — Zoom opening and then its call starting asks once, not twice.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -54,6 +59,8 @@ pub struct Detector {
     handled: HashMap<String, HashSet<u32>>,
     /// When the last calendar or audio-activity signal arrived.
     last_call_signal: Option<Instant>,
+    /// When the last prompt of any kind was asked for.
+    last_prompt: Option<Instant>,
 }
 
 impl Detector {
@@ -124,7 +131,33 @@ impl Detector {
                 process: app.name.clone(),
             });
         }
+        if !signals.is_empty() {
+            self.last_prompt = Some(now);
+        }
         signals
+    }
+
+    /// Audio activity was seen at `now` (see [`crate::activity`]): a poll
+    /// like [`Self::observe`] that also counts it as a call signal. Returns
+    /// the meeting apps that now prompt; failing those,
+    /// [`Signal::AudioActivity`] — unless recording, or something prompted in
+    /// the last [`CALL_SIGNAL_WINDOW`] (most likely for this very call).
+    pub fn audio_activity(
+        &mut self,
+        running: &[RunningProcess],
+        recording: bool,
+        now: Instant,
+    ) -> Vec<Signal> {
+        let recent_prompt = self
+            .last_prompt
+            .is_some_and(|at| now.saturating_duration_since(at) <= CALL_SIGNAL_WINDOW);
+        self.call_signal(now);
+        let signals = self.observe(running, recording, now);
+        if !signals.is_empty() || recording || recent_prompt {
+            return signals;
+        }
+        self.last_prompt = Some(now);
+        vec![Signal::AudioActivity]
     }
 }
 
@@ -309,5 +342,83 @@ mod tests {
         let slack = [RunningProcess::new(5, "Slack")];
         assert!(detector.observe(&slack, true, now).is_empty());
         assert!(detector.observe(&slack, false, now).is_empty());
+    }
+
+    #[test]
+    fn audio_activity_alone_prompts_as_audio_activity() {
+        let mut detector = Detector::new();
+        let now = Instant::now();
+        let running = [RunningProcess::new(1, "Google Chrome")];
+        assert_eq!(
+            detector.audio_activity(&running, false, now),
+            [Signal::AudioActivity]
+        );
+    }
+
+    #[test]
+    fn audio_activity_names_slack_instead() {
+        let mut detector = Detector::new();
+        let now = Instant::now();
+        let slack = [RunningProcess::new(5, "Slack")];
+        assert!(detector.observe(&slack, false, now).is_empty());
+        assert_eq!(
+            detector.audio_activity(&slack, false, now + Duration::from_secs(5)),
+            [process("Slack")]
+        );
+    }
+
+    #[test]
+    fn audio_activity_soon_after_an_app_prompt_stays_quiet() {
+        let mut detector = Detector::new();
+        let now = Instant::now();
+        assert_eq!(detector.observe(&[zoom(42)], false, now).len(), 1);
+        // Zoom's call starts a minute later: already asked.
+        assert!(
+            detector
+                .audio_activity(&[zoom(42)], false, now + Duration::from_secs(60))
+                .is_empty()
+        );
+        // Hours later, with Zoom still open, a new call asks.
+        assert_eq!(
+            detector.audio_activity(&[zoom(42)], false, now + Duration::from_secs(3 * 3600)),
+            [Signal::AudioActivity]
+        );
+    }
+
+    #[test]
+    fn zoom_first_seen_with_audio_activity_asks_once_naming_zoom() {
+        let mut detector = Detector::new();
+        let now = Instant::now();
+        assert_eq!(
+            detector.audio_activity(&[zoom(42)], false, now),
+            [process("zoom.us")]
+        );
+        assert!(
+            detector
+                .observe(&[zoom(42)], false, now + Duration::from_secs(5))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn audio_activity_while_recording_stays_quiet() {
+        let mut detector = Detector::new();
+        assert!(
+            detector
+                .audio_activity(&[], true, Instant::now())
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn two_audio_activities_in_a_row_ask_once() {
+        let mut detector = Detector::new();
+        let now = Instant::now();
+        assert_eq!(detector.audio_activity(&[], false, now).len(), 1);
+        assert!(
+            detector
+                .audio_activity(&[], false, now + Duration::from_secs(90))
+                .is_empty()
+        );
     }
 }

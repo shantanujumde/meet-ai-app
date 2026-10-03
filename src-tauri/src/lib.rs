@@ -114,6 +114,8 @@ pub fn run() {
             }
             // TUR-27: watch for a meeting app opening, and ask before recording.
             detection::start(_app.handle(), crate::config::detection().processes);
+            // TUR-31: and for the mic and speakers both in use, like a call in a browser.
+            detection::start_audio_activity(_app.handle(), crate::config::detection().audio_activity);
             // TUR-100: notice edits made to the meetings folder outside the app.
             watch::state(_app.handle()).restart(_app.handle());
             // TUR-101: open the search index now, rebuilding it if it is missing.
