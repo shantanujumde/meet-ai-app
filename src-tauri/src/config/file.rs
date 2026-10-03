@@ -124,7 +124,7 @@ pub fn with_tickets(raw: &str, tickets: &TicketsConfig) -> Result<String, Config
     )
 }
 
-fn with_section(
+pub(super) fn with_section(
     raw: &str,
     section: &str,
     fields: Vec<(&str, CstInputValue)>,

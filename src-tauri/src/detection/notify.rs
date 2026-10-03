@@ -133,6 +133,10 @@ fn deliver(
     if let Err(error) = app.emit(DETECTION_PROMPT_EVENT, &prompt) {
         tracing::warn!(%error, "could not send the detection prompt to the window");
     }
+    // TUR-76: the banner is in the window, which may be hidden in the menu bar.
+    if delivery == Delivery::New {
+        crate::lifecycle::reveal_for_prompt(app);
+    }
 }
 
 #[cfg(test)]

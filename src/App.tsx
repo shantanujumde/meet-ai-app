@@ -34,6 +34,7 @@ import { useAppStore, watchPermissionStatus } from "@/state/app";
 import { useRecordingStore, watchRecordingState } from "@/state/recording";
 import { watchLiveTranscript } from "@/state/transcript";
 import { DetectionPrompt } from "@/ui/DetectionPrompt";
+import { QuitPrompt } from "@/ui/QuitPrompt";
 import { Shell } from "@/ui/Shell";
 
 export function App() {
@@ -42,6 +43,8 @@ export function App() {
       <Bootstrap />
       {/* TUR-27: "Record this meeting?" when a meeting app opens. */}
       <DetectionPrompt />
+      {/* TUR-76: "Stop recording and quit?" when ⌘Q comes in mid-meeting. */}
+      <QuitPrompt />
       <Routes>
         <Route element={<Shell />}>
           <Route index element={<Navigate to={MEETINGS} replace />} />

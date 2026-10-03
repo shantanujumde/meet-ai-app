@@ -273,6 +273,18 @@ export const commands = {
 	 *  reads as the default 7, as it does for the job itself.
 	 */
 	audioRetentionDays: () => __TAURI_INVOKE<number>("audio_retention_days"),
+	/**
+	 *  "Stop and quit": let the held quit through. The exit hook in `lib.rs`
+	 *  stops the recording the same way the Stop button does.
+	 */
+	confirmQuit: () => __TAURI_INVOKE<void>("confirm_quit"),
+	/**  `app` from `config.jsonc`, defaults when missing or not valid. */
+	appSettings: () => typedError<meet_ai_lib_lifecycle_AppSettings, meet_ai_lib_error_UiError>(__TAURI_INVOKE("app_settings")),
+	/**
+	 *  Save "Show in Dock when the window is closed" and return it as saved.
+	 *  Writes under the meetings root, so through the [`FolderGate`].
+	 */
+	setShowInDockWhenClosed: (show: boolean) => typedError<meet_ai_lib_lifecycle_AppSettings, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_show_in_dock_when_closed", { show })),
 };
 
 /* Constants */
@@ -285,6 +297,8 @@ export const MEETINGS_CHANGED_EVENT = "meetings-changed" as const;
 export const MODEL_PROGRESS_EVENT = "model://progress" as const;
 
 export const PERMISSION_STATUS_EVENT = "permission://status" as const;
+
+export const QUIT_CONFIRM_EVENT = "app://confirm-quit" as const;
 
 export const RECORDING_STATE_EVENT = "recording://state" as const;
 
@@ -372,6 +386,12 @@ export type meet_ai_lib_agent_setup_AgentTestTask = {
 	title: string,
 	owner: string | null,
 	due: string | null,
+};
+
+/**  The app settings the Settings screen shows. */
+export type meet_ai_lib_lifecycle_AppSettings = {
+	/**  macOS: keep the Dock icon while the window is closed. */
+	showInDockWhenClosed: boolean,
 };
 
 /**  One ticket still open from last time. */

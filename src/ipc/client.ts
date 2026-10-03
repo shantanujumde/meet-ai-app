@@ -585,3 +585,11 @@ export async function meetingBrief(title: string): Promise<MeetingBrief> {
   if (!hasBackend()) return { title, previous: null, commits: null };
   return narrow(() => commands.meetingBrief(title));
 }
+
+// --- command groups in their own modules ------------------------------------
+
+// Closing and quitting (TUR-76). Re-exported, so every caller (and
+// `@/test/ipcMock`) keeps the one `@/ipc/client` import; `call` and
+// `subscribe` are exported for such modules.
+export * from "./lifecycle";
+export { call, subscribe };
