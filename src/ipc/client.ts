@@ -582,6 +582,7 @@ export * from "./lifecycle";
 export * from "./logs";
 // Settings' audio retention line (TUR-45, TUR-85).
 export * from "./retention";
+export * from "./notifications";
 // The Settings speech engine picker (TUR-75).
 export * from "./speech";
 export { call, subscribe };

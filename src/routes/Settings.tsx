@@ -19,6 +19,7 @@ import { EngineSummary } from "@/ui/engine/EngineSummary";
 import { FolderRow } from "@/ui/FolderRow";
 import { LogsFolderRow } from "@/ui/LogsFolderRow";
 import { MenuBarCountdownSetting } from "@/ui/MenuBarCountdownSetting";
+import { NotificationSettings } from "@/ui/NotificationSettings";
 import { Button, Card, Row, RowLabel } from "@/ui/primitives";
 import { ErrorState } from "@/ui/states";
 import { TrackerSettings } from "@/ui/TrackerSettings";
@@ -76,6 +77,9 @@ export function Settings() {
           <MenuBarCountdownSetting />
         </Card>
       </section>
+
+      {/* TUR-78: reminders, their lead time, and which prompts ask. */}
+      <NotificationSettings />
 
       <TrackerSettings />
     </div>
