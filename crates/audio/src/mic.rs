@@ -17,8 +17,9 @@ use cpal::{SampleFormat, Stream, StreamConfig};
 use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
+use crate::pipeline::Pipeline;
 use crate::platform::host_now_ns;
-use crate::resample::{Resampler, downmix_to_mono};
+use crate::rate_meter::{CallbackMeter, FixedRates, Rates};
 use crate::tee::Tee;
 use crate::wav_writer::WavWriter;
 use crate::{AudioSource, Channel, Error};
@@ -46,13 +47,10 @@ struct Shared {
 /// actually live.
 struct Built {
     stream: Stream,
+    rates: Arc<FixedRates>,
     worker: JoinHandle<()>,
     running: Arc<AtomicBool>,
     shared: Arc<Mutex<Shared>>,
-}
-
-fn f32_to_i16(sample: f32) -> i16 {
-    (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
 }
 
 /// The microphone capture channel: a `cpal` input stream feeding a resampler
@@ -66,6 +64,8 @@ pub struct MicSource {
     shared: Option<Arc<Mutex<Shared>>>,
     /// The live-transcription copy, if one was asked for ([`AudioSource::tee`]).
     tee: Option<Tee>,
+    /// The reported and measured device rates (TUR-87), while running.
+    rates: Option<Arc<FixedRates>>,
 }
 
 impl Default for MicSource {
@@ -82,66 +82,53 @@ impl MicSource {
             running: Arc::new(AtomicBool::new(false)),
             shared: None,
             tee: None,
+            rates: None,
         }
     }
 
+    /// Raw device samples → [`Pipeline`], following the measured rate
+    /// (TUR-87): when the callbacks deliver another rate than `cpal`
+    /// reported, the resampler is rebuilt at the measured one.
     fn worker_loop(
         mut consumer: HeapCons<f32>,
-        channels: usize,
-        device_rate: u32,
+        mut pipeline: Pipeline,
+        rates: Arc<FixedRates>,
         shared: Arc<Mutex<Shared>>,
         last_cb_host_ns: Arc<AtomicU64>,
         running: Arc<AtomicBool>,
         tee: Option<Tee>,
     ) {
-        let mut resampler = Resampler::new(device_rate);
-        let chunk_raw_len = resampler.input_chunk_frames() * channels.max(1);
-
-        // Every buffer below is sized once, here, and only cleared and refilled
-        // inside the loop: `pending` holds less than one chunk before each
-        // refill of at most `scratch.len()` samples, so it never regrows.
+        let mut sink = |frames: &[i16]| {
+            let host_ns = last_cb_host_ns.load(Ordering::Relaxed);
+            let Ok(mut guard) = shared.lock() else {
+                tracing::warn!("mic writer mutex poisoned; dropping this chunk");
+                return;
+            };
+            if guard.writer.append(frames).is_err() {
+                tracing::warn!("mic wav writer append failed; dropping this chunk");
+                return;
+            }
+            guard.frames += frames.len() as u64;
+            guard.last_host_ns = host_ns;
+            // Released before the tee sees anything: the tee never blocks,
+            // but `position()` has no reason to wait on it either way.
+            drop(guard);
+            if let Some(tee) = &tee {
+                tee.offer(frames);
+            }
+        };
+        // Sized once; `pop_slice` only refills it.
         let mut scratch = vec![0.0f32; 4096];
-        let mut pending: Vec<f32> = Vec::with_capacity(chunk_raw_len + scratch.len());
-        let mut mono: Vec<f32> = Vec::with_capacity(resampler.input_chunk_frames());
-        let mut resampled: Vec<f32> = Vec::with_capacity(resampler.output_frames_max());
-        let mut i16_buf: Vec<i16> = Vec::with_capacity(resampler.output_frames_max());
-
         loop {
             let popped = consumer.pop_slice(&mut scratch);
-            if popped > 0 {
-                pending.extend_from_slice(&scratch[..popped]);
-            } else if !running.load(Ordering::Acquire) {
+            if popped == 0 && !running.load(Ordering::Acquire) {
                 break;
-            } else {
+            } else if popped == 0 {
                 std::thread::sleep(IDLE_POLL);
                 continue;
             }
-
-            while pending.len() >= chunk_raw_len {
-                downmix_to_mono(&pending[..chunk_raw_len], channels.max(1), &mut mono);
-                pending.drain(..chunk_raw_len);
-                resampler.process_into(&mono, &mut resampled);
-                if resampled.is_empty() {
-                    continue;
-                }
-                i16_buf.clear();
-                i16_buf.extend(resampled.iter().copied().map(f32_to_i16));
-                let host_ns = last_cb_host_ns.load(Ordering::Relaxed);
-
-                let mut guard = shared.lock().expect("mic writer mutex poisoned");
-                if guard.writer.append(&i16_buf).is_err() {
-                    tracing::warn!("mic wav writer append failed; dropping this chunk");
-                    continue;
-                }
-                guard.frames += i16_buf.len() as u64;
-                guard.last_host_ns = host_ns;
-                // Released before the tee sees anything: the tee never blocks,
-                // but `position()` has no reason to wait on it either way.
-                drop(guard);
-                if let Some(tee) = &tee {
-                    tee.offer(&i16_buf);
-                }
-            }
+            pipeline.follow(&*rates, &mut sink);
+            pipeline.push(&scratch[..popped], &mut sink);
         }
     }
 }
@@ -174,6 +161,13 @@ impl MicSource {
         let config: StreamConfig = supported.into();
         let device_rate = config.sample_rate;
         let channels = config.channels as usize;
+        // Read once from `cpal`, so it can go stale (a headset mic switching to
+        // HFP when another app opens a call): logged, and measured below.
+        tracing::info!(
+            "microphone device rate {device_rate} Hz, {channels} ch, {sample_format:?} \
+             (cpal default input config)"
+        );
+        let rates = FixedRates::new("microphone", device_rate);
 
         // A segment reopen (device change) restarts capture against the same
         // `dest` a previous `MicSource` already wrote to — the WAV stays one
@@ -200,6 +194,8 @@ impl MicSource {
         let running = Arc::new(AtomicBool::new(true));
 
         let cb_host_ns_for_stream = Arc::clone(&last_cb_host_ns);
+        // The delivered-rate meter (TUR-84's, TUR-87): integers and atomics.
+        let mut meter = CallbackMeter::new(Arc::clone(&rates), channels);
         let err_fn = |err| tracing::warn!("cpal input stream error: {err}");
 
         // The callback itself: timestamp, then push into the lock-free ring.
@@ -208,8 +204,10 @@ impl MicSource {
             SampleFormat::F32 => device.build_input_stream(
                 config,
                 move |data: &[f32], _| {
-                    cb_host_ns_for_stream.store(host_now_ns(), Ordering::Relaxed);
+                    let now = host_now_ns();
+                    cb_host_ns_for_stream.store(now, Ordering::Relaxed);
                     let _ = producer.push_slice(data);
+                    meter.observe(now, data.len());
                 },
                 err_fn,
                 Some(crate::AUDIO_PERMISSION_TIMEOUT),
@@ -219,7 +217,9 @@ impl MicSource {
                 device.build_input_stream(
                     config,
                     move |data: &[i16], _| {
-                        cb_host_ns_for_stream.store(host_now_ns(), Ordering::Relaxed);
+                        let now = host_now_ns();
+                        cb_host_ns_for_stream.store(now, Ordering::Relaxed);
+                        meter.observe(now, data.len());
                         if scratch.len() < data.len() {
                             scratch.resize(data.len(), 0.0);
                         }
@@ -249,11 +249,13 @@ impl MicSource {
             .spawn({
                 let shared = Arc::clone(&shared);
                 let running = Arc::clone(&running);
+                let rates = Arc::clone(&rates);
+                let pipeline = Pipeline::new("microphone", channels, device_rate);
                 move || {
                     Self::worker_loop(
                         consumer,
-                        channels,
-                        device_rate,
+                        pipeline,
+                        rates,
                         shared,
                         last_cb_host_ns,
                         running,
@@ -265,6 +267,7 @@ impl MicSource {
 
         Ok(Built {
             stream,
+            rates,
             worker,
             running,
             shared,
@@ -297,6 +300,7 @@ impl AudioSource for MicSource {
         };
 
         self.stream = Some(built.stream);
+        self.rates = Some(built.rates);
         self.worker = Some(built.worker);
         self.running = built.running;
         self.shared = Some(built.shared);
@@ -370,5 +374,13 @@ impl AudioSource for MicSource {
 
     fn tee(&mut self, tee: Tee) {
         self.tee = Some(tee);
+    }
+
+    fn rate_report(&self) -> Option<String> {
+        self.rates.as_ref().map(|rates| rates.describe())
+    }
+
+    fn device_rate(&self) -> Option<u32> {
+        self.rates.as_ref().map(|rates| rates.effective())
     }
 }

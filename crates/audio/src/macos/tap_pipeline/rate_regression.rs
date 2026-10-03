@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use super::*;
 use crate::chime;
+use crate::macos::tap_rate::RateState;
 use crate::macos::tap_rate::{CallbackMeter, ReportedRates};
+use crate::segments::SAMPLE_RATE_HZ;
 
 /// Frames per IO callback.
 const BLOCK: usize = 512;
@@ -53,13 +55,13 @@ fn device_audio(rate: u32) -> Vec<f32> {
 fn record(rate: u32, reported: ReportedRates) -> Vec<i16> {
     let rates = RateState::fake(reported);
     let mut meter = CallbackMeter::new(Arc::clone(&rates), 2);
-    let mut pipeline = TapPipeline::new(2, rates.effective());
+    let mut pipeline = TapPipeline::new("system tap", 2, rates.effective());
     let mut out = Vec::new();
     for (n, block) in device_audio(rate).chunks(BLOCK * 2).enumerate() {
         let host_ns = (n * BLOCK) as f64 * 1e9 / f64::from(rate);
         meter.observe(host_ns as u64 + 1_000, block.len());
         let mut sink = |c: &[i16]| out.extend_from_slice(c);
-        pipeline.follow(&rates, &mut sink);
+        pipeline.follow(&*rates, &mut sink);
         pipeline.push(block, &mut sink);
     }
     // Switching rate flushes every frame given so far (TUR-80's exact flush).
@@ -99,7 +101,7 @@ fn built_in_speakers_at_48_khz_are_unchanged() {
 #[test]
 fn without_the_fix_the_chime_is_lost_at_16_khz() {
     // The pre-TUR-84 choice: the stream format, 48 kHz, for 16 kHz frames.
-    let mut pipeline = TapPipeline::new(2, 48_000);
+    let mut pipeline = TapPipeline::new("system tap", 2, 48_000);
     let mut out = Vec::new();
     for block in device_audio(16_000).chunks(BLOCK * 2) {
         pipeline.push(block, &mut |c: &[i16]| out.extend_from_slice(c));

@@ -258,7 +258,7 @@ impl SystemSource {
             if let Some(report) = probe.take_report() {
                 tracing::info!("{report}");
             }
-            pipeline.follow(&rates, &mut sink);
+            pipeline.follow(&*rates, &mut sink);
             pipeline.push(&scratch[..popped], &mut sink);
         }
     }
@@ -504,7 +504,7 @@ impl SystemSource {
         }
 
         let rate_watch = RateWatch::install(&rates);
-        let pipeline = TapPipeline::new(channels, input_rate);
+        let pipeline = TapPipeline::new("system tap", channels, input_rate);
         let worker = std::thread::Builder::new()
             .name("meet-rec-system-worker".to_string())
             .spawn({

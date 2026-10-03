@@ -80,6 +80,13 @@ pub mod wav_repair;
 /// and every anchor formula assumes.
 pub(crate) mod resample;
 
+/// Measuring the rate a device really delivers against the host clock
+/// (TUR-84), for the tap and the microphone alike (TUR-87).
+pub(crate) mod rate_meter;
+
+/// Raw device samples to 16 kHz mono, following the measured rate.
+pub(crate) mod pipeline;
+
 /// Whether the default mic and speakers are in use by anyone (TUR-31), on
 /// every platform: [`activity::device_activity`].
 pub mod activity;
