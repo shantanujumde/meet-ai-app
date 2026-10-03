@@ -419,7 +419,11 @@ jobs:
       # on Linux (AppImage is TUR-39). Unsigned. On Windows the Tauri CLI
       # downloads the NSIS tools from GitHub, so a failed attempt is retried;
       # the second try reuses the compiled crates and costs only the bundling.
+      # The Windows release build alone took 18 of the job's 30 minutes on a PR
+      # (run 37148432624), past the 25-minute budget, so Windows bundles only on
+      # a push to main; Linux (17 minutes in all) bundles on every PR too.
       - name: pnpm tauri build
+        if: runner.os != 'Windows' || github.event_name == 'push'
         env:
           BUNDLE: ${{ matrix.bundle }}
         run: |
@@ -433,6 +437,7 @@ jobs:
           exit 1
 
       - name: Upload the ${{ matrix.bundle }} bundle
+        if: runner.os != 'Windows' || github.event_name == 'push'
         uses: actions/upload-artifact@v7
         with:
           name: meet-ai-${{ matrix.name }}-${{ matrix.bundle }}

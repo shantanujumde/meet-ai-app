@@ -5,7 +5,9 @@ test bed for them (the `rust (windows)` and `rust (linux)` jobs in
 `.github/workflows/check.yml`).
 
 1. **The Windows installer opens to the meeting list.**
-   Download the `meet-ai-windows-nsis` artifact from a green `check` run, run
+   Download the `meet-ai-windows-nsis` artifact from a green `check` run on a push to main (PR runs
+   skip the Windows bundle to stay under 25 minutes; run 37148432624 of this
+   PR has one, kept until 2026-10-10), run
    the `meet-ai_*_x64-setup.exe` on Windows 10/11, then start meet-ai.
    Expected: a normal (opaque, OS-framed) window opens on the meeting list.
    Recording controls stay usable only as far as the TUR-42 stubs allow: the
