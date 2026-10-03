@@ -1,11 +1,14 @@
-//! A reminder one minute before each meeting (TUR-30, `docs/problem.md` items
-//! 41 and 43).
+//! A reminder before each meeting (TUR-30, `docs/problem.md` items 41 and 43),
+//! as early as Settings → Notifications says (TUR-78).
 //!
 //! A worker thread ticks every [`TICK`]. [`Reminders::tick`] keeps the next
 //! stretch of calendar events (re-read every `calendar.refresh_minutes`) and
-//! returns the ones whose reminder is due: [`REMIND_BEFORE`] before their
-//! start, with at least `detection.min_attendees` people, so a solo focus
-//! block says nothing. Each one goes out as [`detect::Signal::Calendar`]
+//! returns the ones whose reminder is due: [`ReminderSettings::lead`] before
+//! their start (`detection.remind_before_minutes`, default
+//! [`DEFAULT_REMIND_BEFORE_MINUTES`]), with at least
+//! `detection.min_attendees` people, so a solo focus block says nothing. The
+//! loop asks for the settings on every tick, so a change applies without a
+//! restart, and with `detection.calendar` off it reads nothing at all. Each one goes out as [`detect::Signal::Calendar`]
 //! through the one prompt path, [`super::notify::remind`], whose banner holds
 //! **Record** and **Open brief**. Record is the ordinary start-recording path,
 //! so the recording names itself from this very event (TUR-29: an event
@@ -19,9 +22,10 @@
 //!   reminder. Just before anything fires the calendar is read again, so an
 //!   event moved or cancelled since the last read is seen as it is now.
 //! - **Never late.** Only an event that has not started yet is due. A Mac
-//!   that slept through the minute before a meeting wakes up quiet about it,
+//!   that slept through the minutes before a meeting wakes up quiet about it,
 //!   and a tick after a long gap re-reads the calendar first, since anything
-//!   may have changed while it slept.
+//!   may have changed while it slept. A lead time of `0` means "at the
+//!   start": due from the start for [`AT_START_GRACE`], no later.
 //!
 //! The clock and the calendar are traits, so the tests run on a fake clock and
 //! `calendar::fake::FakeProvider`.
@@ -33,12 +37,43 @@ use std::thread::JoinHandle;
 use ::calendar::{Error, Event};
 use chrono::{DateTime, Duration, Utc};
 
-/// How long before a meeting's start its reminder fires.
-pub const REMIND_BEFORE: Duration = Duration::seconds(60);
+pub use crate::config::DEFAULT_REMIND_BEFORE_MINUTES;
 
-/// How often the loop looks at the clock: well inside [`REMIND_BEFORE`], so a
+/// How often the loop looks at the clock: well inside a minute, so a
 /// reminder is at most this late while the Mac is awake.
 pub const TICK: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// With a lead time of `0` ("at the start"), how long after the start the
+/// reminder may still fire: two ticks, so one slow tick does not lose it,
+/// and never a reminder for a meeting well under way.
+pub const AT_START_GRACE: Duration = Duration::seconds(20);
+
+/// What decides which events are due. Read from `detection` on every tick
+/// ([`spawn`]'s `settings`), so a Settings change applies at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReminderSettings {
+    /// How long before the start the reminder fires.
+    pub lead: Duration,
+    /// `detection.min_attendees`.
+    pub min_attendees: usize,
+}
+
+impl ReminderSettings {
+    /// `lead_minutes` before the start, for meetings with `min_attendees`.
+    pub fn new(lead_minutes: u32, min_attendees: usize) -> Self {
+        Self {
+            lead: Duration::minutes(i64::from(lead_minutes)),
+            min_attendees,
+        }
+    }
+}
+
+impl Default for ReminderSettings {
+    /// The SPEC §3.5 defaults: a minute ahead, two attendees.
+    fn default() -> Self {
+        Self::new(DEFAULT_REMIND_BEFORE_MINUTES, 2)
+    }
+}
 
 /// A gap between two ticks longer than this means the Mac slept (or the
 /// clock was changed): re-read the calendar before deciding anything.
@@ -78,10 +113,11 @@ pub trait Upcoming: Send + 'static {
 /// What the reminder loop remembers between ticks.
 #[derive(Debug)]
 pub struct Reminders {
-    min_attendees: usize,
+    settings: ReminderSettings,
     /// `calendar.refresh_minutes`.
     refresh_every: Duration,
-    /// The meetings (enough attendees) from the latest successful read.
+    /// The events from the latest successful read. Filtered by attendees when
+    /// due, not here, so a changed `min_attendees` needs no re-read.
     events: Vec<Event>,
     /// When the calendar was last read, successfully or not.
     read_at: Option<DateTime<Utc>>,
@@ -94,9 +130,9 @@ pub struct Reminders {
 }
 
 impl Reminders {
-    pub fn new(min_attendees: usize, refresh_every: Duration) -> Self {
+    pub fn new(settings: ReminderSettings, refresh_every: Duration) -> Self {
         Self {
-            min_attendees,
+            settings,
             refresh_every,
             events: Vec::new(),
             read_at: None,
@@ -104,6 +140,15 @@ impl Reminders {
             fired: HashMap::new(),
             unreadable_logged: false,
         }
+    }
+
+    /// Use `settings` from the next tick on. A longer lead time reaches
+    /// further ahead than the last read did, so it re-reads.
+    pub fn configure(&mut self, settings: ReminderSettings) {
+        if settings.lead > self.settings.lead {
+            self.read_at = None;
+        }
+        self.settings = settings;
     }
 
     /// One tick at `now`: the events to remind about, each at most once.
@@ -147,11 +192,13 @@ impl Reminders {
         self.events.iter().any(|event| self.is_due(event, now))
     }
 
-    /// Not started, starting within [`REMIND_BEFORE`], and not reminded
-    /// about for this start yet.
+    /// Enough attendees, inside its reminder window ([`due_window`]), and
+    /// not reminded about for this start yet.
     fn is_due(&self, event: &Event, now: DateTime<Utc>) -> bool {
-        event.start > now
-            && event.start - REMIND_BEFORE <= now
+        let (from, until) = due_window(event.start, self.settings.lead);
+        event.attendees >= self.settings.min_attendees
+            && from <= now
+            && now < until
             && self.fired.get(&event.id) != Some(&event.start)
     }
 
@@ -159,14 +206,10 @@ impl Reminders {
     /// good one: an unreadable calendar is not a cancelled meeting.
     fn read(&mut self, now: DateTime<Utc>, calendar: &dyn Upcoming) {
         self.read_at = Some(now);
-        let to = now + self.refresh_every + REMIND_BEFORE + LOOKAHEAD_MARGIN;
+        let to = now + self.refresh_every + self.settings.lead + LOOKAHEAD_MARGIN;
         match calendar.events_between(now, to) {
             Ok(events) => {
-                let min_attendees = self.min_attendees;
-                self.events = events
-                    .into_iter()
-                    .filter(|event| event.attendees >= min_attendees)
-                    .collect();
+                self.events = events;
                 self.unreadable_logged = false;
             }
             Err(error) => {
@@ -175,6 +218,17 @@ impl Reminders {
                 }
             }
         }
+    }
+}
+
+/// When a meeting starting at `start` is due, as `[from, until)`: from
+/// `lead` before the start until the start, or with no lead ("at the start")
+/// from the start for [`AT_START_GRACE`].
+pub fn due_window(start: DateTime<Utc>, lead: Duration) -> (DateTime<Utc>, DateTime<Utc>) {
+    if lead > Duration::zero() {
+        (start - lead, start)
+    } else {
+        (start, start + AT_START_GRACE)
     }
 }
 
@@ -209,12 +263,14 @@ impl Drop for ReminderLoop {
 }
 
 /// Tick `reminders` every `interval` on a thread of its own, handing each due
-/// event to `fire`.
+/// event to `fire`. `settings` is asked on every tick: `None` (reminders
+/// switched off) skips the tick without reading the calendar.
 pub fn spawn(
     clock: impl Clock,
     calendar: impl Upcoming,
     mut reminders: Reminders,
     interval: std::time::Duration,
+    mut settings: impl FnMut() -> Option<ReminderSettings> + Send + 'static,
     mut fire: impl FnMut(Event) + Send + 'static,
 ) -> std::io::Result<ReminderLoop> {
     let (stop, stopped) = mpsc::channel::<()>();
@@ -222,8 +278,11 @@ pub fn spawn(
         .name("meet-ai-reminders".to_string())
         .spawn(move || {
             loop {
-                for event in reminders.tick(clock.now(), &calendar) {
-                    fire(event);
+                if let Some(settings) = settings() {
+                    reminders.configure(settings);
+                    for event in reminders.tick(clock.now(), &calendar) {
+                        fire(event);
+                    }
                 }
                 // Only a timeout keeps going: a stop, or the handle dropped.
                 if !matches!(

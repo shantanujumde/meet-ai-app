@@ -78,7 +78,12 @@ impl Upcoming for Calendar {
 
 fn reminders() -> Reminders {
     // The SPEC §3.5 defaults: two attendees, a read every 15 minutes.
-    Reminders::new(2, Duration::minutes(15))
+    Reminders::new(ReminderSettings::default(), Duration::minutes(15))
+}
+
+/// [`reminders`] with a lead time of `minutes`.
+fn reminding(minutes: u32) -> Reminders {
+    Reminders::new(ReminderSettings::new(minutes, 2), Duration::minutes(15))
 }
 
 /// Tick every [`TICK`] over `[from, to]`, returning each firing's time and id.
@@ -128,7 +133,7 @@ fn a_solo_block_stays_silent() {
 
     // `min_attendees` decides: three wanted, two invited, still silent.
     let calendar = Calendar::with(vec![invite("pair", at(10, 0, 0), 2)]);
-    let mut strict = Reminders::new(3, Duration::minutes(15));
+    let mut strict = Reminders::new(ReminderSettings::new(1, 3), Duration::minutes(15));
     assert!(run(&mut strict, &calendar, at(9, 50, 0), at(10, 30, 0)).is_empty());
 }
 
@@ -314,6 +319,7 @@ fn the_loop_fires_each_reminder_once() {
         calendar.clone(),
         reminders(),
         std::time::Duration::from_millis(1),
+        || Some(ReminderSettings::default()),
         move |event| {
             let _ = tx.send(event.id);
         },
@@ -331,4 +337,161 @@ fn the_loop_fires_each_reminder_once() {
     assert!(fired.try_recv().is_err());
     // One read: the first was fresh enough to ask from.
     assert_eq!(calendar.reads(), 1);
+}
+
+// --- TUR-78: the lead time from Settings → Notifications --------------------
+
+#[test]
+fn the_default_lead_time_is_one_minute() {
+    assert_eq!(DEFAULT_REMIND_BEFORE_MINUTES, 1);
+    assert_eq!(ReminderSettings::default().lead, Duration::minutes(1));
+}
+
+#[test]
+fn each_lead_time_fires_that_many_minutes_early_and_once() {
+    for (minutes, expected) in [(1, at(9, 59, 0)), (5, at(9, 55, 0)), (10, at(9, 50, 0))] {
+        let calendar = Calendar::with(vec![invite("standup", at(10, 0, 0), 3)]);
+        let mut reminders = reminding(minutes);
+        let fired = run(&mut reminders, &calendar, at(9, 30, 0), at(10, 30, 0));
+        assert_eq!(fired, [(expected, "standup".to_string())], "{minutes} min");
+    }
+}
+
+#[test]
+fn a_ten_minute_lead_time_knows_an_event_just_past_the_next_refresh() {
+    // Read at 9:00, next read 9:15: an event at 9:24 is due at 9:14.
+    let calendar = Calendar::with(vec![invite("early", at(9, 24, 0), 2)]);
+    let mut reminders = reminding(10);
+    let fired = run(&mut reminders, &calendar, at(9, 0, 0), at(9, 30, 0));
+    assert_eq!(fired, [(at(9, 14, 0), "early".to_string())]);
+}
+
+#[test]
+fn zero_minutes_reminds_at_the_start_and_never_later() {
+    let calendar = Calendar::with(vec![invite("standup", at(10, 0, 0), 3)]);
+    let mut reminders = reminding(0);
+    let fired = run(&mut reminders, &calendar, at(9, 50, 0), at(10, 30, 0));
+    assert_eq!(fired, [(at(10, 0, 0), "standup".to_string())]);
+
+    // Waking after the grace: quiet, like any late reminder.
+    let mut reminders = reminding(0);
+    assert!(reminders.tick(at(9, 50, 0), &calendar).is_empty());
+    assert!(reminders.tick(at(10, 0, 30), &calendar).is_empty());
+}
+
+#[test]
+fn the_due_window_for_each_lead_time() {
+    let start = at(10, 0, 0);
+    assert_eq!(
+        due_window(start, Duration::minutes(2)),
+        (at(9, 58, 0), start)
+    );
+    assert_eq!(
+        due_window(start, Duration::zero()),
+        (start, start + AT_START_GRACE)
+    );
+}
+
+#[test]
+fn a_moved_event_re_arms_with_a_longer_lead_time() {
+    let calendar = Calendar::with(vec![invite("sync", at(10, 0, 0), 2)]);
+    let mut reminders = reminding(5);
+    assert_eq!(
+        run(&mut reminders, &calendar, at(9, 50, 0), at(9, 59, 50)),
+        [(at(9, 55, 0), "sync".to_string())]
+    );
+    calendar.set(vec![invite("sync", at(10, 30, 0), 2)]);
+    assert_eq!(
+        run(&mut reminders, &calendar, at(10, 0, 0), at(10, 45, 0)),
+        [(at(10, 25, 0), "sync".to_string())]
+    );
+}
+
+#[test]
+fn sleeping_across_a_long_lead_time_and_the_start_skips_it() {
+    let calendar = Calendar::with(vec![invite("standup", at(10, 0, 0), 3)]);
+    let mut reminders = reminding(10);
+    assert!(run(&mut reminders, &calendar, at(9, 40, 0), at(9, 49, 50)).is_empty());
+    assert!(run(&mut reminders, &calendar, at(10, 1, 0), at(10, 30, 0)).is_empty());
+}
+
+#[test]
+fn a_changed_lead_time_applies_on_the_next_tick() {
+    let calendar = Calendar::with(vec![invite("standup", at(10, 0, 0), 3)]);
+    let mut reminders = reminders();
+    assert!(run(&mut reminders, &calendar, at(9, 50, 0), at(9, 51, 50)).is_empty());
+    reminders.configure(ReminderSettings::new(5, 2));
+    let fired = run(&mut reminders, &calendar, at(9, 52, 0), at(10, 5, 0));
+    assert_eq!(fired, [(at(9, 55, 0), "standup".to_string())]);
+}
+
+#[test]
+fn a_changed_min_attendees_applies_without_a_re_read() {
+    let calendar = Calendar::with(vec![invite("pair", at(10, 0, 0), 2)]);
+    let mut reminders = Reminders::new(ReminderSettings::new(1, 3), Duration::minutes(15));
+    assert!(reminders.tick(at(9, 50, 0), &calendar).is_empty());
+    reminders.configure(ReminderSettings::new(1, 2));
+    let fired = run(&mut reminders, &calendar, at(9, 50, 10), at(10, 5, 0));
+    assert_eq!(fired, [(at(9, 59, 0), "pair".to_string())]);
+}
+
+#[test]
+fn the_loop_with_reminders_switched_off_reads_nothing_and_fires_nothing() {
+    let calendar = Calendar::with(vec![invite("standup", at(10, 0, 0), 3)]);
+    let clock = FakeClock(Arc::new(Mutex::new(at(9, 59, 0))));
+    let asked = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&asked);
+    let running = spawn(
+        clock,
+        calendar.clone(),
+        reminders(),
+        std::time::Duration::from_millis(1),
+        move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            None
+        },
+        |_| panic!("switched off: no reminder"),
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while asked.load(Ordering::SeqCst) < 5 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    running.stop();
+    assert!(
+        asked.load(Ordering::SeqCst) >= 5,
+        "the switch is asked each tick"
+    );
+    assert_eq!(calendar.reads(), 0);
+}
+
+#[test]
+fn the_loop_reads_the_lead_time_on_every_tick() {
+    let calendar = Calendar::with(vec![invite("standup", at(10, 0, 0), 3)]);
+    // 9:58: due with two minutes' notice, not with one.
+    let clock = FakeClock(Arc::new(Mutex::new(at(9, 58, 0))));
+    let lead = Arc::new(Mutex::new(1u32));
+    let setting = Arc::clone(&lead);
+    let (tx, fired) = mpsc::channel();
+    let running = spawn(
+        clock,
+        calendar.clone(),
+        reminders(),
+        std::time::Duration::from_millis(1),
+        move || Some(ReminderSettings::new(*setting.lock().unwrap(), 2)),
+        move |event| {
+            let _ = tx.send(event.id);
+        },
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    assert!(fired.try_recv().is_err(), "one minute ahead: not yet");
+    *lead.lock().unwrap() = 2;
+    assert_eq!(
+        fired
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap(),
+        "standup"
+    );
+    running.stop();
 }

@@ -330,6 +330,37 @@ export const commands = {
 	 *  bar picks it up at once rather than at its next minute.
 	 */
 	setMenuBarCountdown: (show: boolean) => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_menu_bar_countdown", { show })),
+	/**  `detection` from `config.jsonc`, defaults when missing or not valid. */
+	notificationSettings: () => typedError<meet_ai_lib_detection_settings_NotificationSettings, meet_ai_lib_error_UiError>(__TAURI_INVOKE("notification_settings")),
+	/**
+	 *  Save the card and return what was saved. The loops follow from their
+	 *  next tick. Writes under the meetings root, so through the [`FolderGate`].
+	 */
+	setNotificationSettings: (settings: meet_ai_lib_detection_settings_NotificationSettings) => typedError<meet_ai_lib_detection_settings_NotificationSettings, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_notification_settings", { settings })),
+	/**
+	 *  Is the OS blocking meet-ai's notifications? The card then offers the OS
+	 *  page that allows them.
+	 */
+	osNotificationsBlocked: () => __TAURI_INVOKE<boolean>("os_notifications_blocked"),
+	/**  Open the OS page where meet-ai's notifications are allowed. */
+	openNotificationSettings: () => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("open_notification_settings")),
+	/**
+	 *  "Send a test reminder": a reminder for a fake "Test meeting" starting in
+	 *  the configured lead time, through the real prompt path. `false` when
+	 *  nothing was shown because a recording is running. Never records.
+	 */
+	sendTestReminder: () => __TAURI_INVOKE<boolean>("send_test_reminder"),
+	/**
+	 *  **Join**: open the reminded meeting's link in the browser or the app that
+	 *  owns it.
+	 */
+	joinRemindedMeeting: (eventId: string) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("join_reminded_meeting", { eventId })),
+	/**
+	 *  **Record**, or with `join` **Join and record**: open the link first (a
+	 *  link that will not open is logged, and the recording still starts), then
+	 *  start a recording named after this meeting.
+	 */
+	recordRemindedMeeting: (eventId: string, join: boolean) => typedError<meet_ai_lib_recording_Status, meet_ai_lib_error_UiError>(__TAURI_INVOKE("record_reminded_meeting", { eventId, join })),
 };
 
 /* Constants */
@@ -772,6 +803,26 @@ export type meet_ai_lib_agent_run_NotesSection = {
 };
 
 /**
+ *  What the Notifications card shows and saves: `detection` in
+ *  `config.jsonc`.
+ */
+export type meet_ai_lib_detection_settings_NotificationSettings = {
+	/**  "Remind me before meetings": `detection.calendar`. */
+	remind: boolean,
+	/**  The lead time: `detection.remind_before_minutes`, 0 to 15. */
+	remindBeforeMinutes: number,
+	/**  "Ask when a meeting app is running": `detection.processes`. */
+	processes: boolean,
+	/**
+	 *  "Ask when my mic and speakers are both in use":
+	 *  `detection.audio_activity`.
+	 */
+	audioActivity: boolean,
+	/**  "Only for meetings with at least N people": `detection.min_attendees`. */
+	minAttendees: number,
+};
+
+/**
  *  System Settings panes worth deep-linking to.
  * 
  *  SPEC §8.1 left the exact audio-capture anchor to be "verified at
@@ -835,6 +886,15 @@ export type meet_ai_lib_detection_notify_Prompt = {
 	 *  call was already asked about (`detection/merge.rs`).
 	 */
 	updateOnly: boolean,
+	/**
+	 *  The reminded calendar event (TUR-78), for the banner's Join and
+	 *  Record. `None` for other prompts and for a test.
+	 */
+	eventId: string | null,
+	/**  The event has a meeting link: offer **Join and record** and **Join**. */
+	canJoin: boolean,
+	/**  "Send a test reminder" (TUR-78): the buttons only close the banner. */
+	test: boolean,
 };
 
 /**

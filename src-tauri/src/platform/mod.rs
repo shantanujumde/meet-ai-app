@@ -179,3 +179,38 @@ pub(crate) fn is_apple_silicon() -> bool {
 /// calendar source that needs no sign-in (TUR-49, SPEC A12). Windows and
 /// Linux read calendars only through the Google and Microsoft sign-ins.
 pub const HAS_CALENDAR_APP: bool = cfg!(target_os = "macos");
+
+/// Where the OS lets the user allow meet-ai's notifications (TUR-78):
+/// System Settings → Notifications on macOS, Settings → Notifications on
+/// Windows. `None` on Linux, where each desktop has its own place.
+pub fn notification_settings_url() -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        Some("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Some("ms-settings:notifications")
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        None
+    }
+}
+
+/// Is the OS blocking meet-ai's notifications? Through the notification
+/// plugin's `permission_state`. On desktop, tauri-plugin-notification 2.4.0
+/// answers `Granted` without asking the OS, so this is `false` there until
+/// the plugin (or a native check here) can tell.
+pub fn notifications_blocked(app: &AppHandle) -> bool {
+    use tauri_plugin_notification::{NotificationExt as _, PermissionState};
+
+    match app.notification().permission_state() {
+        Ok(PermissionState::Denied) => true,
+        Ok(_) => false,
+        Err(error) => {
+            tracing::debug!(%error, "could not read the notification permission");
+            false
+        }
+    }
+}

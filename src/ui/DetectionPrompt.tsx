@@ -16,6 +16,13 @@
  * right after Zoom opened): it replaces the banner on screen, and never brings
  * back one the user dismissed.
  *
+ * TUR-78: a reminder for an event with a meeting link leads with **Join and
+ * record** (opens the link and starts a recording named after the meeting),
+ * then **Join**, **Record**, **Open brief** and **Dismiss**. A reminder's
+ * Join and Record go through Rust with the event's id, never a link, so only
+ * the calendar's own link is opened. A test reminder from Settings shows the
+ * same buttons, and each one only closes it.
+ *
  * Detection never records on its own (L15): nothing here runs without a click.
  * A recording that starts any other way (the button, ⌘⇧R, the menu bar)
  * answers the question too, so the banner goes away.
@@ -23,7 +30,13 @@
 
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { onDetectionPrompt, type DetectionPrompt as Prompt } from "@/ipc/client";
+import {
+  joinRemindedMeeting,
+  onDetectionPrompt,
+  type DetectionPrompt as Prompt,
+  recordRemindedMeeting,
+} from "@/ipc/client";
+import { toUiError } from "@/ipc/types";
 import { briefPath, isOnboardingPath } from "@/lib/routes";
 import { useRecordingStore } from "@/state/recording";
 import { Button, ButtonRow } from "./primitives";
@@ -50,12 +63,47 @@ export function DetectionPrompt() {
 
   if (prompt === null || phase !== "idle" || onboarding) return null;
 
+  const eventId = prompt.eventId;
+  const test = prompt.test;
+
   const record = () => {
     setPrompt(null);
+    if (test) return;
     // Re-read at the click, not the render: `toggle` stops a running
     // recording, and Record must only ever start one.
     const recorder = useRecordingStore.getState();
-    if (recorder.status.phase === "idle") void recorder.toggle();
+    if (recorder.status.phase !== "idle") return;
+    if (eventId === null) {
+      void recorder.toggle();
+      return;
+    }
+    void recordReminded(eventId, false);
+  };
+
+  const joinAndRecord = () => {
+    setPrompt(null);
+    if (test || eventId === null) return;
+    if (useRecordingStore.getState().status.phase !== "idle") return;
+    void recordReminded(eventId, true);
+  };
+
+  const join = () => {
+    if (test || eventId === null) {
+      setPrompt(null);
+      return;
+    }
+    // Joining is not an answer to "record?": the banner stays.
+    joinRemindedMeeting(eventId).catch((thrown: unknown) =>
+      useRecordingStore.setState({ error: toUiError(thrown) }),
+    );
+  };
+
+  const openBrief = (title: string) => {
+    if (test) {
+      setPrompt(null);
+      return;
+    }
+    navigate(briefPath(title));
   };
 
   const briefTitle = prompt.signal.kind === "calendar" ? prompt.signal.title : null;
@@ -71,11 +119,25 @@ export function DetectionPrompt() {
       </h2>
       <p className="text-body text-fg-secondary">{prompt.reason}</p>
       <ButtonRow>
-        <Button tone="primary" size="small" disabled={busy} onClick={record}>
-          Record
-        </Button>
+        {prompt.canJoin ? (
+          <>
+            <Button tone="primary" size="small" disabled={busy} onClick={joinAndRecord}>
+              Join and record
+            </Button>
+            <Button size="small" onClick={join}>
+              Join
+            </Button>
+            <Button size="small" disabled={busy} onClick={record}>
+              Record
+            </Button>
+          </>
+        ) : (
+          <Button tone="primary" size="small" disabled={busy} onClick={record}>
+            Record
+          </Button>
+        )}
         {briefTitle !== null && (
-          <Button size="small" onClick={() => navigate(briefPath(briefTitle))}>
+          <Button size="small" onClick={() => openBrief(briefTitle)}>
             Open brief
           </Button>
         )}
@@ -85,4 +147,22 @@ export function DetectionPrompt() {
       </ButtonRow>
     </section>
   );
+}
+
+/**
+ * Start a recording named after the reminded meeting, joining it first when
+ * `join`. Busy while it runs, like the record button; a refusal shows where
+ * the record button's would.
+ */
+async function recordReminded(eventId: string, join: boolean) {
+  const store = useRecordingStore;
+  if (store.getState().busy) return;
+  store.setState({ busy: true, error: null });
+  try {
+    await recordRemindedMeeting(eventId, join);
+  } catch (thrown) {
+    store.setState({ error: toUiError(thrown) });
+  } finally {
+    store.setState({ busy: false });
+  }
 }

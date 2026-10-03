@@ -150,6 +150,13 @@
           "minimum": 0,
           "description": "Only treat a calendar event as a meeting if it has at least this many attendees.",
           "default": 2
+        },
+        "remind_before_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15,
+          "description": "How many minutes before a meeting starts its reminder fires. 0 = at the start. A value outside 0-15 is logged and read as 1.",
+          "default": 1
         }
       }
     },

@@ -9,6 +9,13 @@
 //! macOS notifications posted through the plugin have no action buttons, so
 //! the notification itself only explains; clicking it brings meet-ai forward,
 //! where the banner is waiting. Nothing here starts a recording (L15).
+//!
+//! TUR-78: a reminder names the meeting and how soon it starts ("starts in 2
+//! min", from `detection.remind_before_minutes`), and an event with a meeting
+//! link adds **Join and record** and **Join** ([`super::actions`]). A prompt
+//! whose `detection` switch is off is dropped here ([`allowed`]), so a switch
+//! turned off in Settings stops its prompts at once. [`test_reminder`] is the
+//! card's "Send a test reminder".
 
 use chrono::{DateTime, Utc};
 use detect::Signal;
@@ -34,7 +41,17 @@ pub struct Prompt {
     /// Replace the prompt on screen, if there is one, and open none: this
     /// call was already asked about (`detection/merge.rs`).
     pub update_only: bool,
+    /// The reminded calendar event (TUR-78), for the banner's Join and
+    /// Record. `None` for other prompts and for a test.
+    pub event_id: Option<String>,
+    /// The event has a meeting link: offer **Join and record** and **Join**.
+    pub can_join: bool,
+    /// "Send a test reminder" (TUR-78): the buttons only close the banner.
+    pub test: bool,
 }
+
+/// The fake event a test reminder is about.
+pub const TEST_MEETING: &str = "Test meeting";
 
 /// The prompt for `signal`, or `None` while a recording is starting, running
 /// or stopping — the user is already recording, and asking again is nagging.
@@ -45,12 +62,81 @@ pub fn prompt_for(phase: Phase, signal: &Signal) -> Option<Prompt> {
         signal: signal.clone(),
         reason: signal.reason(),
         update_only: false,
+        event_id: None,
+        can_join: false,
+        test: false,
     })
+}
+
+/// Whether `signal`'s `detection` switch is on: `processes` for a meeting
+/// app, `audio_activity` for the mic and speakers, `calendar` for a reminder.
+pub fn allowed(config: &crate::config::DetectionConfig, signal: &Signal) -> bool {
+    match signal {
+        Signal::Process { .. } => config.processes,
+        Signal::AudioActivity => config.audio_activity,
+        Signal::Calendar { .. } => config.calendar,
+    }
+}
+
+/// "starts in 2 min", or "is starting now" once it has.
+pub fn starts_in(start: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let seconds = (start - now).num_seconds();
+    if seconds <= 0 {
+        return "is starting now".to_string();
+    }
+    format!("starts in {} min", (seconds + 59) / 60)
+}
+
+/// The reminder for `event` at `now`, or `None` while recording (see
+/// [`prompt_for`]).
+pub fn reminder_prompt(
+    phase: Phase,
+    event: &::calendar::Event,
+    now: DateTime<Utc>,
+) -> Option<Prompt> {
+    let signal = Signal::Calendar {
+        title: event.title.clone(),
+        attendees: event.attendees,
+    };
+    let mut prompt = prompt_for(phase, &signal)?;
+    prompt.reason = format!(
+        "“{}” {}, with {} people invited.",
+        event.title,
+        starts_in(event.start, now),
+        event.attendees
+    );
+    prompt.event_id = Some(event.id.clone());
+    prompt.can_join = super::actions::join_link(event).is_some();
+    Some(prompt)
+}
+
+/// "Send a test reminder": a fake meeting starting in `minutes`, laid out
+/// like a reminder with a link, that never records.
+pub fn test_prompt(phase: Phase, minutes: u32) -> Option<Prompt> {
+    let signal = Signal::Calendar {
+        title: TEST_MEETING.to_string(),
+        attendees: 0,
+    };
+    let mut prompt = prompt_for(phase, &signal)?;
+    let when = if minutes == 0 {
+        "is starting now".to_string()
+    } else {
+        format!("starts in {minutes} min")
+    };
+    prompt.reason =
+        format!("“{TEST_MEETING}” {when}. This is a test reminder: nothing will be recorded.");
+    prompt.can_join = true;
+    prompt.test = true;
+    Some(prompt)
 }
 
 /// The notification's body: the reason, and where the buttons are.
 fn body(prompt: &Prompt) -> String {
     match prompt.signal {
+        Signal::Calendar { .. } if prompt.can_join => format!(
+            "{} Open meet-ai to join, record it or read the brief.",
+            prompt.reason
+        ),
         Signal::Calendar { .. } => format!(
             "{} Open meet-ai to record it or read the brief.",
             prompt.reason
@@ -74,33 +160,70 @@ fn current_phase(app: &AppHandle) -> Phase {
 /// Ask the user whether to record, because of `signal` (a meeting app or
 /// audio activity). Dropped if a reminder just asked about this call.
 pub fn notify(app: &AppHandle, signal: &Signal) {
-    deliver(app, signal, Merger::other);
+    if !switched_on(app, signal) {
+        return;
+    }
+    deliver(app, prompt_for(current_phase(app), signal), Merger::other);
 }
 
-/// Remind the user that `event` starts in a minute (TUR-30), and ask
-/// whether to record it.
+/// Remind the user that `event` starts soon (TUR-30, TUR-78), and ask
+/// whether to join and record it.
 pub fn remind(app: &AppHandle, event: &::calendar::Event) {
-    let signal = Signal::Calendar {
-        title: event.title.clone(),
-        attendees: event.attendees,
-    };
+    let prompt = reminder_prompt(current_phase(app), event, Utc::now());
+    if !prompt
+        .as_ref()
+        .is_none_or(|prompt| switched_on(app, &prompt.signal))
+    {
+        return;
+    }
+    if prompt.is_some()
+        && let Some(detection) = app.try_state::<Detection>()
+    {
+        detection.remember_reminded(event.clone());
+    }
     let ends = event.end;
-    deliver(app, &signal, move |merger, now| merger.reminder(now, ends));
+    deliver(app, prompt, move |merger, now| merger.reminder(now, ends));
 }
 
-/// The one path every prompt takes: not while recording, merged with a
-/// recent prompt for the same call, then a notification and the banner.
+/// "Send a test reminder" (TUR-78): the reminder for a fake meeting
+/// starting in `minutes`, past the merge so it never hides a real prompt.
+/// `false` while recording, when nothing is asked.
+pub fn test_reminder(app: &AppHandle, minutes: u32) -> bool {
+    let prompt = test_prompt(current_phase(app), minutes);
+    let sent = prompt.is_some();
+    deliver(app, prompt, |_, _| Delivery::New);
+    sent
+}
+
+/// Is `signal`'s switch on now? Logged when it is not.
+fn switched_on(app: &AppHandle, signal: &Signal) -> bool {
+    let on = app
+        .try_state::<Detection>()
+        .is_none_or(|detection| allowed(&detection.config(), signal));
+    if !on {
+        tracing::debug!(
+            ?signal,
+            "that prompt is switched off in Settings; not asking"
+        );
+    }
+    on
+}
+
+/// The one path every prompt takes: not while recording (`prompt` is
+/// `None`), merged with a recent prompt for the same call, then a
+/// notification and the banner.
 fn deliver(
     app: &AppHandle,
-    signal: &Signal,
+    prompt: Option<Prompt>,
     merge: impl FnOnce(&mut Merger, DateTime<Utc>) -> Delivery,
 ) {
     use tauri_plugin_notification::NotificationExt as _;
 
-    let Some(mut prompt) = prompt_for(current_phase(app), signal) else {
-        tracing::debug!(?signal, "a meeting signal while recording; not asking");
+    let Some(mut prompt) = prompt else {
+        tracing::debug!("a meeting signal while recording; not asking");
         return;
     };
+    let signal = &prompt.signal.clone();
     let delivery = app
         .try_state::<Detection>()
         .map_or(Delivery::New, |detection| {
@@ -141,6 +264,8 @@ fn deliver(
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeZone as _;
+
     use super::*;
 
     fn zoom() -> Signal {
@@ -185,7 +310,10 @@ mod tests {
             serde_json::json!({
                 "signal": { "kind": "process", "process": "zoom.us" },
                 "reason": "Zoom is open.",
-                "updateOnly": false
+                "updateOnly": false,
+                "eventId": null,
+                "canJoin": false,
+                "test": false
             })
         );
     }
@@ -202,5 +330,129 @@ mod tests {
             "“Standup” starts in a minute, with 3 people invited. \
              Open meet-ai to record it or read the brief."
         );
+    }
+
+    fn event(join_url: Option<&str>) -> ::calendar::Event {
+        let start = Utc.with_ymd_and_hms(2026, 10, 5, 10, 0, 0).unwrap();
+        ::calendar::Event {
+            id: "standup-1".to_string(),
+            title: "Standup".to_string(),
+            start,
+            end: start + chrono::Duration::minutes(30),
+            attendees: 3,
+            attendee_names: Vec::new(),
+            ical_uid: None,
+            join_url: join_url.map(str::to_string),
+        }
+    }
+
+    fn at(h: u32, m: u32, s: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 5, h, m, s).unwrap()
+    }
+
+    #[test]
+    fn a_reminder_names_the_meeting_and_how_soon_it_starts() {
+        let prompt =
+            reminder_prompt(Phase::Idle, &event(None), at(9, 58, 0)).expect("asks when idle");
+        assert_eq!(
+            prompt.reason,
+            "“Standup” starts in 2 min, with 3 people invited."
+        );
+        assert_eq!(prompt.event_id.as_deref(), Some("standup-1"));
+        assert!(!prompt.can_join);
+        assert!(!prompt.test);
+        assert_eq!(
+            body(&prompt),
+            "“Standup” starts in 2 min, with 3 people invited. \
+             Open meet-ai to record it or read the brief."
+        );
+        assert_eq!(
+            reminder_prompt(Phase::Recording, &event(None), at(9, 58, 0)),
+            None
+        );
+    }
+
+    #[test]
+    fn a_reminder_with_a_link_offers_join() {
+        let prompt = reminder_prompt(
+            Phase::Idle,
+            &event(Some("https://zoom.us/j/1")),
+            at(9, 59, 0),
+        )
+        .expect("asks");
+        assert!(prompt.can_join);
+        assert_eq!(
+            body(&prompt),
+            "“Standup” starts in 1 min, with 3 people invited. \
+             Open meet-ai to join, record it or read the brief."
+        );
+        // Only a safe video-call link is a link to join.
+        let odd = reminder_prompt(
+            Phase::Idle,
+            &event(Some("javascript:alert(1)")),
+            at(9, 59, 0),
+        )
+        .expect("asks");
+        assert!(!odd.can_join);
+    }
+
+    #[test]
+    fn starts_in_rounds_up_to_the_minute_and_says_now_at_the_start() {
+        assert_eq!(starts_in(at(10, 0, 0), at(9, 50, 0)), "starts in 10 min");
+        assert_eq!(starts_in(at(10, 0, 0), at(9, 55, 5)), "starts in 5 min");
+        assert_eq!(starts_in(at(10, 0, 0), at(9, 59, 50)), "starts in 1 min");
+        assert_eq!(starts_in(at(10, 0, 0), at(10, 0, 0)), "is starting now");
+        assert_eq!(starts_in(at(10, 0, 0), at(10, 0, 10)), "is starting now");
+    }
+
+    #[test]
+    fn each_switch_turns_its_prompt_off() {
+        use crate::config::DetectionConfig;
+        let calendar = Signal::Calendar {
+            title: "Standup".to_string(),
+            attendees: 3,
+        };
+        let on = DetectionConfig::default();
+        for signal in [zoom(), Signal::AudioActivity, calendar.clone()] {
+            assert!(allowed(&on, &signal), "{signal:?}");
+        }
+        let no_apps = DetectionConfig {
+            processes: false,
+            ..on
+        };
+        assert!(!allowed(&no_apps, &zoom()));
+        assert!(allowed(&no_apps, &Signal::AudioActivity));
+        assert!(allowed(&no_apps, &calendar));
+        let no_audio = DetectionConfig {
+            audio_activity: false,
+            ..on
+        };
+        assert!(!allowed(&no_audio, &Signal::AudioActivity));
+        assert!(allowed(&no_audio, &zoom()));
+        let no_reminders = DetectionConfig {
+            calendar: false,
+            ..on
+        };
+        assert!(!allowed(&no_reminders, &calendar));
+        assert!(allowed(&no_reminders, &zoom()));
+    }
+
+    #[test]
+    fn a_test_reminder_is_flagged_and_never_names_a_real_event() {
+        let prompt = test_prompt(Phase::Idle, 2).expect("asks when idle");
+        assert!(prompt.test);
+        assert!(prompt.can_join, "laid out like a reminder with a link");
+        assert_eq!(prompt.event_id, None, "nothing to join or record");
+        assert_eq!(
+            prompt.reason,
+            "“Test meeting” starts in 2 min. This is a test reminder: nothing will be recorded."
+        );
+        assert!(
+            test_prompt(Phase::Idle, 0)
+                .expect("asks")
+                .reason
+                .contains("is starting now")
+        );
+        assert_eq!(test_prompt(Phase::Recording, 2), None);
     }
 }

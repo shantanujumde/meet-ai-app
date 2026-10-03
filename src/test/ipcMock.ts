@@ -268,6 +268,23 @@ export const ipc = {
   menuBarCountdown: vi.fn<typeof Client.menuBarCountdown>(async () => false),
   setMenuBarCountdown: vi.fn<typeof Client.setMenuBarCountdown>(async (show) => show),
 
+  // TUR-78: the SPEC §3.5 detection defaults, and notifications allowed.
+  notificationSettings: vi.fn<typeof Client.notificationSettings>(async () => ({
+    remind: true,
+    remindBeforeMinutes: 1,
+    processes: true,
+    audioActivity: true,
+    minAttendees: 2,
+  })),
+  setNotificationSettings: vi.fn<typeof Client.setNotificationSettings>(
+    async (settings) => settings,
+  ),
+  osNotificationsBlocked: vi.fn<typeof Client.osNotificationsBlocked>(async () => false),
+  openNotificationSettings: vi.fn<typeof Client.openNotificationSettings>(async () => {}),
+  sendTestReminder: vi.fn<typeof Client.sendTestReminder>(async () => true),
+  joinRemindedMeeting: vi.fn<typeof Client.joinRemindedMeeting>(async () => {}),
+  recordRemindedMeeting: vi.fn<typeof Client.recordRemindedMeeting>(async () => {}),
+
   // TUR-28: a calendar that was read and has nothing today.
   todaysMeetings: vi.fn<typeof Client.todaysMeetings>(async () => NO_MEETINGS_TODAY),
   calendarRefreshMinutes: vi.fn<typeof Client.calendarRefreshMinutes>(
