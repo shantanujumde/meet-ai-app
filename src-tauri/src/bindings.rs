@@ -10,6 +10,7 @@ use tauri_specta::{Builder, collect_commands};
 use crate::agent_run;
 use crate::agent_setup;
 use crate::events::AGENT_RUN_STATUS_EVENT;
+use crate::events::DETECTION_PROMPT_EVENT;
 use crate::events::{
     MEETINGS_CHANGED_EVENT, MODEL_PROGRESS_EVENT, PERMISSION_STATUS_EVENT, RECORDING_STATE_EVENT,
     TRANSCRIPT_STATUS_EVENT, TRANSCRIPT_UPDATE_EVENT,
@@ -70,6 +71,8 @@ pub fn builder() -> Builder<tauri::Wry> {
         .constant("TRANSCRIPT_STATUS_EVENT", TRANSCRIPT_STATUS_EVENT)
         .constant("MEETINGS_CHANGED_EVENT", MEETINGS_CHANGED_EVENT)
         .constant("AGENT_RUN_STATUS_EVENT", AGENT_RUN_STATUS_EVENT)
+        .constant("DETECTION_PROMPT_EVENT", DETECTION_PROMPT_EVENT)
+        .typ::<crate::detection::notify::Prompt>()
 }
 
 #[cfg(test)]
