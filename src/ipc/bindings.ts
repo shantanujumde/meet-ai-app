@@ -300,8 +300,8 @@ export const TRANSCRIPT_UPDATE_EVENT = "transcript://update" as const;
 export type meet_ai_lib_agent_setup_AgentChoice = {
 	harness: meet_ai_lib_agent_setup_AgentHarness,
 	/**
-	 *  Any model name the CLI accepts. Blank for Codex means "Codex's own
-	 *  default".
+	 *  Any model name the CLI accepts. Blank means "Default": no `--model`,
+	 *  the CLI picks its own (SPEC A14), and `null` in `config.jsonc`.
 	 */
 	model: string,
 	/**
@@ -328,13 +328,18 @@ export type meet_ai_lib_agent_setup_AgentCli = {
 	version: string | null,
 	/**  What to type in Terminal to sign in. */
 	signInCommand: string,
-	/**  Model names for the picker. The user can still type any other. */
-	models: string[],
 	/**
-	 *  The model picked when the user picks none. `null` for Codex, which
-	 *  then uses its own default.
+	 *  Models for the picker, in order: the first two are the suggestion
+	 *  buttons next to "Default", the rest go in the dropdown. The user can
+	 *  still type any other name.
 	 */
-	defaultModel: string | null,
+	models: meet_ai_lib_agent_setup_AgentModel[],
+	/**
+	 *  The model the CLI runs when meet-ai passes none, when its own settings
+	 *  say which (Claude Code's `~/.claude/settings.json`). `null` when they
+	 *  do not; the CLI then uses its built-in default.
+	 */
+	cliDefault: string | null,
 	/**  Whether the Test button can run. False only when the CLI is missing. */
 	canTest: boolean,
 };
@@ -353,6 +358,16 @@ export type meet_ai_lib_agent_setup_AgentCliState =
 
 /**  `agent.harness`: which CLI runs the notes, or none (copy prompt instead). */
 export type meet_ai_lib_agent_setup_AgentHarness = "claude-code" | "codex" | "none";
+
+/**  One model the picker offers. */
+export type meet_ai_lib_agent_setup_AgentModel = {
+	/**  What is saved and passed as `--model`: `sonnet`, `gpt-5.6-terra`. */
+	name: string,
+	/**  What the screen shows: `Sonnet`. The name when there is no label. */
+	label: string,
+	/**  One line on when to pick it, if meet-ai's list has one. */
+	note: string | null,
+};
 
 /**  What the test run wrote from the sample meeting. */
 export type meet_ai_lib_agent_setup_AgentTestResult = {

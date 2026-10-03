@@ -3,14 +3,21 @@
 //!
 //! The looking itself is `agent::detect`. This part decides what the screen
 //! says about it: ready, signed out or missing, the sign-in command to show,
-//! and the models to offer.
+//! and the models to offer (TUR-74: every model the CLI offers, and which
+//! one it picks on its own when its settings say).
 
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
-use agent::{ClaudeHarness, CodexHarness, Harness as _, Install};
+use agent::{ClaudeHarness, CodexHarness, Harness as _, Install, ListCache};
 
-use super::{AgentChoice, AgentCli, AgentCliId, AgentCliState, AgentHarness};
+use super::{AgentChoice, AgentCli, AgentCliId, AgentCliState, AgentHarness, AgentModel};
 use crate::error::UiError;
+
+/// Codex's own model list, per binary, so opening Settings again does not
+/// start Codex each time (up to 15 s).
+static CODEX_MODELS: LazyLock<ListCache> =
+    LazyLock::new(|| ListCache::new(agent::models::LIST_CACHE_TTL));
 
 impl AgentCliId {
     /// The name the user knows it by.
@@ -45,12 +52,11 @@ impl AgentCliId {
         }
     }
 
-    /// The model used when the user picks none. Codex has none of ours: it
-    /// picks its own.
-    fn default_model(self) -> Option<String> {
+    /// The harness id `agent::models` keys its lists by.
+    fn harness_id(self) -> &'static str {
         match self {
-            Self::ClaudeCode => Some(agent::claude::DEFAULT_MODEL.to_owned()),
-            Self::Codex => None,
+            Self::ClaudeCode => agent::claude::ID,
+            Self::Codex => agent::codex::ID,
         }
     }
 }
@@ -86,23 +92,41 @@ pub(super) fn binary_paths(choice: &AgentChoice) -> (Option<PathBuf>, Option<Pat
 
 fn detect_claude(binary_path: Option<&Path>) -> AgentCli {
     let install = agent::detect::claude(binary_path);
-    // A fixed list; nothing is run for it.
+    // `models.json`; nothing is run for it, and the settings file is only read.
     let models = ClaudeHarness::new().models();
-    cli_view(AgentCliId::ClaudeCode, install, models)
+    let mut cli = cli_view(AgentCliId::ClaudeCode, install, models);
+    cli.cli_default = agent::claude::settings_model();
+    cli
 }
 
-/// Codex, plus its model list when it can be asked for one: found and
-/// signed in. Asking runs `codex debug models`, up to 15 s.
+/// Codex, plus its own model list when it can be asked for one: found and
+/// signed in. Asking runs `codex debug models`, up to 15 s, kept for
+/// [`agent::models::LIST_CACHE_TTL`]. When Codex cannot be asked, the list
+/// in `models.json`.
 fn detect_codex(binary_path: Option<&Path>) -> AgentCli {
     let install = agent::detect::codex(binary_path);
-    let models = match &install {
-        Some(install) if install.signed_in => CodexHarness::with_binary(&install.path).models(),
+    let listed = match &install {
+        Some(install) if install.signed_in => CODEX_MODELS.get_or_list(&install.path, || {
+            CodexHarness::with_binary(&install.path).models()
+        }),
         _ => Vec::new(),
     };
-    cli_view(AgentCliId::Codex, install, models)
+    cli_view(AgentCliId::Codex, install, codex_models(listed))
 }
 
-/// The Setup screen's row for `id`, from what detection found.
+/// What Codex listed, or meet-ai's own list when it listed nothing.
+pub(super) fn codex_models(listed: Vec<String>) -> Vec<String> {
+    if !listed.is_empty() {
+        return listed;
+    }
+    agent::models::listed(agent::codex::ID)
+        .into_iter()
+        .map(|model| model.name)
+        .collect()
+}
+
+/// The Setup screen's row for `id`, from what detection found. `models` are
+/// names in the CLI's order; labels and notes come from `models.json`.
 pub(super) fn cli_view(id: AgentCliId, install: Option<Install>, models: Vec<String>) -> AgentCli {
     let state = match &install {
         None => AgentCliState::Missing,
@@ -118,8 +142,11 @@ pub(super) fn cli_view(id: AgentCliId, install: Option<Install>, models: Vec<Str
         path: path.map(|path| path.display().to_string()),
         version: install.as_ref().and_then(|install| install.version.clone()),
         sign_in_command: sign_in_command(id, path),
-        models,
-        default_model: id.default_model(),
+        models: agent::models::described(id.harness_id(), models)
+            .into_iter()
+            .map(AgentModel::from)
+            .collect(),
+        cli_default: None,
         can_test: install.is_some(),
     }
 }

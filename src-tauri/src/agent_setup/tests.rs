@@ -56,7 +56,7 @@ fn good_notes() -> serde_json::Value {
 fn run_fake(behavior: FakeBehavior, timeout: Duration) -> Result<AgentTestResult, UiError> {
     run_sample(
         &FakeHarness::new(behavior),
-        "fake-small",
+        Some("fake-small"),
         timeout,
         std::env::temp_dir(),
         None,
@@ -87,7 +87,18 @@ fn the_wire_names_match_the_contract() {
     assert_eq!(value["state"], "signed-out");
     assert_eq!(value["signInCommand"], "claude auth login");
     assert_eq!(value["canTest"], true);
-    assert!(value.get("defaultModel").is_some(), "{value}");
+    assert!(value.get("cliDefault").is_some(), "{value}");
+    assert!(value.get("defaultModel").is_none(), "{value}");
+}
+
+#[test]
+fn a_model_crosses_as_name_label_and_note() {
+    let cli = cli_view(AgentCliId::ClaudeCode, None, vec!["haiku".into()]);
+    let value = serde_json::to_value(&cli.models).unwrap();
+    assert_eq!(
+        value,
+        json!([{ "name": "haiku", "label": "Haiku", "note": "fastest, cheapest" }])
+    );
 }
 
 #[test]
@@ -108,8 +119,13 @@ fn a_missing_claude_code_has_no_path_and_cannot_be_tested() {
     assert_eq!(cli.path, None);
     assert_eq!(cli.version, None);
     assert_eq!(cli.sign_in_command, "claude auth login");
-    assert_eq!(cli.default_model.as_deref(), Some("opus"));
+    // No model of meet-ai's: the CLI picks (A14).
+    assert_eq!(cli.cli_default, None);
     assert!(!cli.can_test);
+}
+
+fn names(cli: &AgentCli) -> Vec<&str> {
+    cli.models.iter().map(|model| model.name.as_str()).collect()
 }
 
 #[test]
@@ -117,13 +133,43 @@ fn a_signed_in_claude_code_is_ready() {
     let cli = cli_view(
         AgentCliId::ClaudeCode,
         Some(install("/opt/homebrew/bin/claude", true)),
-        vec!["opus".into(), "sonnet".into(), "haiku".into()],
+        agent::Harness::models(&agent::ClaudeHarness::new()),
     );
     assert_eq!(cli.state, AgentCliState::Ready);
     assert_eq!(cli.path.as_deref(), Some("/opt/homebrew/bin/claude"));
     assert_eq!(cli.version.as_deref(), Some("2.1.0 (Claude Code)"));
-    assert_eq!(cli.models, ["opus", "sonnet", "haiku"]);
+    // Every model in models.json, Sonnet and Haiku first, each with a label.
+    assert_eq!(
+        names(&cli),
+        [
+            "sonnet",
+            "haiku",
+            "opus",
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+            "claude-haiku-4-5",
+            "claude-fable-5-1"
+        ]
+    );
+    assert_eq!(cli.models[0].label, "Sonnet");
     assert!(cli.can_test);
+}
+
+#[test]
+fn codex_s_own_list_wins_and_meet_ai_s_list_stands_in_when_it_is_empty() {
+    let own = super::view::codex_models(vec!["gpt-new".into(), "gpt-5.6-terra".into()]);
+    assert_eq!(own, ["gpt-new", "gpt-5.6-terra"]);
+    let fallback = super::view::codex_models(Vec::new());
+    assert_eq!(
+        fallback,
+        [
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+            "gpt-5.2"
+        ]
+    );
 }
 
 #[test]
@@ -136,8 +182,8 @@ fn codex_names_openai_and_has_no_default_model() {
     assert_eq!(cli.name, "Codex");
     assert_eq!(cli.provider, "OpenAI");
     assert_eq!(cli.state, AgentCliState::Ready);
-    assert_eq!(cli.default_model, None);
-    assert_eq!(cli.models, ["gpt-5.6-terra"]);
+    assert_eq!(cli.cli_default, None);
+    assert_eq!(names(&cli), ["gpt-5.6-terra"]);
     assert_eq!(cli.sign_in_command, "codex login");
     assert!(cli.can_test);
 
@@ -219,7 +265,7 @@ fn saving_keeps_auto_run_and_the_time_limit() {
         saved,
         AgentConfig {
             harness: Harness::Codex,
-            model: "gpt-5.6-terra".into(),
+            model: Some("gpt-5.6-terra".into()),
             binary_path: Some("/opt/codex".into()),
             auto_run: false,
             timeout_sec: 42,
@@ -228,28 +274,33 @@ fn saving_keeps_auto_run_and_the_time_limit() {
 }
 
 #[test]
-fn a_blank_model_is_opus_for_claude_code_and_codex_s_own_default_for_codex() {
-    let saved = merged(
-        &choice(AgentHarness::ClaudeCode, "  ", None),
-        Ok(AgentConfig::default()),
-    )
-    .unwrap();
-    assert_eq!(saved.model, "opus");
+fn a_blank_model_is_saved_as_null_for_every_harness() {
+    for harness in [AgentHarness::ClaudeCode, AgentHarness::Codex] {
+        let saved = merged(&choice(harness, "  ", Some("")), Ok(AgentConfig::default())).unwrap();
+        assert_eq!(saved.model, None, "{harness:?}");
+        assert_eq!(saved.binary_path, None);
+    }
 
-    let saved = merged(
-        &choice(AgentHarness::Codex, "", Some("")),
-        Ok(AgentConfig::default()),
-    )
-    .unwrap();
-    assert_eq!(saved.model, "");
-    assert_eq!(saved.binary_path, None);
+    // Picking Default over a stored opus stores null.
+    let opus = AgentConfig {
+        model: Some("opus".into()),
+        ..AgentConfig::default()
+    };
+    assert_eq!(AgentChoice::from_config(&opus).model, "opus");
+    let saved = merged(&choice(AgentHarness::ClaudeCode, "", None), Ok(opus)).unwrap();
+    assert_eq!(saved.model, None);
 
     let saved = merged(
         &choice(AgentHarness::None, " sonnet ", None),
         Ok(AgentConfig::default()),
     )
     .unwrap();
-    assert_eq!(saved.model, "sonnet");
+    assert_eq!(saved.model.as_deref(), Some("sonnet"));
+}
+
+#[test]
+fn a_fresh_config_shows_a_blank_model() {
+    assert_eq!(AgentChoice::from_config(&AgentConfig::default()).model, "");
 }
 
 #[test]
@@ -261,7 +312,7 @@ fn saving_over_an_unknown_harness_uses_the_defaults() {
     .unwrap();
     let defaults = AgentConfig::default();
     assert_eq!(saved.harness, Harness::ClaudeCode);
-    assert_eq!(saved.model, "sonnet");
+    assert_eq!(saved.model.as_deref(), Some("sonnet"));
     assert_eq!(saved.auto_run, defaults.auto_run);
     assert_eq!(saved.timeout_sec, defaults.timeout_sec);
 }
@@ -282,7 +333,7 @@ fn saving_over_a_broken_config_is_refused() {
 fn the_choice_shown_is_the_config_s_agent_section() {
     let agent = AgentConfig {
         harness: Harness::None,
-        model: "haiku".into(),
+        model: Some("haiku".into()),
         binary_path: Some("/opt/claude".into()),
         ..AgentConfig::default()
     };
@@ -339,6 +390,71 @@ fn a_good_reply_becomes_the_test_result() {
         }]
     );
     assert!(result.seconds < 30, "{}", result.seconds);
+}
+
+/// A harness that keeps the model each run got, and replies with good notes.
+#[derive(Default)]
+struct Recording(std::sync::Mutex<Vec<Option<String>>>);
+
+impl agent::Harness for Recording {
+    fn id(&self) -> &'static str {
+        "recording"
+    }
+    fn detect(&self) -> Option<Install> {
+        None
+    }
+    fn models(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn run(&self, job: &agent::Job) -> Result<serde_json::Value, AgentError> {
+        self.0.lock().unwrap().push(job.model.clone());
+        Ok(good_notes())
+    }
+}
+
+#[test]
+fn the_test_runs_the_picked_model_and_default_passes_none() {
+    let harness = Recording::default();
+    for model in [Some("haiku"), None, Some("  "), Some(" sonnet ")] {
+        run_sample(
+            &harness,
+            model,
+            Duration::from_secs(5),
+            std::env::temp_dir(),
+            None,
+        )
+        .unwrap();
+    }
+    let got = harness.0.lock().unwrap().clone();
+    assert_eq!(
+        got,
+        [Some("haiku".into()), None, None, Some("sonnet".into())]
+    );
+}
+
+#[test]
+fn a_failed_test_names_the_model_it_tried() {
+    let fail = FakeBehavior::Fail {
+        code: 1,
+        stderr: "unknown model".into(),
+    };
+    let error = run_fake(fail.clone(), Duration::from_secs(30)).unwrap_err();
+    assert_eq!(error.kind, "agent-failed");
+    assert!(
+        error.message.ends_with("(model: fake-small)"),
+        "{}",
+        error.message
+    );
+
+    let error = run_sample(
+        &FakeHarness::new(fail),
+        None,
+        Duration::from_secs(30),
+        std::env::temp_dir(),
+        None,
+    )
+    .unwrap_err();
+    assert!(!error.message.contains("model:"), "{}", error.message);
 }
 
 #[test]
