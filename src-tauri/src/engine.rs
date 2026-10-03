@@ -26,6 +26,10 @@ use crate::error::UiError;
 use crate::folder_move::FolderGate;
 use crate::meetings;
 
+// The Settings engine picker: what each choice would do, and saving one (TUR-75).
+mod choices;
+pub use choices::{EngineChoice, EngineChoices, choices, save_choice};
+
 /// SPEC §3.5's defaults.
 ///
 /// `DEFAULT_MODEL` is only the fallback: `crate::config::transcription` reads
@@ -74,6 +78,14 @@ pub struct ModelView {
     #[specta(type = specta_typescript::Number)]
     pub bytes: u64,
     pub installed: bool,
+    /// The plain-word name, e.g. "Small (English only)" (TUR-79). The id stays
+    /// in the detail line.
+    pub display_name: &'static str,
+    /// One line on when to pick it.
+    pub good_for: &'static str,
+    pub tags: Vec<stt::model::ModelTag>,
+    /// Why this is the model to pick on this Mac, set on that one row only.
+    pub recommended: Option<String>,
 }
 
 /// Progress for one model, as emitted on [`crate::events::MODEL_PROGRESS_EVENT`].
@@ -271,6 +283,7 @@ pub fn resolve(
 /// The pinned model catalogue plus whether each one is already on disk.
 pub fn catalogue() -> Vec<ModelView> {
     let dirs = ModelDirs::discover();
+    let recommendation = choices::recommendation();
     stt::model::MODELS
         .iter()
         .map(|spec| ModelView {
@@ -278,6 +291,11 @@ pub fn catalogue() -> Vec<ModelView> {
             filename: spec.filename,
             bytes: spec.bytes,
             installed: dirs.installed(spec).is_some(),
+            display_name: spec.facts.display_name,
+            good_for: spec.facts.good_for,
+            tags: spec.facts.tags.to_vec(),
+            recommended: (spec.id == recommendation.model_id)
+                .then(|| recommendation.reason.clone()),
         })
         .collect()
 }

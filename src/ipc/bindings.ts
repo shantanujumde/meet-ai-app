@@ -105,6 +105,17 @@ export const commands = {
 	 *  it lasts exactly as long as the writer does (see `engine::Claim`).
 	 */
 	downloadModel: (id: string) => typedError<string, meet_ai_lib_error_UiError>(__TAURI_INVOKE("download_model", { id })),
+	/**
+	 *  The Settings engine picker (TUR-75): the saved choice, what "Automatic"
+	 *  lands on, and which choices this Mac can run. Runs the ~160 ms probe.
+	 */
+	engineChoices: () => typedError<meet_ai_lib_engine_choices_EngineChoices, meet_ai_lib_error_UiError>(__TAURI_INVOKE("engine_choices")),
+	/**
+	 *  Save `transcription.engine` and `transcription.model` into config.jsonc,
+	 *  keeping the rest of the file. Takes effect on the next recording. Writes
+	 *  under the meetings root, so through the [`FolderGate`].
+	 */
+	setTranscription: (engine: meet_ai_lib_engine_choices_EngineChoice, model: string) => typedError<meet_ai_lib_engine_choices_EngineChoices, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_transcription", { engine, model })),
 	recordingStatus: () => __TAURI_INVOKE<meet_ai_lib_recording_Status>("recording_status"),
 	/**
 	 *  Starting or stopping blocks on real wall-clock time — SPEC §8.1's
@@ -445,6 +456,29 @@ export type meet_ai_lib_brief_Commit = {
 	subject: string,
 };
 
+/**  Whether one choice can be picked, and the sentence to show when not. */
+export type meet_ai_lib_engine_choices_EngineAvailability = {
+	available: boolean,
+	reason: string | null,
+};
+
+/**  `transcription.engine`, as the window sends and receives it. */
+export type meet_ai_lib_engine_choices_EngineChoice = "auto" | "apple-speech" | "whisper";
+
+/**  Everything the picker draws. */
+export type meet_ai_lib_engine_choices_EngineChoices = {
+	/**  What `config.jsonc` says now. */
+	engine: meet_ai_lib_engine_choices_EngineChoice,
+	/**  `transcription.model`: the whisper model in use when whisper runs. */
+	model: string,
+	/**  What "Automatic" resolves to on this Mac; `None` when nothing is ready. */
+	auto: meet_ai_lib_engine_choices_ResolvedEngine | null,
+	apple: meet_ai_lib_engine_choices_EngineAvailability,
+	whisper: meet_ai_lib_engine_choices_EngineAvailability,
+	/**  The locales Apple's engine has installed, e.g. `en-US`. */
+	languages: string[],
+};
+
 /**  What the filesystem says, with no subprocess involved. */
 export type meet_ai_lib_engine_EnvironmentView = {
 	/**
@@ -637,6 +671,12 @@ export type meet_ai_lib_meetings_view_MeetingSummary = {
 	audioMs: number | null,
 };
 
+/**
+ *  One word about a model, drawn as a small chip. The UI owns the label for
+ *  each, so the wording stays the same on every row.
+ */
+export type stt_model_ModelTag = "fast" | "light" | "most-accurate" | "multilingual" | "english-only" | "slower";
+
 /**  One row on the model download screen. */
 export type meet_ai_lib_engine_ModelView = {
 	id: string,
@@ -648,6 +688,16 @@ export type meet_ai_lib_engine_ModelView = {
 	 */
 	bytes: number,
 	installed: boolean,
+	/**
+	 *  The plain-word name, e.g. "Small (English only)" (TUR-79). The id stays
+	 *  in the detail line.
+	 */
+	displayName: string,
+	/**  One line on when to pick it. */
+	goodFor: string,
+	tags: stt_model_ModelTag[],
+	/**  Why this is the model to pick on this Mac, set on that one row only. */
+	recommended: string | null,
 };
 
 export type meet_ai_lib_agent_run_NotesSection = {
@@ -767,6 +817,9 @@ export type meet_ai_lib_brief_RepoCommits = {
 	/**  Newest first, at most [`BRIEF_MAX_COMMITS`]. */
 	commits: meet_ai_lib_brief_Commit[],
 };
+
+/**  An engine that actually runs: what "Automatic" lands on. */
+export type meet_ai_lib_engine_choices_ResolvedEngine = "apple-speech" | "whisper";
 
 /**  Which engine this Mac will actually use, and why. */
 export type meet_ai_lib_engine_SelectionView = {

@@ -3305,6 +3305,7 @@ dependencies = [
  "specta-typescript",
  "store",
  "stt",
+ "sysinfo",
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",

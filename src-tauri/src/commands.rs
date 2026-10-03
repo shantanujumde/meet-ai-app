@@ -288,6 +288,31 @@ pub async fn download_model(app: AppHandle, id: String) -> Result<String, UiErro
     engine::download(app, id).await
 }
 
+/// The Settings engine picker (TUR-75): the saved choice, what "Automatic"
+/// lands on, and which choices this Mac can run. Runs the ~160 ms probe.
+#[tauri::command]
+#[specta::specta]
+pub async fn engine_choices() -> Result<engine::EngineChoices, UiError> {
+    on_blocking_pool(engine::choices).await
+}
+
+/// Save `transcription.engine` and `transcription.model` into config.jsonc,
+/// keeping the rest of the file. Takes effect on the next recording. Writes
+/// under the meetings root, so through the [`FolderGate`].
+#[tauri::command]
+#[specta::specta]
+pub async fn set_transcription(
+    app: AppHandle,
+    engine: engine::EngineChoice,
+    model: String,
+) -> Result<engine::EngineChoices, UiError> {
+    on_blocking_pool(move || {
+        app.state::<FolderGate>()
+            .writing(|| engine::save_choice(engine, &model))
+    })
+    .await?
+}
+
 // --- recording ------------------------------------------------------------
 
 #[tauri::command]

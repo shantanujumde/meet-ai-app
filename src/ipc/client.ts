@@ -34,6 +34,8 @@ import type {
   AgentChoice,
   AgentCli,
   AgentTestResult,
+  EngineChoice,
+  EngineChoices,
   EnvironmentView,
   LiveTranscriptSnapshot,
   MeetingBrief,
@@ -439,6 +441,24 @@ export async function modelCatalogue(): Promise<ModelView[]> {
 
 export function downloadModel(id: string): Promise<string> {
   return call(() => commands.downloadModel(id));
+}
+
+/**
+ * The Settings engine picker (TUR-75): the saved choice, what "Automatic"
+ * lands on here, and which choices this Mac can run, with the reason when
+ * not. Runs the ~160 ms probe, so never await it before painting.
+ */
+export function engineChoices(): Promise<EngineChoices> {
+  return call(() => commands.engineChoices());
+}
+
+/**
+ * Save `transcription.engine` and `transcription.model` into config.jsonc,
+ * keeping the rest of the file. Used from the next recording on. Resolves to
+ * the picker as saved.
+ */
+export function setTranscription(engine: EngineChoice, model: string): Promise<EngineChoices> {
+  return call(() => commands.setTranscription(engine, model));
 }
 
 // --- recording ------------------------------------------------------------

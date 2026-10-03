@@ -32,6 +32,7 @@ import type * as Client from "@/ipc/client";
 import type {
   AgentCli,
   AgentModel,
+  EngineChoices,
   LiveTranscriptSnapshot,
   MeetingList,
   MeetingNotes,
@@ -54,6 +55,15 @@ const NOT_CHECKED: PermissionStatus = {
 const EMPTY_LIST: MeetingList = { root: "/Users/test/Meetings", rootExists: false, meetings: [] };
 
 const NO_NOTES: MeetingNotes = { notesOff: false, analyzedBy: null, sections: [] };
+
+const APPLE_READY: EngineChoices = {
+  engine: "auto",
+  model: "large-v3-turbo-q5_0",
+  auto: "apple-speech",
+  apple: { available: true, reason: null },
+  whisper: { available: false, reason: "Download a model first." },
+  languages: ["en-US"],
+};
 
 const CANCELLED: NotesRunFailure = {
   kind: "cancelled",
@@ -222,6 +232,13 @@ export const ipc = {
   })),
   modelCatalogue: vi.fn<typeof Client.modelCatalogue>(async () => []),
   downloadModel: vi.fn<typeof Client.downloadModel>(async (id) => id),
+  // TUR-75: a Mac on macOS 26 with Apple's engine ready and no model downloaded.
+  engineChoices: vi.fn<typeof Client.engineChoices>(async () => APPLE_READY),
+  setTranscription: vi.fn<typeof Client.setTranscription>(async (engine, model) => ({
+    ...APPLE_READY,
+    engine,
+    model,
+  })),
 
   recordingStatus: vi.fn<typeof Client.recordingStatus>(async () => IDLE),
   toggleRecording: vi.fn<typeof Client.toggleRecording>(async () => IDLE),

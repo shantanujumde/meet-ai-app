@@ -55,6 +55,8 @@ mod detection_section;
 mod file;
 // TUR-76: `app.show_in_dock_when_closed`.
 mod app_section;
+#[cfg(test)]
+mod transcription_tests;
 
 pub use agent_section::ConfigError;
 pub use app_section::{AppConfig, app, set_app};
@@ -67,6 +69,7 @@ pub use detection_section::detection;
 #[allow(unused_imports)]
 pub use agent_section::{AgentConfig, Harness, TicketsConfig};
 pub use file::default_repo;
+pub use file::set_transcription;
 #[allow(unused_imports)] // TUR-9, same
 pub use file::{agent, set_agent, set_tickets, tickets};
 

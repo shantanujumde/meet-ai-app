@@ -139,6 +139,45 @@ export type ModelView = {
   /** The pinned size in bytes. Read this, do not hardcode a number. */
   bytes: number;
   installed: boolean;
+  /** The plain-word name, e.g. "Small (English only)" (TUR-79). */
+  displayName: string;
+  /** One line on when to pick it. */
+  goodFor: string;
+  tags: ModelTag[];
+  /** Why this is the one to pick on this Mac; set on that one row only. */
+  recommended: string | null;
+};
+
+/** One word about a model, drawn as a chip. Labels live in `ui/engine/tags.ts`. */
+export type ModelTag =
+  | "fast"
+  | "light"
+  | "most-accurate"
+  | "multilingual"
+  | "english-only"
+  | "slower";
+
+/** `transcription.engine` in config.jsonc. */
+export type EngineChoice = "auto" | "apple-speech" | "whisper";
+
+/** Whether one engine can be picked; `reason` says why not, in a sentence. */
+export type EngineAvailability = {
+  available: boolean;
+  reason: string | null;
+};
+
+/** The Settings engine picker (TUR-75). Costs the ~160 ms probe. */
+export type EngineChoices = {
+  /** What config.jsonc says now. */
+  engine: EngineChoice;
+  /** `transcription.model`: the whisper model used when whisper runs. */
+  model: string;
+  /** What "Automatic" resolves to on this Mac; null when nothing is ready. */
+  auto: "apple-speech" | "whisper" | null;
+  apple: EngineAvailability;
+  whisper: EngineAvailability;
+  /** Locales Apple's engine has installed, as BCP 47 ids. */
+  languages: string[];
 };
 
 export type ModelProgress = {

@@ -13,6 +13,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use jsonc_parser::cst::{CstInputValue, CstRootNode};
+use stt::registry::Preference;
 
 use super::FILE;
 use super::agent_section::parse_default_repo;
@@ -51,6 +52,32 @@ pub fn set_agent(agent: &AgentConfig) -> Result<(), ConfigError> {
 #[allow(dead_code)] // TUR-9 (Setup screens) adds the IPC command that calls this.
 pub fn set_tickets(tickets: &TicketsConfig) -> Result<(), ConfigError> {
     write_in(&app_dir()?, |raw| with_tickets(raw, tickets))
+}
+
+/// Save `transcription.engine` and `transcription.model` into
+/// `~/Meetings/.app/config.jsonc` (TUR-75), keeping everything else —
+/// `language`, `live` and the user's comments included. Read again by the next
+/// recording; one already running keeps the engine it opened with.
+pub fn set_transcription(engine: Preference, model: &str) -> Result<(), ConfigError> {
+    write_in(&app_dir()?, |raw| with_transcription(raw, engine, model))
+}
+
+/// `raw` with `transcription.engine` and `transcription.model` set.
+pub fn with_transcription(
+    raw: &str,
+    engine: Preference,
+    model: &str,
+) -> Result<String, ConfigError> {
+    let engine = match engine {
+        Preference::Auto => "auto",
+        Preference::AppleSpeech => "apple-speech",
+        Preference::Whisper => "whisper",
+    };
+    with_section(
+        raw,
+        "transcription",
+        vec![("engine", engine.into()), ("model", model.into())],
+    )
 }
 
 fn app_dir() -> Result<PathBuf, ConfigError> {

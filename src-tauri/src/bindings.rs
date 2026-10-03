@@ -38,6 +38,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             commands::engine_selection,
             commands::model_catalogue,
             commands::download_model,
+            commands::engine_choices,
+            commands::set_transcription,
             commands::recording_status,
             commands::toggle_recording,
             commands::stop_recording,
