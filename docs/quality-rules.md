@@ -256,7 +256,9 @@ Unlike most rules, R9 reads every line of the file, not only the added ones: a
 copy needs its notice for as long as it is in the repo. For the same reason,
 when `THIRD_PARTY_NOTICES.md` itself is among the changed files, R9 also checks
 every file `git grep -l 'Adapted from'` finds, so dropping a section (or the
-whole file) fails the copy that needed it. `R9_NOTICES=<file>`
+whole file) fails the copy that needed it. CI passes deleted files in too
+(`--diff-filter=ACMRD`) so a deleted notices file triggers this; the rules
+skip any other path that no longer exists. `R9_NOTICES=<file>`
 points it at another notices file. The rule's own script and self-test are
 skipped, because they spell the format out as examples.
 
@@ -305,10 +307,13 @@ Not OS cfgs, so never flagged: `cfg(test)`, `cfg(feature = ...)`,
 plugin gate (`src-tauri/src/lib.rs`, `notify.rs`), not a port.
 
 Three unix-only test modules in `crates/agent/src` still carry `cfg(unix)`:
-`process.rs:504`, `detect.rs:401` and `mcp/tests.rs:190`. They run the
-`/bin/sh` fake harness, and TUR-54 makes them portable. Those exact lines are
-the known-debt list, `R10_DEBT` in `scripts/quality-rules.sh`; a new cfg in the
-same files still fails. Nothing else in the tree has an OS cfg outside the
+`process.rs`, `detect.rs` and `mcp/tests.rs` (one `#[cfg(unix)]` each). They
+run the `/bin/sh` fake harness, and TUR-54 makes them portable. They are the
+known-debt list, `R10_DEBT` in `scripts/quality-rules.sh`, keyed on the path
+and the cfg line's trimmed text (not its line number, so an edit above it does
+not break the build). Each entry lets through only the first hit with that
+text in its file, so a new cfg in the same files still fails, even one spelled
+the same. Nothing else in the tree has an OS cfg outside the
 allowed paths (`crates/store` keeps its one, Windows' lock-violation codes, in
 `src/platform/` since TUR-89).
 

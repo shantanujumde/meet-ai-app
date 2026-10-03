@@ -167,7 +167,7 @@ jobs:
           changed=()
           while IFS= read -r file; do
             changed+=("$file")
-          done < <(git diff --name-only --diff-filter=ACMR "origin/$BASE_REF...HEAD")
+          done < <(git diff --name-only --diff-filter=ACMRD "origin/$BASE_REF...HEAD")
           if [ "${#changed[@]}" -eq 0 ]; then
             echo "No changed files."
             exit 0

@@ -35,8 +35,10 @@ The headless parts are covered by:
   Join and record send the event id, a test reminder never records or joins.
 
 Not run here: `cargo check --target x86_64-pc-windows-msvc -p meet-ai` (ring's
-C build needs a Windows toolchain; `just check-windows` skips src-tauri). The
-Windows CI job checks it.
+C build needs a Windows toolchain; `just check-windows` skips src-tauri for
+the same reason). No Windows CI job exists yet (TUR-36, #83, adds it), so
+until #83 merges this is a manual check: on a Windows machine with MSVC, run
+`cargo check -p meet-ai` and expect it to pass.
 
 ## Known limit: "macOS is blocking meet-ai's notifications"
 

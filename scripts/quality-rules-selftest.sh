@@ -321,25 +321,27 @@ mkdir -p crates/x/src/platform crates/agent/src src-tauri/src
 printf '#[cfg(unix)]\nfn a() {}\n' >crates/x/src/old.rs
 printf '#[cfg(windows)]\nfn a() {}\n' >crates/x/src/platform/windows.rs
 printf '#[cfg(not(any(target_os = "android", target_os = "ios")))]\nmod tray;\n' >src-tauri/src/lib.rs
-# A known-debt line (R10_DEBT) at its exact place, and a new cfg below it.
+# A known-debt line (R10_DEBT, keyed on its text, not its line number: here
+# at line 3, not 504 as on main), then a new cfg with the same text and one
+# with other text below it.
 {
-  i=1
-  while [ "$i" -lt 504 ]; do
-    echo "// line $i"
-    i=$((i + 1))
-  done
+  echo '// line 1'
+  echo '// line 2'
   echo '    #[cfg(unix)]'
   echo '    mod unix_tests {}'
   echo '    #[cfg(unix)]'
   echo '    mod more_unix_tests {}'
+  echo '#[cfg(windows)]'
+  echo 'mod windows_tests {}'
 } >crates/agent/src/process.rs
 git add -A
 git commit -q -m "tree"
 expect10tree "R10 tree: a cfg already in the base fails" crates/x/src/old.rs 1 ERROR
 expect10tree "R10 tree: the platform module passes" crates/x/src/platform/windows.rs 1 none
 expect10tree "R10 tree: the desktop-vs-mobile gate passes" src-tauri/src/lib.rs 1 none
-expect10tree "R10 tree: a known-debt line warns" crates/agent/src/process.rs 504 WARN
-expect10tree "R10 tree: a new cfg in a known-debt file fails" crates/agent/src/process.rs 506 ERROR
+expect10tree "R10 tree: a known-debt line warns, wherever it sits" crates/agent/src/process.rs 3 WARN
+expect10tree "R10 tree: a new cfg with the debt line's text fails" crates/agent/src/process.rs 5 ERROR
+expect10tree "R10 tree: a new cfg with other text in a debt file fails" crates/agent/src/process.rs 7 ERROR
 ran=$((ran + 1))
 if scripts/quality-rules.sh crates/agent/src/process.rs >/dev/null 2>&1; then
   echo "ok   R10: the known-debt lines pass a normal (added-lines) run"

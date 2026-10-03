@@ -43,17 +43,18 @@ pub(crate) mod test_lock {
         let mut read_only = writable.clone();
         read_only.set_readonly(true);
         std::fs::set_permissions(audio, read_only).unwrap();
-        let mut locked: Vec<PathBuf> = std::fs::read_dir(audio)
+        // Held first: its drop restores the mode even if a line below panics.
+        let mut held = Held {
+            audio: audio.to_path_buf(),
+            writable,
+            locked: Vec::new(),
+        };
+        held.locked = std::fs::read_dir(audio)
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .filter(|path| path.extension().is_some_and(|ext| ext == "wav"))
             .collect();
-        locked.sort();
-        let held = Held {
-            audio: audio.to_path_buf(),
-            writable,
-            locked,
-        };
+        held.locked.sort();
         let probe = audio.join(".probe");
         if std::fs::write(&probe, b"").is_ok() {
             let _ = std::fs::remove_file(&probe);

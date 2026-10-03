@@ -408,7 +408,9 @@ rule_r7() {
   fi
   local out="$tmp/bindings.ts"
   if ! BINDINGS_OUT="$out" cargo test -p meet-ai --lib export_bindings >"$tmp/bindings.log" 2>&1; then
-    if grep -q 'meet-stt' "$tmp/bindings.log"; then
+    # Only tauri-build's own complaint, so a real compile error in a file
+    # that happens to mention the sidecar is not hidden.
+    if grep -Eq "resource path .*meet-stt[^ ]* doesn't exist" "$tmp/bindings.log"; then
       report warn R7 src/ipc/bindings.ts 1 "$sidecar_msg"
       return
     fi
@@ -595,7 +597,7 @@ rule_r9() {
           continue
           ;;
         *)
-          report error R9 "$f" "$n" "code adapted from $repo is $spdx; $problem is not one we may copy from (only ${R9_ALLOWED// /, }, and 'X OR Y' when each is one; CONTRIBUTING.md, \"Code from other projects\")"
+          report error R9 "$f" "$n" "code adapted from $repo is $spdx; $problem is not one we may copy from (only ${R9_ALLOWED// /, }, 'X OR Y' when at least one side is, and then the notice names the one we took; 'X AND Y' when every part is; CONTRIBUTING.md, \"Code from other projects\")"
           continue
           ;;
       esac
@@ -732,14 +734,19 @@ R10_FIND_AWK='
     }
   }'
 
-# Known R10 debt, as path:line. Only these exact lines are let through, so a
-# new cfg in the same file still fails. Matters for --r10-tree only: on added
-# lines, an untouched old cfg never counts. If you move one of these lines,
-# move its entry; better, make the test portable and drop it.
-#   crates/agent/src/process.rs:504     TUR-54 removes this (unix-only /bin/sh fake harness tests)
-#   crates/agent/src/detect.rs:401      TUR-54 removes this (same)
-#   crates/agent/src/mcp/tests.rs:190   TUR-54 removes this (same)
-R10_DEBT="crates/agent/src/process.rs:504 crates/agent/src/detect.rs:401 crates/agent/src/mcp/tests.rs:190"
+# Known R10 debt, one `path|line` entry per line, where line is the cfg's
+# first line with the indent trimmed. Keyed on the text, not the line number,
+# so an edit above it does not turn the tree run red. Each entry lets through
+# one hit, the first one in the file with that text, so a new cfg in the same
+# file still fails (even one spelled the same). Matters for --r10-tree only: on
+# added lines, an untouched old cfg never counts. Better than editing an entry:
+# make the test portable and drop it.
+#   crates/agent/src/process.rs     TUR-54 removes this (unix-only /bin/sh fake harness tests)
+#   crates/agent/src/detect.rs      TUR-54 removes this (same)
+#   crates/agent/src/mcp/tests.rs   TUR-54 removes this (same)
+R10_DEBT='crates/agent/src/process.rs|#[cfg(unix)]
+crates/agent/src/detect.rs|#[cfg(unix)]
+crates/agent/src/mcp/tests.rs|#[cfg(unix)]'
 
 rule_r10() {
   local f=$1 first last
@@ -756,13 +763,15 @@ rule_r10() {
   # Bytes, not characters: macOS awk gives up on some UTF-8 text otherwise.
   # --r10-tree: every line counts (the whole file is "added").
   [ "$R10_TREE" = 1 ] && awk '{ print NR }' "$f" >"$tmp/r10nums"
+  # Debt entries used so far in this file, one per line (see R10_DEBT).
+  local seen="" key
   LC_ALL=C awk "$R10_CLEAN_AWK" "$f" | LC_ALL=C awk "$R10_FIND_AWK" | while read -r first last; do
-    case " $R10_DEBT " in
-      *" $f:$first "*)
-        [ "$R10_TREE" = 1 ] && report warn R10 "$f" "$first" "known OS cfg outside a platform module (R10_DEBT in scripts/quality-rules.sh); TUR-54 removes it"
-        continue
-        ;;
-    esac
+    key="$f|$(sed -n "${first}p" "$f" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    if [ "$(printf '%s\n' "$seen" | grep -cFx -- "$key")" -lt "$(printf '%s\n' "$R10_DEBT" | grep -cFx -- "$key")" ]; then
+      seen="$seen$key"$'\n'
+      [ "$R10_TREE" = 1 ] && report warn R10 "$f" "$first" "known OS cfg outside a platform module (R10_DEBT in scripts/quality-rules.sh); TUR-54 removes it"
+      continue
+    fi
     # Only a cfg with at least one added line counts.
     if awk -v a="$first" -v b="$last" '$1 >= a && $1 <= b { found = 1; exit } END { exit !found }' "$tmp/r10nums"; then
       report error R10 "$f" "$first" "OS-specific cfg outside a platform module; put the OS code in the crate's src/platform/ (macos.rs / windows.rs / linux.rs) and call platform::... from here (SPEC §8.2)"
