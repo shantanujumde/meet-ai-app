@@ -40,9 +40,7 @@
 //! arrive apart or out of order, and the interrupted-recording notification
 //! is built from that status too.
 
-mod auto_title;
-// TUR-77: the menu bar's Record names the meeting from the event clicked.
-pub use auto_title::PinnedEvent;
+pub(crate) mod auto_title;
 mod phase;
 mod ticker;
 

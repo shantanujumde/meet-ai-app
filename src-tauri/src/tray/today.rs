@@ -28,7 +28,7 @@ use super::menu_model::{
 };
 use crate::config::{self, Provider};
 use crate::lifecycle::{self, NavigateTo};
-use crate::recording::PinnedEvent;
+use crate::recording::auto_title::PinnedEvent;
 
 /// "Calendar not connected".
 const CONNECT_ITEM: &str = "tray-today-connect";
