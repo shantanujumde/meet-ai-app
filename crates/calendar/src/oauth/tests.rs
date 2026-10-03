@@ -650,3 +650,33 @@ fn has_sign_in_reads_the_keystore_and_never_the_network() {
     signed_in_google(&auth, &http, 3600);
     assert!(auth.has_sign_in(ProviderId::Google));
 }
+
+#[test]
+fn renewing_a_rejected_token_refreshes_once_even_when_two_reads_saw_the_401() {
+    let (auth, _, http) = setup();
+    signed_in_google(&auth, &http, 3600);
+    let mut reply = token_reply(None, 3600, serde_json::json!({}));
+    reply["access_token"] = "access-2".into();
+    http.reply(200, reply);
+    assert_eq!(
+        auth.renew_access_token(ProviderId::Google, "access-1")
+            .unwrap(),
+        "access-2"
+    );
+    // A second read that also got a 401 with access-1 gets the new token.
+    assert_eq!(
+        auth.renew_access_token(ProviderId::Google, "access-1")
+            .unwrap(),
+        "access-2"
+    );
+    assert_eq!(http.bodies().len(), 2, "one exchange, one refresh");
+}
+
+#[test]
+fn has_sign_in_is_false_when_the_keystore_cannot_be_read() {
+    let store = Arc::new(MemoryStore::unavailable());
+    let http = Arc::new(FakeHttp::default());
+    let auth = auth_with(&store, &http);
+    assert!(!auth.has_sign_in(ProviderId::Google));
+    assert!(http.bodies().is_empty());
+}

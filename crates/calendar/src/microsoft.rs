@@ -21,8 +21,6 @@
 //! - Network: [`HttpClient`], the same one the sign-in uses, so this crate
 //!   has no HTTP stack and the tests answer for Graph from fixture JSON.
 
-use std::collections::HashMap;
-
 use chrono::{DateTime, LocalResult, NaiveDateTime, Offset as _, SecondsFormat, TimeZone, Utc};
 use oauth2::http::{Method, Request, StatusCode, header};
 use oauth2::url::Url;
@@ -77,8 +75,7 @@ impl TokenSource for CalendarAuth {
     }
 
     fn renew_access_token(&self, rejected: &str) -> Result<String, Error> {
-        self.reject_access_token(ProviderId::Microsoft, rejected);
-        CalendarAuth::access_token(self, ProviderId::Microsoft)
+        CalendarAuth::renew_access_token(self, ProviderId::Microsoft, rejected)
     }
 }
 
@@ -143,7 +140,7 @@ impl CalendarProvider for MicrosoftProvider {
             found.extend(page.value);
             match page.odata_next_link {
                 Some(next) => url = next_page_url(&next)?,
-                None => return Ok(convert(found, from, to)),
+                None => return Ok(to_events(found.into_iter().filter_map(raw_event), from, to)),
             }
         }
         Err(unreachable(format!(
@@ -203,31 +200,10 @@ fn read_page(response: &HttpResponse) -> Result<types::ListEventsResponse, Error
         .map_err(|error| unreachable(format!("unreadable reply from Graph: {error}")))
 }
 
-/// Graph events to [`Event`]s: the skip rules, then [`to_events`] for the
-/// range, all-day and sorting, then each event's iCalUID back on it.
-fn convert(found: Vec<types::Event>, from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<Event> {
-    let mut ical_uids = HashMap::new();
-    let raw: Vec<RawEvent> = found
-        .into_iter()
-        .filter_map(raw_event)
-        .map(|(raw, ical_uid)| {
-            if let Some(uid) = ical_uid {
-                ical_uids.insert(raw.id.clone(), uid);
-            }
-            raw
-        })
-        .collect();
-    let mut events = to_events(raw, from, to);
-    for event in &mut events {
-        event.ical_uid = ical_uids.remove(&event.id);
-    }
-    events
-}
-
-/// One Graph event as plain data, and its iCalUID. `None` for an event
+/// One Graph event as plain data. `None` for an event
 /// meet-ai never shows (cancelled, declined, all-day) or one whose times
 /// cannot be read.
-fn raw_event(event: types::Event) -> Option<(RawEvent, Option<String>)> {
+fn raw_event(event: types::Event) -> Option<RawEvent> {
     let declined = event
         .response_status
         .as_ref()
@@ -272,8 +248,9 @@ fn raw_event(event: types::Event) -> Option<(RawEvent, Option<String>)> {
         end,
         all_day,
         attendees,
+        ical_uid: event.ical_uid.filter(|uid| !uid.trim().is_empty()),
     };
-    Some((raw, event.ical_uid.filter(|uid| !uid.trim().is_empty())))
+    Some(raw)
 }
 
 /// A Graph `dateTimeTimeZone` as a UTC instant.
@@ -316,6 +293,8 @@ fn unreachable(detail: impl Into<String>) -> Error {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     fn at(rfc3339: &str) -> DateTime<Utc> {
