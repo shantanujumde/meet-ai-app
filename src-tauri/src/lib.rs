@@ -11,6 +11,7 @@ use tauri_plugin_log::log;
 mod agent_run;
 mod agent_setup;
 mod bindings;
+mod calendar;
 mod commands;
 mod config;
 mod copy_prompt;
@@ -95,6 +96,7 @@ pub fn run() {
         .manage(agent_run::AgentRuns::default())
         .manage(sync::SyncRuns::default())
         .manage(detection::Detection::default())
+        .manage(calendar::CalendarState::default())
         .setup(|_app| {
             // TUR-97: before the record shortcut exists, so nothing can be
             // mid-recording while this rewrites a header. Fast — two 44-byte
