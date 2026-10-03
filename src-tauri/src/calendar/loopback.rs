@@ -14,16 +14,18 @@
 //! [`MAX_HEAD`] and [`IO_TIMEOUT`]. Each connection is served on its own
 //! thread, so a browser's idle pre-opened connection cannot hold up the real
 //! one. Anything that is not a `GET` of [`oauth::CALLBACK_PATH`] (a favicon,
-//! a stray client) gets a 404 and the listener keeps waiting. The first
-//! callback ends it. The `state` check that decides whether that callback is
-//! ours is `CalendarAuth::finish_sign_in`'s, done before anything else in the
-//! URL is read.
+//! a stray client) gets a 404, and a callback without this sign-in's `state`
+//! ([`Loopback::expect_state`], compared in constant time by
+//! [`oauth::carries_state`] before anything else in the URL is read) gets a
+//! 400. Neither ends the listener: a stray tab or another local process
+//! cannot end the sign-in. The first callback with the right `state` ends it,
+//! and so do the timeout and dropping the [`Loopback`].
 
 use std::io::{self, Write as _};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use ::calendar::oauth;
@@ -41,8 +43,10 @@ pub struct Loopback {
     /// Always 127.0.0.1, on a port the OS picked.
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
-    /// The callback URL, `http://127.0.0.1:<port>/callback?…`, each time the
-    /// browser (or anything else) asks for the callback path.
+    /// The `state` a callback must carry. Unset, no callback is ours.
+    expected_state: Arc<OnceLock<String>>,
+    /// The callback URL, `http://127.0.0.1:<port>/callback?…`, once: the
+    /// first callback that carries the expected `state`.
     callbacks: mpsc::Receiver<String>,
 }
 
@@ -52,8 +56,10 @@ pub fn listen(page: &'static str) -> io::Result<Loopback> {
     let addr = listener.local_addr()?;
     let port = addr.port();
     let stop = Arc::new(AtomicBool::new(false));
+    let expected_state = Arc::new(OnceLock::new());
     let (sender, callbacks) = mpsc::channel();
     let stopped = Arc::clone(&stop);
+    let expected = Arc::clone(&expected_state);
     std::thread::Builder::new()
         .name("meet-ai-sign-in-listener".to_string())
         .spawn(move || {
@@ -64,11 +70,16 @@ pub fn listen(page: &'static str) -> io::Result<Loopback> {
                 let Ok(connection) = connection else {
                     continue;
                 };
-                let sender = sender.clone();
-                let ended = Arc::clone(&stopped);
+                let listening = Listening {
+                    port,
+                    page,
+                    expected_state: Arc::clone(&expected),
+                    callbacks: sender.clone(),
+                    stop: Arc::clone(&stopped),
+                };
                 if let Err(error) = std::thread::Builder::new()
                     .name("meet-ai-sign-in-request".to_string())
-                    .spawn(move || serve(connection, port, page, &sender, &ended))
+                    .spawn(move || listening.serve(connection))
                 {
                     tracing::warn!(%error, "could not answer a sign-in request");
                 }
@@ -77,6 +88,7 @@ pub fn listen(page: &'static str) -> io::Result<Loopback> {
     Ok(Loopback {
         addr,
         stop,
+        expected_state,
         callbacks,
     })
 }
@@ -86,7 +98,14 @@ impl Loopback {
         self.addr.port()
     }
 
-    /// The first callback within `timeout`.
+    /// Only a callback carrying `state` is ours. Set once, before the browser
+    /// is opened; until then every callback is refused. A second call is
+    /// ignored.
+    pub fn expect_state(&self, state: &str) {
+        let _ = self.expected_state.set(state.to_owned());
+    }
+
+    /// The first callback with the expected `state`, within `timeout`.
     pub fn next_callback(&self, timeout: Duration) -> Result<String, mpsc::RecvTimeoutError> {
         self.callbacks.recv_timeout(timeout)
     }
@@ -116,45 +135,70 @@ enum Refused {
     Malformed,
     /// A head over [`MAX_HEAD`].
     TooLarge,
-    /// A request for some other path, or not a `GET`.
+    /// A request for some other path, or not a `GET`, or a callback after
+    /// the listener ended.
     NotFound,
+    /// A callback without this sign-in's `state`.
+    WrongState,
 }
 
-fn serve(
-    mut connection: TcpStream,
+/// What one connection's thread needs from its listener.
+struct Listening {
     port: u16,
-    page: &str,
-    callbacks: &mpsc::Sender<String>,
-    stop: &AtomicBool,
-) {
-    let _ = connection.set_read_timeout(Some(IO_TIMEOUT));
-    let _ = connection.set_write_timeout(Some(IO_TIMEOUT));
-    let target = read_head(&mut connection)
-        .and_then(|head| callback_target(&head))
-        // Only the first callback counts; the listener has ended after it.
-        .and_then(|target| {
-            if end(stop, port) {
-                Ok(target)
-            } else {
-                Err(Refused::NotFound)
+    page: &'static str,
+    expected_state: Arc<OnceLock<String>>,
+    callbacks: mpsc::Sender<String>,
+    stop: Arc<AtomicBool>,
+}
+
+impl Listening {
+    fn serve(self, mut connection: TcpStream) {
+        let _ = connection.set_read_timeout(Some(IO_TIMEOUT));
+        let _ = connection.set_write_timeout(Some(IO_TIMEOUT));
+        let port = self.port;
+        let url = read_head(&mut connection)
+            .and_then(|head| callback_target(&head))
+            .map(|target| format!("http://127.0.0.1:{port}{target}"))
+            // `state` first: a callback that is not ours leaves the listener
+            // waiting for the one that is.
+            .and_then(|url| {
+                let ours = self
+                    .expected_state
+                    .get()
+                    .is_some_and(|state| oauth::carries_state(&url, state));
+                if ours {
+                    Ok(url)
+                } else {
+                    Err(Refused::WrongState)
+                }
+            })
+            // Only the first one counts; the listener has ended after it.
+            .and_then(|url| {
+                if end(&self.stop, port) {
+                    Ok(url)
+                } else {
+                    Err(Refused::NotFound)
+                }
+            });
+        let reply = match &url {
+            Ok(_) => response("200 OK", self.page),
+            Err(Refused::NotFound) => response("404 Not Found", ""),
+            Err(Refused::TooLarge) => response("431 Request Header Fields Too Large", ""),
+            Err(Refused::Malformed | Refused::WrongState) => response("400 Bad Request", ""),
+        };
+        // The browser may already be gone; the callback still counts.
+        let _ = connection
+            .write_all(reply.as_bytes())
+            .and_then(|()| connection.flush());
+        match url {
+            Ok(url) => {
+                // The receiver is gone only when the sign-in stopped waiting.
+                let _ = self.callbacks.send(url);
             }
-        });
-    let reply = match &target {
-        Ok(_) => response("200 OK", page),
-        Err(Refused::NotFound) => response("404 Not Found", ""),
-        Err(Refused::TooLarge) => response("431 Request Header Fields Too Large", ""),
-        Err(Refused::Malformed) => response("400 Bad Request", ""),
-    };
-    // The browser may already be gone; the callback still counts.
-    let _ = connection
-        .write_all(reply.as_bytes())
-        .and_then(|()| connection.flush());
-    match target {
-        Ok(target) => {
-            // The receiver is gone only when the sign-in stopped waiting.
-            let _ = callbacks.send(format!("http://127.0.0.1:{port}{target}"));
+            Err(refused) => {
+                tracing::debug!(?refused, "ignored a request to the sign-in listener");
+            }
         }
-        Err(refused) => tracing::debug!(?refused, "ignored a request to the sign-in listener"),
     }
 }
 

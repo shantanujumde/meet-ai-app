@@ -29,9 +29,7 @@ pub fn check_callback(
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.into_owned())
     };
-    let state_matches = param("state")
-        .is_some_and(|state| constant_time_eq(state.as_bytes(), expected_state.as_bytes()));
-    if !state_matches {
+    if !state_in(&url, expected_state) {
         return Err(failed(
             "the reply did not carry this sign-in's state, so it was ignored and nothing was saved",
         ));
@@ -49,6 +47,20 @@ pub fn check_callback(
     param("code")
         .filter(|code| !code.is_empty())
         .ok_or_else(|| failed("the reply had no authorization code"))
+}
+
+/// Whether `callback_url` carries `expected_state`, compared in constant
+/// time. The loopback listener asks this before it ends, so a request
+/// without our `state` (a stray tab, another local process) cannot end the
+/// sign-in.
+pub fn carries_state(callback_url: &str, expected_state: &str) -> bool {
+    Url::parse(callback_url).is_ok_and(|url| state_in(&url, expected_state))
+}
+
+fn state_in(url: &Url, expected_state: &str) -> bool {
+    url.query_pairs()
+        .find(|(key, _)| key == "state")
+        .is_some_and(|(_, state)| constant_time_eq(state.as_bytes(), expected_state.as_bytes()))
 }
 
 /// Equal bytes, compared without stopping at the first difference.

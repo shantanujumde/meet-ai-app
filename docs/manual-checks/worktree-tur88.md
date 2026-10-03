@@ -29,9 +29,11 @@ The headless parts are covered by:
 - `cargo test -p meet-ai --lib calendar::loopback calendar::signin`: a ~3 KB
   Microsoft redirect in one write, a 4.4 KB one in seven pieces, an idle
   pre-opened connection, an oversized head (431), wrong paths and methods
-  (404, listener keeps waiting), a wrong `state` (sign-in fails, nothing
-  stored), the first callback closing the port, and the port closed after a
-  timeout.
+  (404, listener keeps waiting), a wrong or missing `state` and a bare
+  `/callback` (400, no "Signed in" page, listener keeps waiting, nothing
+  stored), a wrong-state callback followed by the right one (signs in), the
+  first callback with our `state` closing the port, and the port closed after
+  a timeout.
 
 ## 1. A Mac with only a cloud calendar gets reminders (macOS)
 
@@ -79,6 +81,18 @@ have Join/Record in the menu bar, and both get a reminder. A focus block with
 no attendees stays greyed. This is the real-token check the fixture cannot
 give: whether Graph really leaves the organizer out of `attendees` (the code
 does not double-count either way).
+
+Record the people count the Today pane shows for each, not only for the one
+you organize:
+
+| 1:1 | Expected | Seen |
+|---|---|---|
+| Organized by you | 2 people | |
+| Invited by a colleague | 2 people | |
+
+The invited one counts as 2 only if Graph lists you in its `attendees`; only
+the organizer is ever added. If it shows "1 person", the `invited-one-on-one`
+fixture's assumption is wrong: note it on TUR-88.
 
 ## 5. The Microsoft account name shows (real account)
 

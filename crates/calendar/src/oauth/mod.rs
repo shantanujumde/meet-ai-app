@@ -42,7 +42,7 @@ mod callback;
 mod providers;
 mod token_store;
 
-pub use callback::{account_label, check_callback};
+pub use callback::{account_label, carries_state, check_callback};
 pub use providers::{Endpoints, ProviderId};
 #[cfg(any(test, feature = "fake"))]
 pub use token_store::MemoryStore;
@@ -173,6 +173,12 @@ impl PendingSignIn {
     /// The page to open in the browser.
     pub fn authorize_url(&self) -> &str {
         &self.authorize_url
+    }
+
+    /// The `state` the reply must carry, for the loopback listener's
+    /// [`carries_state`] check.
+    pub fn state(&self) -> &str {
+        self.state.secret()
     }
 }
 

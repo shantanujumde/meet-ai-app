@@ -50,8 +50,8 @@ type Picker = Box<dyn Fn(Prompt) -> Vec<SharedProvider> + Send + Sync>;
 /// editing `calendar.providers` needs no restart.
 #[derive(Default)]
 pub struct CalendarState {
-    /// Fixed providers instead of the configured ones (tests).
-    fixed: Option<Picker>,
+    /// Picks the providers instead of the configured ones (tests).
+    test_picker: Option<Picker>,
 }
 
 impl CalendarState {
@@ -68,12 +68,12 @@ impl CalendarState {
         pick: impl Fn(Prompt) -> Vec<SharedProvider> + Send + Sync + 'static,
     ) -> Self {
         Self {
-            fixed: Some(Box::new(pick)),
+            test_picker: Some(Box::new(pick)),
         }
     }
 
     fn providers(&self, prompt: Prompt) -> Vec<SharedProvider> {
-        match &self.fixed {
+        match &self.test_picker {
             Some(pick) => pick(prompt),
             None => configured_providers(prompt),
         }

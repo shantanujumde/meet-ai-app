@@ -187,6 +187,7 @@ pub fn sign_in_blocking(
         detail: format!("could not listen on 127.0.0.1: {error}"),
     })?;
     let pending = auth.begin_sign_in(provider, oauth::redirect_uri(listener.port()))?;
+    listener.expect_state(pending.state());
     if let Err(detail) = open(pending.authorize_url()) {
         return Err(SignInError::Failed {
             provider,
@@ -216,8 +217,9 @@ async fn on_blocking_pool<T: Send + 'static>(
 ///
 /// Errors: `calendar-not-configured` (no client id; the message names the
 /// `config.jsonc` key), `calendar-sign-in-cancelled` (said no, or no reply in
-/// 5 minutes), `calendar-sign-in-failed` (a bad reply, such as a `state`
-/// mismatch; nothing is stored), `calendar-unreachable`.
+/// 5 minutes; a callback without this sign-in's `state` is refused and does
+/// not end the wait), `calendar-sign-in-failed` (a bad reply, such as a
+/// provider error; nothing is stored), `calendar-unreachable`.
 #[tauri::command]
 #[specta::specta]
 pub async fn calendar_sign_in(
@@ -264,7 +266,7 @@ pub async fn calendar_accounts(app: AppHandle) -> Result<Vec<CalendarAccount>, U
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write as _;
+    use std::io::{Read as _, Write as _};
     use std::net::TcpStream;
     use std::sync::Arc;
 
@@ -369,8 +371,25 @@ mod tests {
         );
     }
 
+    /// Send one callback with `query` and return the reply the listener
+    /// gave.
+    fn callback_reply(authorize_url: &str, query: &str) -> String {
+        let redirect = Url::parse(&param(authorize_url, "redirect_uri")).unwrap();
+        let port = redirect.port().unwrap();
+        let path = redirect.path();
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .write_all(
+                format!("GET {path}?{query} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").as_bytes(),
+            )
+            .unwrap();
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).unwrap();
+        reply
+    }
+
     #[test]
-    fn a_local_process_with_the_wrong_state_is_rejected_and_nothing_stored() {
+    fn a_local_process_with_the_wrong_state_does_not_end_the_sign_in_and_nothing_is_stored() {
         let (auth, store) = test_auth(true);
         let error = sign_in_blocking(
             &auth,
@@ -379,12 +398,45 @@ mod tests {
                 send_to_listener(url, |_| "state=forged&code=evil".into());
                 Ok(())
             },
-            WAIT,
+            Duration::from_millis(500),
         )
         .unwrap_err();
-        assert!(matches!(error, SignInError::Failed { .. }), "{error:?}");
-        assert_eq!(UiError::from(error).kind, "calendar-sign-in-failed");
+        // Refused by the listener, which kept waiting until the timeout.
+        assert!(matches!(error, SignInError::Cancelled { .. }), "{error:?}");
         assert_eq!(store.stored(ProviderId::Google), None);
+    }
+
+    #[test]
+    fn a_wrong_state_callback_then_the_right_one_still_signs_in() {
+        let (auth, store) = test_auth(true);
+        let mut browser = None;
+        let account = sign_in_blocking(
+            &auth,
+            ProviderId::Microsoft,
+            |url| {
+                let url = url.to_owned();
+                browser = Some(std::thread::spawn(move || {
+                    let forged = callback_reply(&url, "state=forged&code=evil");
+                    assert!(forged.starts_with("HTTP/1.1 400"), "{forged}");
+                    assert!(!forged.contains(CALLBACK_PAGE), "{forged}");
+                    let stray = callback_reply(&url, "");
+                    assert!(stray.starts_with("HTTP/1.1 400"), "{stray}");
+                    let state = param(&url, "state");
+                    let ours = callback_reply(&url, &format!("state={state}&code=the-code"));
+                    assert!(ours.ends_with(CALLBACK_PAGE), "{ours}");
+                }));
+                Ok(())
+            },
+            WAIT,
+        )
+        .unwrap();
+        // The browser's own checks on each reply.
+        browser.unwrap().join().unwrap();
+        assert_eq!(account.state, AccountState::SignedIn);
+        assert_eq!(
+            store.stored(ProviderId::Microsoft).as_deref(),
+            Some("refresh")
+        );
     }
 
     #[test]

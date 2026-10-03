@@ -241,6 +241,38 @@ fn each_sign_in_gets_its_own_state() {
 }
 
 #[test]
+fn carries_state_is_true_only_for_this_sign_ins_state() {
+    let (auth, _, _) = setup();
+    let pending = auth
+        .begin_sign_in(ProviderId::Google, redirect_uri(4711))
+        .unwrap();
+    let state = pending.state();
+    assert_eq!(state, pending.state.secret());
+    let url = |query: &str| format!("http://127.0.0.1:4711/callback{query}");
+    assert!(carries_state(
+        &url(&format!("?state={state}&code=c")),
+        state
+    ));
+    assert!(carries_state(
+        &url(&format!("?code=c&state={state}")),
+        state
+    ));
+    for bad in [
+        url(""),
+        url("?"),
+        url("?code=c"),
+        url("?state=&code=c"),
+        url("?state=someone-else&code=c"),
+        url(&format!("?state={state}x")),
+        url(&format!("?state={}", &state[..state.len() - 1])),
+        url(&format!("?code={state}")),
+        "not a url".to_owned(),
+    ] {
+        assert!(!carries_state(&bad, state), "{bad}");
+    }
+}
+
+#[test]
 fn a_missing_client_id_names_the_config_key() {
     let auth = CalendarAuth::new(
         Box::new(|provider| match provider {
