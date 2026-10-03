@@ -26,7 +26,7 @@
 
 use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -46,7 +46,8 @@ use objc2_foundation::{NSArray, NSNumber, NSString, NSUUID};
 use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
-use crate::resample::{Resampler, downmix_to_mono};
+use super::tap_pipeline::TapPipeline;
+use super::tap_rate::{RateSources, RateWatch};
 use crate::tee::Tee;
 use crate::wav_writer::WavWriter;
 use crate::{AudioSource, Channel, Error};
@@ -62,10 +63,6 @@ const RING_CAPACITY_SAMPLES: usize = 48_000 * 2 * 4;
 /// not to become the dominant term against the 200 ms drift gate, long
 /// enough not to spin a core.
 const IDLE_POLL: Duration = Duration::from_millis(2);
-
-fn f32_to_i16(sample: f32) -> i16 {
-    (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
-}
 
 /// De-interleaves a tap's planar `AudioBufferList` — one buffer per channel —
 /// into a single interleaved buffer, matching the Swift probe's
@@ -246,6 +243,8 @@ struct Built {
     /// its own reference on `AudioDeviceCreateIOProcIDWithBlock` — belt and
     /// braces against relying on an internal-only guarantee.
     _io_block: RcBlock<IoBlockFn>,
+    /// Unregistered before the aggregate device is destroyed.
+    rate_watch: RateWatch,
     worker: JoinHandle<()>,
     running: Arc<AtomicBool>,
     shared: Arc<Mutex<Shared>>,
@@ -294,62 +293,48 @@ impl SystemSource {
         }
     }
 
+    /// Pops the IO proc's raw samples and runs them through [`TapPipeline`],
+    /// switching resampler at a chunk boundary whenever [`RateWatch`] reports
+    /// a new input rate (TUR-80: Bluetooth A2DP -> HFP mid-recording).
     fn worker_loop(
         mut consumer: HeapCons<f32>,
-        channels: usize,
-        device_rate: u32,
+        mut pipeline: TapPipeline,
+        input_rate: Arc<AtomicU32>,
         shared: Arc<Mutex<Shared>>,
         last_cb_host_ns: Arc<AtomicU64>,
         running: Arc<AtomicBool>,
         tee: Option<Tee>,
     ) {
-        let mut resampler = Resampler::new(device_rate);
-        let chunk_raw_len = resampler.input_chunk_frames() * channels.max(1);
-
-        // Every buffer below is sized once, here, and only cleared and refilled
-        // inside the loop: `pending` holds less than one chunk before each
-        // refill of at most `scratch.len()` samples, so it never regrows.
+        let mut sink = |frames: &[i16]| {
+            let host_ns = last_cb_host_ns.load(Ordering::Relaxed);
+            let mut guard = shared.lock().expect("system writer mutex poisoned");
+            if guard.writer.append(frames).is_err() {
+                tracing::warn!("system wav writer append failed; dropping this chunk");
+                return;
+            }
+            guard.frames += frames.len() as u64;
+            guard.last_host_ns = host_ns;
+            // Same as the mic: the writer lock is released first.
+            drop(guard);
+            if let Some(tee) = &tee {
+                tee.offer(frames);
+            }
+        };
+        // Sized once; `pop_slice` only refills it.
         let mut scratch = vec![0.0f32; 4096];
-        let mut pending: Vec<f32> = Vec::with_capacity(chunk_raw_len + scratch.len());
-        let mut mono: Vec<f32> = Vec::with_capacity(resampler.input_chunk_frames());
-        let mut resampled: Vec<f32> = Vec::with_capacity(resampler.output_frames_max());
-        let mut i16_buf: Vec<i16> = Vec::with_capacity(resampler.output_frames_max());
-
         loop {
             let popped = consumer.pop_slice(&mut scratch);
-            if popped > 0 {
-                pending.extend_from_slice(&scratch[..popped]);
-            } else if !running.load(Ordering::Acquire) {
+            if popped == 0 && !running.load(Ordering::Acquire) {
                 break;
-            } else {
+            } else if popped == 0 {
                 std::thread::sleep(IDLE_POLL);
                 continue;
             }
-
-            while pending.len() >= chunk_raw_len {
-                downmix_to_mono(&pending[..chunk_raw_len], channels.max(1), &mut mono);
-                pending.drain(..chunk_raw_len);
-                resampler.process_into(&mono, &mut resampled);
-                if resampled.is_empty() {
-                    continue;
-                }
-                i16_buf.clear();
-                i16_buf.extend(resampled.iter().copied().map(f32_to_i16));
-                let host_ns = last_cb_host_ns.load(Ordering::Relaxed);
-
-                let mut guard = shared.lock().expect("system writer mutex poisoned");
-                if guard.writer.append(&i16_buf).is_err() {
-                    tracing::warn!("system wav writer append failed; dropping this chunk");
-                    continue;
-                }
-                guard.frames += i16_buf.len() as u64;
-                guard.last_host_ns = host_ns;
-                // Same as the mic: the writer lock is released first.
-                drop(guard);
-                if let Some(tee) = &tee {
-                    tee.offer(&i16_buf);
-                }
+            let rate = input_rate.load(Ordering::Acquire);
+            if rate != pipeline.rate() {
+                pipeline.set_rate(rate, &mut sink);
             }
+            pipeline.push(&scratch[..popped], &mut sink);
         }
     }
 
@@ -409,7 +394,7 @@ impl SystemSource {
             )));
         }
         let channels = format.mChannelsPerFrame as usize;
-        let device_rate = format.mSampleRate as u32;
+        let tap_format_rate = format.mSampleRate.round() as u32;
 
         // 3. Private aggregate device carrying the tap.
         let agg_uid = format!("meet-ai-agg-{uuid_string}");
@@ -462,6 +447,15 @@ impl SystemSource {
                 "AudioHardwareCreateAggregateDevice failed: OSStatus {status}"
             )));
         }
+
+        // The IO proc runs at the aggregate's rate, not the tap format's
+        // (TUR-80: 16 kHz on a Bluetooth headset in a call).
+        let rate_sources = RateSources {
+            tap_format_rate,
+            aggregate_id,
+            output_device_id: out_dev,
+        };
+        let input_rate = rate_sources.read_and_log("start");
 
         // 4. WAV + ring buffer, then the IO proc.
         //
@@ -571,16 +565,19 @@ impl SystemSource {
             )));
         }
 
+        let rate_watch = RateWatch::install(rate_sources, input_rate);
+        let pipeline = TapPipeline::new(channels, input_rate);
         let worker = std::thread::Builder::new()
             .name("meet-rec-system-worker".to_string())
             .spawn({
                 let shared = Arc::clone(&shared);
                 let running = Arc::clone(&running);
+                let rate = rate_watch.current();
                 move || {
                     Self::worker_loop(
                         consumer,
-                        channels,
-                        device_rate,
+                        pipeline,
+                        rate,
                         shared,
                         last_cb_host_ns,
                         running,
@@ -595,6 +592,7 @@ impl SystemSource {
             aggregate_id,
             io_proc_id: Some(io_proc_id_value),
             _io_block: io_block,
+            rate_watch,
             worker,
             running,
             shared,
@@ -633,6 +631,7 @@ impl AudioSource for SystemSource {
             return Ok(());
         };
         built.running.store(false, Ordering::Release);
+        drop(built.rate_watch);
         unsafe { ca::AudioDeviceStop(built.aggregate_id, built.io_proc_id) };
         unsafe { ca::AudioDeviceDestroyIOProcID(built.aggregate_id, built.io_proc_id) };
         unsafe { AudioHardwareDestroyAggregateDevice(built.aggregate_id) };
