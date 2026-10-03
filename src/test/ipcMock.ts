@@ -267,6 +267,7 @@ export function mockClient(actual: typeof Client): typeof Client {
     onTranscriptStatus: subscriber(actual.TRANSCRIPT_STATUS_EVENT),
     onMeetingsChanged: subscriber(actual.MEETINGS_CHANGED_EVENT),
     onNotesRunStatus: subscriber(actual.AGENT_RUN_STATUS_EVENT),
+    onDetectionPrompt: subscriber(actual.DETECTION_PROMPT_EVENT),
   };
 }
 
