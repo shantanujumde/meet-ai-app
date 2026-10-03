@@ -124,6 +124,7 @@ export const ipc = {
     root,
   })),
   revealMeeting: vi.fn<typeof Client.revealMeeting>(async () => {}),
+  openLogsFolder: vi.fn<typeof Client.openLogsFolder>(async () => {}),
   wrapUpPrompt: vi.fn<typeof Client.wrapUpPrompt>(async (id) => `Wrap up ${id}`),
   copyPromptFallback: vi.fn<typeof Client.copyPromptFallback>(async () => false),
 

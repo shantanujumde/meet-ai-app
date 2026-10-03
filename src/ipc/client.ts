@@ -261,6 +261,14 @@ export async function revealMeeting(id: string): Promise<void> {
 }
 
 /**
+ * Open the folder with `meet-ai.log` and any crash files (TUR-46), so the user
+ * can attach them to a bug report. Nothing is sent anywhere by the app.
+ */
+export async function openLogsFolder(): Promise<void> {
+  await call(() => commands.openLogsFolder());
+}
+
+/**
  * The wrap-up prompt for one meeting, in its clipboard form (A11's fallback):
  * the agent it is pasted into writes `meeting.md` and the tickets itself, and
  * the folder watcher picks them up.
