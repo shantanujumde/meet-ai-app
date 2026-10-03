@@ -101,6 +101,8 @@ pub fn start(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FIRST_RUN_DELAY).await;
         let mut every = tokio::time::interval(RUN_EVERY);
+        // After a long sleep, one catch-up pass, not a burst of them.
+        every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             // The first tick is immediate: that is the launch pass.
             every.tick().await;
