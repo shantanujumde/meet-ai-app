@@ -38,17 +38,17 @@
     },
     "audio": {
       "type": "object",
-      "description": "What happens to recorded audio. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
+      "description": "What happens to recorded audio.",
       "properties": {
         "retention_days": {
           "type": "integer",
           "minimum": -1,
-          "description": "Days to keep audio files after a meeting. 0 = delete immediately, -1 = keep forever.",
+          "description": "Days to keep a meeting's audio (audio/*.wav) after it ends; the transcript, notes and tasks are always kept. 0 = delete the audio as soon as the transcript is done, -1 = keep it forever. Checked on launch and once a day.",
           "default": 7
         },
         "warn_no_headphones": {
           "type": "boolean",
-          "description": "Warn when recording without headphones, since speakers can echo into the mic.",
+          "description": "Warn when recording without headphones, since speakers can echo into the mic. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
           "default": true
         }
       }
