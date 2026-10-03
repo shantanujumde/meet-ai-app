@@ -37,7 +37,7 @@ import { toUiError, type UiError } from "@/ipc/types";
 import { cn } from "@/lib/cn";
 import { NO_MEETINGS_TODAY } from "@/lib/constants";
 import { briefPath } from "@/lib/routes";
-import { SIGN_IN_TO_SEE_TODAY } from "./calendar/copy";
+import { EMPTY_DAY, SIGN_IN_TO_SEE_TODAY } from "./calendar/copy";
 import { SignInButtons } from "./calendar/SignInButtons";
 import { openSettings } from "./PrivacyButtons";
 import { Button, ButtonRow, cardVariants, RowLabel, RowValue, rowVariants } from "./primitives";
@@ -147,7 +147,7 @@ function TodayBody({ state, onRetry }: { state: State; onRetry: () => void }) {
       );
     case "ready":
       if (state.today.events.length === 0) {
-        return <p className="state__body">No meetings on your calendar today.</p>;
+        return <p className="state__body">{EMPTY_DAY}</p>;
       }
       return (
         <ul className={cardVariants({ flush: true })} aria-label="Today's meetings">

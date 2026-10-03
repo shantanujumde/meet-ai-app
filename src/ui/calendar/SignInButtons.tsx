@@ -5,17 +5,11 @@
  * meet-ai reads. Settings has its own per-account rows instead.
  */
 
-import { useState } from "react";
-import {
-  type CalendarAccount,
-  calendarConnect,
-  SIGN_IN_PROVIDERS,
-  type SignInProvider,
-} from "@/ipc/client";
-import { toUiError, type UiError } from "@/ipc/types";
+import { type CalendarAccount, SIGN_IN_PROVIDERS } from "@/ipc/client";
 import { Button, ButtonRow } from "../primitives";
 import { InlineError } from "../states";
-import { signInError, signInLabel } from "./copy";
+import { signInLabel } from "./copy";
+import { useCalendarSignIn } from "./useCalendarSignIn";
 
 export const WAITING_FOR_BROWSER = "Waiting for the browser…";
 
@@ -25,27 +19,18 @@ export function SignInButtons({
   /** The sign-in finished, and the calendar is now read. */
   onConnected: (account: CalendarAccount) => void;
 }) {
-  const [busy, setBusy] = useState<SignInProvider | null>(null);
-  const [error, setError] = useState<UiError | null>(null);
-
-  async function connect(provider: SignInProvider) {
-    setBusy(provider);
-    setError(null);
-    try {
-      onConnected(await calendarConnect(provider));
-    } catch (thrown) {
-      setError(signInError(provider, toUiError(thrown)));
-    } finally {
-      setBusy(null);
-    }
-  }
+  const { connecting, error, connect } = useCalendarSignIn(onConnected);
 
   return (
     <>
       <ButtonRow>
         {SIGN_IN_PROVIDERS.map((provider) => (
-          <Button key={provider} disabled={busy !== null} onClick={() => void connect(provider)}>
-            {busy === provider ? WAITING_FOR_BROWSER : signInLabel(provider)}
+          <Button
+            key={provider}
+            disabled={connecting !== null}
+            onClick={() => void connect(provider)}
+          >
+            {connecting === provider ? WAITING_FOR_BROWSER : signInLabel(provider)}
           </Button>
         ))}
       </ButtonRow>

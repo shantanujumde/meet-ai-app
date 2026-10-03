@@ -11,6 +11,9 @@ export const PROVIDER_NAME: Record<SignInProvider, string> = {
   microsoft: "Microsoft",
 };
 
+/** The Today pane, when the calendars were read and hold nothing today. */
+export const EMPTY_DAY = "No meetings on your calendar today.";
+
 /** The Today pane and onboarding, with no calendar to read. */
 export const SIGN_IN_TO_SEE_TODAY = "Sign in with Google or Microsoft to see today's meetings";
 

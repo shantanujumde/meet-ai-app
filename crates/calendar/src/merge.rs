@@ -15,8 +15,9 @@
 //! The start is checked even for a UID match: every occurrence of a
 //! repeating meeting shares one UID, and Monday's standup is not Tuesday's.
 //!
-//! Of two copies, the one with more data (named attendees, a UID) supplies
-//! the fields, and the copy seen first keeps its `id`. Callers pass
+//! Of two copies, the one with more data (named attendees, a join link, a
+//! UID) supplies the fields, and the copy seen first keeps its `id`. A join
+//! link or UID only the other copy had is kept too. Callers pass
 //! EventKit's list first, so an event's id stays the same whether or not a
 //! cloud sign-in also holds it: reminders key on that id (TUR-30).
 
@@ -68,9 +69,14 @@ fn normalized(title: &str) -> String {
     title.trim().to_lowercase()
 }
 
-/// How much a copy tells us. More named attendees wins; a UID breaks a tie.
-fn richness(event: &Event) -> (usize, bool) {
-    (event.attendee_names.len(), uid(event).is_some())
+/// How much a copy tells us. More named attendees wins; then a join link,
+/// then a UID breaks a tie.
+fn richness(event: &Event) -> (usize, bool, bool) {
+    (
+        event.attendee_names.len(),
+        event.join_url.is_some(),
+        uid(event).is_some(),
+    )
 }
 
 /// Fold `other` into `kept`: take the richer copy's fields, keep `kept`'s id,
@@ -80,10 +86,17 @@ fn absorb(kept: &mut Event, other: Event) {
     let attendees = kept.attendees.max(other.attendees);
     if richness(&other) > richness(kept) {
         let ical_uid = kept.ical_uid.take();
+        let join_url = kept.join_url.take();
         *kept = other;
         kept.ical_uid = kept.ical_uid.take().or(ical_uid);
-    } else if kept.ical_uid.is_none() {
-        kept.ical_uid = other.ical_uid;
+        kept.join_url = kept.join_url.take().or(join_url);
+    } else {
+        if kept.ical_uid.is_none() {
+            kept.ical_uid = other.ical_uid;
+        }
+        if kept.join_url.is_none() {
+            kept.join_url = other.join_url;
+        }
     }
     kept.id = id;
     kept.attendees = attendees;
@@ -111,6 +124,7 @@ mod tests {
             attendees: 2,
             attendee_names: Vec::new(),
             ical_uid: None,
+            join_url: None,
         }
     }
 
@@ -122,6 +136,11 @@ mod tests {
 
     fn with_uid(mut event: Event, uid: &str) -> Event {
         event.ical_uid = Some(uid.into());
+        event
+    }
+
+    fn with_link(mut event: Event, url: &str) -> Event {
+        event.join_url = Some(url.into());
         event
     }
 
@@ -197,6 +216,51 @@ mod tests {
         assert_eq!(ids(&merged), ["ek-1"]);
         assert_eq!(merged[0].attendee_names, ["Ada", "Me"]);
         assert_eq!(merged[0].ical_uid.as_deref(), Some("uid-7"));
+    }
+
+    #[test]
+    fn a_join_link_only_the_poorer_copy_has_is_kept() {
+        let link = "https://zoom.us/j/123";
+        // EventKit found the link; Google named more people, so its fields win.
+        let merged = merge_events(vec![
+            vec![with_link(event("ek-1", "Roadmap", "14:00:00"), link)],
+            vec![with_names(
+                event("g-1", "Roadmap", "14:00:00"),
+                &["Ada", "Grace"],
+            )],
+        ]);
+        assert_eq!(ids(&merged), ["ek-1"]);
+        assert_eq!(merged[0].attendee_names, ["Ada", "Grace"]);
+        assert_eq!(merged[0].join_url.as_deref(), Some(link));
+
+        // And the other way round: the kept copy is richer, the link is on the
+        // one folded in.
+        let merged = merge_events(vec![
+            vec![with_names(
+                event("ek-1", "Roadmap", "14:00:00"),
+                &["Ada", "Grace"],
+            )],
+            vec![with_link(event("g-1", "Roadmap", "14:00:00"), link)],
+        ]);
+        assert_eq!(merged[0].attendee_names, ["Ada", "Grace"]);
+        assert_eq!(merged[0].join_url.as_deref(), Some(link));
+    }
+
+    #[test]
+    fn a_join_link_breaks_a_tie_in_names() {
+        let merged = merge_events(vec![
+            vec![event("ek-1", "Retro", "17:00:00")],
+            vec![with_link(
+                with_uid(event("g-1", "Retro", "17:00:00"), "uid-9"),
+                "https://meet.google.com/abc-defg-hij",
+            )],
+        ]);
+        assert_eq!(ids(&merged), ["ek-1"]);
+        assert_eq!(
+            merged[0].join_url.as_deref(),
+            Some("https://meet.google.com/abc-defg-hij")
+        );
+        assert_eq!(merged[0].ical_uid.as_deref(), Some("uid-9"));
     }
 
     #[test]

@@ -35,22 +35,19 @@ pub struct CalendarSources {
 
 impl CalendarSources {
     pub fn new(config: &CalendarConfig, calendar_app_available: bool) -> Self {
-        let configured = [
-            (SignInProvider::Google, &config.google),
-            (SignInProvider::Microsoft, &config.microsoft),
-        ]
-        .into_iter()
-        .filter(|(_, client)| client.client_id.is_some())
-        .map(|(provider, _)| provider)
-        .collect();
-        let connected = config
-            .providers
-            .iter()
-            .filter_map(|provider| match provider {
-                Provider::EventKit => None,
-                Provider::Google => Some(SignInProvider::Google),
-                Provider::Microsoft => Some(SignInProvider::Microsoft),
+        let configured = SignInProvider::ALL
+            .into_iter()
+            .filter(|provider| {
+                let client = match provider {
+                    SignInProvider::Google => &config.google,
+                    SignInProvider::Microsoft => &config.microsoft,
+                };
+                client.client_id.is_some()
             })
+            .collect();
+        let connected = SignInProvider::ALL
+            .into_iter()
+            .filter(|provider| config.providers.contains(&Provider::from(*provider)))
             .collect();
         Self {
             calendar_app_available,
@@ -61,6 +58,7 @@ impl CalendarSources {
     }
 }
 
+/// The one mapping from a sign-in to its `calendar.providers` entry.
 impl From<SignInProvider> for Provider {
     fn from(provider: SignInProvider) -> Self {
         match provider {
@@ -104,7 +102,12 @@ async fn edit_providers(
 pub async fn calendar_sources() -> CalendarSources {
     tauri::async_runtime::spawn_blocking(current)
         .await
-        .unwrap_or_else(|_| CalendarSources::new(&CalendarConfig::default(), false))
+        .unwrap_or_else(|_| {
+            CalendarSources::new(
+                &CalendarConfig::default(),
+                crate::platform::HAS_CALENDAR_APP,
+            )
+        })
 }
 
 /// Turn the Calendar app on or off (macOS). On first, so its ids win when a

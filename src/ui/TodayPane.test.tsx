@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { TodayEvent, TodaysMeetings } from "@/ipc/client";
 import type { UiError } from "@/ipc/types";
 import { ipc } from "@/test/ipcMock";
-import { SIGN_IN_TO_SEE_TODAY } from "./calendar/copy";
+import { EMPTY_DAY, SIGN_IN_TO_SEE_TODAY } from "./calendar/copy";
 import { CALENDAR_DENIED_COPY, formatAttendees, formatTime, TodayPane } from "./TodayPane";
 
 vi.mock("@/ipc/client", async (importOriginal) =>
@@ -81,7 +81,7 @@ describe("TodayPane", () => {
     todaysMeetings.mockResolvedValue(day([]));
     await show();
 
-    expect(screen.getByText("No meetings on your calendar today.")).toBeTruthy();
+    expect(screen.getByText(EMPTY_DAY)).toBeTruthy();
     expect(screen.queryByRole("list")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -91,7 +91,7 @@ describe("TodayPane", () => {
     await show();
 
     expect(screen.getByRole("alert")).toHaveTextContent(CALENDAR_DENIED_COPY);
-    expect(screen.queryByText("No meetings on your calendar today.")).toBeNull();
+    expect(screen.queryByText(EMPTY_DAY)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Open System Settings" }));
     expect(openPrivacySettings).toHaveBeenCalledWith("calendars");
@@ -227,7 +227,7 @@ describe("TodayPane with no calendar to read", () => {
     expect(screen.getByText(SIGN_IN_TO_SEE_TODAY)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sign in with Google" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sign in with Microsoft" })).toBeTruthy();
-    expect(screen.queryByText("No meetings on your calendar today.")).toBeNull();
+    expect(screen.queryByText(EMPTY_DAY)).toBeNull();
     expect(todaysMeetings).not.toHaveBeenCalled();
   });
 
@@ -266,7 +266,7 @@ describe("TodayPane with no calendar to read", () => {
     ipc.calendarSources.mockResolvedValue({ ...OFF_MAC, connected: ["google"] });
     todaysMeetings.mockResolvedValue(day([]));
     await show();
-    expect(screen.getByText("No meetings on your calendar today.")).toBeTruthy();
+    expect(screen.getByText(EMPTY_DAY)).toBeTruthy();
     expect(screen.queryByText(SIGN_IN_TO_SEE_TODAY)).toBeNull();
   });
 });

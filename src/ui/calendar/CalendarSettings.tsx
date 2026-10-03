@@ -16,12 +16,11 @@
  * on the network after a launch, so each row says it is checking until then.
  */
 
-import { type ReactNode, useCallback, useEffect, useId, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import {
   type CalendarAccount,
   type CalendarSources,
   calendarAccounts,
-  calendarConnect,
   calendarDisconnect,
   calendarSources,
   SIGN_IN_PROVIDERS,
@@ -29,11 +28,12 @@ import {
   setCalendarApp,
 } from "@/ipc/client";
 import { toUiError, type UiError } from "@/ipc/types";
-import { cn } from "@/lib/cn";
 import { Button, ButtonRow, Card, Row, RowLabel } from "../primitives";
+import { SettingSwitch } from "../SettingSwitch";
 import { Checking, InlineError } from "../states";
-import { notConfiguredCopy, PROVIDER_NAME, signInError, signInLabel } from "./copy";
+import { notConfiguredCopy, PROVIDER_NAME, signInLabel } from "./copy";
 import { WAITING_FOR_BROWSER } from "./SignInButtons";
+import { useCalendarSignIn } from "./useCalendarSignIn";
 
 export const CALENDAR_APP_LABEL = "Calendar app";
 export const SIGN_IN_EXPIRED = "Sign-in expired";
@@ -92,9 +92,7 @@ export function CalendarSettings() {
         )
       ) : (
         <Card flush>
-          {sources.calendarAppAvailable ? (
-            <CalendarAppRow on={sources.calendarApp} onSaved={setSources} />
-          ) : null}
+          {sources.calendarAppAvailable ? <CalendarAppRow onSaved={setSources} /> : null}
           {SIGN_IN_PROVIDERS.map((provider) => (
             <SignInRow
               key={provider}
@@ -118,69 +116,23 @@ export function CalendarSettings() {
   );
 }
 
+/** Whether `"eventkit"` is in `calendar.providers`. Module-level, so
+ * {@link SettingSwitch} reads it once. */
+const loadCalendarApp = () => calendarSources().then((sources) => sources.calendarApp);
+
 /** The Calendar app (macOS): a switch, like the Dock setting. */
-function CalendarAppRow({
-  on,
-  onSaved,
-}: {
-  on: boolean;
-  onSaved: (sources: CalendarSources) => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<UiError | null>(null);
-  const id = useId();
-
-  async function change(next: boolean) {
-    setBusy(true);
-    setError(null);
-    try {
-      onSaved(await setCalendarApp(next));
-    } catch (thrown) {
-      setError(toUiError(thrown));
-    } finally {
-      setBusy(false);
-    }
-  }
-
+function CalendarAppRow({ onSaved }: { onSaved: (sources: CalendarSources) => void }) {
   return (
-    <>
-      <Row>
-        <RowLabel
-          name={<label htmlFor={id}>{CALENDAR_APP_LABEL}</label>}
-          detail="Every account already in Calendar.app on this Mac. No sign-in needed."
-          mono={false}
-        />
-        <button
-          type="button"
-          role="switch"
-          id={id}
-          aria-checked={on}
-          disabled={busy}
-          onClick={() => void change(!on)}
-          className={cn(
-            "inline-flex h-(--control-h-small) w-[36px] shrink-0 cursor-default items-center rounded-capsule p-1",
-            "border-[0.5px] [transition:background-color_var(--dur-fast)_var(--ease-out)]",
-            "disabled:cursor-not-allowed disabled:opacity-40",
-            "contrast-more:border contrast-more:border-separator-strong",
-            on ? "border-transparent bg-success" : "border-rim bg-glass-sunken",
-          )}
-        >
-          <span
-            aria-hidden="true"
-            className={cn(
-              "size-6 rounded-capsule bg-on-accent shadow-raised",
-              "[transition:translate_var(--dur-fast)_var(--ease-out)] motion-reduce:transition-none",
-              on ? "translate-x-6" : "translate-x-0",
-            )}
-          />
-        </button>
-      </Row>
-      {error ? (
-        <div className="px-6 pb-5">
-          <InlineError error={error} />
-        </div>
-      ) : null}
-    </>
+    <SettingSwitch
+      label={CALENDAR_APP_LABEL}
+      detail="Every account already in Calendar.app on this Mac. No sign-in needed."
+      load={loadCalendarApp}
+      save={async (on) => {
+        const saved = await setCalendarApp(on);
+        onSaved(saved);
+        return saved.calendarApp;
+      }}
+    />
   );
 }
 
@@ -199,24 +151,13 @@ function SignInRow({
   onAccount: (account: CalendarAccount) => void;
   onSources: (sources: CalendarSources) => void;
 }) {
-  const [busy, setBusy] = useState<"connect" | "disconnect" | null>(null);
-  const [error, setError] = useState<UiError | null>(null);
+  const { connecting, error, setError, connect } = useCalendarSignIn(onAccount);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const busy = connecting !== null || disconnecting;
   const name = PROVIDER_NAME[provider];
 
-  async function connect() {
-    setBusy("connect");
-    setError(null);
-    try {
-      onAccount(await calendarConnect(provider));
-    } catch (thrown) {
-      setError(signInError(provider, toUiError(thrown)));
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function disconnect() {
-    setBusy("disconnect");
+    setDisconnecting(true);
     setError(null);
     try {
       onSources(await calendarDisconnect(provider));
@@ -224,19 +165,19 @@ function SignInRow({
     } catch (thrown) {
       setError(toUiError(thrown));
     } finally {
-      setBusy(null);
+      setDisconnecting(false);
     }
   }
 
   const state = account?.state ?? "signed-out";
   const connectButton = (label: string, tone: "primary" | "neutral") => (
-    <Button size="small" tone={tone} disabled={busy !== null} onClick={() => void connect()}>
-      {busy === "connect" ? WAITING_FOR_BROWSER : label}
+    <Button size="small" tone={tone} disabled={busy} onClick={() => void connect(provider)}>
+      {connecting ? WAITING_FOR_BROWSER : label}
     </Button>
   );
   const disconnectButton = (
-    <Button size="small" tone="quiet" disabled={busy !== null} onClick={() => void disconnect()}>
-      {busy === "disconnect" ? "Disconnecting…" : "Disconnect"}
+    <Button size="small" tone="quiet" disabled={busy} onClick={() => void disconnect()}>
+      {disconnecting ? "Disconnecting…" : "Disconnect"}
     </Button>
   );
 
