@@ -69,6 +69,8 @@ pub struct Attendee {
     pub email_address: Option<EmailAddress>,
 }
 
+/// Parsed but not stored yet: `calendar::Event` has no `join_url` until
+/// TUR-77 adds one; then `join_url` here fills it.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OnlineMeetingInfo {
@@ -94,6 +96,7 @@ pub struct Event {
     pub is_all_day: Option<bool>,
     #[serde(default)]
     pub is_cancelled: Option<bool>,
+    /// TUR-77: `join_url` goes onto `calendar::Event` once it has the field.
     #[serde(default)]
     pub online_meeting: Option<OnlineMeetingInfo>,
     #[serde(default)]

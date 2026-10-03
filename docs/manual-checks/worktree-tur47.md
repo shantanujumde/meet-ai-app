@@ -28,12 +28,28 @@ The headless parts are covered by:
   `has_sign_in`).
 - `cargo test -p meet-ai --lib config::calendar_section`: `microsoft` in
   `calendar.providers` is now read; `google` is still skipped.
-- `cargo check --target x86_64-pc-windows-msvc -p calendar`: passes. The
-  Windows and Linux CI jobs run the fixture tests on those OSes.
+- `cargo check --target x86_64-pc-windows-msvc -p calendar`: passes (it
+  compiles for Windows; it runs no tests).
+
+Where the fixture tests run: today only on macOS CI (`rust (macos-26)` in
+`.github/workflows/check.yml`). The ubuntu job runs only `cargo fmt` and the
+Windows cross-check, not `cargo test`. They run on Windows and Linux CI once
+TUR-36 (PR #83) adds those test jobs; until then, check 0 below is manual.
 
 Before any check: set `calendar.microsoft.client_id` in
 `~/Meetings/.app/config.jsonc` (SETUP.md, "Calendar sign-in (optional)"), and
 sign in as in `worktree-tur44.md` §1 step 4.
+
+## 0. Fixture tests pass on Windows and Linux CI (until TUR-36 lands)
+
+1. After TUR-36 (PR #83) is merged, rebase this branch, or open any PR on
+   top of both, and look at the new Windows and Linux test jobs. Without CI,
+   run `cargo test -p calendar` on a Windows and a Linux machine instead.
+2. Expected: `tests/microsoft.rs` (13 tests) and the `windows_tz` and
+   `microsoft` unit tests pass on both. They use no network and no OS API,
+   so they should behave the same as on macOS.
+3. Why skipped: those CI jobs do not exist on main yet, and this run has no
+   Windows or Linux machine.
 
 ## 1. Today's meetings from a Microsoft account, on macOS, Windows and Linux
 
