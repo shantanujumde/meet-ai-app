@@ -4,8 +4,12 @@
  *
  * On by default. Off writes `agent_notes: off` into `meeting.md`, and from
  * then on nothing about this meeting is sent to the agent — including at Stop,
- * when it was switched off mid-recording; Rust makes sure of that. It sits in
- * the meeting's header, so it is there while recording and after.
+ * when it was switched off mid-recording; Rust makes sure of that. It sits at
+ * the top of the meeting's notes section (TUR-81), which shows while
+ * recording and after.
+ *
+ * Laid out as a Settings row: the label with its helper text under it on the
+ * left, the switch on the right. The caller puts it in a flush `Card`.
  *
  * A real switch: a button with `role="switch"` and `aria-checked`, named by
  * its visible label (a `<label>` for a button, so clicking the words flips it
@@ -17,6 +21,7 @@
 import { useId } from "react";
 import type { UiError } from "@/ipc/types";
 import { cn } from "@/lib/cn";
+import { Row, rowDetailVariants } from "./primitives";
 import { ErrorState } from "./states";
 
 export const NOTES_SWITCH_LABEL = "Make notes for this meeting";
@@ -38,8 +43,18 @@ export function NotesSwitch({
   const hintId = `${id}-hint`;
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-4">
+    <Row stacked>
+      <Row bare divided={false}>
+        <span className="flex min-w-0 flex-col gap-1">
+          <label htmlFor={id} className="text-body font-medium">
+            {NOTES_SWITCH_LABEL}
+          </label>
+          <span id={hintId} className={rowDetailVariants({ mono: false })}>
+            {on
+              ? "On: your agent writes notes from the transcript when the call ends."
+              : "Off: the transcript is not sent to your agent. For private calls."}
+          </span>
+        </span>
         <button
           type="button"
           role="switch"
@@ -65,16 +80,8 @@ export function NotesSwitch({
             )}
           />
         </button>
-        <label htmlFor={id} className="text-body font-medium">
-          {NOTES_SWITCH_LABEL}
-        </label>
-      </div>
-      <p id={hintId} className="m-0 text-caption1 text-fg-tertiary">
-        {on
-          ? "On: your agent writes notes from the transcript when the call ends."
-          : "Off: the transcript is not sent to your agent. For private calls."}
-      </p>
+      </Row>
       {error ? <ErrorState error={error} /> : null}
-    </div>
+    </Row>
   );
 }

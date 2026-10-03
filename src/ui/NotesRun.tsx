@@ -13,8 +13,10 @@
  * **Make notes now** — including when its last run was refused because notes
  * were off, or cancelled by the switch.
  *
- * The run itself is the page's {@link useNotesRun}, passed in, so the header's
- * switch and this pane read the same answers.
+ * The run itself is the page's {@link useNotesRun}, passed in, so the switch
+ * and this pane read the same answers. The review screen passes the switch in
+ * as `toggle` (TUR-81): with one, the section always shows — while recording
+ * too, when the run panel itself waits for Stop.
  *
  * The sections are markdown as the agent wrote it, shown as pre-wrapped text:
  * readable as is, and no markdown library for four short sections.
@@ -56,6 +58,8 @@ const AGENT_NAMES: Record<string, string> = {
 export function NotesRun({
   run,
   canStart,
+  toggle,
+  live = false,
 }: {
   /** This meeting's run and notes, from the page's {@link useNotesRun}. */
   run: NotesRunModel;
@@ -64,30 +68,44 @@ export function NotesRun({
    * and an agent is set up (with none, the header's Copy prompt stands in).
    */
   canStart: boolean;
+  /**
+   * The notes switch (and anything that goes with it), shown at the top of
+   * the section. With it, the section is always there.
+   */
+  toggle?: ReactNode;
+  /**
+   * This meeting is recording: no run panel — the run starts on its own at
+   * Stop, and its status event arrives then.
+   */
+  live?: boolean;
 }) {
   const { state, notes, busy, error, start, cancel, switchedOn } = run;
 
-  // Nothing until both answers are in, so the page does not flash a start
-  // button for a meeting that already has notes.
-  if (state === null || notes === null) return null;
+  // No run panel until both answers are in, so the page does not flash a
+  // start button for a meeting that already has notes.
+  const loaded = state !== null && notes !== null;
+  if (!loaded && toggle === undefined) return null;
 
-  const { sections } = notes;
+  const sections = notes?.sections ?? [];
   // Notes switched off for this meeting: nothing about runs at all.
-  const panel = notes.notesOff
-    ? null
-    : runPanel({
-        state: afterSwitch(state, switchedOn),
-        hasNotes: sections.length > 0,
-        canStart,
-        busy,
-        justSwitchedOn: switchedOn,
-        start,
-        cancel,
-      });
+  const panel =
+    !loaded || live || notes.notesOff
+      ? null
+      : runPanel({
+          state: afterSwitch(state, switchedOn),
+          hasNotes: sections.length > 0,
+          canStart,
+          busy,
+          justSwitchedOn: switchedOn,
+          start,
+          cancel,
+        });
 
-  if (panel === null && sections.length === 0 && error === null) return null;
+  if (toggle === undefined && panel === null && sections.length === 0 && error === null) {
+    return null;
+  }
 
-  const by = notes.analyzedBy;
+  const by = notes?.analyzedBy ?? null;
   return (
     <section className="section" aria-labelledby="meeting-notes-heading">
       <div className="section__header">
@@ -98,6 +116,7 @@ export function NotesRun({
           {by ? `Written by ${AGENT_NAMES[by] ?? by} into meeting.md` : "Written into meeting.md"}
         </p>
       </div>
+      {toggle}
       {panel}
       {error ? <ErrorState error={error} /> : null}
       {sections.length > 0 ? <Sections sections={sections} /> : null}

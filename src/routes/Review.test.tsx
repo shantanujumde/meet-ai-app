@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { MeetingDetail, RecordingStatus } from "@/ipc/types";
@@ -166,14 +166,17 @@ describe("Review's meeting notes", () => {
     expect(await screen.findByRole("button", { name: "Write notes" })).toBeTruthy();
   });
 
-  test("is hidden while this meeting records, and shows the run once it stops", async () => {
+  test("holds only the switch while this meeting records, and shows the run once it stops", async () => {
     recording({ phase: "recording", meetingId: ID, startedAtMs: 0 });
     readMeeting.mockResolvedValue(detail([transcriptLine()]));
     ipc.notesRunStatus.mockResolvedValue({ meetingId: ID, state: { state: "running" } });
     renderReview();
 
     expect(await screen.findByRole("heading", { name: "Live transcript" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Meeting notes" })).toBeNull();
+    const notes = screen.getByRole("region", { name: "Meeting notes" });
+    expect(within(notes).getByRole("switch", { name: "Make notes for this meeting" })).toBeTruthy();
+    await waitFor(() => expect(ipc.notesRunStatus).toHaveBeenCalledWith(ID));
+    expect(screen.queryByText("Writing notes…")).toBeNull();
 
     act(() => recording({ phase: "idle" }));
     expect(await screen.findByText("Writing notes…")).toBeTruthy();
@@ -201,8 +204,9 @@ describe("Review's meeting notes", () => {
 });
 
 /**
- * TUR-12, SPEC A11: the "Make notes for this meeting" switch sits in the
- * header, so it is there while recording as well as after.
+ * TUR-12, SPEC A11: the "Make notes for this meeting" switch heads the
+ * meeting-notes section (TUR-81), so it is there while recording as well as
+ * after — and not in the header.
  */
 describe("Review's notes switch", () => {
   const SWITCH = { name: "Make notes for this meeting" } as const;
@@ -213,7 +217,14 @@ describe("Review's notes switch", () => {
     renderReview();
 
     expect(await screen.findByRole("heading", { name: "Live transcript" })).toBeTruthy();
-    const toggle = screen.getByRole("switch", SWITCH);
+    const toggle = within(screen.getByRole("region", { name: "Meeting notes" })).getByRole(
+      "switch",
+      SWITCH,
+    );
+    expect(within(screen.getByRole("banner")).queryByRole("switch")).toBeNull();
+    expect(toggle).toHaveAccessibleDescription(
+      "On: your agent writes notes from the transcript when the call ends.",
+    );
     expect(toggle).toHaveAttribute("aria-checked", "true");
 
     fireEvent.click(toggle);
@@ -251,5 +262,67 @@ describe("Review's notes switch", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Make notes now" }));
     await waitFor(() => expect(ipc.startNotesRun).toHaveBeenCalledWith(ID));
+  });
+});
+
+/**
+ * TUR-81: the header is the title, one meta line and two icon actions. The
+ * folder path is the Show in Finder tooltip, never printed in the header.
+ */
+describe("Review's header", () => {
+  const PATH = `/Users/test/Meetings/${ID}`;
+
+  test("shows the title, one meta line with the length, and no raw path", async () => {
+    readMeeting.mockResolvedValue(
+      meetingDetail({
+        summary: { id: ID, title: "Standup", time: "22:36", audioMs: 50 * 60_000 },
+        lines: [transcriptLine()],
+      }),
+    );
+    renderReview();
+
+    const header = await screen.findByRole("banner");
+    expect(within(header).getByRole("heading", { level: 1, name: "Standup" })).toBeTruthy();
+    const meta = within(header).getByTestId("meeting-meta");
+    expect(meta).toHaveTextContent(/·\s*22:36\s*·\s*50 min/);
+    expect(within(header).queryByText(PATH)).toBeNull();
+  });
+
+  test("Show in Finder is an icon button with the path as its tooltip, and opens the folder", async () => {
+    renderReview();
+
+    const button = await screen.findByRole("button", { name: "Show in Finder" });
+    expect(button).toHaveAttribute("title", PATH);
+    fireEvent.click(button);
+    await waitFor(() => expect(ipc.revealMeeting).toHaveBeenCalledWith(ID));
+  });
+
+  test("Copy folder path copies the path and says Copied", async () => {
+    vi.mocked(copyText).mockReset();
+    renderReview();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copy folder path" }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(PATH));
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeTruthy();
+    expect(screen.getByText("Folder path copied to the clipboard")).toBeTruthy();
+  });
+
+  test("a clipboard that refuses shows the path to copy by hand", async () => {
+    vi.mocked(copyText).mockReset();
+    vi.mocked(copyText).mockRejectedValueOnce(new Error("no focus"));
+    renderReview();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Copy folder path" }));
+    expect(await screen.findByText(PATH)).toBeTruthy();
+  });
+
+  test("says Recording on the meta line while this meeting records", async () => {
+    recording({ phase: "recording", meetingId: ID, startedAtMs: Date.now() - 12 * 60_000 });
+    readMeeting.mockResolvedValue(detail([]));
+    renderReview();
+
+    const meta = await screen.findByTestId("meeting-meta");
+    expect(meta).toHaveTextContent(/^Recording/);
+    expect(meta).toHaveTextContent("12 min");
   });
 });
