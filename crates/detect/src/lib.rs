@@ -30,7 +30,7 @@ pub use poll::{DetectionLoop, POLL_INTERVAL, ProcessSource, SysinfoProcesses, sp
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Signal {
-    /// A calendar event with enough attendees is starting.
+    /// A calendar event with enough attendees starts in a minute.
     Calendar {
         title: String,
         #[specta(type = u32)]
@@ -51,7 +51,7 @@ impl Signal {
     pub fn reason(&self) -> String {
         match self {
             Self::Calendar { title, attendees } => {
-                format!("“{title}” is starting, with {attendees} people invited.")
+                format!("“{title}” starts in a minute, with {attendees} people invited.")
             }
             Self::Process { process } => format!("{} is open.", processes::label(process)),
             Self::AudioActivity => {

@@ -9,6 +9,11 @@
 //! default mic and speakers are in use, and when both have been for a while
 //! it hands that to the process loop, which applies the same don't-nag rules
 //! before anything is asked.
+//!
+//! Calendar reminders (TUR-30, [`reminder`]) are a third loop: a minute
+//! before each meeting with enough attendees it asks through the same path,
+//! counts as a call signal for Slack and Discord, and [`merge`] makes a
+//! reminder and an app prompt for the same call one prompt.
 
 use std::sync::Mutex;
 
@@ -18,7 +23,9 @@ use tauri::{AppHandle, Manager as _};
 
 use crate::lock::lock_or_recover;
 
+pub mod merge;
 pub mod notify;
+pub mod reminder;
 
 /// Managed state: the running detection loop, kept so it lives as long as the
 /// app and so later signals (calendar, audio activity) can reach it.
@@ -27,17 +34,26 @@ pub struct Detection {
     running: Mutex<Option<DetectionLoop>>,
     /// The audio-activity loop (TUR-31), when `detection.audio_activity` is on.
     activity: Mutex<Option<ActivityLoop>>,
+    /// The one-minute meeting reminders (TUR-30), when `detection.calendar`
+    /// is on.
+    reminders: Mutex<Option<reminder::ReminderLoop>>,
+    /// The last prompts asked, so one call is asked about once (TUR-30).
+    merge: Mutex<merge::Merger>,
 }
 
 impl Detection {
     /// A calendar event was just seen: Slack or Discord being open now counts
     /// as a call. A no-op when detection is off. (Audio activity goes through
     /// [`Self::audio_activity`], which counts as a call signal too.)
-    #[allow(dead_code)] // The calendar refresh loop (TUR-30) calls this.
     pub fn call_signal(&self) {
         if let Some(running) = lock_or_recover(&self.running).as_ref() {
             running.call_signal();
         }
+    }
+
+    /// Run `decide` on the prompt history (see [`merge`]).
+    fn merge(&self, decide: impl FnOnce(&mut merge::Merger) -> merge::Delivery) -> merge::Delivery {
+        decide(&mut lock_or_recover(&self.merge))
     }
 
     /// The mic and speakers have both been in use for a while: the process
@@ -104,6 +120,65 @@ pub fn start_audio_activity(app: &AppHandle, audio_activity: bool) {
         },
     );
     *lock_or_recover(&state.activity) = activity;
+}
+
+/// Remind a minute before each meeting (TUR-30), unless `calendar` (the
+/// `detection.calendar` switch) is off. Call it after [`start`]: a reminder
+/// counts as a call signal for Slack and Discord. `detection.min_attendees`
+/// and `calendar.refresh_minutes` are read here, once.
+pub fn start_reminders(app: &AppHandle, calendar: bool) {
+    let Some(state) = app.try_state::<Detection>() else {
+        tracing::error!("the detection state is missing; meetings go unreminded");
+        return;
+    };
+    let fire_app = app.clone();
+    let reminders = spawn_reminders(
+        calendar,
+        reminder::AppCalendar(app.clone()),
+        reminder::Reminders::new(
+            crate::config::detection().min_attendees as usize,
+            chrono::Duration::minutes(i64::from(crate::config::calendar().refresh_minutes)),
+        ),
+        move |event| {
+            notify::remind(&fire_app, &event);
+            // After the reminder, so a Slack prompt this lets through is
+            // merged into it rather than asked first.
+            if let Some(state) = fire_app.try_state::<Detection>() {
+                state.call_signal();
+            }
+        },
+    );
+    *lock_or_recover(&state.reminders) = reminders;
+}
+
+/// [`start_reminders`] without the app, so the switch is testable: `None`,
+/// and the calendar never read, when `calendar` is off.
+fn spawn_reminders<C: reminder::Upcoming>(
+    calendar: bool,
+    source: C,
+    reminders: reminder::Reminders,
+    fire: impl FnMut(::calendar::Event) + Send + 'static,
+) -> Option<reminder::ReminderLoop> {
+    if !calendar {
+        tracing::info!("detection.calendar is off; no meeting reminders");
+        return None;
+    }
+    match reminder::spawn(
+        reminder::SystemClock,
+        source,
+        reminders,
+        reminder::TICK,
+        fire,
+    ) {
+        Ok(running) => {
+            tracing::info!("reminding a minute before each meeting");
+            Some(running)
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not start the meeting reminders");
+            None
+        }
+    }
 }
 
 /// The real mic-and-speakers reader, or `None` when the switch is off or
@@ -338,5 +413,54 @@ mod tests {
         );
         running.stop();
         assert!(signals.try_recv().is_err());
+    }
+
+    struct CountingCalendar(Arc<AtomicUsize>);
+
+    impl reminder::Upcoming for CountingCalendar {
+        fn events_between(
+            &self,
+            _from: chrono::DateTime<chrono::Utc>,
+            _to: chrono::DateTime<chrono::Utc>,
+        ) -> Result<Vec<::calendar::Event>, ::calendar::Error> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(Vec::new())
+        }
+    }
+
+    fn reminders() -> reminder::Reminders {
+        reminder::Reminders::new(2, chrono::Duration::minutes(15))
+    }
+
+    #[test]
+    fn calendar_off_means_no_reminders_and_no_calendar_reads() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let running = spawn_reminders(
+            false,
+            CountingCalendar(Arc::clone(&reads)),
+            reminders(),
+            |_| panic!("no reminder"),
+        );
+        assert!(running.is_none());
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn calendar_on_starts_the_reminders_and_reads_the_calendar() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let running = spawn_reminders(
+            true,
+            CountingCalendar(Arc::clone(&reads)),
+            reminders(),
+            |_| {},
+        )
+        .expect("starts");
+        // The first tick reads at once; the rules are `reminder`'s tests.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while reads.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        running.stop();
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
     }
 }

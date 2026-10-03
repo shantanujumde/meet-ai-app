@@ -636,6 +636,11 @@ export type meet_ai_lib_detection_notify_Prompt = {
 	signal: detect_Signal,
 	/**  Why the user is being asked, as one sentence: "Zoom is open." */
 	reason: string,
+	/**
+	 *  Replace the prompt on screen, if there is one, and open none: this
+	 *  call was already asked about (`detection/merge.rs`).
+	 */
+	updateOnly: boolean,
 };
 
 /**
@@ -706,7 +711,7 @@ export type meet_ai_lib_sync_tracker_ServerStatus = "connected" | "needs_auth" |
  *  being asked rather than just being asked.
  */
 export type detect_Signal = 
-/**  A calendar event with enough attendees is starting. */
+/**  A calendar event with enough attendees starts in a minute. */
 { kind: "calendar"; title: string; attendees: number } | 
 /**
  *  A known meeting application is running. `process` is its name as
