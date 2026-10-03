@@ -14,10 +14,9 @@
  */
 
 import { type Event, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { DEFAULT_APP_SETTINGS, DEFAULT_ROOT_LABEL, NO_MEETINGS_TODAY } from "@/lib/constants";
+import { DEFAULT_ROOT_LABEL, NO_MEETINGS_TODAY } from "@/lib/constants";
 import {
   AGENT_RUN_STATUS_EVENT,
-  type meet_ai_lib_lifecycle_AppSettings as AppSettings,
   commands,
   DETECTION_PROMPT_EVENT,
   MEETINGS_CHANGED_EVENT,
@@ -26,7 +25,6 @@ import {
   type meet_ai_lib_calendar_TodaysMeetings,
   type meet_ai_lib_detection_notify_Prompt,
   PERMISSION_STATUS_EVENT,
-  QUIT_CONFIRM_EVENT,
   RECORDING_STATE_EVENT,
   TRANSCRIPT_STATUS_EVENT,
   TRANSCRIPT_UPDATE_EVENT,
@@ -76,7 +74,6 @@ export {
   MEETINGS_CHANGED_EVENT,
   MODEL_PROGRESS_EVENT,
   PERMISSION_STATUS_EVENT,
-  QUIT_CONFIRM_EVENT,
   RECORDING_STATE_EVENT,
   TRANSCRIPT_STATUS_EVENT,
   TRANSCRIPT_UPDATE_EVENT,
@@ -589,25 +586,10 @@ export async function meetingBrief(title: string): Promise<MeetingBrief> {
   return narrow(() => commands.meetingBrief(title));
 }
 
-// --- closing and quitting (TUR-76) -----------------------------------------
+// --- command groups in their own modules ------------------------------------
 
-/** How meet-ai behaves as an app: the `app` section of `config.jsonc`. */
-export async function appSettings(): Promise<AppSettings> {
-  if (!hasBackend()) return DEFAULT_APP_SETTINGS;
-  return call(() => commands.appSettings());
-}
-
-/** "Show in Dock when the window is closed" (macOS). Resolves to what was saved. */
-export function setShowInDockWhenClosed(show: boolean): Promise<AppSettings> {
-  return call(() => commands.setShowInDockWhenClosed(show));
-}
-
-/** ⌘Q or the menu-bar Quit while recording: Rust holds it until the window answers. */
-export function onQuitConfirm(handler: () => void): () => void {
-  return subscribe<null>(QUIT_CONFIRM_EVENT, () => handler());
-}
-
-/** "Stop and quit": Rust stops the recording through its normal stop path and quits. */
-export async function confirmQuit(): Promise<void> {
-  await call(() => commands.confirmQuit());
-}
+// Closing and quitting (TUR-76). Re-exported, so every caller (and
+// `@/test/ipcMock`) keeps the one `@/ipc/client` import; `call` and
+// `subscribe` are exported for such modules.
+export * from "./lifecycle";
+export { call, subscribe };
