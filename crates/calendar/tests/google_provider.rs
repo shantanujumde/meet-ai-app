@@ -22,6 +22,7 @@ const RECURRING: &str = include_str!("fixtures/google/recurring.json");
 const ERROR_401: &str = include_str!("fixtures/google/error-401.json");
 const ERROR_403: &str = include_str!("fixtures/google/error-403.json");
 const JOIN_LINKS: &str = include_str!("fixtures/google/join-links.json");
+const JOIN_LINKS_PASTED: &str = include_str!("fixtures/google/join-links-pasted.json");
 
 const TOKEN_HOST: &str = "oauth2.googleapis.com";
 
@@ -309,6 +310,42 @@ fn a_blank_hangout_link_falls_back_and_a_dial_in_is_no_join_link() {
             ("phone-only", None),
         ]
     );
+}
+
+#[test]
+fn a_link_pasted_into_the_location_or_description_is_the_join_link() {
+    // TUR-86: no conference, so the location, then the description; and a
+    // conference link a browser would open elsewhere is never offered.
+    let fake = Arc::new(FakeGoogle::default());
+    fake.token("access-1").page(200, JOIN_LINKS_PASTED);
+    let (from, to) = day(5);
+    let events = provider(&fake).list_events(from, to).unwrap();
+    let links: Vec<(&str, Option<&str>)> = events
+        .iter()
+        .map(|e| (e.id.as_str(), e.join_url.as_deref()))
+        .collect();
+    assert_eq!(
+        links,
+        vec![
+            (
+                "zoom-in-location",
+                Some("https://acme.zoom.us/j/5551234567?pwd=abc")
+            ),
+            ("zoom-in-description", Some("https://zoom.us/j/98765")),
+            ("phishing-conference", None),
+            (
+                "phishing-then-real",
+                Some("https://MEET.Google.com/xyz-abcd-efg")
+            ),
+        ]
+    );
+}
+
+#[test]
+fn the_read_asks_for_location_and_description() {
+    let url = events_url(at(5, 0, 0), at(6, 0, 0), None).unwrap();
+    let fields = param(&url, "fields").unwrap();
+    assert!(fields.ends_with(",location,description)"), "{fields}");
 }
 
 #[test]

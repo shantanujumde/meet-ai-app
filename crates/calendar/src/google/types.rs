@@ -59,6 +59,13 @@ pub struct Event {
     /// Any conference on the event, Meet or an add-on like Zoom (TUR-77).
     #[serde(default)]
     pub conference_data: Option<ConferenceData>,
+    /// Free text where an invite often pastes its call link (TUR-86).
+    #[serde(default)]
+    pub location: Option<String>,
+    /// The event's notes, often HTML; the other place a link is pasted
+    /// (TUR-86).
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// A start or end: `date_time` for a timed event, `date` alone for an

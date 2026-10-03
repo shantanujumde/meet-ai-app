@@ -26,6 +26,7 @@ use oauth2::http::{Method, Request, StatusCode, header};
 use oauth2::url::Url;
 use oauth2::{HttpRequest, HttpResponse};
 
+use crate::join_url::{extract_join_url, is_safe_join_url};
 use crate::oauth::{CalendarAuth, HttpClient, ProviderId};
 use crate::raw::{RawAttendee, RawEvent, to_events};
 use crate::windows_tz::windows_tz_to_iana;
@@ -45,8 +46,7 @@ pub const CALENDAR_VIEW_URL: &str = "https://graph.microsoft.com/v1.0/me/calenda
 const GRAPH_HOST: &str = "graph.microsoft.com";
 
 /// Every field [`types::Event`] reads, and nothing else.
-pub const SELECT: &str =
-    "id,subject,start,end,isAllDay,isCancelled,responseStatus,attendees,iCalUId,onlineMeeting";
+pub const SELECT: &str = "id,subject,start,end,isAllDay,isCancelled,responseStatus,attendees,iCalUId,onlineMeeting,location,bodyPreview";
 
 /// Events per page.
 pub const PAGE_SIZE: &str = "50";
@@ -250,11 +250,23 @@ fn raw_event(event: types::Event) -> Option<RawEvent> {
         attendees,
         ical_uid: event.ical_uid.filter(|uid| !uid.trim().is_empty()),
         // TUR-77: Teams (or any online meeting) gives its link outright.
+        // TUR-86: only if it passes the Join check, else a link pasted into
+        // the location or body.
         join_url: event
             .online_meeting
             .and_then(|meeting| meeting.join_url)
             .map(|url| url.trim().to_owned())
-            .filter(|url| !url.is_empty()),
+            .filter(|url| is_safe_join_url(url))
+            .or_else(|| {
+                extract_join_url(
+                    None,
+                    event
+                        .location
+                        .as_ref()
+                        .and_then(|location| location.display_name.as_deref()),
+                    event.body_preview.as_deref(),
+                )
+            }),
     };
     Some(raw)
 }

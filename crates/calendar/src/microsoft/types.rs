@@ -100,6 +100,13 @@ pub struct Event {
     pub online_meeting: Option<OnlineMeetingInfo>,
     #[serde(default)]
     pub response_status: Option<ResponseStatus>,
+    /// Where a call link is often pasted when there is no online meeting
+    /// (TUR-86).
+    #[serde(default)]
+    pub location: Option<Location>,
+    /// The body's first 255 characters as plain text (TUR-86).
+    #[serde(default)]
+    pub body_preview: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -112,6 +119,14 @@ pub struct ListEventsResponse {
 }
 
 // End of the adapted code.
+
+/// An event's location; only the text shown for it is read (TUR-86).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Location {
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
 
 /// Graph's error body: `{ "error": { "code": "...", "message": "..." } }`.
 /// Only the code is logged; the message can name the account.
