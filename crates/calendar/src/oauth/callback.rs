@@ -56,8 +56,8 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// The account to show: the `email` claim (Google) or `preferred_username`
-/// (Microsoft) from the id_token's payload.
+/// The account to show: the `email` claim (Google) or `preferred_username`,
+/// else `email` (Microsoft), from the id_token's payload.
 ///
 /// The signature is **not** checked: this is a label on the settings screen
 /// and is never used to decide anything. The token came straight from the
@@ -66,10 +66,16 @@ pub fn account_label(provider: ProviderId, id_token: Option<&str>) -> Option<Str
     let payload = id_token?.split('.').nth(1)?;
     let bytes = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
     let claims: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    claims
-        .get(provider.endpoints().account_claim)?
-        .as_str()
-        .map(str::trim)
-        .filter(|label| !label.is_empty())
-        .map(str::to_owned)
+    provider
+        .endpoints()
+        .account_claims
+        .iter()
+        .find_map(|claim| {
+            claims
+                .get(claim)?
+                .as_str()
+                .map(str::trim)
+                .filter(|label| !label.is_empty())
+                .map(str::to_owned)
+        })
 }

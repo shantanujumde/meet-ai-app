@@ -223,7 +223,7 @@ fn microsoft_asks_for_offline_access_and_calendars_read() {
     let pairs = query(url);
     assert_eq!(
         get(&pairs, "scope"),
-        Some("openid email offline_access https://graph.microsoft.com/Calendars.Read")
+        Some("openid profile email offline_access https://graph.microsoft.com/Calendars.Read")
     );
     assert_eq!(get(&pairs, "prompt"), None);
 }
@@ -362,6 +362,12 @@ fn microsoft_sends_no_client_secret_and_reads_preferred_username() {
     let pending = auth
         .begin_sign_in(ProviderId::Microsoft, redirect_uri(4711))
         .unwrap();
+    // TUR-88: a real id_token only carries `preferred_username` when the
+    // sign-in asked for `profile`, so the fake token below is only honest
+    // with it in the scope.
+    let scopes = query(pending.authorize_url());
+    let scopes: Vec<&str> = get(&scopes, "scope").unwrap().split(' ').collect();
+    assert!(scopes.contains(&"profile"), "{scopes:?}");
     http.reply(
         200,
         token_reply(
@@ -376,6 +382,27 @@ fn microsoft_sends_no_client_secret_and_reads_preferred_username() {
     let form = http.form(0);
     assert_eq!(get(&form, "client_id"), Some("microsoft-id"));
     assert_eq!(get(&form, "client_secret"), None);
+}
+
+#[test]
+fn a_microsoft_token_without_preferred_username_falls_back_to_email() {
+    // TUR-88: some accounts' tokens have `email` and no `preferred_username`.
+    let email_only = id_token(serde_json::json!({ "email": "ada@contoso.com" }));
+    assert_eq!(
+        account_label(ProviderId::Microsoft, Some(&email_only)).as_deref(),
+        Some("ada@contoso.com")
+    );
+    let blank = id_token(serde_json::json!({ "preferred_username": " ", "email": "a@b.c" }));
+    assert_eq!(
+        account_label(ProviderId::Microsoft, Some(&blank)).as_deref(),
+        Some("a@b.c")
+    );
+    // Google never reads `preferred_username`.
+    let username_only = id_token(serde_json::json!({ "preferred_username": "ada" }));
+    assert_eq!(
+        account_label(ProviderId::Google, Some(&username_only)),
+        None
+    );
 }
 
 #[test]
@@ -673,10 +700,107 @@ fn renewing_a_rejected_token_refreshes_once_even_when_two_reads_saw_the_401() {
 }
 
 #[test]
-fn has_sign_in_is_false_when_the_keystore_cannot_be_read() {
+fn a_keystore_that_cannot_be_read_is_unreachable_not_signed_out() {
+    // TUR-88: a locked or refusing keystore says nothing about the sign-in.
     let store = Arc::new(MemoryStore::unavailable());
     let http = Arc::new(FakeHttp::default());
     let auth = auth_with(&store, &http);
-    assert!(!auth.has_sign_in(ProviderId::Google));
+    assert!(auth.has_sign_in(ProviderId::Google));
+    let error = auth.access_token(ProviderId::Google).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            Error::Unreachable { provider: "Google", detail } if detail.contains("keystore")
+        ),
+        "{error:?}"
+    );
     assert!(http.bodies().is_empty());
+}
+
+/// A keystore that can be locked and unlocked, like a Keychain the user has
+/// not unlocked yet.
+struct LockableStore {
+    inner: Arc<MemoryStore>,
+    locked: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl TokenStore for LockableStore {
+    fn load(&self, provider: ProviderId) -> Result<Option<String>, StoreError> {
+        if self.locked.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(StoreError("locked (test)".into()));
+        }
+        self.inner.load(provider)
+    }
+    fn save(&self, provider: ProviderId, refresh_token: &str) -> Result<(), StoreError> {
+        self.inner.save(provider, refresh_token)
+    }
+    fn delete(&self, provider: ProviderId) -> Result<(), StoreError> {
+        self.inner.delete(provider)
+    }
+}
+
+#[test]
+fn a_locked_keystore_after_a_restart_is_unreachable_until_it_opens() {
+    let (auth, store, http) = setup();
+    signed_in_google(&auth, &http, 3600);
+    drop(auth);
+
+    let locked = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let restarted = CalendarAuth::new(
+        Box::new(clients),
+        Box::new(LockableStore {
+            inner: store.clone(),
+            locked: locked.clone(),
+        }),
+        Box::new(SharedHttp(http.clone())),
+    );
+    assert!(restarted.has_sign_in(ProviderId::Google));
+    assert!(matches!(
+        restarted.access_token(ProviderId::Google),
+        Err(Error::Unreachable { .. })
+    ));
+    assert_eq!(http.bodies().len(), 1, "no refresh without a refresh token");
+
+    // Unlocked: the stored sign-in works again, nothing to redo.
+    locked.store(false, std::sync::atomic::Ordering::SeqCst);
+    http.reply(200, token_reply(None, 3600, serde_json::json!({})));
+    assert_eq!(
+        restarted.access_token(ProviderId::Google).unwrap(),
+        "access-1"
+    );
+}
+
+#[test]
+fn a_rejected_client_id_is_tried_again_once_the_config_changes() {
+    // TUR-88: a mistyped client id, then corrected in config.jsonc.
+    let client_id = Arc::new(Mutex::new("typo-id".to_owned()));
+    let configured = client_id.clone();
+    let store = Arc::new(MemoryStore::default());
+    let http = Arc::new(FakeHttp::default());
+    let auth = CalendarAuth::new(
+        Box::new(move |_| {
+            Some(OAuthClient {
+                client_id: configured.lock().unwrap().clone(),
+                client_secret: None,
+            })
+        }),
+        Box::new(SharedStore(store.clone())),
+        Box::new(SharedHttp(http.clone())),
+    );
+    signed_in_google(&auth, &http, 0);
+    http.reply(400, serde_json::json!({ "error": "invalid_client" }));
+    assert!(matches!(
+        auth.access_token(ProviderId::Google),
+        Err(Error::SignInExpired { .. })
+    ));
+    assert_eq!(auth.accounts()[0].state, AccountState::Expired);
+    // Same client: the verdict stands, no request.
+    assert!(auth.access_token(ProviderId::Google).is_err());
+    assert_eq!(http.bodies().len(), 2);
+
+    *client_id.lock().unwrap() = "fixed-id".to_owned();
+    http.reply(200, token_reply(None, 3600, serde_json::json!({})));
+    assert_eq!(auth.accounts()[0].state, AccountState::SignedIn);
+    assert_eq!(get(&http.form(2), "client_id"), Some("fixed-id"));
+    assert_eq!(auth.access_token(ProviderId::Google).unwrap(), "access-1");
 }
