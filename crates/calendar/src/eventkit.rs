@@ -86,6 +86,21 @@ pub fn access() -> Access {
     Access::from_status(status)
 }
 
+/// Whether the calendar permission has been answered either way, so a read
+/// will not show the macOS prompt. On every OS, so callers need no `#[cfg]`
+/// of their own (SPEC §8.2): off macOS there is no prompt, so `true` (and
+/// every read is [`Error::Unreachable`] anyway).
+pub fn access_answered() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        access() != Access::NotAsked
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
 /// Makes sure meet-ai may read events, showing the macOS prompt if it has
 /// never been answered. Blocks until the user answers (at most
 /// [`PROMPT_WAIT`]).
@@ -249,6 +264,12 @@ fn raw_attendee(p: &EKParticipant) -> RawAttendee {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn answered_is_anything_but_not_asked() {
+        // A status read: no prompt, whatever this Mac has granted.
+        assert_eq!(access_answered(), access() != Access::NotAsked);
+    }
 
     #[test]
     fn every_status_that_cannot_read_is_not_granted() {
