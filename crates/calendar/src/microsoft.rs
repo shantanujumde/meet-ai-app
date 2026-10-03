@@ -15,6 +15,9 @@
 //! - Skipped, like EventKit: cancelled, declined (the event's own
 //!   `responseStatus`, which is the signed-in user's) and all-day events.
 //!   Rooms and other resources are not counted as attendees.
+//! - The organizer: Graph sends it apart from `attendees`, which leave it
+//!   out, so it is added as one more person when it is not already listed
+//!   (TUR-88). Without it a Teams 1:1 counts one person and reads as solo.
 //! - Tokens: [`TokenSource`], which the app answers from
 //!   [`CalendarAuth`](crate::oauth::CalendarAuth). A 401 renews the token
 //!   once; a second 401 is [`Error::SignInExpired`].
@@ -46,7 +49,7 @@ pub const CALENDAR_VIEW_URL: &str = "https://graph.microsoft.com/v1.0/me/calenda
 const GRAPH_HOST: &str = "graph.microsoft.com";
 
 /// Every field [`types::Event`] reads, and nothing else.
-pub const SELECT: &str = "id,subject,start,end,isAllDay,isCancelled,responseStatus,attendees,iCalUId,onlineMeeting,location,bodyPreview";
+pub const SELECT: &str = "id,subject,start,end,isAllDay,isCancelled,responseStatus,attendees,organizer,iCalUId,onlineMeeting,location,bodyPreview";
 
 /// Events per page.
 pub const PAGE_SIZE: &str = "50";
@@ -219,7 +222,11 @@ fn raw_event(event: types::Event) -> Option<RawEvent> {
         tracing::debug!("skipping a Microsoft event whose times cannot be read");
         return None;
     };
-    let attendees = event
+    let organized_by_me = event
+        .response_status
+        .as_ref()
+        .is_some_and(|status| status.response == Some(ResponseType::Organizer));
+    let mut attendees: Vec<RawAttendee> = event
         .attendees
         .unwrap_or_default()
         .into_iter()
@@ -241,6 +248,9 @@ fn raw_event(event: types::Event) -> Option<RawEvent> {
             }
         })
         .collect();
+    if let Some(organizer) = organizer(event.organizer, &attendees, organized_by_me) {
+        attendees.push(organizer);
+    }
     let raw = RawEvent {
         id: event.id,
         title: event.subject.unwrap_or_default(),
@@ -269,6 +279,40 @@ fn raw_event(event: types::Event) -> Option<RawEvent> {
             }),
     };
     Some(raw)
+}
+
+/// The organizer as one more attendee, unless `attendees` already lists the
+/// same address (or, with no address, the same name). `organized_by_me` is
+/// the event's own `responseStatus` saying `organizer`.
+fn organizer(
+    organizer: Option<types::Recipient>,
+    attendees: &[RawAttendee],
+    organized_by_me: bool,
+) -> Option<RawAttendee> {
+    let address = organizer?.email_address?;
+    let email = address
+        .address
+        .map(|a| a.trim().to_owned())
+        .filter(|a| !a.is_empty());
+    let name = address
+        .name
+        .map(|n| n.trim().to_owned())
+        .filter(|n| !n.is_empty());
+    let listed = |attendee: &RawAttendee| match (&email, &attendee.email) {
+        (Some(email), Some(theirs)) => email.eq_ignore_ascii_case(theirs.trim()),
+        (None, _) => name.is_some() && attendee.name.as_deref().map(str::trim) == name.as_deref(),
+        (Some(_), None) => false,
+    };
+    if (email.is_none() && name.is_none()) || attendees.iter().any(listed) {
+        return None;
+    }
+    Some(RawAttendee {
+        name,
+        email,
+        is_me: organized_by_me,
+        declined: false,
+        resource: false,
+    })
 }
 
 /// A Graph `dateTimeTimeZone` as a UTC instant.
