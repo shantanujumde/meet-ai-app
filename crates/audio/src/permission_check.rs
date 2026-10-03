@@ -281,9 +281,10 @@ pub fn check_system_with(mut system: Box<dyn AudioSource>) -> ChannelResult {
     let listened = chime::listen_live(verdict::RATE, &clock, play, |left| feed.recv_timeout(left));
 
     drop(output_stream);
+    let rates = system.rate_report();
     let _ = system.stop();
 
-    verdict::log(&listened);
+    verdict::log(&listened, rates.as_deref());
     let result = verdict::system_verdict(&listened);
 
     cleanup(&dir, &dest);

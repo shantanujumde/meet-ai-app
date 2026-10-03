@@ -129,8 +129,9 @@ pub fn system_verdict(listened: &Listened) -> ChannelResult {
 /// the first frame took, and how loud the audio after the first play was.
 /// All zeros after a play is a real denial; real audio without the tone is
 /// a grant whose chime did not survive the path (a misread device rate, a
-/// muted or wrong output), so it also gets a warning.
-pub fn log(listened: &Listened) {
+/// muted or wrong output), so it also gets a warning carrying `rates`, the
+/// source's [`crate::AudioSource::rate_report`].
+pub fn log(listened: &Listened, rates: Option<&str>) {
     let attempt = &listened.attempt;
     tracing::info!(
         plays = attempt.plays,
@@ -147,8 +148,9 @@ pub fn log(listened: &Listened) {
         tracing::warn!(
             peak = attempt.peak,
             rms = attempt.rms,
+            rates = rates.unwrap_or("unknown"),
             "system audio is flowing but the check tone was not recognised; counting it as \
-             granted (see the system tap rates lines for the rates in use)"
+             granted"
         );
     }
 }

@@ -1,5 +1,5 @@
 //! Which sample rate the system tap's IO proc really delivers, and noticing
-//! when it changes mid-recording (TUR-80).
+//! when it changes mid-recording (TUR-80, TUR-84).
 //!
 //! `kAudioTapPropertyFormat` reports the tap's own format (48 kHz on every
 //! Mac seen so far), but the IO proc runs on the private aggregate device's
@@ -10,15 +10,22 @@
 //! HFP (16 kHz) when a call starts, without any default-device change, so the
 //! rate has to be watched for the whole recording, not read once.
 //!
-//! [`effective_input_rate`] is the decision, kept pure so it is unit-tested
-//! without a device. The rest is the Core Audio reads feeding it and a
-//! property listener ([`RateWatch`]) that keeps an atomic up to date for the
-//! worker thread to pick up at its next chunk boundary.
+//! TUR-84: the aggregate's input stream can still claim 48 kHz while the
+//! aggregate and the output run at 16 kHz or 44.1 kHz (realme Buds), and the
+//! IO proc delivers at the aggregate's rate. So the device nominal rates now
+//! win over the stream format, and the delivered rate is also **measured**
+//! (frames vs `mHostTime`, [`RateMeter`]); a measurement more than
+//! [`MEASURED_TOLERANCE`] away from the reported rate wins.
+//!
+//! [`effective_rate`] is the decision, kept pure so it is unit-tested
+//! without a device. The rest is the Core Audio reads feeding it, the shared
+//! [`RateState`] the IO proc, the worker and the rate listeners
+//! ([`RateWatch`]) all see, and those listeners.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 use objc2_core_audio::{self as ca, AudioObjectID, AudioObjectPropertyAddress};
 use objc2_core_audio_types::AudioStreamBasicDescription;
@@ -26,24 +33,154 @@ use objc2_core_audio_types::AudioStreamBasicDescription;
 /// Rates outside this range are a failed or nonsense read, never a device.
 const PLAUSIBLE_RATES_HZ: std::ops::RangeInclusive<f64> = 1_000.0..=768_000.0;
 
+/// The rates a measurement snaps to.
+pub(crate) const STANDARD_RATES_HZ: [u32; 9] = [
+    8_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000, 88_200, 96_000,
+];
+
+/// A measured rate further than this (as a fraction) from the reported one
+/// overrides it.
+pub(crate) const MEASURED_TOLERANCE: f64 = 0.02;
+
+/// How much host time one measurement spans.
+pub(crate) const MEASURE_WINDOW_NS: u64 = 500_000_000;
+
 fn plausible(rate: Option<f64>) -> Option<u32> {
     rate.filter(|r| r.is_finite() && PLAUSIBLE_RATES_HZ.contains(r))
         .map(|r| r.round() as u32)
 }
 
-/// The rate to resample the tap's frames from. Prefers the aggregate's input
-/// stream format (what the IO proc's buffers are actually in), then the
-/// aggregate device's nominal rate (the clock the IO proc runs on), and only
-/// then the tap's own reported format, which is what this module used alone
-/// before TUR-80 and is wrong whenever the output device is not at 48 kHz.
-pub(crate) fn effective_input_rate(
-    tap_format_rate: u32,
-    aggregate_nominal_rate: Option<f64>,
-    stream_virtual_rate: Option<f64>,
-) -> u32 {
-    plausible(stream_virtual_rate)
-        .or_else(|| plausible(aggregate_nominal_rate))
-        .unwrap_or(tap_format_rate)
+/// The nearest standard rate to a measured one, or `None` for nonsense.
+pub(crate) fn snap(rate: f64) -> Option<u32> {
+    plausible(Some(rate))?;
+    STANDARD_RATES_HZ.iter().copied().min_by(|a, b| {
+        let da = (f64::from(*a) - rate).abs();
+        let db = (f64::from(*b) - rate).abs();
+        da.total_cmp(&db)
+    })
+}
+
+/// Every rate Core Audio reports for one tap.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ReportedRates {
+    /// `kAudioTapPropertyFormat`'s rate.
+    pub tap_format: u32,
+    /// The aggregate device's `kAudioDevicePropertyNominalSampleRate`.
+    pub aggregate_nominal: Option<f64>,
+    /// The default output device's nominal rate (the aggregate's main
+    /// sub-device, so its clock).
+    pub output_nominal: Option<f64>,
+    /// The virtual format of the aggregate's last input stream.
+    pub stream_virtual: Option<f64>,
+}
+
+impl ReportedRates {
+    /// The reported rate to trust: the aggregate's nominal rate (the clock
+    /// the IO proc runs on), then the output device's (the aggregate's
+    /// clock source), then the input stream's format, then the tap's own
+    /// format. TUR-80 put the stream first; on the owner's Bluetooth buds
+    /// it said 48 kHz while frames came at 16 and 44.1 kHz (TUR-84).
+    pub(crate) fn chosen(&self) -> u32 {
+        plausible(self.aggregate_nominal)
+            .or_else(|| plausible(self.output_nominal))
+            .or_else(|| plausible(self.stream_virtual))
+            .unwrap_or(self.tap_format)
+    }
+}
+
+/// The rate to resample the tap's frames from: [`ReportedRates::chosen`],
+/// unless `measured` (frames per second of host time) differs from it by
+/// more than [`MEASURED_TOLERANCE`], in which case the measurement, snapped
+/// to the nearest [`STANDARD_RATES_HZ`], wins.
+pub(crate) fn effective_rate(reported: ReportedRates, measured: Option<f64>) -> u32 {
+    let chosen = reported.chosen();
+    let Some((raw, snapped)) = measured.and_then(|m| Some((m, snap(m)?))) else {
+        return chosen;
+    };
+    let off = (raw - f64::from(chosen)).abs() / f64::from(chosen.max(1));
+    if off > MEASURED_TOLERANCE {
+        snapped
+    } else {
+        chosen
+    }
+}
+
+/// One published measurement.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Measurement {
+    /// Frames per second of host time.
+    pub hz: f64,
+    /// The first since the meter was (re)started. The rate in use was then
+    /// a guess, so the frames since the start or the last notification were
+    /// at this rate all along. A later one is a switch that happened without
+    /// a notification.
+    pub first: bool,
+}
+
+/// Measures the rate the IO proc really delivers: frames counted between
+/// callbacks against the callbacks' `mHostTime`, over windows of at least
+/// [`MEASURE_WINDOW_NS`].
+///
+/// No allocation and no locks, so it runs inside the IO proc. The first
+/// window after a [`reset`](Self::reset) is published at once; after that a
+/// new rate is only published once two windows in a row agree on it, so a
+/// window straddling a switch (or a dropout) never flips the resampler.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct RateMeter {
+    /// Host time of the callback the current window started at.
+    anchor_ns: Option<u64>,
+    /// Frames delivered from the anchor callback up to (not including) the
+    /// latest one.
+    frames: u64,
+    published: Option<u32>,
+    candidate: Option<u32>,
+}
+
+impl RateMeter {
+    /// Start over, e.g. after a rate-change notification.
+    pub(crate) fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// One IO callback: its input `mHostTime` in ns and how many frames it
+    /// carried. Returns a measurement when there is a new one to publish.
+    pub(crate) fn observe(&mut self, host_ns: u64, frames: u64) -> Option<Measurement> {
+        let Some(anchor) = self.anchor_ns else {
+            self.anchor_ns = Some(host_ns);
+            self.frames = frames;
+            return None;
+        };
+        let Some(elapsed) = host_ns.checked_sub(anchor) else {
+            // The host clock went backwards: start this window over.
+            self.anchor_ns = Some(host_ns);
+            self.frames = frames;
+            return None;
+        };
+        if elapsed < MEASURE_WINDOW_NS {
+            self.frames += frames;
+            return None;
+        }
+        let rate = self.frames as f64 * 1e9 / elapsed as f64;
+        self.anchor_ns = Some(host_ns);
+        self.frames = frames;
+        let snapped = snap(rate)?;
+        match self.published {
+            None => {}
+            Some(published) if published == snapped => {
+                self.candidate = None;
+                return None;
+            }
+            Some(_) if self.candidate != Some(snapped) => {
+                self.candidate = Some(snapped);
+                return None;
+            }
+            Some(_) => {}
+        }
+        let first = self.published.is_none();
+        self.published = Some(snapped);
+        self.candidate = None;
+        Some(Measurement { hz: rate, first })
+    }
 }
 
 fn address(selector: u32, scope: u32) -> AudioObjectPropertyAddress {
@@ -137,7 +274,7 @@ fn input_stream_rate(device_id: AudioObjectID) -> Option<f64> {
     Some(format.mSampleRate)
 }
 
-/// The devices whose rates decide [`effective_input_rate`].
+/// The devices whose rates decide [`effective_rate`].
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RateSources {
     pub tap_format_rate: u32,
@@ -146,24 +283,184 @@ pub(crate) struct RateSources {
 }
 
 impl RateSources {
-    /// Read every rate, log them all, and return the one to resample from.
-    pub(crate) fn read_and_log(&self, when: &str) -> u32 {
-        let aggregate = nominal_rate(self.aggregate_id);
-        let stream = input_stream_rate(self.aggregate_id);
-        let output = nominal_rate(self.output_device_id);
-        let effective = effective_input_rate(self.tap_format_rate, aggregate, stream);
-        tracing::info!(
-            "system tap rates ({when}): tap format {} Hz, aggregate nominal {aggregate:?} Hz, \
-             input stream {stream:?} Hz, output device {output:?} Hz; resampling from {effective} Hz",
-            self.tap_format_rate
-        );
-        effective
+    fn read(&self) -> ReportedRates {
+        ReportedRates {
+            tap_format: self.tap_format_rate,
+            aggregate_nominal: nominal_rate(self.aggregate_id),
+            output_nominal: nominal_rate(self.output_device_id),
+            stream_virtual: input_stream_rate(self.aggregate_id),
+        }
     }
 }
 
-struct WatchState {
+/// What every rate log line says.
+fn describe(reported: &ReportedRates, measured: Option<f64>) -> String {
+    let effective = effective_rate(*reported, measured);
+    format!(
+        "tap format {} Hz, aggregate nominal {:?} Hz, input stream {:?} Hz, output device {:?} \
+         Hz, measured_rate {:?} Hz, effective_rate {effective} Hz; resampling from {effective} Hz",
+        reported.tap_format,
+        reported.aggregate_nominal,
+        reported.stream_virtual,
+        reported.output_nominal,
+        measured.map(|m| m.round() as u32),
+    )
+}
+
+/// The rates one tap is running at, shared by the rate listeners (which
+/// re-read the reported rates), the IO proc (which publishes measurements)
+/// and the worker (which resamples at [`RateState::effective`]).
+pub(crate) struct RateState {
     sources: RateSources,
-    rate: Arc<AtomicU32>,
+    /// Written by the listeners, read by the worker; never by the IO proc.
+    reported: Mutex<ReportedRates>,
+    /// The latest measurement as `f32` bits, 0 for none yet.
+    measured_bits: AtomicU32,
+    /// Whether that measurement is [`Measurement::first`].
+    measured_first: AtomicBool,
+    /// Bumped on every rate-change notification, so the IO proc restarts its
+    /// [`RateMeter`].
+    epoch: AtomicU32,
+    /// Set whenever the effective rate may have changed.
+    dirty: AtomicBool,
+}
+
+impl RateState {
+    /// Read every rate once and log them.
+    pub(crate) fn new(sources: RateSources) -> Arc<Self> {
+        let reported = sources.read();
+        tracing::info!("system tap rates (start): {}", describe(&reported, None));
+        Self::with(sources, reported)
+    }
+
+    /// A state that starts from `reported` without reading any device, for
+    /// tests that drive the IO-proc and worker sides by hand.
+    #[cfg(test)]
+    pub(crate) fn fake(reported: ReportedRates) -> Arc<Self> {
+        let sources = RateSources {
+            tap_format_rate: reported.tap_format,
+            aggregate_id: ca::kAudioObjectUnknown,
+            output_device_id: ca::kAudioObjectUnknown,
+        };
+        Self::with(sources, reported)
+    }
+
+    fn with(sources: RateSources, reported: ReportedRates) -> Arc<Self> {
+        Arc::new(Self {
+            sources,
+            reported: Mutex::new(reported),
+            measured_bits: AtomicU32::new(0),
+            measured_first: AtomicBool::new(false),
+            epoch: AtomicU32::new(0),
+            dirty: AtomicBool::new(false),
+        })
+    }
+
+    fn reported(&self) -> ReportedRates {
+        match self.reported.lock() {
+            Ok(guard) => *guard,
+            Err(poisoned) => *poisoned.into_inner(),
+        }
+    }
+
+    /// The latest measured delivery rate, if a window has completed since
+    /// the last rate change.
+    pub(crate) fn measured(&self) -> Option<f64> {
+        let bits = self.measured_bits.load(Ordering::Acquire);
+        (bits != 0).then(|| f64::from(f32::from_bits(bits)))
+    }
+
+    /// Whether [`Self::measured`] is the first since the last (re)start.
+    pub(crate) fn measured_first(&self) -> bool {
+        self.measured_first.load(Ordering::Acquire)
+    }
+
+    /// The rate to resample from right now.
+    pub(crate) fn effective(&self) -> u32 {
+        effective_rate(self.reported(), self.measured())
+    }
+
+    /// The current rate log line's text, for a caller's own log.
+    pub(crate) fn describe(&self) -> String {
+        describe(&self.reported(), self.measured())
+    }
+
+    /// Re-read the reported rates and forget the measurement, which the IO
+    /// proc then takes again (a rate-change notification).
+    fn reread(&self, when: &str) {
+        let previous = self.effective();
+        let reported = self.sources.read();
+        match self.reported.lock() {
+            Ok(mut guard) => *guard = reported,
+            Err(poisoned) => *poisoned.into_inner() = reported,
+        }
+        let rate = reported.chosen();
+        if previous != rate {
+            tracing::warn!(
+                "system tap input rate changed {previous} Hz -> {rate} Hz mid-recording"
+            );
+        }
+        self.measured_bits.store(0, Ordering::Release);
+        self.epoch.fetch_add(1, Ordering::AcqRel);
+        self.dirty.store(true, Ordering::Release);
+        tracing::info!("system tap rates ({when}): {}", describe(&reported, None));
+    }
+
+    /// The meter epoch the IO proc compares against.
+    pub(crate) fn epoch(&self) -> u32 {
+        self.epoch.load(Ordering::Acquire)
+    }
+
+    /// Publish a measurement from the IO proc: two atomic stores, nothing
+    /// else, so it is safe on the real-time thread.
+    pub(crate) fn publish_measured(&self, measured: Measurement) {
+        self.measured_first.store(measured.first, Ordering::Release);
+        // Never 0 bits: a plausible rate is >= 1 kHz.
+        self.measured_bits
+            .store((measured.hz as f32).to_bits(), Ordering::Release);
+        self.dirty.store(true, Ordering::Release);
+    }
+
+    /// For the worker: whether anything changed since it last asked.
+    pub(crate) fn take_change(&self) -> bool {
+        self.dirty.swap(false, Ordering::AcqRel)
+    }
+}
+
+/// The IO proc's side of the measurement: a [`RateMeter`] restarted after
+/// every rate-change notification, publishing into [`RateState`]. Atomics
+/// and integers only, so it is safe on the real-time thread.
+pub(crate) struct CallbackMeter {
+    rates: Arc<RateState>,
+    meter: RateMeter,
+    epoch: u32,
+    channels: usize,
+}
+
+impl CallbackMeter {
+    pub(crate) fn new(rates: Arc<RateState>, channels: usize) -> Self {
+        let epoch = rates.epoch();
+        Self {
+            rates,
+            meter: RateMeter::default(),
+            epoch,
+            channels: channels.max(1),
+        }
+    }
+
+    /// One callback: its input host time and how many interleaved samples
+    /// it delivered.
+    pub(crate) fn observe(&mut self, host_ns: u64, samples: usize) {
+        let epoch = self.rates.epoch();
+        if epoch != self.epoch {
+            self.epoch = epoch;
+            self.meter.reset();
+        }
+        let frames = (samples / self.channels) as u64;
+        if let Some(measured) = self.meter.observe(host_ns, frames) {
+            self.rates.publish_measured(measured);
+        }
+    }
 }
 
 /// Listener for `kAudioDevicePropertyNominalSampleRate` on the aggregate and
@@ -175,43 +472,35 @@ unsafe extern "C-unwind" fn on_rate_change(
     _addresses: NonNull<AudioObjectPropertyAddress>,
     client_data: *mut c_void,
 ) -> i32 {
-    // SAFETY: `client_data` is the leaked `WatchState` from `RateWatch::install`,
-    // valid for the rest of the process.
-    let Some(state) = (unsafe { client_data.cast::<WatchState>().as_ref() }) else {
+    // SAFETY: `client_data` is the leaked `Arc<RateState>` from
+    // `RateWatch::install`, valid for the rest of the process.
+    let Some(state) = (unsafe { client_data.cast::<RateState>().as_ref() }) else {
         return 0;
     };
-    let rate = state.sources.read_and_log("rate changed");
-    let previous = state.rate.swap(rate, Ordering::AcqRel);
-    if previous != rate {
-        tracing::warn!("system tap input rate changed {previous} Hz -> {rate} Hz mid-recording");
-    }
+    state.reread("rate changed");
     0
 }
 
 /// The registered rate listeners for one tap. Dropping it unregisters them.
 pub(crate) struct RateWatch {
-    state: *mut WatchState,
+    state: *const RateState,
     objects: Vec<AudioObjectID>,
-    rate: Arc<AtomicU32>,
 }
 
-// SAFETY: `state` points at a leaked, never-freed `WatchState` whose fields
-// are `Copy` ids and an `Arc<AtomicU32>`; nothing here is thread-bound.
+// SAFETY: `state` points at a leaked, never-freed `RateState`, which is
+// `Sync` (ids, a `Mutex` and atomics); nothing here is thread-bound.
 unsafe impl Send for RateWatch {}
 
 impl RateWatch {
-    /// Register the listeners, then re-read the rate once so a change between
-    /// the caller's first read and the registration is not missed.
-    pub(crate) fn install(sources: RateSources, initial_rate: u32) -> Self {
-        let rate = Arc::new(AtomicU32::new(initial_rate));
-        // Leaked on purpose (a few dozen bytes per segment): Core Audio gives
-        // no guarantee that a notification already in flight has returned
-        // when `AudioObjectRemovePropertyListener` does, so freeing this on
-        // drop could leave that callback reading freed memory.
-        let state = Box::into_raw(Box::new(WatchState {
-            sources,
-            rate: Arc::clone(&rate),
-        }));
+    /// Register the listeners, then re-read the rates once so a change
+    /// between the first read and the registration is not missed.
+    pub(crate) fn install(state: &Arc<RateState>) -> Self {
+        // Leaked on purpose (one reference per segment): Core Audio gives no
+        // guarantee that a notification already in flight has returned when
+        // `AudioObjectRemovePropertyListener` does, so releasing this on drop
+        // could leave that callback reading freed memory.
+        let leaked = Arc::into_raw(Arc::clone(state));
+        let sources = state.sources;
         let mut objects = Vec::new();
         for object in [sources.aggregate_id, sources.output_device_id] {
             let mut addr = address(
@@ -219,13 +508,13 @@ impl RateWatch {
                 ca::kAudioObjectPropertyScopeGlobal,
             );
             // SAFETY: `on_rate_change` matches `AudioObjectPropertyListenerProc`,
-            // and `state` stays valid forever (see above).
+            // and `leaked` stays valid forever (see above).
             let status = unsafe {
                 ca::AudioObjectAddPropertyListener(
                     object,
                     NonNull::from(&mut addr),
                     Some(on_rate_change),
-                    state.cast(),
+                    leaked.cast_mut().cast(),
                 )
             };
             if status == 0 {
@@ -234,18 +523,11 @@ impl RateWatch {
                 tracing::warn!("could not watch the sample rate of device {object}: {status}");
             }
         }
-        let rereads = sources.read_and_log("after installing rate listeners");
-        rate.store(rereads, Ordering::Release);
+        state.reread("after installing rate listeners");
         Self {
-            state,
+            state: leaked,
             objects,
-            rate,
         }
-    }
-
-    /// The rate the worker thread should resample from right now.
-    pub(crate) fn current(&self) -> Arc<AtomicU32> {
-        Arc::clone(&self.rate)
     }
 }
 
@@ -262,7 +544,7 @@ impl Drop for RateWatch {
                     object,
                     NonNull::from(&mut addr),
                     Some(on_rate_change),
-                    self.state.cast(),
+                    self.state.cast_mut().cast(),
                 )
             };
         }
@@ -270,46 +552,4 @@ impl Drop for RateWatch {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_stream_format_wins_over_everything() {
-        assert_eq!(
-            effective_input_rate(48_000, Some(24_000.0), Some(16_000.0)),
-            16_000
-        );
-    }
-
-    #[test]
-    fn the_aggregate_rate_wins_over_the_tap_format() {
-        // The TUR-80 Bluetooth case: tap says 48 kHz, the HFP output runs 16 kHz.
-        assert_eq!(effective_input_rate(48_000, Some(16_000.0), None), 16_000);
-    }
-
-    #[test]
-    fn the_tap_format_is_the_last_resort() {
-        assert_eq!(effective_input_rate(48_000, None, None), 48_000);
-    }
-
-    #[test]
-    fn nonsense_reads_fall_through_to_the_next_source() {
-        assert_eq!(
-            effective_input_rate(48_000, Some(0.0), Some(f64::NAN)),
-            48_000
-        );
-        assert_eq!(
-            effective_input_rate(48_000, Some(44_100.0), Some(-1.0)),
-            44_100
-        );
-        assert_eq!(
-            effective_input_rate(48_000, Some(f64::INFINITY), Some(1e9)),
-            48_000
-        );
-    }
-
-    #[test]
-    fn fractional_rates_round_to_the_nearest_hertz() {
-        assert_eq!(effective_input_rate(48_000, None, Some(15_999.6)), 16_000);
-    }
-}
+mod tests;

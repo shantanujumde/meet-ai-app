@@ -20,6 +20,9 @@ mod tap_pipeline;
 /// Which rate the tap's IO proc really runs at, and watching it change.
 mod tap_rate;
 
+/// The fresh UUID each process tap is created with.
+mod tap_uuid;
+
 /// Default-output/input-device polling, for detecting the AirPods swap SPEC
 /// §5's exit gate names — see the module docs for why this polls instead of
 /// registering a Core Audio property listener.
