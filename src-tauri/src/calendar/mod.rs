@@ -86,7 +86,7 @@ fn provider_for(provider: Provider) -> Option<SharedProvider> {
         // On every OS: off macOS its reads are errors (SPEC §8.2 keeps the
         // `#[cfg]` inside `crates/calendar/src/eventkit.rs`).
         Provider::EventKit => Some(Arc::new(::calendar::eventkit::EventKitProvider::new())),
-        // Only with a sign-in (`cloud`); Google is TUR-48.
+        // Only with a sign-in (`cloud`).
         Provider::Google => cloud::provider(ProviderId::Google).map(SharedProvider::from),
         Provider::Microsoft => cloud::provider(ProviderId::Microsoft).map(SharedProvider::from),
     }

@@ -12,7 +12,8 @@ use std::sync::OnceLock;
 
 use ::calendar::CalendarProvider;
 use ::calendar::Error;
-use ::calendar::microsoft::{MicrosoftProvider, TokenSource};
+use ::calendar::google::{self, GoogleProvider};
+use ::calendar::microsoft::{self, MicrosoftProvider};
 use ::calendar::oauth::{CalendarAuth, ProviderId};
 use tauri::{AppHandle, Manager as _};
 
@@ -27,43 +28,67 @@ pub(crate) fn init(app: &AppHandle) {
 }
 
 /// The cloud provider for `id`, when it has a sign-in. `None` before
-/// [`init`], when signed out, and for a provider not built yet.
+/// [`init`] and when signed out.
 pub(crate) fn provider(id: ProviderId) -> Option<Box<dyn CalendarProvider + Send + Sync>> {
     let app = APP.get()?;
     if !app.try_state::<CalendarAuth>()?.has_sign_in(id) {
         tracing::debug!(provider = %id, "calendar provider is configured but not signed in; skipping it");
         return None;
     }
+    let tokens = AppTokens {
+        app: app.clone(),
+        provider: id,
+    };
+    let http = Box::new(ReqwestHttp::default());
     match id {
-        ProviderId::Microsoft => Some(Box::new(MicrosoftProvider::new(
-            Box::new(AppTokens(app.clone())),
-            Box::new(ReqwestHttp::default()),
-        ))),
-        // TUR-48.
-        ProviderId::Google => None,
+        ProviderId::Microsoft => Some(Box::new(MicrosoftProvider::new(Box::new(tokens), http))),
+        ProviderId::Google => Some(Box::new(GoogleProvider::new(Box::new(tokens), http))),
     }
 }
 
-/// The Microsoft access token from the app's managed [`CalendarAuth`].
-struct AppTokens(AppHandle);
+/// One provider's access token from the app's managed [`CalendarAuth`].
+struct AppTokens {
+    app: AppHandle,
+    provider: ProviderId,
+}
 
 impl AppTokens {
     fn auth(&self) -> Result<tauri::State<'_, CalendarAuth>, Error> {
-        self.0
+        self.app
             .try_state::<CalendarAuth>()
             .ok_or(Error::SignInExpired {
-                provider: ProviderId::Microsoft.display_name(),
+                provider: self.provider.display_name(),
             })
     }
-}
 
-impl TokenSource for AppTokens {
     fn access_token(&self) -> Result<String, Error> {
-        TokenSource::access_token(self.auth()?.inner())
+        self.auth()?.access_token(self.provider)
     }
 
     fn renew_access_token(&self, rejected: &str) -> Result<String, Error> {
-        self.auth()?.inner().renew_access_token(rejected)
+        self.auth()?.renew_access_token(self.provider, rejected)
+    }
+}
+
+// The two providers' token traits have the same shape; both answer from the
+// one `AppTokens`, and the renewal itself is `CalendarAuth::renew_access_token`.
+impl microsoft::TokenSource for AppTokens {
+    fn access_token(&self) -> Result<String, Error> {
+        AppTokens::access_token(self)
+    }
+
+    fn renew_access_token(&self, rejected: &str) -> Result<String, Error> {
+        AppTokens::renew_access_token(self, rejected)
+    }
+}
+
+impl google::TokenSource for AppTokens {
+    fn access_token(&self) -> Result<String, Error> {
+        AppTokens::access_token(self)
+    }
+
+    fn renew_access_token(&self, rejected: &str) -> Result<String, Error> {
+        AppTokens::renew_access_token(self, rejected)
     }
 }
 
