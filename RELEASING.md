@@ -25,17 +25,19 @@ notarized.
    PR, titled `chore(main): release X.Y.Z`, or updates it if it is already
    open. That PR:
    - bumps the version in `Cargo.toml` (`[workspace.package]`),
-     `package.json` and `src-tauri/tauri.conf.json`, and in
-     `.release-please-manifest.json`;
+     `package.json` and `.release-please-manifest.json`. The app reads its
+     version from `package.json`, because `src-tauri/tauri.conf.json` has
+     `"version": "../package.json"`. release-please would rewrite
+     `tauri.conf.json` in a layout that `biome check` rejects, so the file
+     points there instead of holding its own number;
+   - bumps every workspace crate in `Cargo.lock`. Each one inherits the
+     workspace version, so the lockfile has to change with it. The
+     jsonpath `$.package[?(!@.source)]` picks out the workspace crates, so
+     new crates are covered too;
    - adds a `## [X.Y.Z]` entry to `CHANGELOG.md`, above the text already
      there. The entry is built from the `feat` and `fix` titles (also `perf`
      and `revert`).
 
-   A follow-up job (`release-pr-fixups`) then pushes one more commit to the
-   release PR. It refreshes `Cargo.lock`, because every workspace crate gets
-   its version from the workspace. It also runs Biome on the two JSON files,
-   because release-please rewrites `tauri.conf.json` in a layout that
-   `biome check` rejects.
 3. Merging any other PR only updates the release PR. Nothing is published.
 4. Merging the release PR makes release-please tag the merge commit `vX.Y.Z`
    and create the GitHub release. Then, on a `macos-26` runner:
@@ -120,8 +122,7 @@ bottom.
 
 ### When the workflow fails
 
-- **Before the release exists** (in `release-please` or
-  `release-pr-fixups`): fix the cause, then re-run the workflow from the
+- **Before the release exists** (in `release-please`): fix the cause, then re-run the workflow from the
   Actions tab. A merge to `main` also starts a new run.
 - **After the release exists** (in `build` or `publish`): the tag and the
   release are already there, but have no files attached. Fix the cause,
@@ -212,13 +213,13 @@ git log --oneline "$(git describe --tags --abbrev=0)"..main
 
 Work on a branch named `release/vX.Y.Z`, cut from the commits you want to ship.
 
-The version lives in three files. Change all three:
+Change the version in all of these files:
 
 | File | Field |
 |---|---|
 | `Cargo.toml` | `[workspace.package] version` |
-| `package.json` | `"version"` |
-| `src-tauri/tauri.conf.json` | `"version"` (this is what the built app reports) |
+| `package.json` | `"version"`. This is what the built app reports: `src-tauri/tauri.conf.json` has `"version": "../package.json"` |
+| `.release-please-manifest.json` | `"."`. Keep it in step, or the next automatic release starts from the wrong version |
 
 Then refresh `Cargo.lock` so every workspace crate picks up the new number:
 
@@ -257,7 +258,7 @@ rewrote runs of spaces inside regexes to ` {12}`, which matches the same text.
 ### 4. Commit, open a PR, merge
 
 ```sh
-git add CHANGELOG.md Cargo.lock Cargo.toml package.json src-tauri/tauri.conf.json
+git add CHANGELOG.md Cargo.lock Cargo.toml package.json .release-please-manifest.json
 git commit -m "Release X.Y.Z"
 git push -u origin release/vX.Y.Z
 gh pr create --base main --head release/vX.Y.Z --title "Release X.Y.Z: <one-line summary>"
