@@ -75,6 +75,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::lifecycle::confirm_quit,
             crate::lifecycle::app_settings,
             crate::lifecycle::set_show_in_dock_when_closed,
+            crate::logs::open_logs_folder,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)

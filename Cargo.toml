@@ -97,8 +97,9 @@ tempfile = "=3.27.0"
 thiserror = "=2.0.20"
 tokio = "=1.53.1"
 tracing = "=0.1.44"
-tracing-appender = "=0.2.5"
 tracing-subscriber = "=0.3.23"
+# Native crash handler: writes a local crash file, nothing is sent (TUR-46).
+crash-handler = "=0.7.0"
 
 # --- tauri (SETUP.md §2.1) ---
 tauri = "=2.11.5"
