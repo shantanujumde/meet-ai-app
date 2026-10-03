@@ -153,7 +153,7 @@ SOFTWARE.
 - Copyright: Copyright (c) 2024 thewh1teagle
 - Commit: 53056d6bf3e5835c15fca3f1725f489de1e199f9
 - Files:
-  - `src-tauri/src/logs/native.rs` (`attach`: the `crash_handler` hook that
+  - `src-tauri/src/logs/native/mod.rs` (`attach`: the `crash_handler` hook that
     records the exception code; its analytics and report dialog were not
     taken) from `desktop/src-tauri/src/setup.rs`
 

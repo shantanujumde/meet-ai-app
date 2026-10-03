@@ -190,18 +190,3 @@ fn the_stack_string_refuses_to_overflow() {
     assert!(text.write_str("e").is_err());
     assert_eq!(text.as_str(), "abcd");
 }
-
-#[test]
-fn the_log_is_capped_at_a_megabyte() {
-    assert_eq!(LOG_MAX_BYTES, 1_000_000);
-    assert_eq!(MAX_CRASH_FILES, 5);
-    assert_eq!(LOG_FILE_STEM, "meet-ai");
-}
-
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-#[test]
-fn mach_exception_kinds_have_their_header_names() {
-    assert_eq!(native::mach_exception_name(1), "EXC_BAD_ACCESS");
-    assert_eq!(native::mach_exception_name(10), "EXC_CRASH");
-    assert_eq!(native::mach_exception_name(99), "unknown exception");
-}

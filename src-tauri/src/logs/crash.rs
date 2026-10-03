@@ -151,10 +151,7 @@ pub fn write_native_file(
     if built.is_err() {
         return Err(std::io::Error::other("crash file path too long"));
     }
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(Path::new(path.as_str()))?;
+    let mut file = open_append(Path::new(path.as_str()))?;
     file.write_all(header.as_bytes())?;
     let mut time = StackStr::<32>::new();
     let _ = at.rfc3339(&mut time);
@@ -163,12 +160,17 @@ pub fn write_native_file(
     file.flush()
 }
 
-fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
+/// Open `path` for appending, creating it if needed. Does not allocate, so
+/// the native crash path can use it too.
+fn open_append(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(path)?;
-    file.write_all(bytes)
+        .open(path)
+}
+
+fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    open_append(path)?.write_all(bytes)
 }
 
 /// Keep the newest `keep` crash files in `dir`, deleting the oldest first.
