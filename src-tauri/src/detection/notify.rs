@@ -386,7 +386,7 @@ mod tests {
             "“Standup” starts in 1 min, with 3 people invited. \
              Open meet-ai to join, record it or read the brief."
         );
-        // Only a web link is a link to join.
+        // Only a safe video-call link is a link to join.
         let odd = reminder_prompt(
             Phase::Idle,
             &event(Some("javascript:alert(1)")),

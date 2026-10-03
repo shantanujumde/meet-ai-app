@@ -3,11 +3,11 @@
 //!
 //! A reminder remembers its event ([`Reminded`]), and the banner sends back
 //! only that event's id, never a link: the link a click opens is the one the
-//! calendar gave, and only a web link ([`join_link`], the same rule as the
-//! menu bar's Join). Record pins the event, so the recording is named after
-//! this meeting even when the reminder came ten minutes early, and goes
-//! through the normal start path (`folder_move::start_recording`, as the menu
-//! bar's Record does). Every one of these runs from a click (L15).
+//! calendar gave, and only a safe video-call link ([`join_link`], the same
+//! check as the menu bar's Join). Record pins the event, so the recording is
+//! named after this meeting even when the reminder came ten minutes early,
+//! and goes through the normal start path (`folder_move::start_recording`,
+//! as the menu bar's Record does). Every one of these runs from a click (L15).
 
 use std::collections::VecDeque;
 
@@ -54,14 +54,13 @@ impl Detection {
     }
 }
 
-/// `event`'s meeting link, if it has one that is a web link. The providers'
-/// fields are someone else's data, so nothing else is opened.
-// TODO(TUR-86): check with calendar::join_url::is_safe_join_url once it lands
-// on main, instead of this scheme-only test.
+/// `event`'s meeting link, if it passes the one Join-link check every Join
+/// uses ([`::calendar::join_url::is_safe_join_url`]: http(s), a known video
+/// service, no user info, no `\\` before the path). The providers' fields are
+/// someone else's data, so nothing else gets a Join button or is opened.
 pub fn join_link(event: &::calendar::Event) -> Option<&str> {
     let url = event.join_url.as_deref()?.trim();
-    let lower = url.to_ascii_lowercase();
-    (lower.starts_with("https://") || lower.starts_with("http://")).then_some(url)
+    ::calendar::join_url::is_safe_join_url(url).then_some(url)
 }
 
 fn reminded_event(app: &AppHandle, event_id: &str) -> Result<::calendar::Event, UiError> {
@@ -142,20 +141,30 @@ mod tests {
     }
 
     #[test]
-    fn only_a_web_link_is_joined() {
+    fn only_a_safe_video_call_link_is_joined() {
         assert_eq!(
             join_link(&event("a", Some("https://zoom.us/j/1"))),
             Some("https://zoom.us/j/1")
         );
         assert_eq!(
-            join_link(&event("a", Some(" HTTP://meet.example/x "))),
-            Some("HTTP://meet.example/x")
+            join_link(&event("a", Some(" HTTPS://meet.google.com/abc-defg-hij "))),
+            Some("HTTPS://meet.google.com/abc-defg-hij")
         );
         for odd in [
+            // Not a known video service.
+            "https://meet.example/x",
+            "http://meet.example/x",
+            // Not http(s).
             "file:///etc/passwd",
             "javascript:alert(1)",
             "zoommtg://x",
             "",
+            // A `\` before the path: browsers and the OS may disagree on the host.
+            "https://evil.example\\@meet.google.com/abc-defg-hij",
+            "https:\\\\meet.google.com\\abc-defg-hij",
+            // User info dressing one host up as another.
+            "https://meet.google.com@evil.example/abc-defg-hij",
+            "https://user:pass@meet.google.com/abc-defg-hij",
         ] {
             assert_eq!(join_link(&event("a", Some(odd))), None, "{odd}");
         }
