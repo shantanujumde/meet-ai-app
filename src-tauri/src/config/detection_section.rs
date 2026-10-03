@@ -6,7 +6,7 @@
 //! defaults ([`detection`]); [`parse_detection`] returns the error for a
 //! caller that wants to show it.
 //!
-//! There is no detection loop on main yet: TUR-27 calls [`detection`].
+//! The detection loop (`crate::detection`, TUR-27) reads `processes` at startup.
 
 use serde::Deserialize;
 
@@ -73,7 +73,6 @@ fn detection_or_defaults(raw: &str) -> DetectionConfig {
 
 /// `detection` from `~/Meetings/.app/config.jsonc`, or the SPEC §3.5
 /// defaults if the file or section is missing or not valid (logged).
-#[allow(dead_code)] // TUR-27 (detection loop) calls this.
 pub fn detection() -> DetectionConfig {
     detection_or_defaults(&super::raw_or_empty())
 }

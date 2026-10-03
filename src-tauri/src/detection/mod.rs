@@ -14,10 +14,6 @@ use crate::lock::lock_or_recover;
 
 pub mod notify;
 
-/// `detection.processes` (SPEC §3.5), until TUR-25's detection config section
-/// is there to read it from: on.
-pub const PROCESSES_DEFAULT: bool = true;
-
 /// Managed state: the running detection loop, kept so it lives as long as the
 /// app and so later signals (calendar, audio activity) can reach it.
 #[derive(Default)]
@@ -28,7 +24,7 @@ pub struct Detection {
 impl Detection {
     /// A calendar event or audio activity was just seen: Slack or Discord
     /// being open now counts as a call. A no-op when detection is off.
-    #[allow(dead_code)] // TUR-26 (calendar) and audio activity call this.
+    #[allow(dead_code)] // The calendar refresh loop (TUR-28) and audio activity call this.
     pub fn call_signal(&self) {
         if let Some(running) = lock_or_recover(&self.running).as_ref() {
             running.call_signal();

@@ -47,8 +47,8 @@ forward.
 
 1. Open Slack and Discord and leave them open. Expected: no prompt. They only
    prompt when a calendar event or audio activity was seen in the last
-   5 minutes, and neither signal exists yet (TUR-26 adds the calendar; it
-   should call `detection::Detection::call_signal`).
+   5 minutes, and neither signal feeds detection yet (the calendar refresh
+   loop, TUR-28, should call `detection::Detection::call_signal`).
 
 ## 5. The process names are right on a real Mac
 
@@ -62,13 +62,16 @@ no code).
 
 ## 6. `detection.processes = false`
 
-TUR-25's `detection` config section was not on `origin/main` when this was
-written, so the switch is passed as `detection::PROCESSES_DEFAULT` (`true`)
-in `src-tauri/src/lib.rs`. Once TUR-25 merges, pass its value there. Then:
-set `"detection": { "processes": false }` in
-`~/Meetings/.app/config.jsonc`, restart the app and open Zoom. Expected: no
-prompt, and the log says "detection.processes is off; not watching for
-meeting apps".
+The switch is read once at startup from TUR-25's config section
+(`crate::config::detection().processes`, default `true`), so a change needs a
+restart.
+
+1. Set `"detection": { "processes": false }` in
+   `~/Meetings/.app/config.jsonc` and restart the app. Open Zoom.
+2. Expected: no notification, no banner, and `meet-ai.log` says
+   "detection.processes is off; not watching for meeting apps".
+3. Set it back to `true` (or remove the key), restart, and open Zoom.
+   Expected: the prompt from check 1.
 
 ## Known limits
 

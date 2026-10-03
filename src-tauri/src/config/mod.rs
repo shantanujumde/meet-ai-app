@@ -51,11 +51,10 @@ mod detection_section;
 mod file;
 
 pub use agent_section::ConfigError;
-// TUR-27 (detection loop) and TUR-28 (calendar refresh loop) use these.
+// TUR-28 (calendar refresh loop) uses these.
 #[allow(unused_imports)]
 pub use calendar_section::{CalendarConfig, Provider, calendar, parse_calendar};
-#[allow(unused_imports)] // TUR-27, same
-pub use detection_section::{DetectionConfig, detection, parse_detection};
+pub use detection_section::detection;
 // TUR-9 (Setup screens) adds the IPC commands that use these.
 #[allow(unused_imports)]
 pub use agent_section::{AgentConfig, Harness, TicketsConfig};
