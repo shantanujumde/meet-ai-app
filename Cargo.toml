@@ -6,7 +6,7 @@ resolver = "3"
 edition = "2024"
 rust-version = "1.98.0"
 license = "Apache-2.0"
-version = "0.3.0"
+version = "0.4.0"
 
 # Every version here is pinned exactly to SETUP.md §2. Do not bump one without
 # updating SETUP.md in the same commit — two other crates depend on these being
