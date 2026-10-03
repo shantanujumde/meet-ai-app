@@ -38,6 +38,7 @@ import type {
   PermissionStatus,
   RecordingStatus,
 } from "@/ipc/types";
+import { NO_MEETINGS_TODAY } from "@/lib/constants";
 import { meetingDetail, meetingSummary, ticketSummary } from "./fixtures";
 
 const IDLE: RecordingStatus = { phase: "idle", meetingId: null, startedAtMs: null, error: null };
@@ -209,12 +210,10 @@ export const ipc = {
   liveTranscript: vi.fn<typeof Client.liveTranscript>(async () => EMPTY_SNAPSHOT),
 
   // TUR-28: a calendar that was read and has nothing today.
-  todaysMeetings: vi.fn<typeof Client.todaysMeetings>(async () => ({
-    events: [],
-    refreshMinutes: 15,
-    minAttendees: 2,
-  })),
-  openCalendarSettings: vi.fn<typeof Client.openCalendarSettings>(async () => {}),
+  todaysMeetings: vi.fn<typeof Client.todaysMeetings>(async () => NO_MEETINGS_TODAY),
+  calendarRefreshMinutes: vi.fn<typeof Client.calendarRefreshMinutes>(
+    async () => NO_MEETINGS_TODAY.refreshMinutes,
+  ),
 
   agentChoice: vi.fn<typeof Client.agentChoice>(async () => ({
     harness: "claude-code",

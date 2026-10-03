@@ -9,7 +9,7 @@ vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
 );
 
-const { todaysMeetings, openCalendarSettings } = ipc;
+const { todaysMeetings, openPrivacySettings, calendarRefreshMinutes } = ipc;
 
 const NINE = Date.UTC(2026, 9, 3, 9, 0);
 const HALF_HOUR = 30 * 60_000;
@@ -74,7 +74,28 @@ describe("TodayPane", () => {
     expect(screen.queryByText("No meetings on your calendar today.")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Open System Settings" }));
-    expect(openCalendarSettings).toHaveBeenCalledTimes(1);
+    expect(openPrivacySettings).toHaveBeenCalledWith("calendars");
+  });
+
+  test("Check again re-reads, and a granted calendar replaces the denied screen", async () => {
+    todaysMeetings.mockRejectedValue(DENIED);
+    await show();
+
+    todaysMeetings.mockResolvedValue(day([event()]));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    });
+    expect(todaysMeetings).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Standup")).toBeTruthy();
+  });
+
+  test("the denied screen needs the app domain, not just the kind", async () => {
+    todaysMeetings.mockRejectedValue({ ...DENIED, domain: "stt" } satisfies UiError);
+    await show();
+
+    expect(screen.queryByText(CALENDAR_DENIED_COPY)).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(DENIED.message);
   });
 
   test("lists time, title and attendee count; solo blocks are greyed", async () => {
@@ -123,6 +144,20 @@ describe("TodayPane", () => {
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5 * 60_000);
+    });
+    expect(todaysMeetings).toHaveBeenCalledTimes(2);
+  });
+
+  test("a failed read still re-reads on the configured interval", async () => {
+    vi.useFakeTimers();
+    todaysMeetings.mockRejectedValue(DENIED);
+    calendarRefreshMinutes.mockResolvedValue(3);
+    await show();
+    expect(calendarRefreshMinutes).toHaveBeenCalledTimes(1);
+    expect(todaysMeetings).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3 * 60_000);
     });
     expect(todaysMeetings).toHaveBeenCalledTimes(2);
   });

@@ -8,8 +8,9 @@
 //! What is here (Phase 5a, TUR-26):
 //!
 //! - [`eventkit`]: tier 1, every account already in Calendar.app, behind one
-//!   macOS permission prompt. macOS only; the module is empty elsewhere, and it
-//!   is the only file in this crate with OS-specific code (SPEC §8.2).
+//!   macOS permission prompt. It is the only file in this crate with OS-specific
+//!   code (SPEC §8.2): off macOS only [`eventkit::EventKitProvider`] exists,
+//!   and every read is an error.
 //! - [`raw`]: the plain, provider-neutral shape a provider reads first, and the
 //!   one pure function that turns it into [`Event`]s (skip all-day, skip
 //!   declined, name the attendees). Shared so every provider filters the same

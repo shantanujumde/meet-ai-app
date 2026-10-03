@@ -30,7 +30,7 @@ fn raw(id: &str, start: &str, end: &str, people: usize) -> RawEvent {
     }
 }
 
-fn shared(provider: FakeProvider) -> Shared {
+fn shared(provider: FakeProvider) -> SharedProvider {
     Arc::new(provider)
 }
 

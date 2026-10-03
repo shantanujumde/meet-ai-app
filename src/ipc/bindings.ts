@@ -239,10 +239,11 @@ export const commands = {
 	 */
 	todaysMeetings: () => typedError<meet_ai_lib_calendar_TodaysMeetings, meet_ai_lib_error_UiError>(__TAURI_INVOKE("todays_meetings")),
 	/**
-	 *  Open System Settings at the Calendars switch, or at Privacy & Security if
-	 *  that link is refused.
+	 *  `calendar.refresh_minutes` alone: a config read, never the calendar. The
+	 *  Today pane asks for it when [`todays_meetings`] fails, so the re-read
+	 *  timer follows the config even while access is denied.
 	 */
-	openCalendarSettings: () => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("open_calendar_settings")),
+	calendarRefreshMinutes: () => __TAURI_INVOKE<number>("calendar_refresh_minutes"),
 };
 
 /* Constants */
@@ -545,15 +546,21 @@ export type meet_ai_lib_agent_run_NotesSection = {
  *    Contents/MacOS/SecurityPrivacyExtension | grep -oE 'Privacy_[A-Za-z0-9]+'
  *  ```
  * 
- *  `Privacy_AudioCapture` and `Privacy_Microphone` are both in that table. The
- *  pane root stays here as the third entry because an unknown anchor lands on
- *  the root anyway, and because this list will be wrong on some future macOS.
+ *  `Privacy_AudioCapture`, `Privacy_Microphone` and `Privacy_Calendars` are
+ *  all in that table. The pane root stays as the fallback because an unknown
+ *  anchor lands on the root anyway, and because this list will be wrong on
+ *  some future macOS.
  */
 export type meet_ai_lib_permission_Pane = 
 /**  "System Audio Recording Only" — the tap permission. */
 "audio-capture" | 
 /**  The microphone half, which is a separate grant. */
-"microphone";
+"microphone" | 
+/**
+ *  Calendar access, for the Today pane (TUR-28). Never in an audio
+ *  [`Status::denied`] list.
+ */
+"calendars";
 
 /**
  *  Where the recorder is right now.

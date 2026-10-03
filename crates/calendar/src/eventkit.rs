@@ -3,7 +3,10 @@
 //! iCloud, Google, Exchange, Outlook and CalDAV accounts the user added to
 //! Calendar.app all come through here behind one macOS permission prompt, with
 //! no OAuth. This is the only file in the crate with OS-specific code (SPEC
-//! §8.2): on any other OS the module is empty.
+//! §8.2). [`EventKitProvider`] exists on every OS, so the app builds it
+//! without a `#[cfg]` of its own; off macOS every read is
+//! [`Error::Unreachable`], since there is no Calendar.app to read. Everything
+//! else here is macOS only.
 //!
 //! The prompt text is `NSCalendarsFullAccessUsageDescription` in
 //! `src-tauri/Info.plist`. macOS remembers the answer per signed bundle id, so
@@ -13,29 +16,40 @@
 //! Call [`EventKitProvider::list_events`] and [`request_access`] off the main
 //! thread (a `spawn_blocking` task, a worker thread).
 
-#![cfg(target_os = "macos")]
-
+#[cfg(target_os = "macos")]
 use std::sync::mpsc;
+#[cfg(target_os = "macos")]
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
 use block2::RcBlock;
 use chrono::{DateTime, Utc};
+#[cfg(target_os = "macos")]
 use objc2::rc::Retained;
+#[cfg(target_os = "macos")]
 use objc2::runtime::Bool;
+#[cfg(target_os = "macos")]
 use objc2_event_kit::{
     EKAuthorizationStatus, EKEntityType, EKEvent, EKEventStore, EKParticipant, EKParticipantStatus,
     EKParticipantType,
 };
+#[cfg(target_os = "macos")]
 use objc2_foundation::{NSDate, NSError};
 
+#[cfg(target_os = "macos")]
 use crate::raw::{RawAttendee, RawEvent, email_from_url, occurrence_id, to_events};
 use crate::{CalendarProvider, Error, Event};
 
+/// The provider's name, for the settings screen and error messages.
+const NAME: &str = "Calendar (this Mac)";
+
 /// How long [`request_access`] waits for the user to answer the prompt.
 /// Past it the answer counts as "no" for this read; the next read asks again.
+#[cfg(target_os = "macos")]
 const PROMPT_WAIT: Duration = Duration::from_secs(120);
 
 /// Where meet-ai stands with calendar permission.
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
     /// Never asked. The next read shows the prompt.
@@ -50,6 +64,7 @@ pub enum Access {
     WriteOnly,
 }
 
+#[cfg(target_os = "macos")]
 impl Access {
     fn from_status(status: EKAuthorizationStatus) -> Self {
         match status {
@@ -64,6 +79,7 @@ impl Access {
 }
 
 /// The current calendar permission, without prompting.
+#[cfg(target_os = "macos")]
 pub fn access() -> Access {
     // SAFETY: a class method taking a plain enum; callable from any thread.
     let status = unsafe { EKEventStore::authorizationStatusForEntityType(EKEntityType::Event) };
@@ -76,6 +92,7 @@ pub fn access() -> Access {
 ///
 /// Uses the macOS 14+ full-access request; the older `requestAccessToEntityType`
 /// is deprecated since macOS 14.
+#[cfg(target_os = "macos")]
 pub fn request_access() -> Result<(), Error> {
     match access() {
         Access::Granted => return Ok(()),
@@ -110,6 +127,8 @@ pub fn request_access() -> Result<(), Error> {
 /// Holds no state: each read makes its own `EKEventStore`, which keeps the
 /// provider `Send + Sync` and means a grant given since the last read is
 /// always seen.
+///
+/// Off macOS it reads nothing: every read is [`Error::Unreachable`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EventKitProvider;
 
@@ -119,9 +138,24 @@ impl EventKitProvider {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 impl CalendarProvider for EventKitProvider {
     fn name(&self) -> &'static str {
-        "Calendar (this Mac)"
+        NAME
+    }
+
+    fn list_events(&self, _from: DateTime<Utc>, _to: DateTime<Utc>) -> Result<Vec<Event>, Error> {
+        Err(Error::Unreachable {
+            provider: NAME,
+            detail: "Calendar.app is only on macOS".to_string(),
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl CalendarProvider for EventKitProvider {
+    fn name(&self) -> &'static str {
+        NAME
     }
 
     fn list_events(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Event>, Error> {
@@ -146,11 +180,13 @@ impl CalendarProvider for EventKitProvider {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn ns_date(at: DateTime<Utc>) -> Retained<NSDate> {
     let secs = at.timestamp() as f64 + f64::from(at.timestamp_subsec_millis()) / 1000.0;
     NSDate::dateWithTimeIntervalSince1970(secs)
 }
 
+#[cfg(target_os = "macos")]
 fn utc(date: &NSDate) -> Option<DateTime<Utc>> {
     let millis = (date.timeIntervalSince1970() * 1000.0).round();
     // An out-of-range date (NaN, or past year 262143) is not a meeting.
@@ -160,6 +196,7 @@ fn utc(date: &NSDate) -> Option<DateTime<Utc>> {
     DateTime::from_timestamp_millis(millis as i64)
 }
 
+#[cfg(target_os = "macos")]
 /// One `EKEvent` as plain data. `None` for an entry with an unreadable date.
 fn raw_event(event: &EKEvent) -> Option<RawEvent> {
     // SAFETY: plain property getters on an event this store just returned,
@@ -191,6 +228,7 @@ fn raw_event(event: &EKEvent) -> Option<RawEvent> {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn raw_attendee(p: &EKParticipant) -> RawAttendee {
     // SAFETY: plain property getters on a participant of a fetched event.
     unsafe {
@@ -208,7 +246,7 @@ fn raw_attendee(p: &EKParticipant) -> RawAttendee {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 

@@ -9,8 +9,8 @@
 //! [`parse_calendar`] returns the error for a caller (say a settings screen)
 //! that wants to show it.
 //!
-//! Nothing refreshes calendars on main yet: TUR-27 and TUR-28 call
-//! [`calendar`] and [`CalendarConfig::available_providers`].
+//! The app's `CalendarState` (TUR-28) calls [`calendar`] and
+//! [`CalendarConfig::available_providers`] on every read.
 
 use std::fmt;
 
@@ -97,7 +97,6 @@ impl CalendarConfig {
     /// The providers this build can read. A known provider that is not built
     /// yet (google, microsoft, ics) is logged as "not available yet" and
     /// skipped, so the rest still work.
-    #[allow(dead_code)] // TUR-28 (calendar refresh loop) calls this.
     pub fn available_providers(&self) -> Vec<Provider> {
         self.providers
             .iter()

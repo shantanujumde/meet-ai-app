@@ -229,9 +229,10 @@ fn forced_status() -> Option<Status> {
 ///   Contents/MacOS/SecurityPrivacyExtension | grep -oE 'Privacy_[A-Za-z0-9]+'
 /// ```
 ///
-/// `Privacy_AudioCapture` and `Privacy_Microphone` are both in that table. The
-/// pane root stays here as the third entry because an unknown anchor lands on
-/// the root anyway, and because this list will be wrong on some future macOS.
+/// `Privacy_AudioCapture`, `Privacy_Microphone` and `Privacy_Calendars` are
+/// all in that table. The pane root stays as the fallback because an unknown
+/// anchor lands on the root anyway, and because this list will be wrong on
+/// some future macOS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Pane {
@@ -239,6 +240,9 @@ pub enum Pane {
     AudioCapture,
     /// The microphone half, which is a separate grant.
     Microphone,
+    /// Calendar access, for the Today pane (TUR-28). Never in an audio
+    /// [`Status::denied`] list.
+    Calendars,
 }
 
 impl Pane {
@@ -247,6 +251,7 @@ impl Pane {
         match self {
             Pane::AudioCapture => "System Audio Recording",
             Pane::Microphone => "Microphone",
+            Pane::Calendars => "Calendars",
         }
     }
 
@@ -258,6 +263,9 @@ impl Pane {
             }
             Pane::Microphone => {
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+            }
+            Pane::Calendars => {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars"
             }
         }
     }
@@ -371,7 +379,8 @@ mod tests {
     fn deep_links_use_anchors_verified_against_the_settings_extension() {
         assert!(Pane::AudioCapture.url().ends_with("?Privacy_AudioCapture"));
         assert!(Pane::Microphone.url().ends_with("?Privacy_Microphone"));
-        for pane in [Pane::AudioCapture, Pane::Microphone] {
+        assert!(Pane::Calendars.url().ends_with("?Privacy_Calendars"));
+        for pane in [Pane::AudioCapture, Pane::Microphone, Pane::Calendars] {
             assert!(
                 pane.url().starts_with(PRIVACY_ROOT_URL),
                 "every anchor must hang off the pane root, so the fallback is the same pane"

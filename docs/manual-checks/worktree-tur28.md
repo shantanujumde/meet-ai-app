@@ -42,11 +42,16 @@ confirms it.
 2. Click back into the meet-ai window.
 3. Expected: Today shows "meet-ai can't read your calendar, so Today and
    meeting reminders are off." with **Open System Settings**, never "No
-   meetings on your calendar today."
+   meetings on your calendar today." The pane also shows on the "Reading
+   your meetings folder…" and folder-error screens.
 4. Click **Open System Settings**. Expected: System Settings opens at
    Privacy & Security → Calendars.
-5. Turn access back on and click back into meet-ai. Expected: today's events
-   come back without restarting the app.
+5. Turn access back on and press **Check again** (or click back into
+   meet-ai). Expected: today's events come back without restarting the app.
+6. With access still off, set `calendar.refresh_minutes` to 1 in
+   `config.jsonc` and leave the window in front. Expected: the pane re-reads
+   about once a minute (watch the log for "could not read a calendar"), so
+   the configured interval holds even while every read fails.
 
 ## 3. No meetings today
 

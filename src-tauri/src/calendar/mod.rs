@@ -20,7 +20,6 @@ use ::calendar::{CalendarProvider, Error, Event};
 use chrono::{DateTime, Duration, Local, NaiveDate, Offset as _, TimeZone, Utc};
 use serde::Serialize;
 use tauri::{AppHandle, Manager as _};
-use tauri_plugin_opener::OpenerExt as _;
 
 use crate::config::{self, Provider};
 use crate::error::UiError;
@@ -28,12 +27,8 @@ use crate::error::UiError;
 #[cfg(test)]
 mod tests;
 
-/// The Calendars switch in System Settings → Privacy & Security.
-pub const CALENDAR_SETTINGS_URL: &str =
-    "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars";
-
 /// A provider that can be shared with the blocking pool.
-type Shared = Arc<dyn CalendarProvider + Send + Sync>;
+type SharedProvider = Arc<dyn CalendarProvider + Send + Sync>;
 
 /// Managed state: where calendar events come from.
 ///
@@ -42,13 +37,13 @@ type Shared = Arc<dyn CalendarProvider + Send + Sync>;
 #[derive(Default)]
 pub struct CalendarState {
     /// Fixed providers instead of the configured ones (tests).
-    fixed: Option<Vec<Shared>>,
+    fixed: Option<Vec<SharedProvider>>,
 }
 
 impl CalendarState {
     /// A state that reads only `providers`, whatever the config says.
     #[cfg(test)]
-    pub fn with_providers(providers: Vec<Shared>) -> Self {
+    pub fn with_providers(providers: Vec<SharedProvider>) -> Self {
         Self {
             fixed: Some(providers),
         }
@@ -74,7 +69,7 @@ impl CalendarState {
 }
 
 /// The providers `config.jsonc` names that this build can read.
-fn configured_providers() -> Vec<Shared> {
+fn configured_providers() -> Vec<SharedProvider> {
     config::calendar()
         .available_providers()
         .into_iter()
@@ -82,28 +77,20 @@ fn configured_providers() -> Vec<Shared> {
         .collect()
 }
 
-fn provider_for(provider: Provider) -> Option<Shared> {
+fn provider_for(provider: Provider) -> Option<SharedProvider> {
     match provider {
-        Provider::EventKit => eventkit(),
+        // On every OS: off macOS its reads are errors (SPEC §8.2 keeps the
+        // `#[cfg]` inside `crates/calendar/src/eventkit.rs`).
+        Provider::EventKit => Some(Arc::new(::calendar::eventkit::EventKitProvider::new())),
         // Not built yet; `available_providers` already logged and dropped them.
         Provider::Google | Provider::Microsoft | Provider::Ics => None,
     }
 }
 
-#[cfg(target_os = "macos")]
-fn eventkit() -> Option<Shared> {
-    Some(Arc::new(::calendar::eventkit::EventKitProvider::new()))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn eventkit() -> Option<Shared> {
-    None
-}
-
 /// Every provider's events in one sorted list; see
 /// [`CalendarState::events_between`] for what an error does.
 fn merge(
-    providers: &[Shared],
+    providers: &[SharedProvider],
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> Result<Vec<Event>, Error> {
@@ -240,23 +227,11 @@ pub async fn todays_meetings(app: AppHandle) -> Result<TodaysMeetings, UiError> 
     .map_err(|error| UiError::app("task-failed", error.to_string()))?
 }
 
-/// Open System Settings at the Calendars switch, or at Privacy & Security if
-/// that link is refused.
+/// `calendar.refresh_minutes` alone: a config read, never the calendar. The
+/// Today pane asks for it when [`todays_meetings`] fails, so the re-read
+/// timer follows the config even while access is denied.
 #[tauri::command]
 #[specta::specta]
-pub fn open_calendar_settings(app: AppHandle) -> Result<(), UiError> {
-    match app.opener().open_url(CALENDAR_SETTINGS_URL, None::<&str>) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            tracing::warn!(%error, "calendar settings link failed; falling back to the pane root");
-            app.opener()
-                .open_url(crate::permission::PRIVACY_ROOT_URL, None::<&str>)
-                .map_err(|error| {
-                    UiError::app(
-                        "open-failed",
-                        format!("meet-ai could not open System Settings: {error}"),
-                    )
-                })
-        }
-    }
+pub async fn calendar_refresh_minutes() -> u32 {
+    config::calendar().refresh_minutes
 }

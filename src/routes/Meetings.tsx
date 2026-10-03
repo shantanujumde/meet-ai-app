@@ -50,6 +50,7 @@ export function Meetings() {
   if (loading && list === null) {
     return (
       <div className="page">
+        <TodayPane />
         <Checking label="Reading your meetings folder…" />
       </div>
     );
@@ -58,6 +59,7 @@ export function Meetings() {
   if (error) {
     return (
       <div className="page">
+        <TodayPane />
         <ErrorState error={error} onRemedy={() => void reload()} />
       </div>
     );

@@ -14,7 +14,7 @@
  */
 
 import { type Event, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
+import { DEFAULT_ROOT_LABEL, NO_MEETINGS_TODAY } from "@/lib/constants";
 import {
   AGENT_RUN_STATUS_EVENT,
   commands,
@@ -549,11 +549,15 @@ export type TodayEvent = meet_ai_lib_calendar_TodayEvent;
  * backend there is no calendar, so no events.
  */
 export async function todaysMeetings(): Promise<TodaysMeetings> {
-  if (!hasBackend()) return { events: [], refreshMinutes: 15, minAttendees: 2 };
+  if (!hasBackend()) return NO_MEETINGS_TODAY;
   return call(() => commands.todaysMeetings());
 }
 
-/** Open System Settings at Privacy & Security → Calendars. */
-export async function openCalendarSettings(): Promise<void> {
-  await call(() => commands.openCalendarSettings());
+/**
+ * `calendar.refresh_minutes` without reading the calendar, for when
+ * {@link todaysMeetings} failed and so did not say.
+ */
+export async function calendarRefreshMinutes(): Promise<number> {
+  if (!hasBackend()) return NO_MEETINGS_TODAY.refreshMinutes;
+  return call(() => commands.calendarRefreshMinutes());
 }

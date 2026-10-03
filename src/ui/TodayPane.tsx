@@ -8,13 +8,13 @@
  * - loading, only before the first answer (a refresh keeps the list up);
  * - no meetings today, when the calendars were read and hold nothing;
  * - calendar access denied, which is never shown as an empty day: one line
- *   on what stops working and the **Open System Settings** button, like the
- *   audio permission screen;
+ *   on what stops working, **Open System Settings** and **Check again**, like
+ *   the audio permission screen;
  * - any other read error, through the shared error screen.
  *
  * The list re-reads every `calendar.refresh_minutes` and whenever the window
  * comes to the front, so a meeting added in Calendar.app shows up without a
- * restart.
+ * restart. The interval follows the config even while reads fail.
  *
  * Solo blocks (fewer than `detection.min_attendees` people) are greyed, not
  * hidden, so the day still reads true. Nothing here acts on them; nothing here
@@ -23,18 +23,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  openCalendarSettings,
+  calendarRefreshMinutes,
   type TodayEvent,
   type TodaysMeetings,
   todaysMeetings,
 } from "@/ipc/client";
 import { toUiError, type UiError } from "@/ipc/types";
 import { cn } from "@/lib/cn";
+import { NO_MEETINGS_TODAY } from "@/lib/constants";
+import { openSettings } from "./PrivacyButtons";
 import { Button, ButtonRow, cardVariants, RowLabel, RowValue, rowVariants } from "./primitives";
 import { Checking, ErrorState } from "./states";
-
-/** How often to re-read before the first answer says otherwise. */
-const DEFAULT_REFRESH_MINUTES = 15;
 
 export const CALENDAR_DENIED_COPY =
   "meet-ai can't read your calendar, so Today and meeting reminders are off.";
@@ -47,7 +46,9 @@ type State =
 
 export function TodayPane() {
   const [state, setState] = useState<State>({ kind: "loading" });
-  const [refreshMinutes, setRefreshMinutes] = useState(DEFAULT_REFRESH_MINUTES);
+  // The default until Rust answers; every answer, or the cheap config read
+  // after a failed one, replaces it.
+  const [refreshMinutes, setRefreshMinutes] = useState(NO_MEETINGS_TODAY.refreshMinutes);
   // Only the latest read may land: a slow read that started before a newer
   // one must not overwrite it.
   const latest = useRef(0);
@@ -62,7 +63,15 @@ export function TodayPane() {
     } catch (thrown) {
       if (id !== latest.current) return;
       const error = toUiError(thrown);
-      setState(error.kind === "calendar-denied" ? { kind: "denied" } : { kind: "error", error });
+      setState(isDenied(error) ? { kind: "denied" } : { kind: "error", error });
+      // A failed read carries no settings, so ask for the interval alone: a
+      // denied calendar is still re-read on the configured schedule.
+      try {
+        const minutes = await calendarRefreshMinutes();
+        if (id === latest.current) setRefreshMinutes(minutes);
+      } catch {
+        // Keep the current interval; the next read tries again.
+      }
     }
   }, []);
 
@@ -100,12 +109,13 @@ function TodayBody({ state, onRetry }: { state: State; onRetry: () => void }) {
       return <Checking label="Reading your calendar…" />;
     case "denied":
       return (
-        <div className="state" role="alert">
+        <div className="state state--error" role="alert">
           <p className="state__body">{CALENDAR_DENIED_COPY}</p>
           <ButtonRow>
-            <Button tone="primary" onClick={() => void openSettings()}>
+            <Button tone="primary" onClick={() => void openSettings("calendars")}>
               Open System Settings
             </Button>
+            <Button onClick={onRetry}>Check again</Button>
           </ButtonRow>
         </div>
       );
@@ -159,11 +169,7 @@ export function formatAttendees(count: number): string {
   return count === 1 ? "1 person" : `${count} people`;
 }
 
-async function openSettings() {
-  try {
-    await openCalendarSettings();
-  } catch {
-    // The deep link and its fallback both failed. The sentence above still
-    // says what to change; an error screen on top of it would add nothing.
-  }
+/** Calendar access is off: the one error with its own screen. */
+function isDenied(error: UiError): boolean {
+  return error.domain === "app" && error.kind === "calendar-denied";
 }
