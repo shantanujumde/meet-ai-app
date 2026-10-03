@@ -4,7 +4,7 @@
 //! this reason), so unlike the process tap — macOS-only, lives in
 //! [`crate::macos`] per SPEC §4's ⛔ — this module needs no platform gate of
 //! its own. The one exception is the host-clock read each callback stamps
-//! itself with, isolated in [`host_now_ns`] below.
+//! itself with, which is OS code and comes from `crate::platform`.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -17,40 +17,11 @@ use cpal::{SampleFormat, Stream, StreamConfig};
 use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
+use crate::platform::host_now_ns;
 use crate::resample::{Resampler, downmix_to_mono};
 use crate::tee::Tee;
 use crate::wav_writer::WavWriter;
 use crate::{AudioSource, Channel, Error};
-
-/// Host time "now", in the same clock domain as the process tap's
-/// `AudioTimeStamp.mHostTime` converted via `AudioConvertHostTimeToNanos`
-/// (contract revision 3, §0: "mach_absolute_time, converted to ns via
-/// mach_timebase_info"). `AudioGetCurrentHostTime` returns exactly the value
-/// `mach_absolute_time()` would — same underlying counter — so calling it
-/// from the mic callback keeps both channels' anchors comparable without
-/// needing to reconcile two different clock epochs. `cpal`'s own per-callback
-/// `InputCallbackInfo` timestamp is not documented to share that domain, so
-/// this reads the Core Audio host clock directly instead of trusting it.
-#[cfg(target_os = "macos")]
-fn host_now_ns() -> u64 {
-    // SAFETY: both calls read current host-clock state; neither takes a
-    // pointer or has a precondition beyond "the audio HAL is initialized",
-    // which it is by the time any cpal stream callback can run.
-    unsafe {
-        objc2_core_audio::AudioConvertHostTimeToNanos(objc2_core_audio::AudioGetCurrentHostTime())
-    }
-}
-
-/// SPEC §8.2's Windows port is a stub, not held to the drift gate, so a
-/// process-relative monotonic clock is sufficient here — there is no second
-/// channel on that platform yet for it to be compared against.
-#[cfg(not(target_os = "macos"))]
-fn host_now_ns() -> u64 {
-    use std::sync::OnceLock;
-    use std::time::Instant;
-    static START: OnceLock<Instant> = OnceLock::new();
-    START.get_or_init(Instant::now).elapsed().as_nanos() as u64
-}
 
 /// Ring buffer capacity, in raw (device-rate, interleaved) samples. 4 s at
 /// 48 kHz stereo is generously oversized for a worker thread serviced every

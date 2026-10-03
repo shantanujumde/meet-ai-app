@@ -23,6 +23,9 @@ pub mod device_watch;
 /// audio-activity meeting signal (TUR-31) — property reads only, no capture.
 pub mod activity;
 
+/// The functions [`crate::platform`] routes to on macOS.
+pub(crate) mod platform;
+
 /// The real tap/IOProc creation call site (once written) uses
 /// [`crate::AUDIO_PERMISSION_TIMEOUT`] — moved there because [`crate::mic`]
 /// needs the identical bound on `cpal`'s stream creation, and both are the

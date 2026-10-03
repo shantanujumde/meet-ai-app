@@ -2,7 +2,8 @@
 //!
 //! The one entry point for the audio-activity meeting signal, on every
 //! platform: [`device_activity`]. The reads themselves are OS code and live in
-//! [`crate::macos::activity`] (SPEC §8.2); elsewhere this returns
+//! `crate::macos::activity`, reached through `crate::platform` (SPEC §8.2);
+//! elsewhere this returns
 //! [`Error::Unsupported`], the way [`crate::mic`] and
 //! [`crate::permission_check`] do, so callers need no platform checks.
 
@@ -21,14 +22,7 @@ pub struct DeviceActivity {
 /// process. Property reads only: no stream, no tap, no permission prompt.
 /// [`Error::Unsupported`] on a platform without an implementation yet.
 pub fn device_activity() -> Result<DeviceActivity, Error> {
-    #[cfg(target_os = "macos")]
-    {
-        crate::macos::activity::read()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Err(Error::Unsupported)
-    }
+    crate::platform::device_activity()
 }
 
 #[cfg(test)]
@@ -40,7 +34,7 @@ mod tests {
     #[test]
     fn device_activity_answers_on_this_machine() {
         let result = device_activity();
-        if cfg!(target_os = "macos") {
+        if crate::platform::DEVICE_ACTIVITY {
             assert!(result.is_ok(), "{result:?}");
         } else {
             assert!(matches!(result, Err(Error::Unsupported)), "{result:?}");

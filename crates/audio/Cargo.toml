@@ -50,3 +50,9 @@ objc2-foundation.workspace = true
 # Test-only: temp folders and the shared tone generator.
 tempfile.workspace = true
 test-support.workspace = true
+
+[features]
+# No-op system and mic sources, and `Unmeasurable` permission checks, on any OS
+# (SPEC §8.2), so CI can build and test without audio devices. Off by default;
+# never on in the app build. See src/platform/stub.rs.
+stub-audio = []

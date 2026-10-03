@@ -46,13 +46,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use crate::mic::MicSource;
-use crate::{AudioSource, Error, chime};
+use crate::{AudioSource, Error, chime, platform};
 
 pub mod verdict;
-
-#[cfg(target_os = "macos")]
-use crate::macos::tap::SystemSource;
 
 /// Where one channel's check landed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,57 +87,6 @@ fn cleanup(dir: &std::path::Path, dest: &std::path::Path) {
     let _ = std::fs::remove_dir(dir);
 }
 
-/// Ask macOS directly whether the microphone is authorized, without opening
-/// any stream.
-///
-/// `AVCaptureDevice.authorizationStatus(for: .audio)` is a public, documented,
-/// synchronous TCC query — a different mechanism entirely from the process
-/// tap's `OSStatus`/sample-payload path that FINDINGS §10.1 proved lies on
-/// denial. It reads the same `kTCCServiceMicrophone` record `cpal`'s
-/// CoreAudio path is ultimately gated by, for this same process, so a
-/// `Denied`/`Restricted` answer here is authoritative.
-#[cfg(target_os = "macos")]
-fn mic_authorization_status() -> objc2_av_foundation::AVAuthorizationStatus {
-    use objc2_av_foundation::{AVCaptureDevice, AVMediaTypeAudio};
-    // SAFETY: `AVMediaTypeAudio` is an Apple-provided static that is always
-    // present once the AVFoundation image is loaded; `authorizationStatusForMediaType`
-    // reads TCC state and has no other preconditions.
-    unsafe {
-        let media_type =
-            AVMediaTypeAudio.expect("AVFoundation always provides the AVMediaTypeAudio constant");
-        AVCaptureDevice::authorizationStatusForMediaType(media_type)
-    }
-}
-
-/// A stored `Denied`/`Restricted` microphone decision, if there is one.
-///
-/// `None` covers `Authorized` and `NotDetermined` alike: neither says anything
-/// about the mic until a stream is actually opened.
-fn stored_mic_denial() -> Option<ChannelResult> {
-    #[cfg(target_os = "macos")]
-    {
-        use objc2_av_foundation::AVAuthorizationStatus;
-        let status = mic_authorization_status();
-        if status == AVAuthorizationStatus::Denied {
-            return Some(ChannelResult {
-                state: ChannelState::Denied,
-                detail: "macOS reports the microphone permission as explicitly denied \
-                         (AVAuthorizationStatusDenied)"
-                    .into(),
-            });
-        }
-        if status == AVAuthorizationStatus::Restricted {
-            return Some(ChannelResult {
-                state: ChannelState::Denied,
-                detail: "macOS reports the microphone as restricted (parental controls or an \
-                         MDM profile), which this client cannot change"
-                    .into(),
-            });
-        }
-    }
-    None
-}
-
 /// The microphone's stored decision alone: nothing opened, nothing played.
 ///
 /// The instant, silent half of [`check_mic`], for a caller that must not make
@@ -151,7 +96,7 @@ fn stored_mic_denial() -> Option<ChannelResult> {
 /// [`ChannelState::Unmeasurable`], never `Granted`, because nothing was opened
 /// to prove it.
 pub fn mic_decision() -> ChannelResult {
-    stored_mic_denial().unwrap_or_else(|| ChannelResult {
+    platform::stored_mic_denial().unwrap_or_else(|| ChannelResult {
         state: ChannelState::Unmeasurable,
         detail: "the microphone has not been opened since meet-ai started".into(),
     })
@@ -162,14 +107,20 @@ pub fn mic_decision() -> ChannelResult {
 /// Bounded by [`crate::AUDIO_PERMISSION_TIMEOUT`] inside `MicSource::start`:
 /// worst case this blocks that long waiting for a dialog nobody answers.
 pub fn check_mic() -> ChannelResult {
-    if let Some(denial) = stored_mic_denial() {
+    if let Some(denial) = platform::stored_mic_denial() {
         return denial;
     }
     // `Authorized` and `NotDetermined` both fall through: `Authorized` still
     // opens the stream below to also confirm a device exists, `NotDetermined`
     // opens it because that is what triggers the OS consent dialog in the
     // first place.
+    platform::check_mic()
+}
 
+/// The open-and-see half of [`check_mic`]: start `source` briefly and report
+/// whether it opened. The platform seam calls this with its microphone
+/// (`crate::mic::MicSource` on every OS so far).
+pub fn check_mic_with(mut source: Box<dyn AudioSource>) -> ChannelResult {
     let (dir, dest) = match scratch_dir("mic") {
         Ok(paths) => paths,
         Err(error) => {
@@ -182,7 +133,6 @@ pub fn check_mic() -> ChannelResult {
         }
     };
 
-    let mut source = MicSource::new();
     let result = match source.start(dest.clone()) {
         Ok(()) => {
             let _ = source.stop();
@@ -218,8 +168,16 @@ pub fn check_mic() -> ChannelResult {
 /// A wall-clock deadline a little past that, counted from the tap's first
 /// frame, ends the check if the tap stops delivering audio; a check cut
 /// short that way is unmeasurable, never denied (TUR-72).
-#[cfg(target_os = "macos")]
+///
+/// [`ChannelState::Unmeasurable`] on a platform with no system-audio capture
+/// yet (`crate::platform`).
 pub fn check_system() -> ChannelResult {
+    platform::check_system()
+}
+
+/// [`check_system`]'s closed loop against `system`, a system-audio source
+/// that has not been started. The platform seam calls this with its tap.
+pub fn check_system_with(mut system: Box<dyn AudioSource>) -> ChannelResult {
     let host = cpal::default_host();
     let Some(output) = host.default_output_device() else {
         return ChannelResult {
@@ -252,7 +210,6 @@ pub fn check_system() -> ChannelResult {
     // A live copy of the tap's 16 kHz mono frames, so the check can listen
     // while it plays instead of reading the WAV back afterwards.
     let (tee, feed) = crate::tee::tee();
-    let mut system = SystemSource::new();
     system.tee(tee);
     if let Err(error) = system.start(dest.clone()) {
         cleanup(&dir, &dest);
@@ -327,12 +284,4 @@ pub fn check_system() -> ChannelResult {
 
     cleanup(&dir, &dest);
     result
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn check_system() -> ChannelResult {
-    ChannelResult {
-        state: ChannelState::Unmeasurable,
-        detail: "system-audio capture is not implemented on this platform yet".into(),
-    }
 }
