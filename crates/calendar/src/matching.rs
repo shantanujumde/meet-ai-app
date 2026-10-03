@@ -105,7 +105,10 @@ mod tests {
     fn too_few_attendees_is_not_a_meeting() {
         let events = [event("focus", at(10, 0), at(11, 0), 1)];
         assert_eq!(picked(&events, at(10, 5)), None);
-        assert_eq!(pick_event(&events, at(10, 5), 1).map(|e| e.id.as_str()), Some("focus"));
+        assert_eq!(
+            pick_event(&events, at(10, 5), 1).map(|e| e.id.as_str()),
+            Some("focus")
+        );
     }
 
     #[test]

@@ -133,7 +133,7 @@ fn is_untitled(meeting: &Meeting, default: &str) -> bool {
 mod tests {
     use super::*;
 
-    const ID: &str = "2026-10-05-1000";
+    const ID: &str = "2026-10-05-1000-meeting";
 
     fn root_with_meeting() -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
@@ -201,7 +201,10 @@ mod tests {
         let applied = apply(root.path(), ID, &standup(&[])).unwrap();
         assert!(applied.title);
         assert!(!applied.attendees, "no names, so nothing to write");
-        assert_eq!(read(root.path()).title().as_deref(), Some("Platform Standup"));
+        assert_eq!(
+            read(root.path()).title().as_deref(),
+            Some("Platform Standup")
+        );
     }
 
     #[test]

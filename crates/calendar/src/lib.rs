@@ -23,9 +23,9 @@
 use chrono::{DateTime, Utc};
 
 pub mod eventkit;
-pub mod matching;
 #[cfg(feature = "fake")]
 pub mod fake;
+pub mod matching;
 pub mod raw;
 
 /// One calendar entry, flattened to the fields meet-ai actually uses.
