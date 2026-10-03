@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use stt::model::ModelSpec;
 
-use crate::{Error, Progress, download, part_size, remove_if_present};
+use crate::{Error, Progress, STALL_TIMEOUT, download, part_size, remove_if_present};
 
 /// How many times to retry after the first failure.
 const MAX_RETRIES: u32 = 3;
@@ -17,11 +17,15 @@ const MAX_RETRIES: u32 = 3;
 /// First backoff delay; doubles each retry (1s, 2s, 4s).
 const BASE_DELAY: Duration = Duration::from_secs(1);
 
-/// Retry count and backoff, injectable so tests do not sleep for seconds.
+/// When an attempt is given up, and how retries are spaced. Injectable so
+/// tests do not sleep for seconds.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RetryPolicy {
     pub max_retries: u32,
     pub base_delay: Duration,
+    /// Silence after which an attempt fails and is retried; see
+    /// [`STALL_TIMEOUT`].
+    pub stall_timeout: Duration,
 }
 
 impl Default for RetryPolicy {
@@ -29,6 +33,7 @@ impl Default for RetryPolicy {
         Self {
             max_retries: MAX_RETRIES,
             base_delay: BASE_DELAY,
+            stall_timeout: STALL_TIMEOUT,
         }
     }
 }
@@ -60,7 +65,7 @@ pub(crate) async fn download_with_retry(
             return Ok(have);
         }
 
-        match download(spec, part_path, have, on_progress).await {
+        match download(spec, part_path, have, policy.stall_timeout, on_progress).await {
             Ok(total) => return Ok(total),
             Err(error) if retry < policy.max_retries => {
                 let delay = policy.delay(retry);
@@ -87,6 +92,7 @@ mod tests {
     const FAST: RetryPolicy = RetryPolicy {
         max_retries: 3,
         base_delay: Duration::from_millis(1),
+        stall_timeout: STALL_TIMEOUT,
     };
 
     #[derive(Clone, Copy)]
@@ -95,7 +101,22 @@ mod tests {
         fail_first: usize,
         partial: usize,
         ranges: bool,
+        /// Failing connections go silent after `partial` bytes, keeping the
+        /// socket open, instead of hanging up. This is a dropped Wi-Fi link:
+        /// no FIN, no RST, just nothing.
+        stall: bool,
+        /// Gap between single-byte writes on a full send. Zero sends the body
+        /// in one write.
+        trickle: Duration,
     }
+
+    const PLAIN: Script = Script {
+        fail_first: 0,
+        partial: 0,
+        ranges: true,
+        stall: false,
+        trickle: Duration::ZERO,
+    };
 
     struct Server {
         url: String,
@@ -113,6 +134,8 @@ mod tests {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::clone(&seen);
         std::thread::spawn(move || {
+            // Stalled connections are parked here so they stay open.
+            let mut parked = Vec::new();
             for (index, stream) in listener.incoming().enumerate() {
                 let Ok(mut stream) = stream else { return };
                 let mut request = Vec::new();
@@ -151,14 +174,28 @@ mod tests {
                         tail.len()
                     ),
                 };
-                let send = if index < script.fail_first {
+                let failing = index < script.fail_first;
+                let send = if failing {
                     &tail[..script.partial.min(tail.len())]
                 } else {
                     tail
                 };
+                // No Nagle batching, so trickled bytes leave one at a time.
+                let _ = stream.set_nodelay(true);
                 let _ = stream.write_all(head.as_bytes());
-                let _ = stream.write_all(send);
+                if !failing && !script.trickle.is_zero() {
+                    for byte in send {
+                        let _ = stream.write_all(std::slice::from_ref(byte));
+                        let _ = stream.flush();
+                        std::thread::sleep(script.trickle);
+                    }
+                } else {
+                    let _ = stream.write_all(send);
+                }
                 let _ = stream.flush();
+                if failing && script.stall {
+                    parked.push(stream);
+                }
             }
         });
         Server { url, seen }
@@ -184,6 +221,7 @@ mod tests {
                 fail_first: 2,
                 partial: 3,
                 ranges: true,
+                ..PLAIN
             },
         );
         let tmp = tempfile::tempdir().unwrap();
@@ -203,6 +241,7 @@ mod tests {
                 fail_first: 1,
                 partial: 5,
                 ranges: true,
+                ..PLAIN
             },
         );
         let tmp = tempfile::tempdir().unwrap();
@@ -223,6 +262,7 @@ mod tests {
                 fail_first: 1,
                 partial: 5,
                 ranges: false,
+                ..PLAIN
             },
         );
         let tmp = tempfile::tempdir().unwrap();
@@ -242,6 +282,7 @@ mod tests {
                 fail_first: 100,
                 partial: 2,
                 ranges: true,
+                ..PLAIN
             },
         );
         let tmp = tempfile::tempdir().unwrap();
@@ -256,14 +297,7 @@ mod tests {
     #[tokio::test]
     async fn checksum_mismatch_still_errors_without_retrying() {
         let data = body();
-        let server = serve(
-            data.clone(),
-            Script {
-                fail_first: 0,
-                partial: 0,
-                ranges: true,
-            },
-        );
+        let server = serve(data.clone(), PLAIN);
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_path_buf();
         let s = spec(&server.url, &data, b"some other bytes");
@@ -272,6 +306,113 @@ mod tests {
         assert_eq!(server.seen.lock().unwrap().len(), 1);
         assert!(!dir.join("retry.bin").exists());
         assert!(!dir.join("retry.bin.part").exists());
+    }
+
+    /// Fails the test instead of hanging it, which is the bug being tested.
+    async fn within<T>(limit: Duration, work: impl std::future::Future<Output = T>) -> T {
+        tokio::time::timeout(limit, work)
+            .await
+            .expect("the download hung instead of failing and retrying")
+    }
+
+    #[tokio::test]
+    async fn a_connection_that_goes_silent_mid_body_is_retried_and_resumed() {
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                fail_first: 1,
+                partial: 5,
+                stall: true,
+                ..PLAIN
+            },
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let s = spec(&server.url, &data, &data);
+        let policy = RetryPolicy {
+            stall_timeout: Duration::from_millis(200),
+            ..FAST
+        };
+        let path = within(
+            Duration::from_secs(10),
+            ensure_with(&s, &dir, &policy, &mut |_| {}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), data);
+        // The retry resumed from the five bytes the stalled attempt kept.
+        let seen = server.seen.lock().unwrap().clone();
+        assert_eq!(seen, vec![None, Some("bytes=5-".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn a_server_that_always_stalls_ends_in_a_download_error() {
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                fail_first: 100,
+                partial: 2,
+                stall: true,
+                ..PLAIN
+            },
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let s = spec(&server.url, &data, &data);
+        let policy = RetryPolicy {
+            stall_timeout: Duration::from_millis(200),
+            ..FAST
+        };
+        let error = within(
+            Duration::from_secs(10),
+            ensure_with(&s, &dir, &policy, &mut |_| {}),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, Error::Download(_)), "got {error:?}");
+        assert!(error.to_string().contains("stalled"), "got {error}");
+        assert_eq!(server.seen.lock().unwrap().len(), 4, "1 try + 3 retries");
+    }
+
+    #[tokio::test]
+    async fn a_slow_but_live_download_is_not_cut_off() {
+        // 16 bytes, 50 ms apart: the whole body takes ~800 ms, well past the
+        // 300 ms stall limit, but no single gap comes near it. The limit is
+        // on silence, not on total time.
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                trickle: Duration::from_millis(50),
+                ..PLAIN
+            },
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let s = spec(&server.url, &data, &data);
+        let policy = RetryPolicy {
+            max_retries: 0,
+            stall_timeout: Duration::from_millis(300),
+            ..FAST
+        };
+        let path = within(
+            Duration::from_secs(10),
+            ensure_with(&s, &dir, &policy, &mut |_| {}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), data);
+        assert_eq!(server.seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn default_stall_timeout_is_30_seconds() {
+        assert_eq!(
+            RetryPolicy::default().stall_timeout,
+            Duration::from_secs(30)
+        );
     }
 
     #[test]
