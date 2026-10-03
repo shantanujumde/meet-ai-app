@@ -143,6 +143,12 @@ jobs:
         with:
           # Release profile: its own cache, apart from check.yml's debug one.
           shared-key: release
+          # Save the compiled dependencies even when a later step fails (a
+          # signing or upload problem, say). The fix for those is "re-run
+          # failed jobs", and that re-run then skips the cold release build of
+          # whisper.cpp and the workspace's dependencies. Releases only run
+          # from main, so there is no PR cache to protect here.
+          cache-on-failure: true
 
       - uses: pnpm/action-setup@v4
 
