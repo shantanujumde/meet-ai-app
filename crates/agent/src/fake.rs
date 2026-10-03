@@ -26,7 +26,6 @@ const ID: &str = "fake";
 ///
 /// `sleep` gets its own stdin, stdout and stderr, so if the shell is killed
 /// mid-sleep the run's pipes close at once even if `sleep` itself lives on.
-#[cfg(unix)]
 const SCRIPT: &str = r#"cat >/dev/null
 if [ -n "$FAKE_SLEEP" ]; then sleep "$FAKE_SLEEP" </dev/null >/dev/null 2>&1; fi
 printf '%s' "$FAKE_STDOUT"
@@ -144,24 +143,23 @@ type ScriptEnv = [(&'static str, String); 4];
 
 /// Runs [`SCRIPT`] with `env` in a fresh working folder, which is deleted
 /// before this returns, and hands back what it printed on stdout.
-#[cfg(unix)]
+///
+/// Off Unix there is no `/bin/sh` to run the script with
+/// (`crate::platform::POSIX_SHELL`), so the run fails to start.
 fn run_script(env: ScriptEnv, job: &Job) -> Result<String, AgentError> {
     use crate::process;
 
+    let Some(shell) = crate::platform::POSIX_SHELL else {
+        return Err(AgentError::CouldNotStart {
+            reason: "the fake harness needs /bin/sh".into(),
+        });
+    };
     let dir = process::fresh_work_dir(job)?;
-    let mut command = std::process::Command::new("/bin/sh");
+    let mut command = std::process::Command::new(shell);
     command.arg("-c").arg(SCRIPT).envs(env);
     let out = process::run_cli(ID, command, job, dir.path())?;
     drop(dir);
     Ok(out.stdout)
-}
-
-/// Off Unix there is no `/bin/sh` to run the script with.
-#[cfg(not(unix))]
-fn run_script(_env: ScriptEnv, _job: &Job) -> Result<String, AgentError> {
-    Err(AgentError::CouldNotStart {
-        reason: "the fake harness needs /bin/sh".into(),
-    })
 }
 
 #[cfg(test)]

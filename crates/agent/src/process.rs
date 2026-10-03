@@ -16,6 +16,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::platform::{kill_group, own_process_group};
 use crate::{AgentError, Job};
 
 /// How often the child is checked for exit, Cancel and the time limit.
@@ -40,10 +41,6 @@ const MAX_STDERR_BYTES: usize = 4 * 1024;
 /// settings from. Claude Code and Codex look for these in the working folder
 /// and every folder above it.
 const PROJECT_MARKERS: &[&str] = &[".git", "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md"];
-
-/// The system `kill`, by full path so `PATH` cannot swap it out.
-#[cfg(unix)]
-const KILL: &str = "/bin/kill";
 
 /// What a CLI printed when it exited with status 0.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -265,17 +262,6 @@ pub(crate) fn reply_too_big() -> AgentError {
     }
 }
 
-/// Puts the child in a new process group of its own, so one kill reaches
-/// everything it starts.
-#[cfg(unix)]
-fn own_process_group(command: &mut Command) {
-    use std::os::unix::process::CommandExt;
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-fn own_process_group(_command: &mut Command) {}
-
 /// "Not found" means the CLI is not installed; anything else is reported as is.
 fn spawn_error(display_name: &str, error: &io::Error) -> AgentError {
     if error.kind() == io::ErrorKind::NotFound {
@@ -491,23 +477,6 @@ fn stop(child: &mut Child) {
     let _ = child.wait();
 }
 
-/// Kills every process in the group the child leads. Runs the system `kill`,
-/// so no `unsafe` and no extra crate is needed.
-#[cfg(unix)]
-fn kill_group(pid: u32) {
-    let _ = Command::new(KILL)
-        .args(["-KILL", "--", &format!("-{pid}")])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-/// There are no process groups to kill outside unix; [`stop`] kills the child
-/// itself.
-#[cfg(not(unix))]
-fn kill_group(_pid: u32) {}
-
 /// The last `max` bytes of `text` at most, cut where a character starts.
 fn tail(text: &str, max: usize) -> &str {
     if text.len() <= max {
@@ -561,7 +530,7 @@ mod tests {
         fn is_gone(pid: &str) -> bool {
             let deadline = Instant::now() + Duration::from_secs(2);
             while Instant::now() < deadline {
-                let alive = Command::new(KILL)
+                let alive = Command::new(crate::platform::KILL)
                     .args(["-0", pid])
                     .stderr(Stdio::null())
                     .status()

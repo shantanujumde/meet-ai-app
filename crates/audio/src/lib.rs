@@ -44,10 +44,17 @@ use std::time::Duration;
 /// API is sufficient on its own.
 pub const AUDIO_PERMISSION_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The macOS capture implementation. SPEC §4 ⛔: OS-specific code lives here
-/// and nowhere else.
-#[cfg(target_os = "macos")]
-pub mod macos;
+/// The OS seam (SPEC §8.2). The only module that names an operating system:
+/// it routes to `src/macos/` (SPEC §4 ⛔: OS-specific code lives there and
+/// nowhere else), or to the Windows and Linux stubs, and the rest of the crate
+/// calls `platform::…` with no `cfg` of its own.
+mod platform;
+
+/// `audio::macos` on macOS: the capture implementation, re-exported from
+/// `platform` so its public path is unchanged.
+// Empty, so unused, on every other OS.
+#[allow(unused_imports)]
+pub use platform::public::*;
 
 /// The recording-start chime and its detector (SPEC §8.1, decided in A6).
 /// Platform-agnostic for the same reason `segments` is: it is the contract

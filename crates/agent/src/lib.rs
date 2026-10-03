@@ -26,6 +26,8 @@ mod error;
 mod job;
 pub mod mcp;
 mod output;
+/// The OS seam (SPEC §8.2): the only module that names an operating system.
+mod platform;
 pub mod process;
 
 #[cfg(feature = "test-support")]

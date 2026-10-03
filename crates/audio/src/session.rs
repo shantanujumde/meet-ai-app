@@ -82,16 +82,18 @@ pub const TICK_INTERVAL: Duration = Duration::from_millis(200);
 ///
 /// Exported so `meet-rec` and every future in-process caller (the app,
 /// TUR-92) build the same default rather than each growing their own copy of
-/// this `cfg` — the drift this ticket exists to prevent.
+/// the platform choice — the drift this ticket exists to prevent. The choice
+/// itself lives in `crate::platform` (SPEC §8.2); under the `stub-audio`
+/// feature it is a source that records nothing.
 pub fn default_system_source() -> Option<Box<dyn AudioSource>> {
-    #[cfg(target_os = "macos")]
-    {
-        Some(Box::new(crate::macos::tap::SystemSource::new()))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
+    crate::platform::system_source()
+}
+
+/// The microphone [`AudioSource`] for this platform: [`crate::mic::MicSource`],
+/// or under the `stub-audio` feature a source that records nothing. What a
+/// segment reopen ([`reopen_segment`]) rebuilds the microphone with.
+pub fn default_mic_source() -> Box<dyn AudioSource> {
+    crate::platform::mic_source()
 }
 
 /// Poll `source.position()` until it reports its first resampled buffer, or
@@ -212,7 +214,7 @@ fn reopen_segment(
         None => (0, 0),
     };
 
-    let mut new_mic: Box<dyn AudioSource> = Box::new(crate::mic::MicSource::new());
+    let mut new_mic: Box<dyn AudioSource> = default_mic_source();
     tees.attach_mic(&mut *new_mic);
     new_mic
         .start(mic_path.to_path_buf())
@@ -373,12 +375,11 @@ pub struct RecordingSession {
     last_checkpoint: Instant,
     /// Kept so [`reopen_segment`] can hand them to the rebuilt sources. Only
     /// macOS watches for device changes today, so only macOS reads it back.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     tees: Tees,
-    #[cfg(target_os = "macos")]
-    last_output_device: Option<objc2_core_audio::AudioObjectID>,
-    #[cfg(target_os = "macos")]
-    last_input_device: Option<objc2_core_audio::AudioObjectID>,
+    /// `None` on a platform with no device watch yet (`crate::platform`):
+    /// [`RecordingSession::tick`] then never sees a change.
+    last_output_device: Option<crate::platform::DeviceId>,
+    last_input_device: Option<crate::platform::DeviceId>,
 }
 
 impl RecordingSession {
@@ -474,10 +475,8 @@ impl RecordingSession {
         // after the segment they belong to has already opened, so a swap
         // mid-startup (unlikely, but free to handle correctly) is not
         // mistaken for one that happened during the recording.
-        #[cfg(target_os = "macos")]
-        let last_output_device = crate::macos::device_watch::default_output_device().ok();
-        #[cfg(target_os = "macos")]
-        let last_input_device = crate::macos::device_watch::default_input_device().ok();
+        let last_output_device = crate::platform::default_output_device().ok();
+        let last_input_device = crate::platform::default_input_device().ok();
 
         Ok(Self {
             mic,
@@ -490,9 +489,7 @@ impl RecordingSession {
             started: Instant::now(),
             last_checkpoint: Instant::now(),
             tees,
-            #[cfg(target_os = "macos")]
             last_output_device,
-            #[cfg(target_os = "macos")]
             last_input_device,
         })
     }
@@ -511,9 +508,10 @@ impl RecordingSession {
     /// one, run an ordinary checkpoint. The caller decides how often to call
     /// this; nothing here sleeps or blocks on a timer of its own.
     pub fn tick(&mut self) -> Result<(), String> {
-        #[cfg(target_os = "macos")]
+        // The device reads fail on a platform without a device watch yet
+        // (`crate::platform`), so nothing below runs there.
         {
-            if let Ok(current) = crate::macos::device_watch::default_output_device() {
+            if let Ok(current) = crate::platform::default_output_device() {
                 if self.last_output_device.is_some_and(|prev| prev != current) {
                     tracing::info!("default output device changed — reopening segment");
                     reopen_segment(
@@ -526,13 +524,12 @@ impl RecordingSession {
                         segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED,
                         &self.tees,
                     )?;
-                    self.last_input_device =
-                        crate::macos::device_watch::default_input_device().ok();
+                    self.last_input_device = crate::platform::default_input_device().ok();
                     self.last_checkpoint = Instant::now();
                 }
                 self.last_output_device = Some(current);
             }
-            if let Ok(current) = crate::macos::device_watch::default_input_device() {
+            if let Ok(current) = crate::platform::default_input_device() {
                 if self.last_input_device.is_some_and(|prev| prev != current) {
                     tracing::info!("default input device changed — reopening segment");
                     reopen_segment(
@@ -545,8 +542,7 @@ impl RecordingSession {
                         segments::reason::DEFAULT_INPUT_DEVICE_CHANGED,
                         &self.tees,
                     )?;
-                    self.last_output_device =
-                        crate::macos::device_watch::default_output_device().ok();
+                    self.last_output_device = crate::platform::default_output_device().ok();
                     self.last_checkpoint = Instant::now();
                 }
                 self.last_input_device = Some(current);

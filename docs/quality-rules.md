@@ -259,6 +259,55 @@ throwaway git repo: an `Adapted from` line with no notice must fail, one with a
 notice must pass, and so on for each case above. CI runs it in the
 `rust-portable` job.
 
+### R10: OS-specific cfg outside a platform module (ERROR)
+
+A new `cfg` on an operating system in Rust under `crates/` or `src-tauri/src/`,
+outside the places OS code is allowed to live. The rule reads every
+`#[cfg(...)]`, `#![cfg(...)]`, `cfg!(...)` and `#[cfg_attr(...)]` whose
+condition names `target_os`, `target_family`, `target_vendor`, `unix` or
+`windows`, anywhere in it: `cfg(target_os = "macos")`,
+`cfg(not(target_os = "macos"))`, `cfg(all(test, unix))`, `cfg!(windows)`, and
+conditions split over several lines. For `cfg_attr` only the condition counts,
+so `cfg_attr(not(debug_assertions), windows_subsystem = "windows")` passes.
+Comments and string literals are skipped. Only a `cfg` with an added line
+counts.
+
+Allowed paths:
+
+- `**/platform/**`, `**/macos/**`, `**/windows/**`, `**/linux/**`
+- `**/eventkit.rs` (`crates/calendar`, named by SPEC §8.2)
+- `**/build.rs` (better: read `CARGO_CFG_TARGET_OS`, as `crates/stt/build.rs`
+  does)
+- integration tests, `crates/*/tests/**`, so an OS-only test file can gate
+  itself with `#![cfg(...)]`. A `tests.rs` inside `src/` is not one of these.
+
+Not OS cfgs, so never flagged: `cfg(test)`, `cfg(feature = ...)`,
+`cfg(debug_assertions)`, and a condition whose only OS names are
+`target_os = "android"` or `"ios"`. That last one is Tauri's desktop-vs-mobile
+plugin gate (`src-tauri/src/lib.rs`, `notify.rs`), not a port.
+
+Three unix-only test modules in `crates/agent/src` (`process.rs`, `detect.rs`,
+`mcp/tests.rs`) still carry `cfg(unix)`. They run the `/bin/sh` fake harness,
+and TUR-54 makes them portable; R10 lets them be until someone edits those
+lines.
+
+**Why:** SPEC §8.2 keeps OS code in one place per crate so that a Windows or
+Linux port adds files instead of editing every module. A `cfg` dropped into
+shared code is how that drifts: each one is small, and together they turn a
+port into surgery.
+
+**Fix:** put the OS code in the crate's `src/platform/` module, one file per OS
+(`macos.rs`, `windows.rs`, `linux.rs`, or folders) behind the same functions,
+and call `platform::...` from the shared code. `crates/audio/src/platform/` is
+the full example: `mod.rs` is the only file that picks an OS, and the Windows
+and Linux files are explicit stubs. A test that only makes sense on one OS
+can ask the platform module (a constant such as `platform::DEVICE_ACTIVITY`)
+instead of using `cfg!`.
+
+**Self-test:** the R10 cases in `scripts/quality-rules-selftest.sh`: a stray
+`cfg(target_os = ...)` in a crate must fail and the same line under
+`src/platform/` must pass, plus every form and allowed path above.
+
 ## Knobs
 
 | Env var | Effect |

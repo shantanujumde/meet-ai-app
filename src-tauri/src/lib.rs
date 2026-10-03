@@ -27,6 +27,7 @@ mod meetings;
 mod notify;
 mod onboarding;
 mod permission;
+mod platform;
 mod recording;
 mod recording_state;
 mod retention;

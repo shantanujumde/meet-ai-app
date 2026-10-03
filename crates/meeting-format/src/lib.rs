@@ -16,8 +16,9 @@
 //! * [`Channel`], [`Speaker`], [`SAMPLE_RATE`] — L5 and SPEC §2.3.
 //! * [`write_atomic`] — the one crash-safe way to replace a file.
 //!
-//! Platform-free by construction: serde is the only dependency and there is no
-//! `#[cfg(target_os)]` anywhere, because `stt` and `store` must stay free of
+//! Platform-free by construction: serde is the only dependency, and the one OS
+//! difference (folder `fsync`) sits behind the private `platform` module, the
+//! only place with an OS `cfg`, because `stt` and `store` must stay free of
 //! mac-only code (SPEC §8.2) and they both depend on this.
 
 #![forbid(unsafe_code)]
@@ -29,6 +30,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub mod layout;
 pub mod meeting_md;
+/// The OS seam (SPEC §8.2): folder `fsync` differs per OS.
+mod platform;
 pub mod segments;
 pub mod transcript;
 
@@ -162,7 +165,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         std::fs::remove_file(&tmp).ok();
     }
     written?;
-    sync_dir(dir)
+    platform::sync_dir(dir)
 }
 
 /// Every temp name this process hands out is distinct, across threads.
@@ -186,33 +189,6 @@ fn create_temp(dir: &Path, name: &str) -> io::Result<(PathBuf, File)> {
         }
     }
     Err(last.unwrap_or_else(|| io::Error::other("no free temp file name")))
-}
-
-/// `fsync` a folder so a rename inside it survives a power cut.
-///
-/// Unix only: Windows has no directory handle to flush, and `MoveFileEx` is
-/// already as durable as that platform offers. A filesystem that cannot sync a
-/// directory at all (some network mounts answer `EINVAL`) is treated as done —
-/// the rename already happened, and failing the whole write over a durability
-/// hint the filesystem does not support would turn a saved file into an error.
-#[cfg(unix)]
-fn sync_dir(dir: &Path) -> io::Result<()> {
-    match File::open(dir).and_then(|dir| dir.sync_all()) {
-        Err(e)
-            if matches!(
-                e.kind(),
-                io::ErrorKind::InvalidInput | io::ErrorKind::Unsupported
-            ) =>
-        {
-            Ok(())
-        }
-        other => other,
-    }
-}
-
-#[cfg(not(unix))]
-fn sync_dir(_dir: &Path) -> io::Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]
