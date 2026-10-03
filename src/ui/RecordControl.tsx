@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import type { PermissionStatus, RecordingStatus } from "@/ipc/types";
 import { SHORTCUT_LABEL } from "@/lib/constants";
 import { formatElapsed } from "@/lib/format";
+import { recordingBlocked } from "@/lib/recordingPermission";
 
 /** Human wording for each phase. `Starting`/`Stopping` get their own. */
 function labelFor(phase: RecordingStatus["phase"]): string {
@@ -65,11 +66,12 @@ export function RecordControl({
   const live = status.phase === "recording";
   const transitioning = status.phase === "starting" || status.phase === "stopping";
 
-  // Denied is the only state that disables the control. "Unknown" must not —
+  // A denied microphone is the only state that disables the control (TUR-87:
+  // with only system audio off it records the microphone). "Unknown" must not —
   // it covers both "hasn't checked yet" and "the check itself couldn't run"
   // (no output device, etc.), neither of which is evidence of a denial, and
   // locking the user out on a guess would be worse than letting them try.
-  const denied = permission?.state === "denied";
+  const denied = recordingBlocked(permission);
   const disabled = denied || busy || transitioning;
 
   const accessibleName = denied

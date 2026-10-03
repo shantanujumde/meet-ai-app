@@ -50,6 +50,13 @@ pub fn outcome(heard: bool, peak: f32, listened_fully: bool) -> Outcome {
     }
 }
 
+/// Whether captured frames per second of wall time are more than 5 % off
+/// [`RATE`] (TUR-87): the tap resamples from the wrong rate. Live chunks
+/// arrive in bursts of tens of ms, so a healthy check is well inside that.
+pub fn rate_is_off(frames_per_s: f64) -> bool {
+    (frames_per_s / f64::from(RATE) - 1.0).abs() > 0.05
+}
+
 fn outcome_of(listened: &Listened) -> Outcome {
     let attempt = &listened.attempt;
     outcome(
@@ -139,10 +146,20 @@ pub fn log(listened: &Listened, rates: Option<&str>) {
         present = attempt.reading.present,
         ended = listened.ended.as_str(),
         first_frame_ms = ?listened.first_frame.map(|at| at.as_millis()),
+        captured_frames_per_s = ?listened.frames_per_s.map(|hz| hz.round() as u64),
         peak = attempt.peak,
         rms = attempt.rms,
         "system-audio permission check finished"
     );
+    if let Some(hz) = listened.frames_per_s.filter(|hz| rate_is_off(*hz)) {
+        tracing::warn!(
+            captured_frames_per_s = hz.round() as u64,
+            expected = RATE,
+            rates = rates.unwrap_or("unknown"),
+            "the system tap delivered audio at the wrong pace during the permission check: a \
+             rate error, not a permission answer"
+        );
+    }
     tracing::debug!(reading = ?attempt.reading, "system-audio permission check reading");
     if outcome_of(listened) == Outcome::Flowing {
         tracing::warn!(

@@ -256,7 +256,7 @@ impl Recorder {
         if let Err(error) = app.emit(PERMISSION_STATUS_EVENT, &permission) {
             tracing::warn!(%error, "could not tell the window about the permission check");
         }
-        if permission.state == permission::State::Denied {
+        if permission.blocks_recording() {
             return Err(self.fail_start(
                 app,
                 None,
@@ -290,7 +290,7 @@ impl Recorder {
         };
 
         let mic: Box<dyn AudioSource> = Box::new(audio::mic::MicSource::new());
-        let sys = audio::session::default_system_source();
+        let sys = permission.system_source();
 
         // One tee per channel (TUR-31). A tee costs capture nothing if nobody
         // ends up reading it, so they are handed out before knowing whether

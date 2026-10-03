@@ -112,6 +112,10 @@ const PANE_LABEL: Record<PrivacyPane, string> = {
 /** Name the switch that is off, so the banner says where to go. */
 function deniedBannerText(denied: PrivacyPane[]): string {
   const names = denied.map((pane) => PANE_LABEL[pane]);
+  // TUR-87: only system audio off still records the microphone.
+  if (denied.length === 1 && denied[0] === "audio-capture") {
+    return "System audio is off: System Audio Recording is switched off for meet-ai in System Settings, so recordings capture only your microphone.";
+  }
   if (names.length === 0) {
     return "meet-ai cannot record this Mac's audio yet, so recording is turned off.";
   }

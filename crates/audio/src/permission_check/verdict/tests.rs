@@ -297,3 +297,39 @@ fn real_audio_on_a_listen_that_was_cut_short_is_still_granted() {
     assert!(!listened.listened_fully(), "{listened:?}");
     assert_eq!(result.state, ChannelState::Granted, "{listened:?}");
 }
+
+#[test]
+fn a_healthy_tap_measures_the_capture_rate() {
+    let (_, listened, _, _) = check(Feed::granted(ms(300)));
+    let hz = listened.frames_per_s.expect("listened for more than 0.5 s");
+    assert!((hz - f64::from(RATE)).abs() < 200.0, "{hz}");
+    assert!(!rate_is_off(hz));
+}
+
+/// TUR-87 M4: a tap resampling from the wrong rate delivers 3x or 1/3 the
+/// audio per second. The first play still waits for the settle time in wall
+/// time, and the pace is reported as a rate error.
+#[test]
+fn a_wrong_capture_rate_moves_neither_the_settle_time_nor_hides_the_rate() {
+    for (samples_per_10ms, factor) in [(samples(30), 3.0), (samples(10), 1.0 / 3.0)] {
+        let mut feed = Feed::granted(ms(0));
+        feed.chunk = samples_per_10ms;
+        if factor < 1.0 {
+            feed.wall_per_chunk = ms(30);
+        }
+        let (_, listened, feed, _) = check(feed);
+        let first_play = *feed.plays.first().expect("the chime was played");
+        // Wall time at the first play, from the samples the feed had sent.
+        let wall_ms = first_play as f64 / (f64::from(RATE) * factor) * 1000.0;
+        assert!(
+            wall_ms >= f64::from(chime::SETTLE_MILLIS) - 30.0,
+            "factor {factor}: played {wall_ms:.0} ms after the first frame"
+        );
+        let hz = listened.frames_per_s.expect("measured");
+        assert!(rate_is_off(hz), "factor {factor}: {hz}");
+        assert!(
+            (hz / f64::from(RATE) - factor).abs() < 0.05,
+            "{factor}: {hz}"
+        );
+    }
+}

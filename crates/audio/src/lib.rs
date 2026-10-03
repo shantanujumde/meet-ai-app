@@ -80,6 +80,13 @@ pub mod wav_repair;
 /// and every anchor formula assumes.
 pub(crate) mod resample;
 
+/// Measuring the rate a device really delivers against the host clock
+/// (TUR-84), for the tap and the microphone alike (TUR-87).
+pub(crate) mod rate_meter;
+
+/// Raw device samples to 16 kHz mono, following the measured rate.
+pub(crate) mod pipeline;
+
 /// Whether the default mic and speakers are in use by anyone (TUR-31), on
 /// every platform: [`activity::device_activity`].
 pub mod activity;
@@ -204,6 +211,13 @@ pub trait AudioSource: Send {
     /// permission check's "audio flows but the tone was not recognised"
     /// warning, TUR-84). `None` when not running or not applicable.
     fn rate_report(&self) -> Option<String> {
+        None
+    }
+
+    /// The device rate this source is resampling from right now, for
+    /// `segments.json`'s `mic_device_rate`/`sys_device_rate` (TUR-87).
+    /// Informational only. `None` when not running or not known.
+    fn device_rate(&self) -> Option<u32> {
         None
     }
 }
