@@ -75,6 +75,7 @@
       "properties": {
         "providers": {
           "type": "array",
+          "$comment": "TUR-49: the default is [\"eventkit\"] on macOS and [] on Windows and Linux, which have no Calendar app; \"eventkit\" there is an error.",
           "description": "Calendar sources to read. \"eventkit\" is the macOS Calendar app.",
           "items": {
             "enum": ["eventkit", "google", "microsoft"]

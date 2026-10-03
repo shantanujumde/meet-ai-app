@@ -52,6 +52,18 @@ const NOT_CHECKED: PermissionStatus = {
   denied: [],
 };
 
+const DEFAULT_SOURCES: Client.CalendarSources = {
+  calendarAppAvailable: true,
+  calendarApp: true,
+  configured: [],
+  connected: [],
+};
+
+const SIGNED_OUT: Client.CalendarAccount[] = [
+  { provider: "google", account: null, state: "signed-out", remembered: true },
+  { provider: "microsoft", account: null, state: "signed-out", remembered: true },
+];
+
 const EMPTY_LIST: MeetingList = { root: "/Users/test/Meetings", rootExists: false, meetings: [] };
 
 const NO_NOTES: MeetingNotes = { notesOff: false, analyzedBy: null, sections: [] };
@@ -261,6 +273,21 @@ export const ipc = {
   calendarRefreshMinutes: vi.fn<typeof Client.calendarRefreshMinutes>(
     async () => NO_MEETINGS_TODAY.refreshMinutes,
   ),
+
+  // TUR-49: a fresh Mac — the Calendar app on, no sign-in set up.
+  calendarSources: vi.fn<typeof Client.calendarSources>(async () => DEFAULT_SOURCES),
+  calendarAccounts: vi.fn<typeof Client.calendarAccounts>(async () => SIGNED_OUT),
+  setCalendarApp: vi.fn<typeof Client.setCalendarApp>(async (on) => ({
+    ...DEFAULT_SOURCES,
+    calendarApp: on,
+  })),
+  calendarConnect: vi.fn<typeof Client.calendarConnect>(async (provider) => ({
+    provider,
+    account: "ada@example.com",
+    state: "signed-in",
+    remembered: true,
+  })),
+  calendarDisconnect: vi.fn<typeof Client.calendarDisconnect>(async () => DEFAULT_SOURCES),
 
   // TUR-45: the SPEC §3.5 default.
   audioRetentionDays: vi.fn<typeof Client.audioRetentionDays>(async () => 7),

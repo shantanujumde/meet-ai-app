@@ -10,7 +10,10 @@
  * - calendar access denied, which is never shown as an empty day: one line
  *   on what stops working, **Open System Settings** and **Check again**, like
  *   the audio permission screen;
- * - any other read error, through the shared error screen.
+ * - any other read error, through the shared error screen;
+ * - no calendar to read at all (TUR-49): Windows and Linux before a sign-in,
+ *   or a Mac with the Calendar app turned off. "Sign in with Google or
+ *   Microsoft" and both buttons, never an empty day.
  *
  * The list re-reads every `calendar.refresh_minutes` and whenever the window
  * comes to the front, so a meeting added in Calendar.app shows up without a
@@ -25,6 +28,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import {
   calendarRefreshMinutes,
+  calendarSources,
   type TodayEvent,
   type TodaysMeetings,
   todaysMeetings,
@@ -33,6 +37,8 @@ import { toUiError, type UiError } from "@/ipc/types";
 import { cn } from "@/lib/cn";
 import { NO_MEETINGS_TODAY } from "@/lib/constants";
 import { briefPath } from "@/lib/routes";
+import { EMPTY_DAY, SIGN_IN_TO_SEE_TODAY } from "./calendar/copy";
+import { SignInButtons } from "./calendar/SignInButtons";
 import { openSettings } from "./PrivacyButtons";
 import { Button, ButtonRow, cardVariants, RowLabel, RowValue, rowVariants } from "./primitives";
 import { Checking, ErrorState } from "./states";
@@ -44,6 +50,7 @@ type State =
   | { kind: "loading" }
   | { kind: "ready"; today: TodaysMeetings }
   | { kind: "denied" }
+  | { kind: "sign-in" }
   | { kind: "error"; error: UiError };
 
 export function TodayPane() {
@@ -57,6 +64,14 @@ export function TodayPane() {
 
   const load = useCallback(async () => {
     const id = ++latest.current;
+    // TUR-49: nothing to read is its own screen. A config read; if it fails,
+    // the calendar read below says what is wrong.
+    const sources = await calendarSources().catch(() => null);
+    if (id !== latest.current) return;
+    if (sources && !sources.calendarApp && sources.connected.length === 0) {
+      setState({ kind: "sign-in" });
+      return;
+    }
     try {
       const today = await todaysMeetings();
       if (id !== latest.current) return;
@@ -123,9 +138,16 @@ function TodayBody({ state, onRetry }: { state: State; onRetry: () => void }) {
       );
     case "error":
       return <ErrorState error={state.error} onRemedy={onRetry} />;
+    case "sign-in":
+      return (
+        <div className="state">
+          <p className="state__body">{SIGN_IN_TO_SEE_TODAY}</p>
+          <SignInButtons onConnected={onRetry} />
+        </div>
+      );
     case "ready":
       if (state.today.events.length === 0) {
-        return <p className="state__body">No meetings on your calendar today.</p>;
+        return <p className="state__body">{EMPTY_DAY}</p>;
       }
       return (
         <ul className={cardVariants({ flush: true })} aria-label="Today's meetings">

@@ -13,6 +13,7 @@
 import { useAppStore } from "@/state/app";
 import { AudioRetentionRow } from "@/ui/AudioRetentionRow";
 import { AgentSetup } from "@/ui/agent/AgentSetup";
+import { CalendarSettings } from "@/ui/calendar/CalendarSettings";
 import { DockSetting } from "@/ui/DockSetting";
 import { EngineSummary } from "@/ui/engine/EngineSummary";
 import { FolderRow } from "@/ui/FolderRow";
@@ -36,6 +37,9 @@ export function Settings() {
       <EngineSummary />
 
       <AgentSetup />
+
+      {/* TUR-49: where meetings come from. */}
+      <CalendarSettings />
 
       <section className="section" aria-labelledby="files-heading">
         <h2 className="section__title" id="files-heading">

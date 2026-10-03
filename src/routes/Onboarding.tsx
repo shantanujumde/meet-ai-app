@@ -22,18 +22,20 @@
  * step's copy lives in `onboarding/*Step.tsx`.
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
+import { calendarSources } from "@/ipc/client";
 import {
   isOnboardingStep,
   MEETINGS,
   type OnboardingStep,
   onboardingStepPath,
-  ONBOARDING_STEPS as STEPS,
+  onboardingSteps,
 } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { Button, ButtonRow } from "@/ui/primitives";
 import { AgentStep } from "./onboarding/AgentStep";
+import { CalendarStep } from "./onboarding/CalendarStep";
 import { FolderStep } from "./onboarding/FolderStep";
 import { PermissionStep } from "./onboarding/PermissionStep";
 import { SpeechStep } from "./onboarding/SpeechStep";
@@ -43,6 +45,9 @@ export function Onboarding() {
   const { step } = useParams<{ step?: string }>();
   const navigate = useNavigate();
   const current: OnboardingStep = isOnboardingStep(step) ? step : "welcome";
+  // TUR-49: off macOS there is a calendar step. A Mac's list until Rust says.
+  const [calendarApp, setCalendarApp] = useState(true);
+  const STEPS = onboardingSteps(calendarApp);
   const index = STEPS.indexOf(current);
 
   const permission = useAppStore((state) => state.permission);
@@ -55,6 +60,20 @@ export function Onboarding() {
   useEffect(() => {
     void loadPermission();
   }, [loadPermission]);
+
+  useEffect(() => {
+    let live = true;
+    calendarSources().then(
+      (sources) => {
+        if (live) setCalendarApp(sources.calendarAppAvailable);
+      },
+      // Keep the Mac's list: the calendar step is optional anyway.
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
 
   function goNext() {
     const next = STEPS[index + 1];
@@ -96,6 +115,7 @@ export function Onboarding() {
       ) : null}
       {current === "speech" ? <SpeechStep onNext={goNext} /> : null}
       {current === "folder" ? <FolderStep onNext={goNext} /> : null}
+      {current === "calendar" ? <CalendarStep onNext={goNext} /> : null}
       {current === "agent" ? <AgentStep onFinish={() => void complete()} /> : null}
 
       <ButtonRow>

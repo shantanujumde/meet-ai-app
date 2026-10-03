@@ -25,6 +25,8 @@
 //!   Windows → IANA time-zone table it reads Graph's zone names with.
 //! - [`google`] (TUR-48, SPEC §2.7 tier 3): a Google account's primary
 //!   calendar through `events.list` with `singleEvents=true`, on every OS.
+//! - [`merge`] (TUR-49): every provider's events in one list, with a meeting
+//!   that is in two calendars shown once.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
@@ -37,6 +39,7 @@ pub mod google;
 // TUR-77: the video-call link in an event's URL, location or notes.
 pub mod join_url;
 pub mod matching;
+pub mod merge;
 pub mod microsoft;
 pub mod oauth;
 pub mod raw;

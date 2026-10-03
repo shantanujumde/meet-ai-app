@@ -42,6 +42,11 @@ pub enum SignInProvider {
     Microsoft,
 }
 
+impl SignInProvider {
+    /// Every sign-in, in the order the Settings card lists them.
+    pub const ALL: [Self; 2] = [Self::Google, Self::Microsoft];
+}
+
 impl From<SignInProvider> for ProviderId {
     fn from(provider: SignInProvider) -> Self {
         match provider {
