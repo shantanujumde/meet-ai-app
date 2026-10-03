@@ -64,3 +64,5 @@ design-system/meet-ai/brand/tools/.render/
 # graphify knowledge graph and its cache. Regenerated locally by
 # `graphify update .`, so it never belongs in the repo.
 graphify-out/
+
+.scratch
