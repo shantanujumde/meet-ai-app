@@ -8,6 +8,8 @@
 #   rust           macos-26  just sidecar, clippy, cargo test, bindings, quality rules
 #   rust-portable  ubuntu    cargo fmt, just check-windows (the SPEC §8.2 seam)
 #   js             ubuntu    biome, typecheck, vitest, pnpm build
+#   rust-native    windows   just check-windows (native workspace build, test,
+#                  + ubuntu  clippy), pnpm tauri build, bundle uploaded (TUR-36)
 #   check-result   ubuntu    the one status named `check` (see that job)
 #
 # Every command `just check` runs appears below as its own `run:` line, and the
@@ -284,6 +286,159 @@ jobs:
       - name: pnpm build
         run: pnpm build
 
+  # The whole workspace, natively, on Windows and Linux (TUR-36, SPEC A13):
+  # `src-tauri`, `store` and `modelfetch` included, which the cross-check in
+  # `rust-portable` cannot cover because they compile C (sqlite, ring). Then
+  # `pnpm tauri build` makes the installer, uploaded as a workflow artifact so
+  # the app can be opened on that OS by hand. Both ship as preview.
+  #
+  # What differs from macOS:
+  # - No sidecar. `just sidecar` is a no-op off macOS, and
+  #   src-tauri/tauri.windows.conf.json and tauri.linux.conf.json (which Tauri
+  #   merges over tauri.conf.json) drop `externalBin`, the macOS window
+  #   effects, and set the bundle targets and icons.
+  # - Audio is the TUR-42 platform stubs: cpal microphone, no system track.
+  #   Tests that need a device are #[ignore]d the same as on macOS; macOS-only
+  #   test files gate themselves with `#![cfg(target_os = "macos")]`.
+  # - No whisper: whisper-rs is gated to macOS in crates/stt/Cargo.toml, so no
+  #   cmake build yet.
+  #
+  # Windows runs `just check-windows`, which on Windows is exactly the native
+  # build, test and clippy below (see the justfile), so the recipe and this job
+  # cannot drift. Linux runs the same commands as separate steps.
+  rust-native:
+    name: rust (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            bundle: nsis
+          - name: linux
+            os: ubuntu-24.04
+            bundle: deb
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    env:
+      # As in the macOS job: line numbers only, smaller and faster test builds.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    defaults:
+      run:
+        # Git Bash on Windows, so one script works on both runners.
+        shell: bash
+    steps:
+      # Deep paths under target/ (build scripts, cmake later for whisper) pass
+      # Windows' 260-character MAX_PATH; git needs telling separately.
+      # Adapted from github.com/cjpais/Handy/.github/workflows/build.yml @ ffbc9504cbf004ce4819d2ca872fcea92be0fddf (MIT)
+      - name: Enable long paths (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+            -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+          git config --system core.longpaths true
+
+      - uses: actions/checkout@v5
+
+      # rust-toolchain.toml pins the version and components. The host target
+      # (x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu) always comes with
+      # the toolchain, so the file's `targets` list does not need to name them.
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      # Tauri's Linux prerequisites (webkit2gtk 4.1, appindicator, rsvg) plus
+      # ALSA and PulseAudio headers for cpal. apt retries each download, so a
+      # flaky mirror does not fail every PR.
+      - name: Install Linux system packages
+        if: runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+            libasound2-dev libpulse-dev patchelf
+
+      # MSVC compiles the C deps (sqlite, ring) through the `cc` crate, which
+      # finds Visual Studio on its own. clang (LLVM) is on the image too and is
+      # what bindgen-based deps need; print both so a missing one shows here
+      # rather than as a build-script error.
+      - name: Check the Windows C toolchain
+        if: runner.os == 'Windows'
+        run: |
+          clang --version
+          cmake --version
+
+      # Dependencies only; per-OS key so the three OSes never share entries.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.name }}-native
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: Windows build, test and clippy
+        if: runner.os == 'Windows'
+        run: just check-windows
+
+      - name: cargo build
+        if: runner.os == 'Linux'
+        run: cargo build --workspace --all-targets
+
+      - name: cargo test
+        if: runner.os == 'Linux'
+        run: cargo test --workspace
+
+      # The no-device audio sources CI is meant to test with (SPEC §8.2).
+      - name: cargo test audio (stub-audio)
+        if: runner.os == 'Linux'
+        run: cargo test -p audio --features audio/stub-audio
+
+      - name: clippy
+        if: runner.os == 'Linux'
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      # A release build of the app and its installer: NSIS on Windows, .deb
+      # on Linux (AppImage is TUR-39). Unsigned. On Windows the Tauri CLI
+      # downloads the NSIS tools from GitHub, so a failed attempt is retried;
+      # the second try reuses the compiled crates and costs only the bundling.
+      - name: pnpm tauri build
+        env:
+          BUNDLE: ${{ matrix.bundle }}
+        run: |
+          args=(--bundles "$BUNDLE")
+          if [ "$RUNNER_OS" = Linux ]; then args+=(--no-sign); fi
+          for attempt in 1 2 3; do
+            if pnpm tauri build "${args[@]}"; then exit 0; fi
+            echo "::warning::pnpm tauri build failed (attempt $attempt of 3)"
+            sleep 15
+          done
+          exit 1
+
+      - name: Upload the ${{ matrix.bundle }} bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: meet-ai-${{ matrix.name }}-${{ matrix.bundle }}
+          path: target/release/bundle/${{ matrix.bundle }}/
+          if-no-files-found: error
+          retention-days: 7
+
   # The one status for branch protection and for release.yml. The ruleset on
   # main requires a status named `check`, so this job keeps that name. It fails
   # when any job above failed, was cancelled or was skipped, so `check` can
@@ -292,7 +447,7 @@ jobs:
   check-result:
     name: check
     if: always()
-    needs: [rust, rust-portable, js]
+    needs: [rust, rust-portable, js, rust-native]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

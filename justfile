@@ -1,4 +1,8 @@
 set shell := ["bash", "-uc"]
+# Windows (TUR-36): PowerShell ships with every Windows, while which `bash` is
+# first on PATH there (Git Bash, WSL, none) is not something to rely on. The
+# recipes that run on Windows are plain commands either shell runs the same.
+set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
 # Self-signed identity created by `scripts/signing/make-identity.sh`. That
 # script is headless — no sudo, no Keychain Access, no admin password, because
@@ -27,6 +31,11 @@ XCODE_DEVELOPER_DIR := env_var_or_default("XCODE_DEVELOPER_DIR", "/Applications/
 #   2. crates/stt tests the sidecar across the process boundary rather than with
 #      XCTest (see main.swift's header), so `cargo test` needs target/meet-stt
 #      to already exist.
+#
+# Off macOS (TUR-36) there is no swiftc and no Apple speech engine, so
+# `sidecar` is a no-op recipe there (see it below) and this same recipe runs on
+# Windows and Linux too. On Windows, `check-windows` is the native workspace
+# build, test and clippy, the commands the `rust (windows)` CI job runs.
 check: check-windows sidecar
     cargo fmt --all --check
     cargo clippy --workspace --all-targets -- -D warnings
@@ -69,10 +78,22 @@ check: check-windows sidecar
 # Since TUR-42 every crate keeps its OS code in `src/platform/` (quality rule
 # R10; `store` since TUR-89, and three unix-only test gates in `agent` wait for
 # TUR-54), and `agent` joined the list: it has no C dependency at all. The second
-# `cargo check` builds `audio` with `stub-audio`, the no-device sources for
-# running the tests on Windows and Linux. No CI job does that yet (TUR-36, #83,
-# adds them); until then it is a manual check. The target is only added when
-# missing.
+# `cargo check` builds `audio` with `stub-audio`, the no-device sources CI on
+# Windows and Linux runs tests with. The target is only added when missing.
+#
+# On a Windows machine (TUR-36) the recipe below is the real thing instead: a
+# native build of the whole workspace, `src-tauri`, `store` and `modelfetch`
+# included, since MSVC is there to compile their C. It is exactly what the
+# `rust (windows)` CI job runs. The cross-check above stays for macOS and
+# Linux, where it is the cheap early warning.
+[windows]
+check-windows:
+    cargo build --workspace --all-targets
+    cargo test --workspace
+    cargo test -p audio --features audio/stub-audio
+    cargo clippy --workspace --all-targets -- -D warnings
+
+[unix]
 check-windows:
     rustup target list --installed | grep -qx x86_64-pc-windows-msvc || rustup target add x86_64-pc-windows-msvc
     cargo check --target x86_64-pc-windows-msvc -p audio -p calendar -p stt -p prompts -p detect -p meeting-format -p agent
@@ -104,6 +125,17 @@ fmt:
 # and says "the meet-stt sidecar was not found in the app bundle". tauri-build
 # checks the file exists at compile time, so a bare `cargo build -p meet-ai`
 # needs `just sidecar` first; every recipe here that builds the app runs it.
+#
+# Off macOS there is nothing to build (TUR-36): no swiftc, no SpeechAnalyzer,
+# and `tauri.windows.conf.json` / `tauri.linux.conf.json` drop `externalBin`,
+# so tauri-build does not look for the file. The no-op keeps `check`,
+# `bindings` and the rest working there unchanged.
+[linux]
+[windows]
+sidecar:
+    @echo "no meet-stt sidecar off macOS"
+
+[macos]
 sidecar:
     mkdir -p target
     swiftc -O sidecar/meet-stt/main.swift -o target/meet-stt
