@@ -197,7 +197,9 @@ fn a_tap_that_stalls_right_after_the_chime_is_unmeasurable_not_denied() {
 
 #[test]
 fn a_tap_that_closes_mid_listen_is_unmeasurable_and_says_so() {
-    let mut feed = Feed::granted(ms(0));
+    // Exact zeros: a granted tap that closes after real audio came back is
+    // a grant (TUR-84), so only a silent one is left unmeasured.
+    let mut feed = Feed::denied(ms(0));
     feed.closes_at = Some(samples(u64::from(chime::SETTLE_MILLIS) + 100));
     let (result, listened, _, _) = check(feed);
     assert_eq!(result.state, ChannelState::Unmeasurable, "{listened:?}");
@@ -237,4 +239,61 @@ fn a_disconnected_feed_before_any_play_is_unmeasurable() {
     assert_eq!(result.state, ChannelState::Unmeasurable);
     assert_eq!(listened.ended, Ended::TapClosed);
     assert!(feed.plays.is_empty());
+}
+
+#[test]
+fn the_rule_table() {
+    use Outcome::*;
+    // (heard, peak, listened fully) -> outcome
+    let cases = [
+        (true, 0.4, true, Heard),
+        (true, 0.0, false, Heard),
+        (false, 0.398, true, Flowing),
+        (false, 0.398, false, Flowing),
+        (false, 2e-6, true, Flowing),
+        (false, 0.0, true, Silent),
+        (false, NONZERO_PEAK, true, Silent),
+        (false, 0.0, false, CutShort),
+    ];
+    for (heard, peak, fully, expected) in cases {
+        assert_eq!(
+            outcome(heard, peak, fully),
+            expected,
+            "heard={heard} peak={peak} fully={fully}"
+        );
+    }
+}
+
+#[test]
+fn real_audio_without_a_recognisable_chime_is_granted_not_denied() {
+    // The owner's log (TUR-84): two plays, a full listen, peak 0.40 and
+    // rms 0.09, but the chime came back pitch-shifted (16 kHz frames
+    // resampled as 48 kHz play it 3x low and slow). That is real audio,
+    // which a denied tap never delivers.
+    let mut feed = Feed::granted(ms(0));
+    feed.chime = chime::samples(RATE * 3)
+        .into_iter()
+        .map(|s| (s * f32::from(i16::MAX)).round() as i16)
+        .collect();
+    let (result, listened, feed, _) = check(feed);
+    assert!(!listened.attempt.reading.present, "{listened:?}");
+    assert_eq!(listened.ended, Ended::Window);
+    assert_eq!(feed.plays.len(), chime::MAX_PLAYS as usize);
+    assert!(listened.attempt.peak > 0.1);
+    assert_eq!(result.state, ChannelState::Granted, "{listened:?}");
+    assert!(
+        result.detail.contains("system audio is flowing"),
+        "{}",
+        result.detail
+    );
+}
+
+#[test]
+fn real_audio_on_a_listen_that_was_cut_short_is_still_granted() {
+    let mut feed = Feed::granted(ms(0));
+    feed.chime = vec![3_000; samples(100)];
+    feed.stalls_at = Some(samples(u64::from(chime::SETTLE_MILLIS) + 300));
+    let (result, listened, _, _) = check(feed);
+    assert!(!listened.listened_fully(), "{listened:?}");
+    assert_eq!(result.state, ChannelState::Granted, "{listened:?}");
 }

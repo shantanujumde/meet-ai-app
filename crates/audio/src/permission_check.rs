@@ -27,7 +27,10 @@
 //!   `noErr` and bit-exact zero samples at the normal callback rate, so a
 //!   return code proves nothing. [`check_system`] plays the permission chime
 //!   through the default output device and confirms [`crate::chime::heard`]
-//!   recovers it from the tap, listening live. One chime per check (TUR-14:
+//!   recovers it from the tap, listening live. A chime that is not
+//!   recognised but comes back with real, non-zero audio still proves the
+//!   grant (TUR-84): only exact zeros after a full listen are a denial, see
+//!   [`verdict::outcome`]. One chime per check (TUR-14:
 //!   it used to loop for ~3 s and sound like ~11 chimes): it waits for the
 //!   tap to settle, plays once, and stops as soon as the chime is heard. Only
 //!   if it is not heard does it play again, and never more than
@@ -55,7 +58,8 @@ pub mod verdict;
 pub enum ChannelState {
     /// The positive control came back (or, for the mic, the stream opened).
     Granted,
-    /// The tone did not come back, or the stream was refused.
+    /// The tone did not come back and only exact zeros did (TUR-84), or the
+    /// stream was refused.
     Denied,
     /// The check itself could not run — no device, no output, an I/O error.
     /// This is neither a grant nor a denial; a caller that folds it into
