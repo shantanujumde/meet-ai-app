@@ -57,6 +57,10 @@ mod attempts;
 pub use attempts::{
     Attempt, LISTEN_TAIL_MILLIS, MAX_PLAYS, SETTLE_MILLIS, play_until_heard, worst_case_millis,
 };
+pub use attempts::{
+    Clock, DEADLINE_HEADROOM_MILLIS, Ended, FIRST_FRAME_TIMEOUT_MILLIS, Finish, Listened,
+    WallClock, listen_live,
+};
 
 /// One note of the chime.
 #[derive(Debug, Clone, Copy, PartialEq)]

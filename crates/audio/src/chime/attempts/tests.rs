@@ -252,3 +252,21 @@ fn the_worst_case_covers_both_plays_and_their_listen_windows() {
     assert!(worst_case_millis() >= ONSET_TIMEOUT_MILLIS + listen);
     assert!(worst_case_millis() >= SETTLE_MILLIS + 2 * listen);
 }
+
+#[test]
+fn the_attempt_says_why_it_ended_and_how_loud_the_audio_after_the_play_was() {
+    let (heard_attempt, _) = run(Tap::granted(MEASURED_SETTLE_MILLIS, 30));
+    assert_eq!(heard_attempt.finish, Finish::Heard);
+    assert!(heard_attempt.peak > 0.0 && heard_attempt.rms > 0.0);
+
+    let (denied, _) = run(Tap::denied());
+    assert_eq!(denied.finish, Finish::Window);
+    assert_eq!((denied.peak, denied.rms), (0.0, 0.0));
+    assert!(denied.listened >= ms(duration_millis() + LISTEN_TAIL_MILLIS));
+
+    let mut tap = Tap::granted(MEASURED_SETTLE_MILLIS, 30);
+    tap.stops_at = Some(ms(SETTLE_MILLIS + 100));
+    let (cut, _) = run(tap);
+    assert_eq!(cut.finish, Finish::Pulled);
+    assert_eq!(cut.listened, ms(100));
+}
