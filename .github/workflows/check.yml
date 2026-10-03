@@ -235,6 +235,11 @@ jobs:
       - name: Windows seam check
         run: just check-windows
 
+      # The repo rules' own tests (sample files in a throwaway git repo). Needs
+      # only bash, git and awk, so it runs here and not on the Mac.
+      - name: Quality rules self-test
+        run: scripts/quality-rules-selftest.sh
+
   # Frontend checks. Nothing here touches Rust or macOS APIs; the bindings file
   # they compile against is the committed one, and the `rust` job proves it
   # matches the Rust side.

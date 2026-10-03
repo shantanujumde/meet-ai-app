@@ -206,6 +206,54 @@ not written yet.
   The CLI does the network call under the user's own login.
 - **Never commit a key, a recording, or a real transcript.**
 
+## Code from other projects
+
+meet-ai is Apache-2.0. Copying code from another open source project is fine
+when that project's licence allows it and we keep its notices. Decide by the
+licence of the exact files you copy, not by a project's reputation:
+
+- **COPY allowed:** MIT, Apache-2.0, BSD (2- and 3-clause), ISC, Zlib,
+  Unlicense, and MPL-2.0 (file level: the copied file stays MPL-2.0 and keeps
+  its header).
+- **INSPIRATION only, never copy a line:** GPL, AGPL, LGPL (any version),
+  commercial or source-available licences, and code with no licence at all.
+  Read it to learn how a problem was solved, then close it and write our own.
+
+For every file you copy or adapt code into:
+
+1. Keep the upstream licence header, if the file had one.
+2. Put this line above the copied code, in the file's comment syntax (`//`,
+   `#`, `/* */`, `<!-- -->`):
+
+   ```
+   // Adapted from github.com/<owner>/<repo>/<path> @ <commit> (<SPDX>)
+   ```
+
+   For example
+   `// Adapted from github.com/insidegui/AudioCap/AudioCap/ProcessTap/ProcessTap.swift @ 6f609e8ad1b1e11fa0e8edbe91864cb099f00de3 (BSD-2-Clause)`.
+   Codeberg and GitLab sources use their host the same way
+   (`codeberg.org/<owner>/<repo>/...`).
+3. Add or extend that project's section in
+   [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md): URL, licence,
+   copyright line, commit, the files we took (ours and theirs), and the full
+   licence text for MIT, BSD, ISC or Zlib code. The file's top explains the
+   shape.
+
+**Pin every copy to a commit**, the full hash, never `main`. Licences change,
+and the commit is the proof of which one our copy came under. Two projects we
+look at already changed: anarlog was GPL-3.0 until 2026-04-26 and is MIT since,
+and screenpipe went commercial on 2026-06-10. Code taken from anarlog before
+that date is GPL and must not be in this repo; code from screenpipe after its
+date cannot be copied at all. Check the `LICENSE` file at the commit you copy
+from, and in a monorepo the licence of the path itself (anarlog's
+`LICENSING.md` maps `enterprise/**` to a commercial licence and the rest to
+MIT).
+
+Rule R9 in [`docs/quality-rules.md`](./docs/quality-rules.md#r9-adapted-code-without-a-notice-error)
+fails a change when a file has an `Adapted from` line without a matching
+`THIRD_PARTY_NOTICES.md` section, or when the line names a GPL, AGPL or LGPL
+licence, no licence, or a branch instead of a commit.
+
 ## Agent runs and the working tree
 
 Automated runs used to share this one checkout. Two runs editing the same files
