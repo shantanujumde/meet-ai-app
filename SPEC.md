@@ -574,6 +574,8 @@ A13 is held by TUR-36 ([#83](https://github.com/shantanujumde/meet-ai-app/pull/8
 
 **Built in TUR-44:** the shared sign-in (`crates/calendar/src/oauth/`, `src-tauri/src/calendar/signin.rs`): PKCE S256, loopback redirect `http://127.0.0.1:<random port>/callback`, `state` checked on every callback, refresh token only in the keystore, access tokens in memory. The calendar providers on top of it are TUR-47 (Microsoft) and TUR-48 (Google).
 
+2026-10-04: the loopback listener is our own (TUR-88, `src-tauri/src/calendar/loopback.rs`); tauri-plugin-oauth removed.
+
 ### A11 — 2026-10-01 · The app runs the user's agent itself; the clipboard step goes (amends L9, L10, §2.8, §3.1, §3.2, §3.3, §3.5, §5 Phase 4; L11 unchanged)
 
 **Decision:** when a call ends, meet-ai starts the agent CLI the user already has installed and signed in to (Claude Code or Codex) as a background process, with no window. It passes the transcript and an output schema, gets back structured notes and tasks, checks them, and writes `meeting.md` and `tickets/TICK-NNNN.md` itself. The user no longer copies a prompt, pastes it into another app and waits for files to appear. The pattern is taken from t3code (`pingdotgg/t3code`, MIT, `apps/server/src/textGeneration/`), which drives the same CLIs the same way.

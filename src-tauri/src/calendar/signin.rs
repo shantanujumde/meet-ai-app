@@ -390,16 +390,32 @@ mod tests {
     #[test]
     fn no_reply_in_time_is_cancelled() {
         let (auth, store) = test_auth(true);
+        let mut port = 0;
         let error = sign_in_blocking(
             &auth,
             ProviderId::Google,
-            |_| Ok(()),
+            |url| {
+                port = Url::parse(&param(url, "redirect_uri"))
+                    .unwrap()
+                    .port()
+                    .unwrap();
+                Ok(())
+            },
             Duration::from_millis(200),
         )
         .unwrap_err();
         assert!(matches!(error, SignInError::Cancelled { .. }), "{error:?}");
         assert_eq!(UiError::from(error).kind, "calendar-sign-in-cancelled");
         assert_eq!(store.stored(ProviderId::Google), None);
+        // TUR-88: the listener is closed once the sign-in gives up.
+        let deadline = std::time::Instant::now() + WAIT;
+        while TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "port {port} still open"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     #[test]

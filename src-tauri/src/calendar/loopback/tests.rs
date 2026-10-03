@@ -10,15 +10,18 @@ const PAGE: &str = "<!doctype html><p>Signed in.</p>";
 const WAIT: Duration = Duration::from_secs(10);
 
 /// A Microsoft work account's redirect as Chrome sends it: a code of about
-/// 1.6 KB, `state`, `session_state`, and Chrome's usual headers, with the
-/// cookies some other local dev server left on 127.0.0.1. About 4.4 KB, past
-/// the old listener's one 4048-byte read.
-fn chrome_redirect(port: u16) -> (String, String) {
-    let code = format!("M.C540_BAY.2.U.{}", "a1B2c3D4e5".repeat(160));
+/// 2 KB, `state`, `session_state`, and Chrome's usual headers, about 3 KB,
+/// plus `cookie_bytes` of cookies some other local dev server left on
+/// 127.0.0.1.
+fn chrome_redirect(port: u16, cookie_bytes: usize) -> (String, String) {
+    let code = format!("M.C540_BAY.2.U.{}", "a1B2c3D4e5".repeat(200));
     let target = format!(
         "/callback?code={code}&state=Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmE&session_state=0f1e2d3c-4b5a-6978-8091-a2b3c4d5e6f7"
     );
-    let cookies = format!("Cookie: dev_session={}", "c".repeat(2000));
+    let cookies = match cookie_bytes {
+        0 => String::new(),
+        n => format!("Cookie: dev_session={}\r\n", "c".repeat(n)),
+    };
     let request = format!(
         "GET {target} HTTP/1.1\r\n\
          Host: 127.0.0.1:{port}\r\n\
@@ -36,7 +39,7 @@ fn chrome_redirect(port: u16) -> (String, String) {
          Referer: https://login.microsoftonline.com/\r\n\
          Accept-Encoding: gzip, deflate, br, zstd\r\n\
          Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n\
-         {cookies}\r\n\r\n"
+         {cookies}\r\n"
     );
     (target, request)
 }
@@ -59,8 +62,12 @@ fn send(port: u16, request: &str, pieces: usize) -> String {
 #[test]
 fn a_realistic_microsoft_redirect_in_one_write_is_read_whole() {
     let listener = listen(PAGE).unwrap();
-    let (target, request) = chrome_redirect(listener.port());
-    assert!(request.len() > 4_048, "{} bytes", request.len());
+    let (target, request) = chrome_redirect(listener.port(), 0);
+    assert!(
+        (2_500..3_500).contains(&request.len()),
+        "{} bytes",
+        request.len()
+    );
     let reply = send(listener.port(), &request, 1);
     assert!(reply.starts_with("HTTP/1.1 200 OK\r\n"), "{reply}");
     assert!(reply.ends_with(PAGE));
@@ -73,9 +80,11 @@ fn a_realistic_microsoft_redirect_in_one_write_is_read_whole() {
 
 #[test]
 fn a_redirect_that_arrives_in_pieces_is_still_read() {
-    // A TCP read can return less than the whole request.
+    // A TCP read can return less than the whole request. With cookies it is
+    // also past the old listener's one 4048-byte read.
     let listener = listen(PAGE).unwrap();
-    let (target, request) = chrome_redirect(listener.port());
+    let (target, request) = chrome_redirect(listener.port(), 2_000);
+    assert!(request.len() > 4_048, "{} bytes", request.len());
     let reply = send(listener.port(), &request, 7);
     assert!(reply.starts_with("HTTP/1.1 200 OK\r\n"), "{reply}");
     let url = listener.next_callback(WAIT).unwrap();
@@ -153,6 +162,37 @@ fn other_requests_are_refused_and_the_listener_keeps_waiting() {
         listener.next_callback(WAIT).unwrap(),
         format!("http://127.0.0.1:{port}/callback?state=s&code=c")
     );
+}
+
+#[test]
+fn the_first_callback_ends_the_listener() {
+    let listener = listen(PAGE).unwrap();
+    let port = listener.port();
+    send(port, "GET /callback?state=first&code=c HTTP/1.1\r\n\r\n", 1);
+    assert!(
+        listener
+            .next_callback(WAIT)
+            .unwrap()
+            .contains("state=first")
+    );
+    // Closed for anyone after it, even with the sign-in still holding it.
+    let deadline = Instant::now() + WAIT;
+    while let Ok(mut late) = TcpStream::connect((Ipv4Addr::LOCALHOST, port)) {
+        let _ = late.write_all(b"GET /callback?state=second&code=c HTTP/1.1\r\n\r\n");
+        assert!(Instant::now() < deadline, "port {port} still open");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(listener.next_callback(Duration::from_millis(100)).is_err());
+}
+
+#[test]
+fn only_127_0_0_1_is_bound_on_a_random_port() {
+    let a = listen(PAGE).unwrap();
+    let b = listen(PAGE).unwrap();
+    assert_ne!(a.port(), b.port());
+    assert_ne!(a.port(), 0);
+    // Never 0.0.0.0, which would answer the whole network.
+    assert_eq!(a.addr.ip(), Ipv4Addr::LOCALHOST);
 }
 
 #[test]

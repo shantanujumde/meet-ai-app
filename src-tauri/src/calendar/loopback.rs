@@ -11,15 +11,16 @@
 //!
 //! Here the URL is taken from the redirect's own request line, and the head
 //! is read until its blank line, however many reads that takes, up to
-//! [`MAX_HEAD`]. Each connection is served on its own thread, so a browser's
-//! idle pre-opened connection cannot hold up the real one. Anything that is
-//! not a `GET` of [`oauth::CALLBACK_PATH`] (a favicon, a stray client) gets an
-//! error page and the listener keeps waiting. The `state` check that decides
-//! whether a callback is ours is `CalendarAuth::finish_sign_in`'s, not this
-//! file's.
+//! [`MAX_HEAD`] and [`IO_TIMEOUT`]. Each connection is served on its own
+//! thread, so a browser's idle pre-opened connection cannot hold up the real
+//! one. Anything that is not a `GET` of [`oauth::CALLBACK_PATH`] (a favicon,
+//! a stray client) gets a 404 and the listener keeps waiting. The first
+//! callback ends it. The `state` check that decides whether that callback is
+//! ours is `CalendarAuth::finish_sign_in`'s, done before anything else in the
+//! URL is read.
 
 use std::io::{self, Write as _};
-use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -27,16 +28,18 @@ use std::time::Duration;
 
 use ::calendar::oauth;
 
-/// The most a request head may be. Far above any real redirect (a long code,
-/// and cookies another local server left on 127.0.0.1), and still a cap.
-pub const MAX_HEAD: usize = 256 * 1024;
+/// The most a request head may be: four times the old listener's buffer, so
+/// a long Microsoft code and some cookies another local server left on
+/// 127.0.0.1 fit, and still a small cap on what a local client can send.
+pub const MAX_HEAD: usize = 16 * 1024;
 
 /// How long one connection may take to send its head, or to take the reply.
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A listener on a random 127.0.0.1 port. Dropping it stops it.
 pub struct Loopback {
-    port: u16,
+    /// Always 127.0.0.1, on a port the OS picked.
+    addr: SocketAddr,
     stop: Arc<AtomicBool>,
     /// The callback URL, `http://127.0.0.1:<port>/callback?…`, each time the
     /// browser (or anything else) asks for the callback path.
@@ -46,7 +49,8 @@ pub struct Loopback {
 /// Listen on a random loopback port, answering the callback with `page`.
 pub fn listen(page: &'static str) -> io::Result<Loopback> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-    let port = listener.local_addr()?.port();
+    let addr = listener.local_addr()?;
+    let port = addr.port();
     let stop = Arc::new(AtomicBool::new(false));
     let (sender, callbacks) = mpsc::channel();
     let stopped = Arc::clone(&stop);
@@ -61,16 +65,17 @@ pub fn listen(page: &'static str) -> io::Result<Loopback> {
                     continue;
                 };
                 let sender = sender.clone();
+                let ended = Arc::clone(&stopped);
                 if let Err(error) = std::thread::Builder::new()
                     .name("meet-ai-sign-in-request".to_string())
-                    .spawn(move || serve(connection, port, page, &sender))
+                    .spawn(move || serve(connection, port, page, &sender, &ended))
                 {
                     tracing::warn!(%error, "could not answer a sign-in request");
                 }
             }
         })?;
     Ok(Loopback {
-        port,
+        addr,
         stop,
         callbacks,
     })
@@ -78,7 +83,7 @@ pub fn listen(page: &'static str) -> io::Result<Loopback> {
 
 impl Loopback {
     pub fn port(&self) -> u16 {
-        self.port
+        self.addr.port()
     }
 
     /// The first callback within `timeout`.
@@ -89,12 +94,19 @@ impl Loopback {
 
 impl Drop for Loopback {
     fn drop(&mut self) {
-        if !self.stop.swap(true, Ordering::SeqCst) {
-            // Wake the accept loop so it sees the flag and closes the port.
-            // Failing means it is already gone.
-            let _ = TcpStream::connect((Ipv4Addr::LOCALHOST, self.port));
-        }
+        end(&self.stop, self.addr.port());
     }
+}
+
+/// Stop listening on `port`: set `stop` and wake the accept loop, which sees
+/// it and closes the port. `false` when it had already ended.
+fn end(stop: &AtomicBool, port: u16) -> bool {
+    if stop.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    // Failing means the accept loop is already gone.
+    let _ = TcpStream::connect((Ipv4Addr::LOCALHOST, port));
+    true
 }
 
 /// Why a request was not the callback.
@@ -108,10 +120,25 @@ enum Refused {
     NotFound,
 }
 
-fn serve(mut connection: TcpStream, port: u16, page: &str, callbacks: &mpsc::Sender<String>) {
+fn serve(
+    mut connection: TcpStream,
+    port: u16,
+    page: &str,
+    callbacks: &mpsc::Sender<String>,
+    stop: &AtomicBool,
+) {
     let _ = connection.set_read_timeout(Some(IO_TIMEOUT));
     let _ = connection.set_write_timeout(Some(IO_TIMEOUT));
-    let target = read_head(&mut connection).and_then(|head| callback_target(&head));
+    let target = read_head(&mut connection)
+        .and_then(|head| callback_target(&head))
+        // Only the first callback counts; the listener has ended after it.
+        .and_then(|target| {
+            if end(stop, port) {
+                Ok(target)
+            } else {
+                Err(Refused::NotFound)
+            }
+        });
     let reply = match &target {
         Ok(_) => response("200 OK", page),
         Err(Refused::NotFound) => response("404 Not Found", ""),

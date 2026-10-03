@@ -104,7 +104,6 @@ Pin these exactly in `Cargo.toml` and commit `Cargo.lock`. 🆕 = new major with
 | `tauri-plugin-log` | **2.9.1** | |
 | `tauri-plugin-single-instance` | **2.4.4** | |
 | `tauri-plugin-updater` | **2.11.0** | added now, `active: false` — §8.1 ⛔ seam |
-| `tauri-plugin-oauth` | **2.1.0** | loopback listener, Phase 5b |
 
 ### 2.2 Audio (🔴 the risky crate)
 
@@ -170,8 +169,11 @@ TUR-44 (SPEC A12) added `oauth2` (no default features in `crates/calendar`;
 `reqwest-blocking` only in `src-tauri`, so the crate keeps no network client and
 still cross-checks for Windows), `keyring` 4.2 (default `v1` feature: Keychain,
 Windows Credential Manager, Secret Service through zbus, all pure Rust) and
-`tauri-plugin-oauth` 2.1.0 (§2.1; Rust API only, the JS plugin is not
-registered). `icalendar` is not added: A12 dropped ICS.
+`tauri-plugin-oauth` 2.1.0 (Rust API only, the JS plugin was never
+registered). TUR-88 removed `tauri-plugin-oauth` again: it read each callback
+with one 4048-byte `read`, so the loopback listener is now our own
+(`src-tauri/src/calendar/loopback.rs`, std only). `icalendar` is not added: A12
+dropped ICS.
 
 #### Calendar sign-in (optional)
 
