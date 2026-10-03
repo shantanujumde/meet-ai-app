@@ -220,6 +220,45 @@ is deleted.
 really has to be global CSS (a third-party override), opt out on the same line
 or the line above with `/* quality: allow-css <reason> */`.
 
+### R9: adapted code without a notice (ERROR)
+
+A comment (`//`, `#`, `/* */`, `<!-- -->`) with `Adapted from` in a source,
+script, workflow, CMake or CSS file (`.rs .ts .tsx .js .swift .sh .yml .cmake
+.css .html` and similar) that:
+
+- is not in the form
+  `Adapted from <host>/<owner>/<repo>/<path> @ <commit> (<SPDX>)`, where
+  `<host>/<owner>/<repo>` is for example `github.com/insidegui/AudioCap`
+  (`https://` in front is accepted)
+- pins a branch or tag instead of a commit hash (7 to 40 hex digits)
+- has no SPDX id, or one that is GPL-\*, AGPL-\*, LGPL-\*, SSPL-\*, BUSL-\*,
+  `NONE`, `NOASSERTION` or `UNLICENSED`. A choice like `MIT OR GPL-3.0-only`
+  passes, because we take it under MIT.
+- has no section in `THIRD_PARTY_NOTICES.md` whose `URL:` line names that
+  repository. The match ignores case and must be the whole repository, so
+  `github.com/acme/lib` does not match a notice for `github.com/acme/library`.
+  A source listed under `## To confirm` does not count.
+
+Unlike most rules, R9 reads every line of the file, not only the added ones: a
+copy needs its notice for as long as it is in the repo. `R9_NOTICES=<file>`
+points it at another notices file. The rule's own script and self-test are
+skipped, because they spell the format out as examples.
+
+**Why:** our Apache-2.0 licence lets us ship MIT, BSD or Apache code from other
+projects only if we keep their copyright and licence notices. GPL-family code
+cannot go into an Apache-2.0 app at all. A notice that is missing is a licence
+breach the day we ship, and nobody notices it in review.
+
+**Fix:** add or extend the project's section in `THIRD_PARTY_NOTICES.md`
+(project, URL, licence, copyright line, commit, files taken; the top of that
+file shows the shape). For a GPL source, delete the copied code and write our
+own. The full rules are in CONTRIBUTING.md, "Code from other projects".
+
+**Self-test:** `scripts/quality-rules-selftest.sh` runs R9 on sample files in a
+throwaway git repo: an `Adapted from` line with no notice must fail, one with a
+notice must pass, and so on for each case above. CI runs it in the
+`rust-portable` job.
+
 ## Knobs
 
 | Env var | Effect |
