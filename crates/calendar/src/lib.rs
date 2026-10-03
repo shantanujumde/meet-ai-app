@@ -17,6 +17,9 @@
 //!   way, and so the filtering is tested without EventKit.
 //! - `fake` (cargo feature `fake`): a provider over fixture events, for tests
 //!   that must not touch Calendar.app (SPEC §6).
+//! - [`oauth`] (TUR-44, SPEC A12): sign in with Google or Microsoft on every
+//!   OS. PKCE over a loopback redirect, the refresh token in the OS keystore,
+//!   and [`oauth::CalendarAuth::access_token`] for the cloud providers.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
@@ -26,6 +29,7 @@ pub mod eventkit;
 #[cfg(feature = "fake")]
 pub mod fake;
 pub mod matching;
+pub mod oauth;
 pub mod raw;
 
 /// One calendar entry, flattened to the fields meet-ai actually uses.
