@@ -91,6 +91,21 @@ pub fn has_tray(app: &AppHandle, id: &str) -> bool {
     }
 }
 
+/// The text next to the menu-bar icon: the next meeting's countdown
+/// (TUR-77), or `None` for the icon alone. macOS only: Windows trays have no
+/// text, and a Linux AppIndicator label crowds the panel, so both skip it.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn set_tray_title(tray: &tauri::tray::TrayIcon, title: Option<&str>) {
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(error) = tray.set_title(title) {
+            tracing::warn!(%error, "could not set the menu-bar title");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (tray, title);
+}
+
 /// The one-off notice for the first time the window is closed.
 pub fn still_running_notice() -> &'static str {
     #[cfg(target_os = "macos")]

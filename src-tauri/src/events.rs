@@ -36,3 +36,7 @@ pub const DETECTION_PROMPT_EVENT: &str = "detection://prompt";
 /// holding it until the window's "Stop recording and quit?" is answered
 /// (TUR-76). No payload.
 pub const QUIT_CONFIRM_EVENT: &str = "app://confirm-quit";
+
+/// Rust wants the window on a screen: the menu bar's "Open brief" and
+/// "Calendar not connected" (TUR-77). `lifecycle::NavigateTo`.
+pub const NAVIGATE_EVENT: &str = "app://navigate";
