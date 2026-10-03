@@ -15,13 +15,13 @@
           "jsonpath": "$.workspace.package.version"
         },
         {
-          "type": "json",
-          "path": "package.json",
-          "jsonpath": "$.version"
+          "type": "toml",
+          "path": "Cargo.lock",
+          "jsonpath": "$.package[?(!@.source)].version"
         },
         {
           "type": "json",
-          "path": "src-tauri/tauri.conf.json",
+          "path": "package.json",
           "jsonpath": "$.version"
         }
       ]
