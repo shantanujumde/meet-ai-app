@@ -13,9 +13,11 @@
 //! inside the tap's unsettled first second (the 1.07 s finding in
 //! [`ONSET_TIMEOUT_MILLIS`]). Two changes remove the need for it:
 //!
-//! - **Wait for the tap to settle before playing.** The clock is the captured
-//!   audio itself: once [`SETTLE_MILLIS`] of it has arrived, the tap has been
-//!   running past the measured settle point, so one chime is enough.
+//! - **Wait for the tap to settle before playing.** Once [`SETTLE_MILLIS`]
+//!   have passed since the tap's first frame, it has been running past the
+//!   measured settle point, so one chime is enough. A live check counts that
+//!   in wall time (TUR-87: captured audio is only a clock if the rate is
+//!   right); [`play_until_heard`] counts captured audio.
 //! - **Listen while it plays.** Every chunk is checked as it arrives, so the
 //!   moment the chime is heard the check is over — nothing more is played and
 //!   nothing more is pulled.
@@ -39,8 +41,10 @@ use super::{ONSET_TIMEOUT_MILLIS, Reading, duration_millis, heard, samples_in};
 ///
 /// The measured settle time is 1.07 s (see [`ONSET_TIMEOUT_MILLIS`]); this
 /// adds a margin on top so a slightly slower tap still has settled by the
-/// time the chime reaches it. Counted in captured audio, not wall time, so a
-/// tap that starts delivering late simply waits longer before playing.
+/// time the chime reaches it. Counted from the tap's first frame, so a tap
+/// that starts delivering late simply waits longer before playing; in a
+/// live check ([`listen_live`]) in wall time (TUR-87), so a tap resampling at
+/// the wrong rate cannot shorten or stretch it.
 pub const SETTLE_MILLIS: u32 = 1200;
 
 /// How long after a play starts, beyond the chime's own length, to keep
@@ -178,11 +182,25 @@ pub fn worst_case_millis() -> u32 {
 /// The check finishes within [`worst_case_millis`] of captured audio.
 pub fn play_until_heard(
     sample_rate: u32,
+    play: impl FnMut(),
+    pull: impl FnMut() -> Option<Vec<f32>>,
+) -> Attempt {
+    let captured_millis = |samples: usize| samples as u64 * 1000 / u64::from(sample_rate.max(1));
+    play_until_heard_by(sample_rate, captured_millis, play, pull)
+}
+
+/// [`play_until_heard`], with the settle and retry times read from `clock`:
+/// milliseconds since the first frame, given how many samples have been
+/// captured. [`play_until_heard`] counts captured audio; [`listen_live`]
+/// counts wall time (TUR-87), so a tap resampling at the wrong rate cannot
+/// move the chime into the unsettled window or past the deadline. The
+/// listen windows stay in captured audio, the stream the chime is found in.
+fn play_until_heard_by(
+    sample_rate: u32,
+    mut clock: impl FnMut(usize) -> u64,
     mut play: impl FnMut(),
     mut pull: impl FnMut() -> Option<Vec<f32>>,
 ) -> Attempt {
-    let settle = samples_in(SETTLE_MILLIS, sample_rate);
-    let retry_from = samples_in(ONSET_TIMEOUT_MILLIS, sample_rate);
     let listen_window = samples_in(duration_millis() + LISTEN_TAIL_MILLIS, sample_rate);
 
     let mut captured: Vec<f32> = Vec::new();
@@ -223,8 +241,12 @@ pub fn play_until_heard(
             }
         }
 
-        let due = if plays == 0 { settle } else { retry_from };
-        if !listening && captured.len() >= due {
+        let due = if plays == 0 {
+            SETTLE_MILLIS
+        } else {
+            ONSET_TIMEOUT_MILLIS
+        };
+        if !listening && clock(captured.len()) >= u64::from(due) {
             play();
             plays += 1;
             play_start = captured.len();
@@ -301,6 +323,10 @@ pub struct Listened {
     /// Wall time from the start of listening to the first non-empty chunk;
     /// `None` if none ever came.
     pub first_frame: Option<std::time::Duration>,
+    /// Captured frames per second of wall time, from the first chunk to the
+    /// last (TUR-87): far from the capture rate means a rate error, not a
+    /// permission answer. `None` over less than half a second.
+    pub frames_per_s: Option<f64>,
 }
 
 impl Listened {
@@ -325,17 +351,23 @@ pub fn listen_live(
     play: impl FnMut(),
     mut recv: impl FnMut(std::time::Duration) -> Result<Vec<i16>, std::sync::mpsc::RecvTimeoutError>,
 ) -> Listened {
+    use std::cell::Cell;
     use std::sync::mpsc::RecvTimeoutError;
     use std::time::Duration;
 
     let first_frame_limit = Duration::from_millis(u64::from(FIRST_FRAME_TIMEOUT_MILLIS));
     let after_first =
         Duration::from_millis(u64::from(worst_case_millis() + DEADLINE_HEADROOM_MILLIS));
-    let mut first_frame: Option<Duration> = None;
+    let first_frame: Cell<Option<Duration>> = Cell::new(None);
+    // Wall time at the latest chunk, and samples before it, for `frames_per_s`.
+    let last_chunk: Cell<(Duration, usize)> = Cell::new((Duration::ZERO, 0));
+    let first_chunk_len = Cell::new(0usize);
     let mut cut: Option<Ended> = None;
 
     let pull = || loop {
-        let limit = first_frame.map_or(first_frame_limit, |at| at + after_first);
+        let limit = first_frame
+            .get()
+            .map_or(first_frame_limit, |at| at + after_first);
         let left = limit.saturating_sub(clock.elapsed());
         if left.is_zero() {
             cut = Some(Ended::Deadline);
@@ -346,9 +378,13 @@ pub fn listen_live(
                 if frames.is_empty() {
                     continue;
                 }
-                if first_frame.is_none() {
-                    first_frame = Some(clock.elapsed());
+                let now = clock.elapsed();
+                if first_frame.get().is_none() {
+                    first_frame.set(Some(now));
+                    first_chunk_len.set(frames.len());
                 }
+                let (_, before) = last_chunk.get();
+                last_chunk.set((now, before + frames.len()));
                 return Some(
                     frames
                         .into_iter()
@@ -364,16 +400,29 @@ pub fn listen_live(
             }
         }
     };
-    let attempt = play_until_heard(sample_rate, play, pull);
+    // Settle and retry on wall time since the first frame (TUR-87).
+    let since_first = |_captured: usize| {
+        first_frame.get().map_or(0, |at| {
+            clock.elapsed().saturating_sub(at).as_millis() as u64
+        })
+    };
+    let attempt = play_until_heard_by(sample_rate, since_first, play, pull);
     let ended = match attempt.finish {
         Finish::Heard => Ended::Heard,
         Finish::Window => Ended::Window,
         Finish::Pulled => cut.unwrap_or(Ended::TapClosed),
     };
+    let frames_per_s = first_frame.get().and_then(|first| {
+        let (at, captured) = last_chunk.get();
+        let span = at.checked_sub(first)?.as_secs_f64();
+        // The first chunk was captured before the span started.
+        (span >= 0.5).then(|| (captured - first_chunk_len.get()) as f64 / span)
+    });
     Listened {
         attempt,
         ended,
-        first_frame,
+        first_frame: first_frame.get(),
+        frames_per_s,
     }
 }
 
