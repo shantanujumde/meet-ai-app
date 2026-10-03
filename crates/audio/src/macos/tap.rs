@@ -20,9 +20,9 @@
 //! say it needs `disable-encoding-assertions` to be safe to call, which
 //! wasn't enabled. Fixed by building the UUID from a formatted string via
 //! `initWithUUIDString:` instead ([`format_uuid_bytes`]), which never goes
-//! through the mismatched-encoding method. `interleave_into` — the one piece
-//! of genuine logic that doesn't touch Core Audio — is additionally
-//! unit-tested against synthetic channel data.
+//! through the mismatched-encoding method. De-interleaving the tap's buffers
+//! — the genuine logic that doesn't touch Core Audio — lives in
+//! `super::tap_buffers` and is unit-tested against synthetic buffer lists.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -46,6 +46,7 @@ use objc2_foundation::{NSArray, NSNumber, NSString, NSUUID};
 use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
+use super::tap_buffers::{LayoutProbe, TapBuffers, gather_into};
 use super::tap_pipeline::TapPipeline;
 use super::tap_rate::{CallbackMeter, RateSources, RateState, RateWatch};
 use super::tap_uuid::{format_uuid_bytes, locally_unique_uuid_bytes};
@@ -64,36 +65,6 @@ const RING_CAPACITY_SAMPLES: usize = 48_000 * 2 * 4;
 /// not to become the dominant term against the 200 ms drift gate, long
 /// enough not to spin a core.
 const IDLE_POLL: Duration = Duration::from_millis(2);
-
-/// De-interleaves a tap's planar `AudioBufferList` — one buffer per channel —
-/// into a single interleaved buffer, matching the Swift probe's
-/// `interleaveScratch` loop. Pure and independent of Core Audio, so it is the
-/// one piece of this module's logic that can be verified without a live tap:
-/// wrong channel order or off-by-one frame counts here would silently swap
-/// or corrupt system audio on every real recording.
-///
-/// Writes into `out` (cleared and resized as needed) rather than returning a
-/// fresh `Vec`, so the IO callback can call this every cycle without
-/// allocating once `out`'s capacity has grown to steady state (SPEC §2.3).
-/// Channel `c` is read straight from `channel(c)`, so there is no staging copy.
-/// The shortest channel sets the frame count if they differ.
-fn interleave_into<'a>(count: usize, channel: impl Fn(usize) -> &'a [f32], out: &mut Vec<f32>) {
-    out.clear();
-    if count == 0 {
-        return;
-    }
-    if count == 1 {
-        out.extend_from_slice(channel(0));
-        return;
-    }
-    let frames = (0..count).map(|c| channel(c).len()).min().unwrap_or(0);
-    out.resize(frames * count, 0.0);
-    for c in 0..count {
-        for (f, sample) in channel(c).iter().take(frames).enumerate() {
-            out[f * count + c] = *sample;
-        }
-    }
-}
 
 /// Builds a `CFDictionary<CFString, CFType>` from `&str` keys (Core Audio's
 /// aggregate-device keys are all `&'static CStr`) and already-boxed
@@ -245,6 +216,7 @@ impl SystemSource {
     }
 
     /// Raw IO-proc samples → [`TapPipeline`], at [`RateState::effective`].
+    #[allow(clippy::too_many_arguments)]
     fn worker_loop(
         mut consumer: HeapCons<f32>,
         mut pipeline: TapPipeline,
@@ -253,6 +225,7 @@ impl SystemSource {
         last_cb_host_ns: Arc<AtomicU64>,
         running: Arc<AtomicBool>,
         tee: Option<Tee>,
+        probe: Arc<LayoutProbe>,
     ) {
         let mut sink = |frames: &[i16]| {
             let host_ns = last_cb_host_ns.load(Ordering::Relaxed);
@@ -281,6 +254,9 @@ impl SystemSource {
             } else if popped == 0 {
                 std::thread::sleep(IDLE_POLL);
                 continue;
+            }
+            if let Some(report) = probe.take_report() {
+                tracing::info!("{report}");
             }
             pipeline.follow(&rates, &mut sink);
             pipeline.push(&scratch[..popped], &mut sink);
@@ -406,6 +382,9 @@ impl SystemSource {
         };
         let rates = RateState::new(rate_sources);
         let input_rate = rates.effective();
+        // Only the tap's own buffers, never the output device's mic (TUR-87).
+        let probe = Arc::new(LayoutProbe::new(TapBuffers::read(aggregate_id, &format)));
+        let probe_for_block = Arc::clone(&probe);
 
         // 4. WAV + ring buffer, then the IO proc.
         //
@@ -474,11 +453,17 @@ impl SystemSource {
                     let count = buf.mDataByteSize as usize / std::mem::size_of::<f32>();
                     unsafe { std::slice::from_raw_parts(buf.mData.cast::<f32>(), count) }
                 };
-                let any_frames = (0..n).map(|i| channel(i).len()).max().unwrap_or(0);
+                probe_for_block.observe(n, |i| unsafe { (*buffers_ptr.add(i)).mNumberChannels });
+                let tap = probe_for_block.layout().range(n);
+                let any_frames = tap.clone().map(|i| channel(i).len()).max().unwrap_or(0);
                 if any_frames == 0 {
                     return;
                 }
-                interleave_into(n, channel, interleaved);
+                let buffer = |i: usize| {
+                    // SAFETY: as for `channel`, `i < mNumberBuffers`.
+                    (unsafe { (*buffers_ptr.add(i)).mNumberChannels }, channel(i))
+                };
+                gather_into(tap, buffer, channels, interleaved);
                 let _ = producer.push_slice(interleaved);
                 meter.observe(host_ns, interleaved.len());
             },
@@ -535,6 +520,7 @@ impl SystemSource {
                         last_cb_host_ns,
                         running,
                         tee,
+                        probe,
                     )
                 }
             })
@@ -651,58 +637,5 @@ impl AudioSource for SystemSource {
 
     fn rate_report(&self) -> Option<String> {
         self.built.as_ref().map(|built| built.rates.describe())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn interleave(channels: &[Vec<f32>]) -> Vec<f32> {
-        let mut out = Vec::new();
-        interleave_into(channels.len(), |i| &channels[i][..], &mut out);
-        out
-    }
-
-    #[test]
-    fn interleave_of_a_single_channel_is_a_copy() {
-        let ch0 = vec![1.0f32, 2.0, 3.0];
-        assert_eq!(interleave(&[ch0]), vec![1.0, 2.0, 3.0]);
-    }
-
-    #[test]
-    fn interleave_of_stereo_alternates_channels() {
-        let left = vec![1.0f32, 2.0, 3.0];
-        let right = vec![10.0f32, 20.0, 30.0];
-        assert_eq!(
-            interleave(&[left, right]),
-            vec![1.0, 10.0, 2.0, 20.0, 3.0, 30.0]
-        );
-    }
-
-    #[test]
-    fn interleave_of_empty_input_is_empty() {
-        let empty: Vec<f32> = Vec::new();
-        assert_eq!(interleave(&[empty.clone(), empty]), Vec::<f32>::new());
-        assert_eq!(interleave(&[]), Vec::<f32>::new());
-    }
-
-    #[test]
-    fn interleave_truncates_to_the_shortest_channel() {
-        let long = vec![1.0f32, 2.0, 3.0];
-        let short = vec![10.0f32, 20.0];
-        assert_eq!(interleave(&[long, short]), vec![1.0, 10.0, 2.0, 20.0]);
-    }
-
-    /// A buffer that already holds data from a previous, larger callback
-    /// must not leak stale samples past the new, shorter length — this is
-    /// exactly the "reuse capacity" property `interleave_into` trades for
-    /// avoiding an allocation every callback.
-    #[test]
-    fn interleave_into_reuses_a_buffer_without_leaking_stale_tail_samples() {
-        let mut out = vec![9.0f32; 32];
-        let channels = [vec![1.0, 2.0], vec![10.0, 20.0]];
-        interleave_into(2, |i| &channels[i][..], &mut out);
-        assert_eq!(out, vec![1.0, 10.0, 2.0, 20.0]);
     }
 }

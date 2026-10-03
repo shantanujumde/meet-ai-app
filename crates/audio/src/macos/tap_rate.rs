@@ -193,7 +193,11 @@ fn address(selector: u32, scope: u32) -> AudioObjectPropertyAddress {
 
 /// # Safety
 /// `T` must match the C layout of `selector`'s value on `object_id`.
-unsafe fn read<T: Copy>(object_id: AudioObjectID, selector: u32, scope: u32) -> Option<T> {
+pub(crate) unsafe fn read<T: Copy>(
+    object_id: AudioObjectID,
+    selector: u32,
+    scope: u32,
+) -> Option<T> {
     let mut addr = address(selector, scope);
     let mut size = std::mem::size_of::<T>() as u32;
     let mut value = std::mem::MaybeUninit::<T>::uninit();
@@ -227,6 +231,21 @@ fn nominal_rate(device_id: AudioObjectID) -> Option<f64> {
 /// added after the sub-devices, so its stream comes last; every stream of an
 /// aggregate runs at the aggregate's one rate anyway.
 fn input_stream_rate(device_id: AudioObjectID) -> Option<f64> {
+    let streams = input_streams(device_id)?;
+    // SAFETY: `kAudioStreamPropertyVirtualFormat` is an `AudioStreamBasicDescription`.
+    let format: AudioStreamBasicDescription = unsafe {
+        read(
+            *streams.last()?,
+            ca::kAudioStreamPropertyVirtualFormat,
+            ca::kAudioObjectPropertyScopeGlobal,
+        )?
+    };
+    Some(format.mSampleRate)
+}
+
+/// A device's input streams (`kAudioDevicePropertyStreams`, input scope), in
+/// the order the IO proc's buffer list carries them. `None` on a failed read.
+pub(crate) fn input_streams(device_id: AudioObjectID) -> Option<Vec<AudioObjectID>> {
     let mut addr = address(
         ca::kAudioDevicePropertyStreams,
         ca::kAudioObjectPropertyScopeInput,
@@ -263,15 +282,8 @@ fn input_stream_rate(device_id: AudioObjectID) -> Option<f64> {
     if status != 0 || written == 0 {
         return None;
     }
-    // SAFETY: `kAudioStreamPropertyVirtualFormat` is an `AudioStreamBasicDescription`.
-    let format: AudioStreamBasicDescription = unsafe {
-        read(
-            streams[written.min(count) - 1],
-            ca::kAudioStreamPropertyVirtualFormat,
-            ca::kAudioObjectPropertyScopeGlobal,
-        )?
-    };
-    Some(format.mSampleRate)
+    streams.truncate(written.min(count));
+    Some(streams)
 }
 
 /// The devices whose rates decide [`effective_rate`].

@@ -17,6 +17,9 @@ pub mod tap;
 /// The tap's samples to 16 kHz mono, at whatever rate the IO proc delivers.
 mod tap_pipeline;
 
+/// Which of the aggregate's IO buffers are the tap's (TUR-87).
+mod tap_buffers;
+
 /// Which rate the tap's IO proc really runs at, and watching it change.
 mod tap_rate;
 
