@@ -2,7 +2,7 @@
 //!
 //! `docs/problem.md` item 40: the meeting names itself, so the user never types
 //! a title. Once a recording is live, [`spawn`] reads the events around its
-//! start, lets [`calendar::matching::pick_event`] choose the one being
+//! start, lets [`::calendar::matching::pick_event`] choose the one being
 //! recorded, and has [`store::meeting_event::apply`] write its title,
 //! attendees and id into `meeting.md` (SPEC §3.2). The folder keeps its name.
 //!
@@ -12,13 +12,15 @@
 //! its own, because EventKit can wait up to two minutes for the user to answer
 //! the permission prompt, and the recording is already going by then.
 //!
-//! The calendar is reached through [`EventSource`], so the rules are tested
-//! against `calendar::fake::FakeProvider` without Tauri or Calendar.app.
+//! The calendar is the app's [`CalendarState`], reached through
+//! [`EventSource`], so the rules are tested against
+//! `calendar::fake::FakeProvider` without Tauri or Calendar.app.
 
 use chrono::{DateTime, Local, Utc};
 use store::meeting_event::{Applied, FromCalendar};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager as _};
 
+use crate::calendar::CalendarState;
 use crate::error::UiError;
 
 /// Where the recorder reads calendar events from.
@@ -31,7 +33,7 @@ pub trait EventSource: Send + Sync {
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
-    ) -> Result<Vec<calendar::Event>, calendar::Error>;
+    ) -> Result<Vec<::calendar::Event>, ::calendar::Error>;
 }
 
 /// What came of naming one recording.
@@ -68,13 +70,21 @@ pub(super) fn spawn(app: &AppHandle, meeting_id: &str, started: DateTime<Local>)
     });
 }
 
-/// Run `read` with the app's calendar.
-///
-/// Nothing yet: the app's calendar state (TUR-28) registers here once it is
-/// on main. Until then every recording takes the no-calendar path and stays
-/// untitled, as before.
-fn with_source<R>(_app: &AppHandle, read: impl FnOnce(Option<&dyn EventSource>) -> R) -> R {
-    read(None)
+/// Run `read` with the app's calendar state (TUR-28), or with none when it
+/// is not managed.
+fn with_source<R>(app: &AppHandle, read: impl FnOnce(Option<&dyn EventSource>) -> R) -> R {
+    let state = app.try_state::<CalendarState>();
+    read(state.as_deref().map(|state| state as &dyn EventSource))
+}
+
+impl EventSource for CalendarState {
+    fn events_between(
+        &self,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<Vec<::calendar::Event>, ::calendar::Error> {
+        CalendarState::events_between(self, from, to)
+    }
 }
 
 /// Look up the event a recording starting at `now` belongs to and hand it to
@@ -88,12 +98,12 @@ pub(crate) fn name_meeting(
     let Some(source) = source else {
         return Outcome::NoCalendar;
     };
-    let (from, to) = calendar::matching::search_window(now);
+    let (from, to) = ::calendar::matching::search_window(now);
     let events = match source.events_between(from, to) {
         Ok(events) => events,
         Err(error) => return Outcome::Unreadable(error.to_string()),
     };
-    let Some(event) = calendar::matching::pick_event(&events, now, min_attendees) else {
+    let Some(event) = ::calendar::matching::pick_event(&events, now, min_attendees) else {
         return Outcome::NoMatch;
     };
     let fields = FromCalendar {

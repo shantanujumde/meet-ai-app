@@ -3,9 +3,11 @@
 
 use std::path::Path;
 
-use calendar::CalendarProvider as _;
-use calendar::fake::FakeProvider;
-use calendar::raw::{RawAttendee, RawEvent};
+use std::sync::Arc;
+
+use ::calendar::CalendarProvider as _;
+use ::calendar::fake::FakeProvider;
+use ::calendar::raw::{RawAttendee, RawEvent};
 use chrono::TimeZone as _;
 use meeting_format::layout::MEETING_FILE;
 use meeting_format::meeting_md::CALENDAR_EVENT_ID;
@@ -21,7 +23,7 @@ impl EventSource for FakeProvider {
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
-    ) -> Result<Vec<calendar::Event>, calendar::Error> {
+    ) -> Result<Vec<::calendar::Event>, ::calendar::Error> {
         self.list_events(from, to)
     }
 }
@@ -209,4 +211,26 @@ fn a_failed_write_is_reported_not_raised() {
         matches!(&outcome, Outcome::NotWritten { event_id, .. } if event_id == "STANDUP-1"),
         "{outcome:?}"
     );
+}
+
+#[test]
+fn the_apps_calendar_state_names_the_meeting_through_the_same_path() {
+    let root = meetings_root();
+    let state = CalendarState::with_providers(vec![Arc::new(FakeProvider::with_events([event(
+        "STANDUP-1",
+        "Platform Standup",
+        at(10, 2),
+        15,
+        &["A", "B"],
+    )]))]);
+    let outcome = name_meeting(Some(&state), at(10, 0), 2, |event| {
+        store::meeting_event::apply(root.path(), ID, event).map_err(UiError::from)
+    });
+    assert_eq!(outcome, named("STANDUP-1"));
+
+    let denied = CalendarState::with_providers(vec![Arc::new(FakeProvider::denied())]);
+    let outcome = name_meeting(Some(&denied), at(10, 0), 2, |_| {
+        unreachable!("nothing to write for a denied calendar")
+    });
+    assert!(matches!(outcome, Outcome::Unreadable(_)), "{outcome:?}");
 }
