@@ -227,6 +227,11 @@ pub fn discover(locale: &str, model_id: &str) -> Environment {
 fn discover_with(dirs: &ModelDirs, locale: &str, model_id: &str) -> Environment {
     let mut environment = Environment::discover_in(None, locale, model_id);
     environment.whisper_model = stt::model::find(model_id).and_then(|spec| dirs.installed(spec));
+    environment.installed_whisper_models = stt::model::MODELS
+        .iter()
+        .filter(|spec| dirs.installed(spec).is_some())
+        .map(|spec| spec.id.to_string())
+        .collect();
     environment
 }
 
@@ -447,6 +452,25 @@ mod tests {
             environment.whisper_model,
             Some(stranded.join(spec.filename))
         );
+    }
+
+    #[test]
+    fn discovery_lists_installed_models_from_both_folders_for_the_error() {
+        // TUR-23: the app's discovery replaces the stt crate's model lookup, so
+        // it must also fill the installed list, or a missing-model error would
+        // say "none installed" next to a small.en the app can see.
+        let scratch = Scratch::new("engine-installed-list");
+        let primary = scratch.0.join("chosen/.app/models");
+        let stranded = scratch.0.join("home/Meetings/.app/models");
+        install(&stranded, stt::model::find("small.en-q5_1").unwrap());
+        let dirs = ModelDirs {
+            primary: Some(primary),
+            stranded: Some(stranded),
+        };
+
+        let environment = discover_with(&dirs, DEFAULT_LOCALE, DEFAULT_MODEL);
+        assert_eq!(environment.whisper_model, None);
+        assert_eq!(environment.installed_whisper_models, vec!["small.en-q5_1"]);
     }
 
     #[test]
