@@ -544,6 +544,12 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A14 — 2026-10-03 · Agent model defaults to the CLI's own choice (amends A11's §3.5 `agent.model`; TUR-74)
+
+**Decision:** `agent.model` defaults to `null`, not `"opus"`. Null (or blank) means meet-ai passes no `--model`, so the CLI picks: for Claude Code, the `model` in its own `settings.json`, else its built-in default; Codex the same. Opus was slow and costly for meeting notes. New installs store `null`; an existing config keeps the model it already stores, and choosing "Default" in Settings stores `null`.
+
+**The picker:** buttons for Default and the harness's first two models (Sonnet and Haiku for Claude Code), a dropdown with every other model, and free text for names not listed. Codex's models come from `codex debug models` (cached 10 min); Claude Code has no non-interactive model list, so its list is data in `crates/agent/models.json`, which is also Codex's fallback. When Claude Code's `settings.json` names a model, Default says so ("Default (Claude Code picks, currently Sonnet)"); the file is only read.
+
 ### A12 — 2026-10-03 · Calendars: EventKit on macOS + Google and Microsoft sign-in on every OS; no ICS (amends L13, §2.7, §5 Phase 5b)
 
 **Decision (2026-10-03):** L13 becomes **"EventKit on macOS + Google + Microsoft sign-in; no ICS."** EventKit stays the zero-auth default on macOS. Google and Microsoft sign-in are built for macOS, Windows and Linux alike. The ICS URL tier (§2.7 tier 4, the `ics` provider, `calendar.ics_urls`) is dropped.
