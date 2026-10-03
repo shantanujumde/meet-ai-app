@@ -4,10 +4,6 @@
 //! [`commands`], the recording state machine, the ⌘⇧R global shortcut, and
 //! the live transcript that runs alongside a recording ([`live_transcript`]).
 
-// The `log` facade, re-exported by tauri-plugin-log. The Rust crates use
-// `tracing`; only the plugin's own level filters need `log` types.
-use tauri_plugin_log::log;
-
 mod agent_run;
 mod agent_setup;
 mod bindings;
@@ -25,6 +21,7 @@ mod folder_move;
 mod lifecycle;
 mod live_transcript;
 mod lock;
+mod logs;
 mod meetings;
 mod notify;
 mod onboarding;
@@ -61,6 +58,9 @@ pub fn run() {
     // Logging goes through tauri-plugin-log so frontend and Rust lines land in
     // the same file (SPEC §2.2).
     let mut builder = tauri::Builder::default();
+    // TUR-46: where the log and crash files go this launch; `None` before
+    // onboarding, which keeps them in the OS log folder.
+    let logs_dir = logs::meetings_logs_dir();
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
@@ -79,16 +79,9 @@ pub fn run() {
     }
 
     builder
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .level(log::LevelFilter::Info)
-                // tao and wry log every AppKit callback at TRACE. Left alone
-                // they bury our own lines under thousands of theirs, which
-                // makes a user-submitted log file useless.
-                .level_for("tao", log::LevelFilter::Warn)
-                .level_for("wry", log::LevelFilter::Warn)
-                .build(),
-        )
+        // TUR-46: `.app/logs/meet-ai.log`, size-capped (see `logs::plugin`).
+        .plugin(logs::plugin(logs_dir.clone()))
+        .manage(logs::LogsDir(logs_dir))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -111,6 +104,10 @@ pub fn run() {
         .manage(lifecycle::Lifecycle::default())
         .on_window_event(lifecycle::on_window_event)
         .setup(|_app| {
+            // TUR-46: first, so a panic anywhere below leaves a crash file.
+            if let Some(dir) = logs::resolve(_app.handle()) {
+                logs::install_crash_handlers(dir);
+            }
             // TUR-97: before the record shortcut exists, so nothing can be
             // mid-recording while this rewrites a header. Fast — two 44-byte
             // reads per meeting — and a no-op on every launch after the first

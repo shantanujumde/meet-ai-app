@@ -73,7 +73,6 @@ tokio = { workspace = true, features = [
 # dropped, and meet-ai.log only ever shows the webview's lines. With it, events
 # fall through to `log`, which tauri-plugin-log already writes to that file.
 tracing = { workspace = true, features = ["log"] }
-tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 
 # Workspace crates. `stt` and `modelfetch` are live (the settings and model
@@ -108,6 +107,9 @@ stt = { workspace = true, features = ["specta"] }
 tauri-plugin-global-shortcut.workspace = true
 tauri-plugin-single-instance.workspace = true
 tauri-plugin-updater.workspace = true
+# Catches native crashes (SIGSEGV, EXC_BAD_ACCESS, Windows SEH) and writes a
+# short local crash file next to the log (TUR-46). Nothing is uploaded.
+crash-handler.workspace = true
 
 [dev-dependencies]
 # The notes-run tests drive the fake agent CLI (TUR-10), and so do

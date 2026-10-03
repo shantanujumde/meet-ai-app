@@ -544,6 +544,9 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A15 — 2026-10-03 · The log file comes from tauri-plugin-log, not tracing-appender (amends §2's Logging row; TUR-46)
+
+§2 lists `tracing`, `tracing-subscriber`, `tracing-appender` for logging, with a rolling file at `.app/logs/`. The rolling file is now written by `tauri-plugin-log` (already in §2.2, so frontend and Rust lines share one file): `<meetings root>/.app/logs/meet-ai.log`, capped at 1 MB with one rotated copy. `tracing` events reach it through its `log` feature. `tracing-appender` was never used and is removed. Before onboarding, with no meetings root yet, the log stays in the OS log folder until the next launch. Crash files (`crash-<ts>.log`, `crash-<ts>-native.log`, at most 5) sit next to it; nothing is sent anywhere (§8.1).
 ### A14 — 2026-10-03 · Agent model defaults to the CLI's own choice (amends A11's §3.5 `agent.model`; TUR-74)
 
 **Decision:** `agent.model` defaults to `null`, not `"opus"`. Null (or blank) means meet-ai passes no `--model`, so the CLI picks: for Claude Code, the `model` in its own `settings.json`, else its built-in default; Codex the same. Opus was slow and costly for meeting notes. New installs store `null`; an existing config keeps the model it already stores, and choosing "Default" in Settings stores `null`.

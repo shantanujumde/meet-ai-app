@@ -593,4 +593,5 @@ export async function meetingBrief(title: string): Promise<MeetingBrief> {
 // `@/test/ipcMock`) keeps the one `@/ipc/client` import; `call` and
 // `subscribe` are exported for such modules.
 export * from "./lifecycle";
+export * from "./logs";
 export { call, subscribe };

@@ -285,6 +285,11 @@ export const commands = {
 	 *  Writes under the meetings root, so through the [`FolderGate`].
 	 */
 	setShowInDockWhenClosed: (show: boolean) => typedError<meet_ai_lib_lifecycle_AppSettings, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_show_in_dock_when_closed", { show })),
+	/**
+	 *  Open the logs folder in Finder (Explorer, the file manager on Linux), so
+	 *  the user can find the one file to attach to a bug report.
+	 */
+	openLogsFolder: () => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("open_logs_folder")),
 };
 
 /* Constants */

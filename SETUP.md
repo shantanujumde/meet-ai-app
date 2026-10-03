@@ -219,7 +219,7 @@ are in `docs/manual-checks/worktree-tur44.md`.
 | `sysinfo` | **0.39.6** | process detection |
 | `tracing` | **0.1.44** | |
 | `tracing-subscriber` | **0.3.23** | |
-| `tracing-appender` | **0.2.5** | |
+| `crash-handler` | **0.7.0** | MIT OR Apache-2.0. Writes a local crash file for native crashes (TUR-46). `tracing-appender` was dropped: tauri-plugin-log writes and rotates the log file |
 | `thiserror` | **2.0.20** | libs |
 | `anyhow` | **1.0.104** | binaries |
 | `insta` | **1.48.0** | snapshot tests |
@@ -428,7 +428,7 @@ cd src-tauri && cargo add \
   tauri-plugin-fs@2.5.2 tauri-plugin-log@2.9.1 tauri-plugin-single-instance@2.4.4 \
   tauri-plugin-updater@2.11.0 \
   tokio@1.53.1 --features tokio/rt-multi-thread,tokio/macros,tokio/fs,tokio/process,tokio/sync,tokio/time
-cargo add anyhow@1.0.104 tracing@0.1.44 tracing-subscriber@0.3.23 tracing-appender@0.2.5
+cargo add anyhow@1.0.104 tracing@0.1.44 tracing-subscriber@0.3.23 crash-handler@0.7.0
 cargo add --build tauri-build@2.6.3
 cd ..
 ```
