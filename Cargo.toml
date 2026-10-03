@@ -59,6 +59,10 @@ base64 = "=0.22.1"
 # (crates/calendar/src/windows_tz.rs), becomes a real offset. Pure Rust, the
 # tz database compiled in; no C build.
 chrono-tz = "=0.10.4"
+# Join-link check (TUR-86, crates/calendar/src/join_url.rs): the WHATWG URL
+# parser browsers use, so the allow-list sees the host a browser would open.
+# Same version oauth2 already pulls.
+url = "=2.5.8"
 
 # --- speech-to-text (SETUP.md §2.3) ---
 whisper-rs = "=0.16.0"
