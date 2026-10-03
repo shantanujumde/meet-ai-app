@@ -249,6 +249,12 @@ fn raw_event(event: types::Event) -> Option<RawEvent> {
         all_day,
         attendees,
         ical_uid: event.ical_uid.filter(|uid| !uid.trim().is_empty()),
+        // TUR-77: Teams (or any online meeting) gives its link outright.
+        join_url: event
+            .online_meeting
+            .and_then(|meeting| meeting.join_url)
+            .map(|url| url.trim().to_owned())
+            .filter(|url| !url.is_empty()),
     };
     Some(raw)
 }

@@ -229,6 +229,7 @@ mod tests {
             end: start + Duration::minutes(minutes),
             attendees,
             attendee_names: Vec::new(),
+            ical_uid: None,
             join_url: None,
         }
     }

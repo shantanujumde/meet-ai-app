@@ -177,9 +177,15 @@ fn fields_are_mapped_and_rooms_are_not_counted() {
         standup.ical_uid.as_deref(),
         Some("040000008200E00074C5B7101A82E00807EA0A05STANDUP")
     );
+    // TUR-77: `onlineMeeting.joinUrl` is the meeting link.
+    assert_eq!(
+        standup.join_url.as_deref(),
+        Some("https://teams.microsoft.com/l/meetup-join/standup")
+    );
     let focus = &events[1];
     assert_eq!(focus.attendees, 0);
     assert_eq!(focus.ical_uid, None);
+    assert_eq!(focus.join_url, None);
 }
 
 #[test]

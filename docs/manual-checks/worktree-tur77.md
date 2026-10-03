@@ -12,6 +12,8 @@ The headless parts are covered by:
   Zoom link in notes after other links, Webex, Slack huddles; none for no
   link, landing pages or look-alike hosts; URL wins over location wins over
   notes; a bare `zoom.us/j/…` gets `https://`; trailing punctuation trimmed.
+- `cargo test -p calendar --test microsoft`: a Microsoft event's
+  `onlineMeeting.joinUrl` becomes its `join_url` (TUR-47 merged first).
 - `cargo test -p meet-ai --lib tray::menu_model`: the menu model's ordering
   (start, then id; ended events dropped), the cap of 5, greyed solo events,
   "Now", the empty day, "Calendar not connected", "Reading your calendar…",
