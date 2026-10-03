@@ -432,3 +432,48 @@ export type AgentTestResult = {
   /** Wall time of the run, in seconds. */
   seconds: number;
 };
+
+/** One ticket still open from the last meeting with the same title (TUR-32). */
+export type BriefTicket = {
+  id: string;
+  title: string;
+  /** `open` or `in_progress`; null when the file has no valid status. */
+  status: TicketStatus | null;
+};
+
+/** The last meeting with the same title, for the pre-meeting brief (TUR-32). */
+export type PreviousMeeting = {
+  /** The folder name, e.g. `2026-09-01-1430-standup`. */
+  id: string;
+  title: string;
+  date: string | null;
+  /** The `## Summary` text; null when blank. */
+  summary: string | null;
+  /** The `## Decisions` text; null when blank. */
+  decisions: string | null;
+  openTickets: BriefTicket[];
+};
+
+/** One `git log` line: short hash and subject. */
+export type BriefCommit = { hash: string; subject: string };
+
+/** What landed in the meeting's repo since last time. */
+export type RepoCommits = {
+  /** The repo path as configured, e.g. `~/apps/api`. */
+  repo: string;
+  /** What `git log --since` was given: the last meeting's date. */
+  since: string;
+  /** Newest first, merges skipped, at most 20. */
+  commits: BriefCommit[];
+};
+
+/**
+ * The pre-meeting brief (TUR-32): what was said last time and the commits since.
+ * `previous` is null when no earlier meeting has this title; `commits` is null
+ * then too, or when there is no readable git repo.
+ */
+export type MeetingBrief = {
+  title: string;
+  previous: PreviousMeeting | null;
+  commits: RepoCommits | null;
+};

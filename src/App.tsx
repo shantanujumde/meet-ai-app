@@ -16,6 +16,7 @@ import type { RecordingPhase } from "@/ipc/types";
 import { isRevisit } from "@/lib/permissionRoute";
 import { changesMeetingList } from "@/lib/recordingPhase";
 import {
+  BRIEF,
   isOnboardingPath,
   MEETINGS,
   meetingPath,
@@ -23,6 +24,7 @@ import {
   SETTINGS,
   TICKETS,
 } from "@/lib/routes";
+import { Brief } from "@/routes/Brief";
 import { Meetings } from "@/routes/Meetings";
 import { Onboarding } from "@/routes/Onboarding";
 import { Review } from "@/routes/Review";
@@ -47,6 +49,8 @@ export function App() {
           <Route path={`${MEETINGS}/:id`} element={<Review />} />
           <Route path={SETTINGS} element={<Settings />} />
           <Route path={TICKETS} element={<Tickets />} />
+          {/* TUR-32: last time's notes and recent commits, before a call. */}
+          <Route path={BRIEF} element={<Brief />} />
           <Route path={ONBOARDING} element={<Onboarding />} />
           <Route path={`${ONBOARDING}/:step`} element={<Onboarding />} />
           {/* A hash that matches nothing is not worth an error page in a

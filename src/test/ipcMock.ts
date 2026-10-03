@@ -139,6 +139,13 @@ export const ipc = {
 
   search: vi.fn<typeof Client.search>(async () => []),
 
+  // No earlier meeting with this title (TUR-32).
+  meetingBrief: vi.fn<typeof Client.meetingBrief>(async (title) => ({
+    title,
+    previous: null,
+    commits: null,
+  })),
+
   listTickets: vi.fn<typeof Client.listTickets>(async () => []),
   createTicket: vi.fn<typeof Client.createTicket>(async (title, body) => ({
     id: "TUR-1",

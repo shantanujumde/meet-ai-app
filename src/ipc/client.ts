@@ -36,6 +36,7 @@ import type {
   AgentTestResult,
   EnvironmentView,
   LiveTranscriptSnapshot,
+  MeetingBrief,
   MeetingDetail,
   MeetingList,
   MeetingNotes,
@@ -560,4 +561,12 @@ export async function todaysMeetings(): Promise<TodaysMeetings> {
 export async function calendarRefreshMinutes(): Promise<number> {
   if (!hasBackend()) return NO_MEETINGS_TODAY.refreshMinutes;
   return call(() => commands.calendarRefreshMinutes());
+}
+
+// --- pre-meeting brief ----------------------------------------------------
+
+/** Last time's notes and the commits since, for the meeting called `title` (TUR-32). */
+export async function meetingBrief(title: string): Promise<MeetingBrief> {
+  if (!hasBackend()) return { title, previous: null, commits: null };
+  return narrow(() => commands.meetingBrief(title));
 }

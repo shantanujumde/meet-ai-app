@@ -14,6 +14,9 @@ export const SETTINGS = "/settings";
 
 export const TICKETS = "/tickets";
 
+/** The pre-meeting brief (TUR-32). Build links with {@link briefPath}. */
+export const BRIEF = "/brief";
+
 /** The setup wizard. Its steps live under it — see {@link onboardingStepPath}. */
 export const ONBOARDING = "/onboarding";
 
@@ -50,4 +53,12 @@ export function onboardingStepPath(step: OnboardingStep): string {
 /** Whether a pathname is somewhere inside the setup wizard. */
 export function isOnboardingPath(pathname: string): boolean {
   return pathname.startsWith(ONBOARDING);
+}
+
+/**
+ * The pre-meeting brief for the meeting called `title`: `/brief?title=<title>`,
+ * the link the reminder notification (TUR-30) and the Today pane open.
+ */
+export function briefPath(title: string): string {
+  return `${BRIEF}?${new URLSearchParams({ title }).toString()}`;
 }
