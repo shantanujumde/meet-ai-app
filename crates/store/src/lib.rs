@@ -39,8 +39,10 @@
 //!   the app writes from the agent's JSON ([`agent_notes`]) are. (Phase 3b,
 //!   TUR-100; TUR-7.)
 //!
-//! No `#[cfg(target_os)]` anywhere in this crate: `store` must stay free of
-//! mac-only code (SPEC §8.2). Every path is built with `Path::join`.
+//! `store` must stay free of mac-only code (SPEC §8.2): every path is built
+//! with `Path::join`, and the only OS `cfg` in the crate is in `platform/`
+//! (quality rule R10), which retention asks which error codes mean a file is
+//! held open.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
@@ -56,6 +58,7 @@ pub mod meeting;
 pub mod meeting_event;
 pub mod notes;
 pub mod notes_switch;
+mod platform;
 pub mod retention;
 pub mod ticket;
 pub mod transcript;

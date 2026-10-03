@@ -33,7 +33,8 @@
 //!   as done only when its recording ended cleanly.
 //!
 //! Plain `std::fs` only, and no `#[cfg(target_os)]`: the same code runs on
-//! every OS (SPEC §8.2).
+//! every OS (SPEC §8.2). The one OS difference, which error codes mean "held
+//! by another program", is asked of [`crate::platform`].
 
 use std::collections::{BTreeMap, HashSet};
 use std::io;
@@ -315,12 +316,14 @@ pub fn apply(plan: &[PathBuf]) -> Report {
 }
 
 /// The file is held by someone else, so try again later rather than report
-/// it: `PermissionDenied` on any OS, or Windows' sharing and lock violations
-/// (`ERROR_SHARING_VIOLATION` 32, `ERROR_LOCK_VIOLATION` 33), which a player
-/// or a backup tool holding the WAV open causes.
+/// it: `PermissionDenied` on any OS, or an OS's own "held open" codes
+/// ([`crate::platform`]: Windows' sharing and lock violations, which a player
+/// or a backup tool holding the WAV open causes).
 pub fn is_locked(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::PermissionDenied
-        || (cfg!(windows) && matches!(error.raw_os_error(), Some(32 | 33)))
+        || error
+            .raw_os_error()
+            .is_some_and(crate::platform::is_lock_violation)
 }
 
 /// `<meeting>/audio/<name>.wav`.
