@@ -611,8 +611,10 @@ R10_FIND_AWK='
   }
   END {
     for (r = 1; r <= NR; r++) {
-      rest = line[r]; off = 0
-      while (match(rest, /(^|[^A-Za-z0-9_])cfg(_attr|!)?[[:space:]]*\(/)) {
+      # The leading space stands in for "start of line" (no ^ inside a group:
+      # mawk on the ubuntu runners is pickier than macOS awk).
+      rest = " " line[r]
+      while (match(rest, /[^A-Za-z0-9_]cfg(_attr|!)?[[:space:]]*\(/)) {
         kind = substr(rest, RSTART, RLENGTH)
         kind = (kind ~ /cfg_attr/) ? "cfg_attr" : "cfg"
         # Collect from just after the opening paren to its matching one,
