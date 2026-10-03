@@ -8,7 +8,7 @@ writer with a stand-in exception) and `crates/meeting-format/src/layout.rs`
 (`logs_dir`).
 
 What was run by hand on this Mac (macOS 26, arm64), outside the app: a
-throwaway binary built from `src-tauri/src/logs/crash.rs` and `native/`,
+throwaway binary built from `src-tauri/src/logs/crash.rs` and `platform/`,
 attaching the same handler, then crashing three ways. Each left one file:
 
 ```text

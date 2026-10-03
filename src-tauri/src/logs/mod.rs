@@ -19,7 +19,7 @@ use crate::error::UiError;
 
 mod crash;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-mod native;
+mod platform;
 
 pub use crash::install_panic_hook;
 
@@ -106,7 +106,7 @@ pub fn install_crash_handlers(dir: PathBuf) {
     crash::prune(&dir, MAX_CRASH_FILES);
     install_panic_hook(dir.clone());
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    native::attach(&dir);
+    platform::attach(&dir);
     tracing::info!(dir = %dir.display(), "logs and crash files go here");
 }
 

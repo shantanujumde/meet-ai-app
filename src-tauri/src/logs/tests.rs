@@ -156,8 +156,17 @@ fn writing_a_sixth_panic_file_deletes_the_oldest() {
 /// The real hook, on a real panic: the CI check that a forced panic leaves a
 /// readable file on every OS. The hook is process-wide, so the assertion
 /// looks for this test's own message rather than counting files.
+/// Held while a test has the real panic hook installed. The hook is
+/// process-wide, so two such tests at once would swap each other's hook out.
+static PANIC_HOOK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn a_real_panic_leaves_a_crash_file() {
+    // A poisoned lock only means an earlier holder failed; the hook is reset
+    // below either way.
+    let _serial = PANIC_HOOK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = tempfile::tempdir().unwrap();
     install_panic_hook(dir.path().to_path_buf());
 
