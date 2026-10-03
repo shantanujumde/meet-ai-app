@@ -50,6 +50,7 @@ R3_LEVEL=warn
 R5_LEVEL=warn
 
 RULES="rule_r1 rule_r2 rule_r3 rule_r4 rule_r5 rule_r6 rule_r8"
+RULES="$RULES rule_r9"
 RUN_ONCE="rule_r7"
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || {
@@ -408,6 +409,110 @@ rule_r8() {
       *'{'*) report error R8 "$f" "$n" "new CSS rule in app.css; styling moves to Tailwind utilities in the component (or add /* quality: allow-css <reason> */)" ;;
     esac
   done
+}
+
+# R9: code copied or adapted from another project. A comment
+#   Adapted from <repo>/<path> @ <commit> (<SPDX>)
+# with <repo> written host/owner/name (github.com/insidegui/AudioCap) must have
+# a section in THIRD_PARTY_NOTICES.md whose URL line names that repo, and the
+# licence must be one we may copy from. Looks at every line of the file, not
+# only the added ones: the notice has to exist for as long as the copy does.
+# The rules in full: CONTRIBUTING.md, "Code from other projects".
+R9_NOTICES=${R9_NOTICES:-THIRD_PARTY_NOTICES.md}
+
+# True when R9_NOTICES has a section (not "## To confirm") with a URL line that
+# names $1 (lowercase host/owner/name) as a whole repo, not a prefix of one.
+r9_has_notice() {
+  [ -f "$R9_NOTICES" ] || return 1
+  awk -v repo="$1" '
+    /^##[[:space:]]/ {
+      s = tolower($0)
+      sub(/^##[[:space:]]+/, "", s)
+      sub(/[[:space:]]+$/, "", s)
+      ok = (s != "to confirm")
+      next
+    }
+    ok && /^[[:space:]]*(-[[:space:]]+)?URL:/ {
+      l = tolower($0)
+      off = 0
+      while ((i = index(substr(l, off + 1), repo)) > 0) {
+        at = off + i
+        before = at > 1 ? substr(l, at - 1, 1) : ""
+        after = substr(l, at + length(repo), 1)
+        if ((before == "" || before ~ /[\/[:space:]<(]/) &&
+            (after == "" || after ~ /[\/[:space:]>)#]/ || substr(l, at + length(repo), 4) == ".git")) {
+          found = 1
+          exit
+        }
+        off = at
+      }
+    }
+    END { exit found ? 0 : 1 }' "$R9_NOTICES"
+}
+
+# Prints why the SPDX expression $1 cannot be copied from, or nothing when it
+# can. GPL-family, "no licence" and source-available ids fail, unless an OR
+# offers a licence we can take instead.
+r9_licence_problem() {
+  local word gpl="" other=0 has_or=0
+  for word in $(printf '%s' "$1" | tr '()' '  '); do
+    case $word in
+      OR | or) has_or=1 ;;
+      AND | and | WITH | with) ;;
+      GPL* | AGPL* | LGPL* | SSPL* | BUSL* | NONE | NOASSERTION | UNLICENSED) gpl=$word ;;
+      *) other=1 ;;
+    esac
+  done
+  if [ -n "$gpl" ] && { [ "$has_or" = 0 ] || [ "$other" = 0 ]; }; then
+    echo "$gpl"
+  fi
+}
+
+rule_r9() {
+  local f=$1
+  case $f in
+    # The rule's own code and tests spell the format out as examples.
+    scripts/quality-rules.sh | scripts/quality-rules-selftest.sh) return ;;
+    *.rs | *.ts | *.tsx | *.js | *.jsx | *.mjs | *.cjs | *.swift | *.sh | *.yml | *.yaml) ;;
+    *.cmake | CMakeLists.txt | */CMakeLists.txt | *.css | *.html | *.c | *.h | *.m | *.mm | *.py | *.toml | justfile) ;;
+    *) return ;;
+  esac
+  local n text repo commit spdx rest problem
+  # Group 2 is the repo, 3 the upstream path, 4 the commit, 5 what follows.
+  local re='Adapted from[[:space:]]+(https?://)?([A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+/[^/[:space:]]+/[^/[:space:]]+)/([^[:space:]]+)[[:space:]]+@[[:space:]]+([^[:space:]]+)(.*)$'
+  local spdx_re='^[[:space:]]*[(]([^)]*)[)]'
+  local format='Adapted from <host>/<owner>/<repo>/<path> @ <commit> (<SPDX>)'
+  awk '/(\/\/|#|\/\*|<!--|^[[:space:]]*\*)[[:space:]]*Adapted from/ { printf "%d\t%s\n", FNR, $0 }' "$f" |
+    while IFS="$TAB" read -r n text; do
+      if ! [[ $text =~ $re ]]; then
+        report error R9 "$f" "$n" "'Adapted from' line is not in the form '$format'"
+        continue
+      fi
+      repo=$(printf '%s' "${BASH_REMATCH[2]}" | tr '[:upper:]' '[:lower:]')
+      repo=${repo%.git}
+      commit=${BASH_REMATCH[5]}
+      rest=${BASH_REMATCH[6]}
+      if ! [[ $commit =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+        report error R9 "$f" "$n" "'Adapted from' must pin a commit hash (7-40 hex digits), not '$commit': licences change, a branch name moves"
+        continue
+      fi
+      spdx=""
+      if [[ $rest =~ $spdx_re ]]; then
+        spdx=$(printf '%s' "${BASH_REMATCH[1]}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+      fi
+      if [ -z "$spdx" ]; then
+        report error R9 "$f" "$n" "'Adapted from' line has no SPDX licence id; write it as '$format'. No licence means we may not copy it"
+        continue
+      fi
+      problem=$(r9_licence_problem "$spdx")
+      if [ -n "$problem" ]; then
+        report error R9 "$f" "$n" "code adapted from $repo is $spdx; $problem code is inspiration only, never copied (CONTRIBUTING.md, \"Code from other projects\")"
+        continue
+      fi
+      if ! r9_has_notice "$repo"; then
+        report error R9 "$f" "$n" "adapted code without a notice: add a '## <Project>' section with 'URL: https://$repo' to $R9_NOTICES"
+      fi
+    done
 }
 
 # --- main ------------------------------------------------------------------
