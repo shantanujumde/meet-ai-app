@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use store::index::{Hit, Index};
+use store::index::{Hit, Index, IndexedMeeting};
 use tauri::{AppHandle, Manager as _};
 
 use crate::error::UiError;
@@ -58,6 +58,19 @@ impl SearchIndex {
             Ok(())
         })?;
         Ok(hits)
+    }
+
+    /// Every meeting titled `title` (any case, trimmed), newest first, for the
+    /// pre-meeting brief (TUR-32). No meetings folder yet means none.
+    pub fn meetings_titled(&self, title: &str) -> Result<Vec<IndexedMeeting>, UiError> {
+        let mut found = Vec::new();
+        self.with_index(|_, index| {
+            found = index
+                .meetings_titled(title)
+                .map_err(|error| UiError::app("search-index", error.to_string()))?;
+            Ok(())
+        })?;
+        Ok(found)
     }
 
     /// Run `work` on the index for the current folder, opening it first when
