@@ -261,6 +261,7 @@ are in `docs/manual-checks/worktree-tur44.md`.
 | `vitest` | **4.1.11** 🆕 | LLMs know 1/2 |
 | `@testing-library/react` | **16.3.3** | |
 | `@testing-library/jest-dom` | **7.0.1** | |
+| `@testing-library/user-event` | **14.6.7** | devDependency. Real key presses in tests: jsdom alone does not move a radio group on the arrow keys (TUR-73) |
 | `jsdom` | **30.0.1** | |
 | `@tauri-apps/api` | **2.11.1** | |
 | `@tauri-apps/cli` | **2.11.4** | devDependency |

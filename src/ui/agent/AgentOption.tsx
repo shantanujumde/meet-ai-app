@@ -12,6 +12,7 @@ import type { AgentCli } from "@/ipc/types";
 import { copyText } from "@/lib/clipboard";
 import { COPIED_RESET_MS } from "@/lib/constants";
 import { Button, Pill, Row, RowValue, rowDetailVariants } from "@/ui/primitives";
+import { Radio } from "@/ui/Radio";
 import { Checking } from "@/ui/states";
 
 export function AgentOption({
@@ -39,20 +40,11 @@ export function AgentOption({
   return (
     <Row stacked>
       <div className="flex justify-between gap-5">
-        <label className="flex min-w-0 items-start gap-4">
-          <input
-            type="radio"
-            name={group}
-            value={value}
-            checked={checked}
-            onChange={onPick}
-            className="mt-1 size-4 shrink-0 accent-accent"
-          />
-          <span className="flex min-w-0 flex-col gap-1">
-            <span className="text-body font-medium">{name}</span>
-            <span className={rowDetailVariants({ mono: false })}>{detail}</span>
-          </span>
-        </label>
+        {/* flex-1, so the empty space up to the status picks the row too. */}
+        <Radio name={group} value={value} checked={checked} onChange={onPick} className="flex-1">
+          <span className="text-body font-medium">{name}</span>
+          <span className={rowDetailVariants({ mono: false })}>{detail}</span>
+        </Radio>
         {status ? <RowValue className="shrink-0">{status}</RowValue> : null}
       </div>
       {children}
