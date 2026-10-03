@@ -9,6 +9,7 @@ use tauri_specta::{Builder, collect_commands};
 
 use crate::agent_run;
 use crate::agent_setup;
+use crate::brief;
 use crate::events::AGENT_RUN_STATUS_EVENT;
 use crate::events::DETECTION_PROMPT_EVENT;
 use crate::events::{
@@ -65,6 +66,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             agent_run::set_meeting_notes,
             crate::calendar::todays_meetings,
             crate::calendar::calendar_refresh_minutes,
+            brief::meeting_brief,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)

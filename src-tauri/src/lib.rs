@@ -11,6 +11,7 @@ use tauri_plugin_log::log;
 mod agent_run;
 mod agent_setup;
 mod bindings;
+mod brief;
 mod calendar;
 mod commands;
 mod config;
