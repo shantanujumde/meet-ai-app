@@ -198,6 +198,14 @@ pub trait AudioSource: Send {
     fn tee(&mut self, tee: tee::Tee) {
         let _ = tee;
     }
+
+    /// The sample rates the running source reports and measures, as one
+    /// log-ready line, for a caller whose own log needs them (the
+    /// permission check's "audio flows but the tone was not recognised"
+    /// warning, TUR-84). `None` when not running or not applicable.
+    fn rate_report(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Everything that can go wrong during capture.

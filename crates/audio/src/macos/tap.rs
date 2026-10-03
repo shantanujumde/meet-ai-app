@@ -26,7 +26,7 @@
 
 use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -47,7 +47,8 @@ use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
 use super::tap_pipeline::TapPipeline;
-use super::tap_rate::{RateSources, RateWatch};
+use super::tap_rate::{CallbackMeter, RateSources, RateState, RateWatch};
+use super::tap_uuid::{format_uuid_bytes, locally_unique_uuid_bytes};
 use crate::tee::Tee;
 use crate::wav_writer::WavWriter;
 use crate::{AudioSource, Channel, Error};
@@ -92,58 +93,6 @@ fn interleave_into<'a>(count: usize, channel: impl Fn(usize) -> &'a [f32], out: 
             out[f * count + c] = *sample;
         }
     }
-}
-
-/// Not cryptographically random — only needs to be unique among this
-/// process's own private, per-recording taps, which a mix of wall-clock
-/// nanoseconds and a process-wide counter comfortably provides. Avoids
-/// pulling in a `uuid`/`rand` dependency for the one field
-/// `CATapDescription` needs a fresh value in.
-fn locally_unique_uuid_bytes() -> [u8; 16] {
-    use std::sync::atomic::{AtomicU64 as Counter, Ordering as CounterOrdering};
-    static COUNTER: Counter = Counter::new(0);
-    let counter = COUNTER.fetch_add(1, CounterOrdering::Relaxed);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let pid = std::process::id() as u128;
-    let mixed = nanos ^ ((pid as u128) << 64) ^ (counter as u128);
-    mixed.to_le_bytes()
-}
-
-/// Formats 16 bytes as a canonical `8-4-4-4-12` hex UUID string.
-///
-/// `objc2-foundation` 0.3.2's `NSUUID::from_bytes`/`initWithUUIDBytes:` is
-/// documented by the crate itself as requiring the `disable-encoding-
-/// assertions` feature to use at all: `__NSConcreteUUID`'s real method
-/// signature takes a `char*`, not the inline 16-byte array the public
-/// headers claim, so calling it with encoding assertions on panics at the
-/// Objective-C message-send boundary — confirmed by reproducing it directly
-/// against a live tap (TUR-4). Going through `initWithUUIDString:` instead
-/// (via [`NSUUID::from_string`]) sidesteps that mismatched-encoding method
-/// entirely rather than weakening encoding verification crate-wide for one
-/// call site.
-fn format_uuid_bytes(bytes: [u8; 16]) -> String {
-    format!(
-        "{:02X}{:02X}{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
-        bytes[0],
-        bytes[1],
-        bytes[2],
-        bytes[3],
-        bytes[4],
-        bytes[5],
-        bytes[6],
-        bytes[7],
-        bytes[8],
-        bytes[9],
-        bytes[10],
-        bytes[11],
-        bytes[12],
-        bytes[13],
-        bytes[14],
-        bytes[15],
-    )
 }
 
 /// Builds a `CFDictionary<CFString, CFType>` from `&str` keys (Core Audio's
@@ -245,6 +194,8 @@ struct Built {
     _io_block: RcBlock<IoBlockFn>,
     /// Unregistered before the aggregate device is destroyed.
     rate_watch: RateWatch,
+    /// Reported and measured rates, for [`AudioSource::rate_report`].
+    rates: Arc<RateState>,
     worker: JoinHandle<()>,
     running: Arc<AtomicBool>,
     shared: Arc<Mutex<Shared>>,
@@ -293,11 +244,11 @@ impl SystemSource {
         }
     }
 
-    /// Raw IO-proc samples → [`TapPipeline`], at the rate [`RateWatch`] reports.
+    /// Raw IO-proc samples → [`TapPipeline`], at [`RateState::effective`].
     fn worker_loop(
         mut consumer: HeapCons<f32>,
         mut pipeline: TapPipeline,
-        input_rate: Arc<AtomicU32>,
+        rates: Arc<RateState>,
         shared: Arc<Mutex<Shared>>,
         last_cb_host_ns: Arc<AtomicU64>,
         running: Arc<AtomicBool>,
@@ -331,10 +282,7 @@ impl SystemSource {
                 std::thread::sleep(IDLE_POLL);
                 continue;
             }
-            let rate = input_rate.load(Ordering::Acquire);
-            if rate != pipeline.rate() {
-                pipeline.set_rate(rate, &mut sink);
-            }
+            pipeline.follow(&rates, &mut sink);
             pipeline.push(&scratch[..popped], &mut sink);
         }
     }
@@ -456,7 +404,8 @@ impl SystemSource {
             aggregate_id,
             output_device_id: out_dev,
         };
-        let input_rate = rate_sources.read_and_log("start");
+        let rates = RateState::new(rate_sources);
+        let input_rate = rates.effective();
 
         // 4. WAV + ring buffer, then the IO proc.
         //
@@ -482,7 +431,9 @@ impl SystemSource {
         // The IO block must be `Fn`, so the producer and interleave buffer sit
         // in a `RefCell`: no lock on the real-time thread, and a re-entrant
         // call skips its cycle. `interleaved` is sized once (2 x 16384 frames).
-        let callback_state = RefCell::new((producer, Vec::<f32>::with_capacity(32_768)));
+        // Plus the delivered-rate meter (TUR-84): integers only, real-time safe.
+        let meter = CallbackMeter::new(Arc::clone(&rates), channels);
+        let callback_state = RefCell::new((producer, Vec::<f32>::with_capacity(32_768), meter));
         let last_cb_host_ns_for_block = Arc::clone(&last_cb_host_ns);
         let io_block: RcBlock<IoBlockFn> = RcBlock::new(
             move |_now: std::ptr::NonNull<AudioTimeStamp>,
@@ -504,7 +455,7 @@ impl SystemSource {
                 let Ok(mut state) = callback_state.try_borrow_mut() else {
                     return;
                 };
-                let (producer, interleaved) = &mut *state;
+                let (producer, interleaved, meter) = &mut *state;
 
                 // `mBuffers` is declared `[AudioBuffer; 1]` but is really a
                 // C flexible array member — buffer `i` lives at
@@ -529,6 +480,7 @@ impl SystemSource {
                 }
                 interleave_into(n, channel, interleaved);
                 let _ = producer.push_slice(interleaved);
+                meter.observe(host_ns, interleaved.len());
             },
         );
 
@@ -566,19 +518,19 @@ impl SystemSource {
             )));
         }
 
-        let rate_watch = RateWatch::install(rate_sources, input_rate);
+        let rate_watch = RateWatch::install(&rates);
         let pipeline = TapPipeline::new(channels, input_rate);
         let worker = std::thread::Builder::new()
             .name("meet-rec-system-worker".to_string())
             .spawn({
                 let shared = Arc::clone(&shared);
                 let running = Arc::clone(&running);
-                let rate = rate_watch.current();
+                let rates = Arc::clone(&rates);
                 move || {
                     Self::worker_loop(
                         consumer,
                         pipeline,
-                        rate,
+                        rates,
                         shared,
                         last_cb_host_ns,
                         running,
@@ -594,6 +546,7 @@ impl SystemSource {
             io_proc_id: Some(io_proc_id_value),
             _io_block: io_block,
             rate_watch,
+            rates,
             worker,
             running,
             shared,
@@ -695,6 +648,10 @@ impl AudioSource for SystemSource {
     fn tee(&mut self, tee: Tee) {
         self.tee = Some(tee);
     }
+
+    fn rate_report(&self) -> Option<String> {
+        self.built.as_ref().map(|built| built.rates.describe())
+    }
 }
 
 #[cfg(test)]
@@ -747,12 +704,5 @@ mod tests {
         let channels = [vec![1.0, 2.0], vec![10.0, 20.0]];
         interleave_into(2, |i| &channels[i][..], &mut out);
         assert_eq!(out, vec![1.0, 10.0, 2.0, 20.0]);
-    }
-
-    #[test]
-    fn locally_unique_uuid_bytes_do_not_repeat_back_to_back() {
-        let a = locally_unique_uuid_bytes();
-        let b = locally_unique_uuid_bytes();
-        assert_ne!(a, b);
     }
 }

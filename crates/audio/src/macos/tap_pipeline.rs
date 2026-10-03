@@ -7,6 +7,7 @@
 //! mid-stream (A2DP 48 kHz to HFP 16 kHz when a call starts) without the
 //! system track's duration drifting from wall time.
 
+use super::tap_rate::RateState;
 use crate::resample::{Resampler, downmix_to_mono};
 use crate::segments::SAMPLE_RATE_HZ;
 
@@ -32,6 +33,9 @@ pub(crate) struct TapPipeline {
     /// it emitted, so a flush can emit exactly `in * 16000 / rate` in total.
     in_frames: u64,
     out_frames: u64,
+    /// Output frames still to drop, after [`Self::correct_rate`] found that
+    /// too many were emitted at a wrong rate (TUR-84).
+    skip: u64,
 }
 
 impl TapPipeline {
@@ -49,9 +53,11 @@ impl TapPipeline {
             resampler,
             in_frames: 0,
             out_frames: 0,
+            skip: 0,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn rate(&self) -> u32 {
         self.rate
     }
@@ -68,14 +74,32 @@ impl TapPipeline {
         if let Some(limit) = limit {
             take = take.min(limit.saturating_sub(self.out_frames) as usize);
         }
-        if take == 0 {
+        self.out_frames += take as u64;
+        let dropped = take.min(self.skip as usize);
+        self.skip -= dropped as u64;
+        if take == dropped {
             return;
         }
         self.i16_buf.clear();
-        self.i16_buf
-            .extend(self.resampled[..take].iter().copied().map(f32_to_i16));
-        self.out_frames += take as u64;
+        self.i16_buf.extend(
+            self.resampled[dropped..take]
+                .iter()
+                .copied()
+                .map(f32_to_i16),
+        );
         sink(&self.i16_buf);
+    }
+
+    /// Hand `frames` frames of silence to `sink`.
+    fn emit_silence(&mut self, mut frames: u64, sink: &mut impl FnMut(&[i16])) {
+        const PIECE: u64 = 4096;
+        while frames > 0 {
+            let piece = frames.min(PIECE);
+            self.i16_buf.clear();
+            self.i16_buf.resize(piece as usize, 0);
+            sink(&self.i16_buf);
+            frames -= piece;
+        }
     }
 
     /// Feed raw interleaved samples; every finished 16 kHz chunk goes to `sink`.
@@ -96,23 +120,71 @@ impl TapPipeline {
         self.pending.drain(..start);
     }
 
+    /// Follow `rates`: after a rate-change notification or a new
+    /// measurement, rebuild the resampler (via [`Self::set_rate`]) if the
+    /// effective rate moved (TUR-84).
+    pub(crate) fn follow(&mut self, rates: &RateState, sink: &mut impl FnMut(&[i16])) {
+        if !rates.take_change() {
+            return;
+        }
+        let rate = rates.effective();
+        let Some(measured) = rates.measured() else {
+            // A rate-change notification: the device really switched now.
+            self.set_rate(rate, sink);
+            return;
+        };
+        tracing::info!("system tap rates (measured): {}", rates.describe());
+        if rate == self.rate {
+            return;
+        }
+        tracing::warn!(
+            "system tap delivers {measured:.0} Hz, not the {} Hz in use; resampling from {rate} Hz",
+            self.rate
+        );
+        if rates.measured_first() {
+            // The first measurement since the start or a notification: the
+            // rate in use was a wrong guess for every frame since then.
+            self.correct_rate(rate, sink);
+        } else {
+            // A later change with no notification: the device switched
+            // about now, so the frames so far were at the old rate.
+            self.set_rate(rate, sink);
+        }
+    }
+
     /// Switch to a new input rate at this chunk boundary. The old resampler
     /// is flushed first (its partial chunk and its filter tail), so the
     /// frames it emits in total match the input it was given at its rate
     /// exactly, and the system track keeps pace with the microphone's.
     pub(crate) fn set_rate(&mut self, rate: u32, sink: &mut impl FnMut(&[i16])) {
-        if rate == self.rate || rate == 0 {
+        self.switch(rate, self.rate, sink);
+    }
+
+    /// Switch to `rate` because a measurement showed the frames since the
+    /// last switch were already arriving at `rate`, not at the rate in use
+    /// (TUR-84). Their audio cannot be resampled again, but their duration
+    /// is put right: silence makes up frames that were missing, and frames
+    /// emitted in excess are dropped from what comes next, so the track
+    /// stays at wall time.
+    pub(crate) fn correct_rate(&mut self, rate: u32, sink: &mut impl FnMut(&[i16])) {
+        self.switch(rate, rate, sink);
+    }
+
+    /// Flush the current resampler, then make the frames emitted since the
+    /// last switch total `input * 16000 / past_rate`, and start a resampler
+    /// at `rate`.
+    fn switch(&mut self, rate: u32, past_rate: u32, sink: &mut impl FnMut(&[i16])) {
+        if rate == self.rate || rate == 0 || past_rate == 0 {
             return;
         }
         let whole = self.pending.len() / self.channels * self.channels;
-        let expected = ((self.in_frames + (whole / self.channels) as u64) as f64
-            * SAMPLE_RATE_HZ as f64
-            / self.rate as f64)
-            .round() as u64;
+        let input = self.in_frames + (whole / self.channels) as u64;
+        let at = |rate: u32| (input as f64 * SAMPLE_RATE_HZ as f64 / rate as f64).round() as u64;
+        let natural = at(self.rate);
         let chunk = self.resampler.input_chunk_frames();
         let mut offset = 0;
         for _ in 0..MAX_FLUSH_CHUNKS {
-            if self.out_frames >= expected {
+            if self.out_frames >= natural {
                 break;
             }
             // The partial chunk first, zero-padded; then pure zeros, which
@@ -121,10 +193,21 @@ impl TapPipeline {
             downmix_to_mono(&self.pending[offset..end], self.channels, &mut self.mono);
             offset = end;
             self.mono.resize(chunk, 0.0);
-            self.run_chunk(Some(expected), sink);
+            self.run_chunk(Some(natural), sink);
         }
         // Keep a trailing partial frame: the ring's next samples complete it.
         self.pending.drain(..whole);
+
+        let target = at(past_rate);
+        if self.out_frames < target {
+            let pad = target - self.out_frames;
+            tracing::warn!("system tap: padding {pad} frames lost to a wrong input rate");
+            self.emit_silence(pad, sink);
+        } else if self.out_frames > target {
+            let excess = self.out_frames - target;
+            tracing::warn!("system tap: dropping {excess} frames emitted at a wrong input rate");
+            self.skip += excess;
+        }
 
         tracing::info!(
             "system tap resampler switched {} Hz -> {rate} Hz after {} output frames",
@@ -142,9 +225,12 @@ impl TapPipeline {
 }
 
 #[cfg(test)]
+mod rate_regression;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::macos::tap_rate::effective_input_rate;
+    use crate::macos::tap_rate::{ReportedRates, effective_rate};
 
     /// Stereo interleaved sine at `rate`, `secs` long.
     fn stereo_tone(rate: u32, secs: f64) -> Vec<f32> {
@@ -164,7 +250,15 @@ mod tests {
     fn sixteen_khz_frames_with_a_48_khz_tap_format_keep_their_duration() {
         // TUR-80: the tap reports 48 kHz, the HFP output (and so the IO proc)
         // runs at 16 kHz. Before the fix this produced 1/3 of the frames.
-        let rate = effective_input_rate(48_000, Some(16_000.0), Some(16_000.0));
+        let rate = effective_rate(
+            ReportedRates {
+                tap_format: 48_000,
+                aggregate_nominal: Some(16_000.0),
+                output_nominal: Some(16_000.0),
+                stream_virtual: Some(16_000.0),
+            },
+            None,
+        );
         let mut p = TapPipeline::new(2, rate);
         let input = stereo_tone(16_000, 10.0);
         let mut out = Vec::new();
