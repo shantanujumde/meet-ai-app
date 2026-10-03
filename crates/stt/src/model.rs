@@ -30,6 +30,47 @@ pub struct ModelSpec {
     pub sha256: &'static str,
     /// Expected size in bytes, for progress reporting and a cheap sanity check.
     pub bytes: u64,
+    /// What the model is good for, in plain words, for the Settings rows
+    /// (TUR-79). Data, so the screen never spells out a model's merits itself.
+    pub facts: ModelFacts,
+}
+
+/// One word about a model, drawn as a small chip. The UI owns the label for
+/// each, so the wording stays the same on every row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(rename_all = "kebab-case")]
+pub enum ModelTag {
+    Fast,
+    Light,
+    MostAccurate,
+    Multilingual,
+    EnglishOnly,
+    Slower,
+}
+
+/// The plain-word facts about one model.
+///
+/// Honest words only: speed and accuracy relative to the other models in this
+/// list, never a made-up number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelFacts {
+    /// The name on the row, e.g. "Small (English only)". No quantisation or
+    /// file-format jargon; the full id is shown in the detail line instead.
+    pub display_name: &'static str,
+    /// One line on when to pick it.
+    pub good_for: &'static str,
+    pub tags: &'static [ModelTag],
+}
+
+impl ModelFacts {
+    /// No facts at all, for test fixtures that are not in [`MODELS`]. The
+    /// catalogue test fails if a real entry uses it.
+    pub const NONE: Self = Self {
+        display_name: "",
+        good_for: "",
+        tags: &[],
+    };
 }
 
 /// The models SPEC §2.4 names.
@@ -39,6 +80,10 @@ pub struct ModelSpec {
 /// object ids Hugging Face publishes for these exact files, read from its API
 /// on 2026-09-27 — not computed from a local download, which would only prove
 /// the bytes matched themselves.
+///
+/// Reading an id: `.en` means English only, no `.en` means multilingual (about
+/// 100 languages); `q5_0` / `q5_1` mean compressed to 5 bits, at near-full
+/// quality. None of that reaches a row's main line — see [`ModelFacts`].
 pub const MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: "small.en-q5_1",
@@ -46,6 +91,12 @@ pub const MODELS: &[ModelSpec] = &[
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin",
         sha256: "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30",
         bytes: 190_098_681,
+        facts: ModelFacts {
+            display_name: "Small (English only)",
+            good_for: "Lightweight and fast. Good for clear English calls; less accurate with \
+                       accents, cross-talk or jargon.",
+            tags: &[ModelTag::Fast, ModelTag::Light, ModelTag::EnglishOnly],
+        },
     },
     ModelSpec {
         id: "large-v3-turbo-q5_0",
@@ -55,12 +106,74 @@ pub const MODELS: &[ModelSpec] = &[
         // SPEC §2.4 estimates ~1.6 GB for this file. The real q5_0 turbo build
         // is 574 MB; the 1.6 GB figure belongs to an unquantized large-v3.
         bytes: 574_041_195,
+        facts: ModelFacts {
+            display_name: "Large turbo (multilingual)",
+            good_for: "Most accurate. Understands ~100 languages and mixed-language calls. \
+                       Slower and uses more memory.",
+            tags: &[
+                ModelTag::MostAccurate,
+                ModelTag::Multilingual,
+                ModelTag::Slower,
+            ],
+        },
     },
 ];
 
 /// Look up a model by its `config.jsonc` id.
 pub fn find(id: &str) -> Option<&'static ModelSpec> {
     MODELS.iter().find(|model| model.id == id)
+}
+
+/// The id of the small model, picked when this Mac is short of memory.
+pub const SMALL_MODEL: &str = "small.en-q5_1";
+/// The id of the large model, picked on Apple silicon with enough memory.
+pub const LARGE_MODEL: &str = "large-v3-turbo-q5_0";
+
+/// The memory the large model is recommended from: 16 GB.
+pub const LARGE_MODEL_MIN_MEMORY: u64 = 16 * 1024 * 1024 * 1024;
+
+/// Which model to suggest for this Mac, and why, in one line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Recommendation {
+    pub model_id: &'static str,
+    pub reason: String,
+}
+
+/// The model to mark "Recommended": large turbo on Apple silicon with at least
+/// 16 GB of memory, small otherwise.
+///
+/// Pure, with the machine passed in, so it is tested without a machine to
+/// match. The app reads `apple_silicon` from the build target and the memory
+/// from `sysinfo`.
+pub fn recommended(apple_silicon: bool, total_memory_bytes: u64) -> Recommendation {
+    let gb = gigabytes(total_memory_bytes);
+    if apple_silicon && total_memory_bytes >= LARGE_MODEL_MIN_MEMORY {
+        Recommendation {
+            model_id: LARGE_MODEL,
+            reason: format!(
+                "This Mac has Apple silicon and {gb} GB of memory, enough for the most accurate \
+                 model."
+            ),
+        }
+    } else if !apple_silicon {
+        Recommendation {
+            model_id: SMALL_MODEL,
+            reason: "This Mac has no Apple silicon, so the lighter model keeps up better."
+                .to_string(),
+        }
+    } else {
+        Recommendation {
+            model_id: SMALL_MODEL,
+            reason: format!(
+                "This Mac has {gb} GB of memory; the lighter model leaves room for the call."
+            ),
+        }
+    }
+}
+
+/// Whole gigabytes, rounded down, so a reason never claims more than the line.
+fn gigabytes(bytes: u64) -> u64 {
+    bytes / (1024 * 1024 * 1024)
 }
 
 /// The variable both this crate and the app read to point meet-ai at a
@@ -149,6 +262,106 @@ mod tests {
         assert!(find("small.en-q5_1").is_some());
         assert!(find("large-v3-turbo-q5_0").is_some());
         assert!(find("not-a-model").is_none());
+        assert!(find(SMALL_MODEL).is_some());
+        assert!(find(LARGE_MODEL).is_some());
+    }
+
+    #[test]
+    fn every_catalogue_model_says_what_it_is_good_for_in_plain_words() {
+        // TUR-79: a model added without its facts fails here, not on screen.
+        for spec in MODELS {
+            let facts = spec.facts;
+            assert_ne!(facts, ModelFacts::NONE, "{} has no facts", spec.id);
+            assert!(
+                !facts.display_name.trim().is_empty(),
+                "{} has no name",
+                spec.id
+            );
+            assert!(
+                !facts.good_for.trim().is_empty(),
+                "{} has no good-for line",
+                spec.id
+            );
+            assert!(!facts.tags.is_empty(), "{} has no tags", spec.id);
+            // The id's jargon stays in the detail line, never the main one.
+            for jargon in ["q5", "ggml", "RTF", ".bin", spec.id] {
+                assert!(
+                    !facts.display_name.contains(jargon) && !facts.good_for.contains(jargon),
+                    "{}'s main line says {jargon:?}",
+                    spec.id
+                );
+            }
+            // `.en` = English only, no `.en` = multilingual.
+            let english_only = spec.id.contains(".en");
+            assert_eq!(
+                facts.tags.contains(&ModelTag::EnglishOnly),
+                english_only,
+                "{}",
+                spec.id
+            );
+            assert_eq!(
+                facts.tags.contains(&ModelTag::Multilingual),
+                !english_only,
+                "{}",
+                spec.id
+            );
+        }
+    }
+
+    #[test]
+    fn the_catalogue_facts_are_the_ones_the_ticket_names() {
+        let small = find("small.en-q5_1").unwrap().facts;
+        assert_eq!(small.display_name, "Small (English only)");
+        assert_eq!(
+            small.tags,
+            &[ModelTag::Fast, ModelTag::Light, ModelTag::EnglishOnly]
+        );
+        let large = find("large-v3-turbo-q5_0").unwrap().facts;
+        assert_eq!(large.display_name, "Large turbo (multilingual)");
+        assert_eq!(
+            large.tags,
+            &[
+                ModelTag::MostAccurate,
+                ModelTag::Multilingual,
+                ModelTag::Slower
+            ]
+        );
+    }
+
+    #[test]
+    fn tags_reach_the_window_in_kebab_case() {
+        assert_eq!(
+            serde_json::to_string(&ModelTag::MostAccurate).unwrap(),
+            "\"most-accurate\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ModelTag::EnglishOnly).unwrap(),
+            "\"english-only\""
+        );
+    }
+
+    #[test]
+    fn large_turbo_is_recommended_on_apple_silicon_with_16_gb_or_more() {
+        const GB: u64 = 1024 * 1024 * 1024;
+        let pick = recommended(true, 16 * GB);
+        assert_eq!(pick.model_id, LARGE_MODEL);
+        assert!(pick.reason.contains("16 GB"), "{}", pick.reason);
+        assert_eq!(recommended(true, 64 * GB).model_id, LARGE_MODEL);
+    }
+
+    #[test]
+    fn small_is_recommended_below_16_gb_or_without_apple_silicon() {
+        const GB: u64 = 1024 * 1024 * 1024;
+        let pick = recommended(true, 8 * GB);
+        assert_eq!(pick.model_id, SMALL_MODEL);
+        assert!(pick.reason.contains("8 GB"), "{}", pick.reason);
+        // One byte short of the line is still under it.
+        assert_eq!(recommended(true, 16 * GB - 1).model_id, SMALL_MODEL);
+        let intel = recommended(false, 64 * GB);
+        assert_eq!(intel.model_id, SMALL_MODEL);
+        assert!(intel.reason.contains("Apple silicon"), "{}", intel.reason);
+        // Unknown memory (0) is not a reason to suggest the big one.
+        assert_eq!(recommended(true, 0).model_id, SMALL_MODEL);
     }
 
     #[test]

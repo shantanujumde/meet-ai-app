@@ -22,6 +22,10 @@ pub struct Probe {
     pub reason: Option<String>,
     #[serde(default)]
     pub os_version: Option<String>,
+    /// Every locale whose on-device model is installed, as BCP 47 ids. Shown
+    /// on the Settings row as the languages Apple's engine can do (TUR-79).
+    #[serde(default)]
+    pub installed_locales: Vec<String>,
 }
 
 impl Probe {
@@ -125,6 +129,7 @@ mod tests {
         };
         assert!(probe.is_usable_offline());
         assert_eq!(probe.locale.as_deref(), Some("en-US"));
+        assert_eq!(probe.installed_locales, vec!["en-US"]);
     }
 
     #[test]
@@ -135,6 +140,7 @@ mod tests {
             locale: Some("en-US".into()),
             reason: None,
             os_version: None,
+            installed_locales: Vec::new(),
         };
         assert!(!probe.is_usable_offline());
     }

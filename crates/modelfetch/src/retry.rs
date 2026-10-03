@@ -209,6 +209,7 @@ mod tests {
             url: leak(url.to_string()),
             sha256: leak(hex(&Sha256::digest(digest_of))),
             bytes: bytes.len() as u64,
+            facts: stt::model::ModelFacts::NONE,
         }
     }
 
