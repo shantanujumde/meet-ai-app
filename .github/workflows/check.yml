@@ -1,9 +1,24 @@
-# The same gate as `just check` on a laptop, plus a production frontend build.
+# The same gate as `just check` on a laptop, plus the generated-bindings check,
+# a production frontend build and the repo rules.
 #
-# Runner: macos-26, not macos-15. `just check` depends on `just sidecar`, which
-# compiles sidecar/meet-stt with swiftc against Apple's SpeechAnalyzer and
+# Split into jobs that run at the same time (TUR-40). Only the work that needs
+# macOS runs on macOS; everything else runs on ubuntu-latest, which is faster
+# to start and far cheaper per minute:
+#
+#   rust           macos-26  just sidecar, clippy, cargo test, bindings, quality rules
+#   rust-portable  ubuntu    cargo fmt, just check-windows (the SPEC §8.2 seam)
+#   js             ubuntu    biome, typecheck, vitest, pnpm build
+#   check-result   ubuntu    the one status named `check` (see that job)
+#
+# Every command `just check` runs appears below as its own `run:` line, and the
+# `rust-portable` job fails if one goes missing (step "Every just check
+# command runs here").
+#
+# Runner for `rust`: macos-26, not macos-15. `just sidecar` compiles
+# sidecar/meet-stt with swiftc against Apple's SpeechAnalyzer and
 # SpeechTranscriber. Those APIs only exist in the macOS 26 SDK (SPEC L2 and A8
-# set macOS 26 as the floor), and the macos-15 image ships an older SDK.
+# set macOS 26 as the floor), and the macos-15 image ships an older SDK. The
+# workspace itself links Apple frameworks, and some tests are macOS-only.
 #
 # What the tests need, and why nothing extra is set here:
 # - No model downloads. The whisper accuracy tests sit behind the
@@ -18,6 +33,11 @@
 # - The stt tests generate their fixture WAVs on first use with macOS `say` and
 #   ffmpeg. `say` ships with macOS; ffmpeg is installed below if the image does
 #   not have it.
+#
+# Caches: only runs on main save them (`save-if` below). A pull request
+# restores main's caches and never writes its own, so PRs cannot evict the
+# entries main relies on (the repo has 10 GB of cache; one Rust cache is
+# over 1 GB).
 
 name: check
 
@@ -36,73 +56,109 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  # Everything that needs macOS: the Swift sidecar (macOS 26 SDK), and the
+  # workspace build, which links Apple frameworks and runs macOS-only tests.
+  rust:
+    name: rust (macos-26)
     runs-on: macos-26
     # A cold cache builds whisper.cpp and the whole workspace from scratch.
     timeout-minutes: 90
+    env:
+      # Line numbers only, no full debug info. Panics and backtraces still
+      # name the file and line; compiling and linking the test binaries is
+      # faster and the cached target/ is smaller. CI only: a laptop
+      # `just check` keeps the default profile.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v5
         with:
-          # Full history so the PR job can diff against the base branch.
+          # Full history so the quality rules can diff against the base branch.
           fetch-depth: 0
 
       # rust-toolchain.toml pins the Rust version, rustfmt and clippy, and the
       # aarch64-apple-darwin target. `rustup toolchain install` with no argument
-      # installs exactly that. The Windows target is not pinned there;
-      # `just check-windows` (part of `just check`) adds it.
+      # installs exactly that.
       - name: Install Rust toolchain
         run: |
           rustup toolchain install
           rustc --version
 
+      # Dependencies only (whisper.cpp's cmake build included, inside
+      # target/debug/build); rust-cache never caches workspace crates.
       - uses: Swatinem/rust-cache@v2
-
-      # No version input: pnpm/action-setup reads `packageManager` from
-      # package.json.
-      - uses: pnpm/action-setup@v4
-
-      # package.json `engines` asks for Node >= 20.19. 24 is the current LTS.
-      - uses: actions/setup-node@v5
         with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install JS dependencies
-        run: pnpm install --frozen-lockfile
+          shared-key: macos-debug
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: taiki-e/install-action@v2
         with:
           tool: just
 
       # cmake builds whisper.cpp inside crates/stt; ffmpeg generates the test
-      # fixtures. Both are usually on the image already.
+      # fixtures. cmake is on the image; ffmpeg is not, and comes from a
+      # Homebrew bottle in a few seconds.
       - name: Install cmake and ffmpeg if missing
         run: |
           command -v cmake >/dev/null || brew install cmake
           command -v ffmpeg >/dev/null || brew install ffmpeg
 
-      - name: just check
-        run: just check
+      # The sidecar binary depends only on main.swift, the recipe that builds
+      # it, and the swiftc and SDK it was built with (the runner image
+      # version), so those make the key. A changed main.swift is always
+      # compiled again. rust-cache throws away anything in target/ that is not
+      # a dependency, so this needs its own cache.
+      - name: Sidecar cache key
+        id: sidecar-key
+        run: |
+          swiftc_hash="$(swiftc --version 2>&1 | shasum -a 256 | cut -c1-16)"
+          echo "key=meet-stt-$ImageOS-$ImageVersion-$swiftc_hash-${{ hashFiles('sidecar/**', 'justfile') }}" >> "$GITHUB_OUTPUT"
 
+      - name: Restore the sidecar
+        id: sidecar-cache
+        uses: actions/cache/restore@v6
+        with:
+          key: ${{ steps.sidecar-key.outputs.key }}
+          path: |
+            target/meet-stt
+            target/meet-stt-aarch64-apple-darwin
+
+      - name: just sidecar
+        if: steps.sidecar-cache.outputs.cache-hit != 'true'
+        run: just sidecar
+
+      - name: Save the sidecar
+        if: github.ref == 'refs/heads/main' && steps.sidecar-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          key: ${{ steps.sidecar-key.outputs.key }}
+          path: |
+            target/meet-stt
+            target/meet-stt-aarch64-apple-darwin
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      # `just bindings` is `just sidecar` plus the cargo command below. The
+      # sidecar is already in place, and running `just sidecar` again would
+      # rewrite target/meet-stt, which makes tauri-build rebuild meet-ai
+      # (about 20 s here). Without it the test binary from `cargo test` is
+      # reused as is.
       - name: Generated bindings are up to date
         run: |
-          just bindings
+          cargo test -p meet-ai --lib export_bindings
           git diff --exit-code src/ipc/bindings.ts
 
-      - name: pnpm build
-        run: pnpm build
-
-      # Repo rules (plan Phase 8), run on the files this PR changed. The script
-      # lands in a separate PR, so this step does nothing until it exists.
+      # Repo rules (plan Phase 8), run on the files this PR changed. Here and
+      # not on ubuntu: rule R7 regenerates the bindings with cargo, which needs
+      # this job's macOS build (and finds it warm).
       - name: Quality rules on changed files
         if: github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
-          if [ ! -x scripts/quality-rules.sh ]; then
-            echo "scripts/quality-rules.sh not present yet; skipping."
-            exit 0
-          fi
           changed=()
           while IFS= read -r file; do
             changed+=("$file")
@@ -112,3 +168,124 @@ jobs:
             exit 0
           fi
           scripts/quality-rules.sh "${changed[@]}"
+
+  # Rust checks that do not need macOS. rustfmt only reads source, and
+  # `just check-windows` is `cargo check` for x86_64-pc-windows-msvc: it never
+  # links, and the crates it covers compile no C for the target, so neither
+  # MSVC nor a Mac is needed.
+  rust-portable:
+    name: rust fmt + windows seam (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-seam
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      # The guard against this file drifting from the justfile: every command
+      # in the `check` recipe needs a `run:` line here, and every recipe
+      # `check` depends on needs a `run: just <recipe>` line. A command that
+      # only sits in a comment does not count.
+      - name: Every just check command runs here
+        run: |
+          set -euo pipefail
+          wf=.github/workflows/check.yml
+          runs="$(grep -v '^[[:space:]]*#' "$wf" | sed -n 's/^[[:space:]]*\(- \)\{0,1\}run: //p')"
+          missing=0
+          for dep in $(just --show check | sed -n 's/^check:\(.*\)$/\1/p'); do
+            want="just $dep"
+            if ! grep -qxF -- "$want" <<<"$runs"; then
+              echo "::error file=$wf::\`just check\` runs \`$want\`, and this workflow does not."
+              missing=1
+            fi
+          done
+          while IFS= read -r want; do
+            if ! grep -qxF -- "$want" <<<"$runs"; then
+              echo "::error file=$wf::\`just check\` runs \`$want\`, and this workflow does not."
+              missing=1
+            fi
+          done < <(just --show check | sed -n 's/^    //p')
+          if [ "$missing" -eq 0 ]; then
+            echo "Every command of \`just check\` runs in this workflow."
+          fi
+          exit "$missing"
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      # `just check` builds the sidecar too, but this check does not need it:
+      # none of the six crates has a build script that looks for it.
+      - name: Windows seam check
+        run: just check-windows
+
+  # Frontend checks. Nothing here touches Rust or macOS APIs; the bindings file
+  # they compile against is the committed one, and the `rust` job proves it
+  # matches the Rust side.
+  js:
+    name: js (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      # No version input: pnpm/action-setup reads `packageManager` from
+      # package.json.
+      - uses: pnpm/action-setup@v4
+
+      # package.json `engines` asks for Node >= 20.19. 24 is the current LTS.
+      # setup-node keys the pnpm store cache on pnpm-lock.yaml, so a run only
+      # writes a new entry when the lockfile changed.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: biome
+        run: pnpm biome check .
+
+      - name: typecheck
+        run: pnpm typecheck
+
+      - name: vitest
+        run: pnpm vitest run
+
+      - name: pnpm build
+        run: pnpm build
+
+  # The one status for branch protection and for release.yml. The ruleset on
+  # main requires a status named `check`, so this job keeps that name. It fails
+  # when any job above failed, was cancelled or was skipped, so `check` can
+  # only go green when every job did. A failed job also fails the workflow
+  # run itself, which is what release.yml's `workflow_run` trigger reads.
+  check-result:
+    name: check
+    if: always()
+    needs: [rust, rust-portable, js]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad="$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success") | .key] | join(", ")')"
+          if [ -n "$bad" ]; then
+            echo "::error::not every job passed: $bad"
+            exit 1
+          fi
