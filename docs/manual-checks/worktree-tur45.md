@@ -43,8 +43,10 @@ file skipped and retried on Unix), the busy wiring and the config reader.
    Expect: "Audio is kept for 7 days.", "Audio is deleted once the transcript
    is done.", "Audio is kept forever.", "Audio is kept for 30 days.", each
    followed by "Transcripts and notes are always kept." A bad value (`-5`,
-   `"7"`) shows 7 days and logs a config warning. Covered headless by
-   `src/ui/AudioRetentionRow.test.tsx`.
+   `"7"`) or a `config.jsonc` that does not parse shows "Audio cleanup
+   paused: config.jsonc could not be read (…)", logs a warning and deletes
+   nothing (TUR-85; it used to show 7 days). Covered headless by
+   `src/ui/AudioRetentionRow.test.tsx` and `src-tauri/src/retention.rs`.
    Why skipped: opens a window.
 5. **Windows: a locked WAV is retried.** On Windows, open an old meeting's
    `mic.wav` in a player that holds it open, then let the pass run.

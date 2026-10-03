@@ -38,6 +38,10 @@ pub fn meeting_id(stamp: &str) -> String {
 /// `announce` hears each candidate id just before its folder is created, so
 /// the recorder can publish it first (TUR-97: a folder whose id is not known
 /// yet would read as an interrupted meeting).
+///
+/// `audio/.incomplete` is written too (TUR-85), before any audio: retention
+/// keeps the meeting's WAVs until a clean final transcript removes it, so a
+/// crash, a `kill -9` or a failed transcription never costs them.
 pub fn create_meeting_folder(
     root: &Path,
     base: &str,
@@ -60,6 +64,7 @@ pub fn create_meeting_folder(
         }
     };
     std::fs::create_dir_all(layout::audio_dir(&dir))?;
+    crate::retention::mark_incomplete(&dir)?;
     for file in [layout::TRANSCRIPT_FILE, layout::NOTES_FILE] {
         let path = dir.join(file);
         if !path.exists() {
@@ -130,6 +135,18 @@ mod tests {
     fn a_hand_renamed_folder_is_listed_without_a_date_rather_than_dropped() {
         assert_eq!(split_folder_name("my-old-notes"), (None, None, None));
         assert_eq!(split_folder_name(""), (None, None, None));
+    }
+
+    #[test]
+    fn a_new_meeting_folder_is_marked_incomplete_until_its_transcript_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = create_meeting_folder(tmp.path(), "2026-09-01-1430-meeting", |_| {}).unwrap();
+        let dir = tmp.path().join(&id);
+        assert!(dir.join("audio/.incomplete").is_file());
+        // Lines written live, then a crash: the next launch's retention pass
+        // still keeps the audio.
+        std::fs::write(dir.join("transcript.md"), "[00:00:04] You: Hi.\n").unwrap();
+        assert!(!crate::retention::survey_meeting(&dir, &|_| true).transcript_done());
     }
 
     #[test]

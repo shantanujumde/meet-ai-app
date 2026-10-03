@@ -301,12 +301,8 @@ export const commands = {
 	 *  `git`.
 	 */
 	meetingBrief: (title: string) => typedError<meet_ai_lib_brief_MeetingBrief, meet_ai_lib_error_UiError>(__TAURI_INVOKE("meeting_brief", { title })),
-	/**
-	 *  `audio.retention_days` as the app uses it: `-1` keeps audio forever, `0`
-	 *  deletes it once the transcript is done, otherwise the days. A bad value
-	 *  reads as the default 7, as it does for the job itself.
-	 */
-	audioRetentionDays: () => __TAURI_INVOKE<number>("audio_retention_days"),
+	/**  `audio.retention_days` as the retention job reads it, for Settings. */
+	audioRetentionDays: () => __TAURI_INVOKE<meet_ai_lib_retention_AudioRetentionSetting>("audio_retention_days"),
 	/**
 	 *  "Stop and quit": let the held quit through. The exit hook in `lib.rs`
 	 *  stops the recording the same way the Stop button does.
@@ -459,6 +455,19 @@ export type meet_ai_lib_lifecycle_AppSettings = {
 	/**  macOS: keep the Dock icon while the window is closed. */
 	showInDockWhenClosed: boolean,
 };
+
+/**  What Settings' retention line says. */
+export type meet_ai_lib_retention_AudioRetentionSetting = 
+/**
+ *  The job runs. `days`: `-1` keeps audio forever, `0` deletes it once
+ *  the transcript is done, otherwise the days.
+ */
+{ state: "running"; days: number } | 
+/**
+ *  No audio is deleted: `config.jsonc` could not be read or parsed, or
+ *  its `audio` section is not valid. `reason` says which.
+ */
+{ state: "paused"; reason: string };
 
 /**  One ticket still open from last time. */
 export type meet_ai_lib_brief_BriefTicket = {

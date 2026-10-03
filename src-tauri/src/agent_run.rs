@@ -200,11 +200,14 @@ pub async fn set_meeting_notes(
 /// (TUR-17); see [`after_stop`].
 pub fn finish_then_run(app: &AppHandle, transcription: Transcription) {
     let transcript = transcription.transcript().to_path_buf();
-    let (_, mut transcript_final) = transcription.finish_final(live_transcript::STOP_TIMEOUT);
+    let (status, mut transcript_final) = transcription.finish_final(live_transcript::STOP_TIMEOUT);
     let Some((stop_root, meeting_id)) = meeting_of(&transcript) else {
         tracing::warn!(path = %transcript.display(), "no meeting folder around the transcript; no notes run");
         return;
     };
+    // TUR-85: only a transcript that ended cleanly (no failure, no timeout)
+    // lets retention delete this meeting's audio.
+    crate::retention::transcript_finished(&stop_root.join(&meeting_id), &status);
     let app = app.clone();
     // TUR-45: busy for the retention job until the transcript is final.
     let transcribing = crate::retention::Transcribing::begin(&app, &meeting_id);

@@ -290,7 +290,10 @@ export const ipc = {
   calendarDisconnect: vi.fn<typeof Client.calendarDisconnect>(async () => DEFAULT_SOURCES),
 
   // TUR-45: the SPEC §3.5 default.
-  audioRetentionDays: vi.fn<typeof Client.audioRetentionDays>(async () => 7),
+  audioRetentionDays: vi.fn<typeof Client.audioRetentionDays>(async () => ({
+    state: "running" as const,
+    days: 7,
+  })),
 
   agentChoice: vi.fn<typeof Client.agentChoice>(async () => ({
     harness: "claude-code",
