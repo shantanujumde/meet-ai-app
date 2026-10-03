@@ -36,7 +36,6 @@ import type {
   AgentTestResult,
   EnvironmentView,
   LiveTranscriptSnapshot,
-  MeetingBrief,
   MeetingDetail,
   MeetingList,
   MeetingNotes,
@@ -564,16 +563,9 @@ export async function calendarRefreshMinutes(): Promise<number> {
   return call(() => commands.calendarRefreshMinutes());
 }
 
-// --- pre-meeting brief ----------------------------------------------------
-
-/** Last time's notes and the commits since, for the meeting called `title` (TUR-32). */
-export async function meetingBrief(title: string): Promise<MeetingBrief> {
-  if (!hasBackend()) return { title, previous: null, commits: null };
-  return narrow(() => commands.meetingBrief(title));
-}
-
 // --- command groups in their own modules ------------------------------------
 
+export * from "./brief";
 export * from "./calendar";
 // Closing and quitting (TUR-76). Re-exported, so every caller (and
 // `@/test/ipcMock`) keeps the one `@/ipc/client` import; `call` and
@@ -585,4 +577,4 @@ export * from "./retention";
 export * from "./notifications";
 // The Settings speech engine picker (TUR-75).
 export * from "./speech";
-export { call, subscribe };
+export { call, narrow, subscribe };

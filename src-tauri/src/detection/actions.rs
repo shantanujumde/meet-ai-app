@@ -56,6 +56,8 @@ impl Detection {
 
 /// `event`'s meeting link, if it has one that is a web link. The providers'
 /// fields are someone else's data, so nothing else is opened.
+// TODO(TUR-86): check with calendar::join_url::is_safe_join_url once it lands
+// on main, instead of this scheme-only test.
 pub fn join_link(event: &::calendar::Event) -> Option<&str> {
     let url = event.join_url.as_deref()?.trim();
     let lower = url.to_ascii_lowercase();
