@@ -52,6 +52,8 @@ R5_LEVEL=warn
 RULES="rule_r1 rule_r2 rule_r3 rule_r4 rule_r5 rule_r6 rule_r8"
 RULES="$RULES rule_r9"
 RUN_ONCE="rule_r7"
+# R10 (TUR-42): OS-specific cfg outside a platform module.
+RULES="$RULES rule_r10"
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "quality-rules: not inside a git repository" >&2
@@ -513,6 +515,144 @@ rule_r9() {
         report error R9 "$f" "$n" "adapted code without a notice: add a '## <Project>' section with 'URL: https://$repo' to $R9_NOTICES"
       fi
     done
+}
+
+# R10: OS-specific cfg outside a platform module (SPEC §8.2, TUR-42).
+#
+# Step 1 (R10_CLEAN_AWK) prints the file with comments removed, char literals
+# blanked and every string literal (raw strings too) cut down to its letters,
+# digits and underscores, so step 2 can match parentheses and words without a
+# "cfg(unix)" in a string or a comment counting. Line numbers are kept.
+# shellcheck disable=SC2016  # awk programs: $0 is awk's, not the shell's
+R10_CLEAN_AWK='
+  function flush() { print out; out = "" }
+  {
+    line = $0; n = length(line); i = 1
+    while (i <= n) {
+      c = substr(line, i, 1)
+      if (mode == "block") {
+        if (substr(line, i, 2) == "*/") { mode = ""; i += 2 } else i++
+        continue
+      }
+      if (mode == "str") {
+        if (c == "\\") { i += 2; continue }
+        if (c == "\"") { out = out "\""; mode = ""; i++; continue }
+        if (c ~ /[A-Za-z0-9_]/) out = out c
+        i++; continue
+      }
+      if (mode == "raw") {
+        if (substr(line, i, length(rawend)) == rawend) { out = out "\""; mode = ""; i += length(rawend); continue }
+        if (c ~ /[A-Za-z0-9_]/) out = out c
+        i++; continue
+      }
+      prev = (i > 1) ? substr(line, i - 1, 1) : " "
+      if (substr(line, i, 2) == "//") break
+      if (substr(line, i, 2) == "/*") { mode = "block"; i += 2; continue }
+      if (c == "r" && prev !~ /[A-Za-z0-9_]/ && match(substr(line, i + 1), /^#*"/)) {
+        hashes = RLENGTH - 1
+        rawend = "\""; for (h = 0; h < hashes; h++) rawend = rawend "#"
+        out = out "\""; mode = "raw"; i += RLENGTH + 1; continue
+      }
+      if (c == "\"") { out = out "\""; mode = "str"; i++; continue }
+      if (c == "'\''") {
+        if (substr(line, i + 1, 1) == "\\") {
+          j = index(substr(line, i + 2), "'\''")
+          if (j) { out = out "'\'' '\''"; i += j + 2; continue }
+        } else if (substr(line, i + 2, 1) == "'\''") {
+          out = out "'\'' '\''"; i += 3; continue
+        }
+      }
+      out = out c; i++
+    }
+    flush()
+  }'
+
+# Step 2 (R10_FIND_AWK) reads the cleaned text and prints "first last" (line
+# numbers) for every cfg(...), cfg!(...) and cfg_attr(...) whose condition
+# names an OS: target_os, target_family, target_vendor, unix or windows. For
+# cfg_attr only the condition counts, not the attribute it applies, so
+# `cfg_attr(not(debug_assertions), windows_subsystem = "windows")` passes.
+# A condition whose only OS names are target_os = "android" / "ios" is Tauri's
+# desktop-vs-mobile gate, not a port, and passes too.
+# shellcheck disable=SC2016
+R10_FIND_AWK='
+  function judge(kind, text,   cond, depth, k, ch, bare, words, w, v, os, mobile) {
+    cond = text
+    if (kind == "cfg_attr") {
+      depth = 0
+      for (k = 1; k <= length(text); k++) {
+        ch = substr(text, k, 1)
+        if (ch == "(") depth++
+        else if (ch == ")") depth--
+        else if (ch == "," && depth == 0) { cond = substr(text, 1, k - 1); break }
+      }
+    }
+    os = 0; mobile = 1
+    v = cond
+    while (match(v, /target_os[[:space:]]*=[[:space:]]*"[^"]*"/)) {
+      w = substr(v, RSTART, RLENGTH); sub(/^[^"]*"/, "", w); sub(/"$/, "", w)
+      if (w != "android" && w != "ios") mobile = 0
+      v = substr(v, RSTART + RLENGTH)
+    }
+    bare = cond
+    gsub(/"[^"]*"/, "", bare)
+    n = split(bare, words, /[^A-Za-z0-9_]+/)
+    for (k = 1; k <= n; k++) {
+      w = words[k]
+      if (w == "target_os" || w == "target_family" || w == "target_vendor" || w == "unix" || w == "windows") {
+        os = 1
+        if (w != "target_os") mobile = 0
+      }
+    }
+    return os && !mobile
+  }
+  {
+    line[NR] = $0
+  }
+  END {
+    for (r = 1; r <= NR; r++) {
+      rest = line[r]; off = 0
+      while (match(rest, /(^|[^A-Za-z0-9_])cfg(_attr|!)?[[:space:]]*\(/)) {
+        kind = substr(rest, RSTART, RLENGTH)
+        kind = (kind ~ /cfg_attr/) ? "cfg_attr" : "cfg"
+        # Collect from just after the opening paren to its matching one,
+        # across lines if the condition is split.
+        depth = 1; text = ""; rr = r
+        seg = substr(rest, RSTART + RLENGTH)
+        rest = seg
+        while (depth > 0 && rr <= NR) {
+          for (k = 1; k <= length(seg) && depth > 0; k++) {
+            ch = substr(seg, k, 1)
+            if (ch == "(") depth++
+            else if (ch == ")") { depth--; if (depth == 0) break }
+            text = text ch
+          }
+          if (depth > 0) { rr++; if (rr - r > 40) break; seg = line[rr]; text = text " " }
+        }
+        if (judge(kind, text)) print r " " rr
+      }
+    }
+  }'
+
+rule_r10() {
+  local f=$1 first last
+  case $f in
+    crates/*.rs | src-tauri/src/*.rs) ;;
+    *) return ;;
+  esac
+  case $f in
+    */platform/* | */macos/* | */windows/* | */linux/* | */eventkit.rs | */build.rs) return ;;
+  esac
+  # Integration tests may gate a whole OS-only file; tests/ in a crate's src does not count.
+  [[ $f =~ ^crates/[^/]+/tests/ ]] && return
+  added_lines "$f" >"$tmp/r10nums"
+  # Bytes, not characters: macOS awk gives up on some UTF-8 text otherwise.
+  LC_ALL=C awk "$R10_CLEAN_AWK" "$f" | LC_ALL=C awk "$R10_FIND_AWK" | while read -r first last; do
+    # Only a cfg with at least one added line counts.
+    if awk -v a="$first" -v b="$last" '$1 >= a && $1 <= b { found = 1; exit } END { exit !found }' "$tmp/r10nums"; then
+      report error R10 "$f" "$first" "OS-specific cfg outside a platform module; put the OS code in the crate's src/platform/ (macos.rs / windows.rs / linux.rs) and call platform::... from here (SPEC §8.2)"
+    fi
+  done
 }
 
 # --- main ------------------------------------------------------------------

@@ -9,6 +9,8 @@
 #
 # Covers R9 (code adapted from another project). Add cases for other rules
 # with the same `expect` helper.
+# R10 (OS-specific cfg outside a platform module) has its own `expect10`
+# below, since `expect` looks for R9 by name.
 #
 # Must stay compatible with macOS /bin/bash 3.2.
 
@@ -124,6 +126,123 @@ expect fail "R9: a branch name instead of a commit fails" src/a.rs \
   "// Adapted from github.com/acme/library/a.rs @ main (MIT)"
 expect fail "R9: a line without a repo path fails" src/a.rs \
   "// Adapted from the acme library (MIT)"
+
+# R10: OS-specific cfg outside a platform module (TUR-42).
+# expect10 pass|fail NAME FILE CONTENT — like `expect`, for rule R10.
+expect10() {
+  local want=$1 name=$2 file=$3 content=$4 out code
+  ran=$((ran + 1))
+  mkdir -p "$(dirname "$file")"
+  printf '%s\n' "$content" >"$file"
+  out=$(scripts/quality-rules.sh "$file" 2>&1)
+  code=$?
+  rm -f "$file"
+  if [ "$want" = pass ] && [ "$code" -eq 0 ] && ! printf '%s' "$out" | grep -q ' R10 '; then
+    echo "ok   $name"
+  elif [ "$want" = fail ] && [ "$code" -eq 2 ] && printf '%s' "$out" | grep -q ' R10 ERROR: '; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name: wanted $want, got exit $code"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/     /'
+    failed=$((failed + 1))
+  fi
+}
+
+# The two cases the ticket asks for.
+expect10 fail "R10: a stray cfg(target_os) in a crate fails" crates/x/src/a.rs \
+  '#[cfg(target_os = "macos")]
+fn a() {}'
+expect10 pass "R10: the same cfg in the crate's platform module passes" crates/x/src/platform/macos.rs \
+  '#[cfg(target_os = "macos")]
+fn a() {}'
+
+# Every OS form fails outside a platform module.
+expect10 fail "R10: cfg(not(target_os))" crates/x/src/a.rs \
+  '#[cfg(not(target_os = "macos"))]
+fn a() {}'
+expect10 fail "R10: cfg(unix)" crates/x/src/a.rs '#[cfg(unix)]
+fn a() {}'
+expect10 fail "R10: cfg(windows) in src-tauri" src-tauri/src/a.rs '#[cfg(windows)]
+fn a() {}'
+expect10 fail "R10: cfg(target_family)" crates/x/src/a.rs '#[cfg(target_family = "unix")]
+fn a() {}'
+expect10 fail "R10: cfg!(windows)" crates/x/src/a.rs 'fn a() -> bool { cfg!(windows) }'
+expect10 fail "R10: cfg_attr on an OS condition" crates/x/src/a.rs \
+  '#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+struct A;'
+expect10 fail "R10: an OS inside all(test, ...)" crates/x/src/a.rs \
+  '#[cfg(all(test, target_os = "macos"))]
+mod e2e;'
+expect10 fail "R10: a condition split over lines" crates/x/src/a.rs '#[cfg(any(
+    unix,
+    windows
+))]
+fn a() {}'
+expect10 fail "R10: after a UTF-8 line" crates/x/src/a.rs 'const E: &str = "é";
+#[cfg(unix)]
+fn a() {}'
+expect10 fail "R10: a tests.rs inside src is not an integration test" crates/x/src/mcp/tests.rs \
+  '#[cfg(unix)]
+mod fake_cli {}'
+
+# Allowed paths.
+expect10 pass "R10: a macos/ folder" crates/x/src/macos/tap.rs '#[cfg(target_os = "macos")]
+fn a() {}'
+expect10 pass "R10: a windows/ folder" crates/x/src/platform/windows/wasapi.rs '#[cfg(windows)]
+fn a() {}'
+expect10 pass "R10: a linux/ folder" crates/x/src/linux/pw.rs '#[cfg(target_os = "linux")]
+fn a() {}'
+expect10 pass "R10: eventkit.rs" crates/calendar/src/eventkit.rs '#[cfg(target_os = "macos")]
+fn a() {}'
+expect10 pass "R10: a build script" crates/x/build.rs '#[cfg(unix)]
+fn a() {}'
+expect10 pass "R10: an integration test gating its whole file" crates/x/tests/claude.rs '#![cfg(unix)]'
+expect10 pass "R10: Rust outside crates/ and src-tauri/src/" spikes/x/src/a.rs '#[cfg(unix)]
+fn a() {}'
+
+# Not OS cfgs.
+expect10 pass "R10: cfg(test), features, debug_assertions" crates/x/src/a.rs '#[cfg(test)]
+mod tests {}
+#[cfg(feature = "stub-audio")]
+fn a() {}
+#[cfg(any(test, feature = "test-support"))]
+fn b() {}
+fn c() -> bool { cfg!(debug_assertions) }'
+expect10 pass "R10: cfg_attr applying windows_subsystem" src-tauri/src/main.rs \
+  '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]'
+expect10 pass "R10: the desktop-vs-mobile gate (android/ios only)" src-tauri/src/a.rs \
+  '#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod tray;'
+expect10 pass "R10: comments, strings and char literals" crates/x/src/a.rs '// #[cfg(unix)] in a comment
+//! `#[cfg(target_os = "macos")]` in a doc comment
+/* #[cfg(windows)] in a block comment */
+const S: &str = "cfg(unix)";
+const R: &str = r#"cfg!(windows) "quoted""#;
+const Q: char = '\''"'\'';
+fn a() {}'
+
+# Only added lines count: a cfg already in the base passes until it is touched.
+mkdir -p crates/x/src
+printf '#[cfg(unix)]\nfn a() {}\n' >crates/x/src/old.rs
+git add crates/x/src/old.rs
+git commit -q -m "old cfg"
+ran=$((ran + 1))
+printf 'fn b() {}\n' >>crates/x/src/old.rs
+if scripts/quality-rules.sh crates/x/src/old.rs >/dev/null 2>&1; then
+  echo "ok   R10: a cfg already in the base passes"
+else
+  echo "FAIL R10: a cfg already in the base passes"
+  failed=$((failed + 1))
+fi
+ran=$((ran + 1))
+printf '#[cfg(windows)]\nfn c() {}\n' >>crates/x/src/old.rs
+if [ "$(scripts/quality-rules.sh crates/x/src/old.rs 2>&1 | grep -c ' R10 ERROR: ')" = 1 ]; then
+  echo "ok   R10: a cfg added to an old file fails, the old one does not"
+else
+  echo "FAIL R10: a cfg added to an old file fails, the old one does not"
+  failed=$((failed + 1))
+fi
+git checkout -q -- crates/x/src/old.rs
 
 # No notices file at all.
 git rm -q THIRD_PARTY_NOTICES.md
