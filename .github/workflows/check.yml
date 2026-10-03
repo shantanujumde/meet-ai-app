@@ -103,15 +103,14 @@ jobs:
           command -v ffmpeg >/dev/null || brew install ffmpeg
 
       # The sidecar binary depends only on main.swift, the recipe that builds
-      # it, and the swiftc and SDK it was built with (the runner image
-      # version), so those make the key. A changed main.swift is always
+      # it, and the swiftc and SDK it was built with. The last two come with
+      # the runner image, so its name and version stand in for them (asking
+      # swiftc for its version costs seconds). A changed main.swift is always
       # compiled again. rust-cache throws away anything in target/ that is not
       # a dependency, so this needs its own cache.
       - name: Sidecar cache key
         id: sidecar-key
-        run: |
-          swiftc_hash="$(swiftc --version 2>&1 | shasum -a 256 | cut -c1-16)"
-          echo "key=meet-stt-$ImageOS-$ImageVersion-$swiftc_hash-${{ hashFiles('sidecar/**', 'justfile') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=meet-stt-$ImageOS-$ImageVersion-${{ hashFiles('sidecar/**', 'justfile') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore the sidecar
         id: sidecar-cache
@@ -138,18 +137,24 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # The bindings check below relies on `cargo test` writing this file.
+      # Deleting it first means that if the export test ever stops running,
+      # the diff shows a deleted file and fails, rather than passing on the
+      # committed copy.
+      - name: Remove src/ipc/bindings.ts for cargo test to write again
+        run: rm src/ipc/bindings.ts
+
       - name: cargo test
         run: cargo test --workspace
 
-      # `just bindings` is `just sidecar` plus the cargo command below. The
-      # sidecar is already in place, and running `just sidecar` again would
-      # rewrite target/meet-stt, which makes tauri-build rebuild meet-ai
-      # (about 20 s here). Without it the test binary from `cargo test` is
-      # reused as is.
+      # `just bindings` is `just sidecar` plus `cargo test -p meet-ai --lib
+      # export_bindings`, and `cargo test --workspace` above already ran that
+      # test (look for `bindings::tests::export_bindings ... ok` in its log),
+      # which wrote src/ipc/bindings.ts again. So all that is left is the diff.
+      # Running the test again cost about 20 s, because cargo rebuilt meet-ai
+      # for it.
       - name: Generated bindings are up to date
-        run: |
-          cargo test -p meet-ai --lib export_bindings
-          git diff --exit-code src/ipc/bindings.ts
+        run: git diff --exit-code src/ipc/bindings.ts
 
       # Repo rules (plan Phase 8), run on the files this PR changed. Here and
       # not on ubuntu: rule R7 regenerates the bindings with cargo, which needs
