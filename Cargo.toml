@@ -38,6 +38,11 @@ objc2-foundation = "=0.3.2"
 ringbuf = "=0.5.1"
 rubato = "=5.0.0"
 
+# --- calendar (SETUP.md §2.5) ---
+# Tier 1, zero-auth (TUR-26). Same 0.3.2 line as the other objc2-* framework
+# crates. No default features: those pull AppKit, MapKit and CoreLocation.
+objc2-event-kit = { version = "=0.3.2", default-features = false }
+
 # --- speech-to-text (SETUP.md §2.3) ---
 whisper-rs = "=0.16.0"
 

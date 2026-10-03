@@ -29,5 +29,9 @@
 	     it here makes the key deterministic. -->
 	<key>CFBundleIconName</key>
 	<string>meet-ai</string>
+	<!-- The calendar prompt (TUR-26, SPEC §2.7 tier 1). The macOS 14+
+	     full-access request needs this key to show a prompt at all. -->
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>meet-ai reads your calendar to show today's meetings and name your recordings. It never changes your calendar.</string>
 </dict>
 </plist>
