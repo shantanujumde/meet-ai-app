@@ -12,6 +12,8 @@
 //! * [`agent_notes`] — `meeting.md` sections and tickets written from the
 //!   agent's notes JSON (SPEC A11).
 //! * [`notes_switch`] — the per-meeting `agent_notes: off` switch (SPEC A11).
+//! * [`meeting_event`] — `meeting.md`'s title, attendees and event id, from
+//!   the calendar event the meeting was recorded during (TUR-29).
 //! * [`folder`] — one meeting folder, or every folder under the root, loaded
 //!   together.
 //!
@@ -50,6 +52,7 @@ pub mod folder_name;
 pub mod frontmatter;
 pub mod index;
 pub mod meeting;
+pub mod meeting_event;
 pub mod notes;
 pub mod notes_switch;
 pub mod ticket;
