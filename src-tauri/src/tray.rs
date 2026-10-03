@@ -122,7 +122,7 @@ fn label_for(phase: Phase) -> &'static str {
 
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
-        OPEN_ITEM => show_window(app),
+        OPEN_ITEM => crate::lifecycle::show_main_window(app),
         // Off the main thread: this callback is delivered on it, and the
         // toggle blocks for as long as the chime and Core Audio take.
         TOGGLE_ITEM => crate::spawn_toggle(app, "menu-bar toggle"),
@@ -130,16 +130,4 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         other if today::on_click(app, other) => {}
         other => tracing::warn!(item = other, "unknown menu-bar item"),
     }
-}
-
-fn show_window(app: &AppHandle) {
-    let Some(window) = app.webview_windows().values().next().cloned() else {
-        tracing::warn!("no window to open from the menu bar");
-        return;
-    };
-    // TUR-76: the Dock icon went away with the window; bring it back first.
-    crate::platform::set_dock_visible(app, true);
-    let _ = window.show();
-    let _ = window.unminimize();
-    let _ = window.set_focus();
 }
