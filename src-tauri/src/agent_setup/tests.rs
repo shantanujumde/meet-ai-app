@@ -326,6 +326,7 @@ fn saving_over_a_broken_config_is_refused() {
         )),
     )
     .unwrap_err();
+    let error = UiError::from(error);
     assert_eq!((error.domain, error.kind), ("app", "invalid-config"));
 }
 

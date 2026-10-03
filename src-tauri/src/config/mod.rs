@@ -82,6 +82,8 @@ pub use file::default_repo;
 pub use file::set_transcription;
 #[allow(unused_imports)] // TUR-9, same
 pub use file::{agent, set_agent, set_tickets, tickets};
+// TUR-90: the Setup screen's save merges under the config write lock.
+pub use file::update_agent;
 
 const FILE: &str = "config.jsonc";
 

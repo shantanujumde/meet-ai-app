@@ -245,11 +245,11 @@ impl AgentChoice {
 fn merged(
     choice: &AgentChoice,
     current: Result<AgentConfig, ConfigError>,
-) -> Result<AgentConfig, UiError> {
+) -> Result<AgentConfig, ConfigError> {
     let current = match current {
         Ok(current) => current,
         Err(ConfigError::UnknownHarness(_)) => AgentConfig::default(),
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(error),
     };
     Ok(AgentConfig {
         harness: choice.harness.into(),
@@ -261,9 +261,9 @@ fn merged(
 }
 
 /// Write the pick and read it back, so the screen shows what is on disk.
+/// The merge runs under the config write lock, from the file as it is then.
 fn save(choice: AgentChoice) -> Result<AgentChoice, UiError> {
-    let agent = merged(&choice, config::agent())?;
-    config::set_agent(&agent)?;
+    config::update_agent(|current| merged(&choice, current))?;
     Ok(AgentChoice::from_config(&config::agent()?))
 }
 

@@ -315,11 +315,8 @@ pub async fn set_show_in_dock_when_closed(
 ) -> Result<AppSettings, UiError> {
     on_blocking_pool(move || {
         app.state::<FolderGate>().writing(|| {
-            let saved = config::set_app(&AppConfig {
-                show_in_dock_when_closed: show,
-                // TUR-77: the other `app` keys stay as they are.
-                ..config::app()
-            })?;
+            // TUR-77: the other `app` keys stay as they are on disk.
+            let saved = config::set_app(|app| app.show_in_dock_when_closed = show)?;
             Ok(AppSettings::from(saved))
         })
     })
@@ -342,10 +339,7 @@ pub async fn set_menu_bar_countdown(app: AppHandle, show: bool) -> Result<bool, 
     let handle = app.clone();
     let saved = on_blocking_pool(move || {
         handle.state::<FolderGate>().writing(|| {
-            let saved = config::set_app(&AppConfig {
-                menu_bar_countdown: show,
-                ..config::app()
-            })?;
+            let saved = config::set_app(|app| app.menu_bar_countdown = show)?;
             Ok(saved.menu_bar_countdown)
         })
     })

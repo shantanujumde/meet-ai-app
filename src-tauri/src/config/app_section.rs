@@ -83,12 +83,27 @@ pub fn with_app(raw: &str, app: &AppConfig) -> Result<String, ConfigError> {
     )
 }
 
-/// Save `app` into `~/Meetings/.app/config.jsonc`, keeping everything else,
-/// and return it as read back from disk.
-pub fn set_app(app: &AppConfig) -> Result<AppConfig, ConfigError> {
+/// Change the `app` section of `~/Meetings/.app/config.jsonc` with `edit`,
+/// keeping everything else, and return it as read back from disk.
+pub fn set_app(edit: impl FnOnce(&mut AppConfig)) -> Result<AppConfig, ConfigError> {
     let dir = super::app_dir().map_err(ConfigError::Root)?;
-    write_in(&dir, |raw| with_app(raw, app))?;
-    parse_app(&read_in(&dir)?)
+    set_app_in(&dir, edit)
+}
+
+/// [`set_app`] for the config folder `dir`. The section `edit` starts from is
+/// parsed from the file under the write lock, so the keys it leaves alone are
+/// the ones on disk. A section that does not parse is refused, never
+/// replaced by defaults, and the message reaches the Settings switch.
+fn set_app_in(
+    dir: &std::path::Path,
+    edit: impl FnOnce(&mut AppConfig),
+) -> Result<AppConfig, ConfigError> {
+    write_in(dir, |raw| {
+        let mut app = parse_app(raw)?;
+        edit(&mut app);
+        with_app(raw, &app)
+    })?;
+    parse_app(&read_in(dir)?)
 }
 
 #[cfg(test)]
@@ -192,6 +207,67 @@ mod tests {
         };
         let written = with_app("", &both).unwrap();
         assert_eq!(parse_app(&written).unwrap(), both);
+    }
+
+    #[test]
+    fn saving_one_key_keeps_the_other_as_it_is_on_disk() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("app-dir");
+        write_in(&dir, |raw| {
+            with_app(
+                raw,
+                &AppConfig {
+                    show_in_dock_when_closed: true,
+                    ..AppConfig::default()
+                },
+            )
+        })
+        .unwrap();
+        let saved = set_app_in(&dir, |app| app.menu_bar_countdown = true).unwrap();
+        assert_eq!(
+            saved,
+            AppConfig {
+                show_in_dock_when_closed: true,
+                menu_bar_countdown: true,
+            }
+        );
+    }
+
+    #[test]
+    fn saving_over_a_bad_section_is_refused_and_the_file_kept() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("app-dir");
+        std::fs::create_dir_all(&dir).unwrap();
+        let bad = r#"{ "app": { "show_in_dock_when_closed": "yes" } }"#;
+        std::fs::write(dir.join(super::super::FILE), bad).unwrap();
+
+        let error = set_app_in(&dir, |app| app.menu_bar_countdown = true).unwrap_err();
+        assert!(matches!(error, ConfigError::Invalid(_)), "{error:?}");
+        assert_eq!(read_in(&dir).unwrap(), bad);
+    }
+
+    #[test]
+    fn two_saves_at_once_both_land() {
+        // Without the write lock both threads read the file before either
+        // wrote it, and the second rename dropped the first one's key.
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("app-dir");
+        for round in 0..20 {
+            let on = round % 2 == 0;
+            std::thread::scope(|scope| {
+                scope.spawn(|| set_app_in(&dir, |app| app.show_in_dock_when_closed = on).unwrap());
+                scope.spawn(|| set_app_in(&dir, |app| app.menu_bar_countdown = on).unwrap());
+            });
+            let saved = parse_app(&read_in(&dir).unwrap()).unwrap();
+            assert_eq!(
+                saved,
+                AppConfig {
+                    show_in_dock_when_closed: on,
+                    menu_bar_countdown: on,
+                },
+                "round {round}"
+            );
+        }
     }
 
     #[test]
