@@ -213,6 +213,7 @@ pub fn notifications_blocked(app: &AppHandle) -> bool {
             false
         }
     }
+}
 
 /// Marks a test's fake CLI script executable (`sync/tests.rs`). Off Unix
 /// there is no mode bit to set, and no `/bin/sh` to run such a script with
