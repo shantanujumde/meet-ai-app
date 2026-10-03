@@ -16,6 +16,8 @@
 //! [`EventSource`], so the rules are tested against
 //! `calendar::fake::FakeProvider` without Tauri or Calendar.app.
 
+use std::sync::Mutex;
+
 use chrono::{DateTime, Local, Utc};
 use store::meeting_event::{Applied, FromCalendar};
 use tauri::{AppHandle, Manager as _};
@@ -51,21 +53,62 @@ pub(crate) enum Outcome {
     NotWritten { event_id: String, reason: String },
 }
 
+/// Managed state: the event the menu bar's **Record** was clicked for
+/// (TUR-77).
+///
+/// That event may be hours away, which [`::calendar::matching::pick_event`]
+/// would never pick, so the next recording to start is named from it
+/// directly. Taken by the start it was pinned for; the menu bar clears it
+/// again once that start returns, so a start that failed or was refused
+/// cannot leave it for a later recording.
+#[derive(Debug, Default)]
+pub struct PinnedEvent(Mutex<Option<::calendar::Event>>);
+
+impl PinnedEvent {
+    /// Name the next recording that starts from `event`.
+    pub fn pin(&self, event: ::calendar::Event) {
+        *self.lock() = Some(event);
+    }
+
+    /// Forget the pinned event, if the start it was for did not take it.
+    pub fn clear(&self) {
+        self.lock().take();
+    }
+
+    fn take(&self) -> Option<::calendar::Event> {
+        self.lock().take()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<::calendar::Event>> {
+        // A panic while holding this lock left an `Option` behind, which is
+        // still a valid value to read.
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 /// Name meeting `meeting_id`, whose recording started at `started`, from the
 /// calendar, on a thread of its own. Returns at once.
 pub(super) fn spawn(app: &AppHandle, meeting_id: &str, started: DateTime<Local>) {
     let app = app.clone();
     let id = meeting_id.to_owned();
     let now = started.with_timezone(&Utc);
+    // Taken here, before returning, so it belongs to this start alone.
+    let pinned = app.try_state::<PinnedEvent>().and_then(|pin| pin.take());
     tauri::async_runtime::spawn_blocking(move || {
         let min_attendees = crate::config::detection().min_attendees as usize;
-        let outcome = with_source(&app, |source| {
-            name_meeting(source, now, min_attendees, |event| {
-                crate::folder_move::writing_in_root(&app, |root| {
-                    store::meeting_event::apply(root, &id, event).map_err(UiError::from)
-                })
+        let write = |event: &FromCalendar<'_>| {
+            crate::folder_move::writing_in_root(&app, |root| {
+                store::meeting_event::apply(root, &id, event).map_err(UiError::from)
             })
-        });
+        };
+        let outcome = match &pinned {
+            Some(event) => name_from(event, write),
+            None => with_source(&app, |source| {
+                name_meeting(source, now, min_attendees, write)
+            }),
+        };
         log(&id, &outcome);
     });
 }
@@ -106,6 +149,14 @@ pub(crate) fn name_meeting(
     let Some(event) = ::calendar::matching::pick_event(&events, now, min_attendees) else {
         return Outcome::NoMatch;
     };
+    name_from(event, write)
+}
+
+/// Hand `event` to `write` as the recording's calendar event.
+pub(crate) fn name_from(
+    event: &::calendar::Event,
+    write: impl FnOnce(&FromCalendar<'_>) -> Result<Applied, UiError>,
+) -> Outcome {
     let fields = FromCalendar {
         event_id: &event.id,
         title: &event.title,

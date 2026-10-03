@@ -10,13 +10,22 @@
 //! `…Template` suffix so the intent travels with the artwork, and
 //! [`icon_as_template`](tauri::tray::TrayIconBuilder::icon_as_template) states
 //! it in code so it does not quietly depend on how the bytes were loaded.
+//!
+//! TUR-77: the menu opens with today's meetings (`today.rs` keeps them
+//! current, `menu_model.rs` decides what they say), and can show the next
+//! one's countdown next to the icon.
 
 use tauri::image::Image;
-use tauri::menu::{MenuBuilder, MenuEvent, MenuItem, MenuItemBuilder};
+use tauri::menu::{MenuEvent, MenuItem, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Listener as _, Manager as _};
 
 use crate::recording::{self, Phase};
+
+mod menu_model;
+mod today;
+
+pub use today::{redraw_soon, reread_soon};
 
 /// The menu-bar glyph: "m.", the brand symbol, drawn on the 16px pixel grid by
 /// the brand build (`design-system/meet-ai/brand/tools/build.mjs`) and
@@ -34,6 +43,8 @@ const TEMPLATE_ICON: &[u8] = include_bytes!("../icons/meet-aiTemplate@2x.png");
 const OPEN_ITEM: &str = "tray-open-window";
 const TOGGLE_ITEM: &str = "tray-toggle-recording";
 const QUIT_ITEM: &str = "tray-quit";
+/// The tray's id; `lifecycle.rs` looks it up by the same name.
+const TRAY_ID: &str = "meet-ai";
 
 /// Put meet-ai in the menu bar.
 ///
@@ -48,15 +59,17 @@ pub fn init(app: &AppHandle) {
 
 fn build(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItemBuilder::with_id(TOGGLE_ITEM, label_for(Phase::Idle)).build(app)?;
-    let menu = MenuBuilder::new(app)
-        .item(&MenuItemBuilder::with_id(OPEN_ITEM, "Open meet-ai").build(app)?)
-        .separator()
-        .item(&toggle)
-        .separator()
-        .item(&MenuItemBuilder::with_id(QUIT_ITEM, "Quit meet-ai").build(app)?)
-        .build()?;
+    let fixed = today::Fixed {
+        open: MenuItemBuilder::with_id(OPEN_ITEM, "Open meet-ai").build(app)?,
+        toggle: toggle.clone(),
+        quit: MenuItemBuilder::with_id(QUIT_ITEM, "Quit meet-ai").build(app)?,
+    };
+    // "Today" reads "Reading your calendar…" until the worker's first read.
+    let first =
+        menu_model::build_menu_model(&menu_model::CalendarRead::Pending, &chrono::Local::now(), 0);
+    let menu = today::menu(app, &first, &fixed)?;
 
-    TrayIconBuilder::with_id("meet-ai")
+    TrayIconBuilder::with_id(TRAY_ID)
         .icon(Image::from_bytes(TEMPLATE_ICON)?)
         .icon_as_template(true)
         .tooltip("meet-ai")
@@ -69,6 +82,7 @@ fn build(app: &AppHandle) -> tauri::Result<()> {
         .build(app)?;
 
     watch_recording_state(app, toggle);
+    today::start(app, TRAY_ID, fixed);
     Ok(())
 }
 
@@ -113,6 +127,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         // toggle blocks for as long as the chime and Core Audio take.
         TOGGLE_ITEM => crate::spawn_toggle(app, "menu-bar toggle"),
         QUIT_ITEM => app.exit(0),
+        other if today::on_click(app, other) => {}
         other => tracing::warn!(item = other, "unknown menu-bar item"),
     }
 }

@@ -301,6 +301,16 @@ export const commands = {
 	 *  the user can find the one file to attach to a bug report.
 	 */
 	openLogsFolder: () => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("open_logs_folder")),
+	/**
+	 *  `app.menu_bar_countdown` (TUR-77): whether the next meeting shows next to
+	 *  the menu-bar icon.
+	 */
+	menuBarCountdown: () => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("menu_bar_countdown")),
+	/**
+	 *  Save "Show next meeting in the menu bar" and return it as saved. The menu
+	 *  bar picks it up at once rather than at its next minute.
+	 */
+	setMenuBarCountdown: (show: boolean) => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_menu_bar_countdown", { show })),
 };
 
 /* Constants */
@@ -311,6 +321,8 @@ export const DETECTION_PROMPT_EVENT = "detection://prompt" as const;
 export const MEETINGS_CHANGED_EVENT = "meetings-changed" as const;
 
 export const MODEL_PROGRESS_EVENT = "model://progress" as const;
+
+export const NAVIGATE_EVENT = "app://navigate" as const;
 
 export const PERMISSION_STATUS_EVENT = "permission://status" as const;
 
@@ -699,6 +711,13 @@ export type meet_ai_lib_engine_ModelView = {
 	/**  Why this is the model to pick on this Mac, set on that one row only. */
 	recommended: string | null,
 };
+
+/**  A screen Rust sends the window to, on [`NAVIGATE_EVENT`] (TUR-77). */
+export type meet_ai_lib_lifecycle_NavigateTo = 
+/**  The pre-meeting brief for the meeting called `title` (TUR-32). */
+{ to: "brief"; title: string } | 
+/**  Settings, where the calendar is connected. */
+{ to: "settings" };
 
 export type meet_ai_lib_agent_run_NotesSection = {
 	heading: string,

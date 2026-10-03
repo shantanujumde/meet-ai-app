@@ -102,6 +102,8 @@ pub fn run() {
         .manage(retention::AudioRetention::default())
         // TUR-76: closing the main window hides it rather than quitting.
         .manage(lifecycle::Lifecycle::default())
+        // TUR-77: the menu bar's Record names the meeting from the event clicked.
+        .manage(recording::auto_title::PinnedEvent::default())
         .on_window_event(lifecycle::on_window_event)
         .setup(|_app| {
             // TUR-46: first, so a panic anywhere below leaves a crash file.

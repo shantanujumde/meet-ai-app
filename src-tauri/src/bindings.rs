@@ -12,6 +12,7 @@ use crate::agent_setup;
 use crate::brief;
 use crate::events::AGENT_RUN_STATUS_EVENT;
 use crate::events::DETECTION_PROMPT_EVENT;
+use crate::events::NAVIGATE_EVENT;
 use crate::events::QUIT_CONFIRM_EVENT;
 use crate::events::{
     MEETINGS_CHANGED_EVENT, MODEL_PROGRESS_EVENT, PERMISSION_STATUS_EVENT, RECORDING_STATE_EVENT,
@@ -78,6 +79,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::lifecycle::app_settings,
             crate::lifecycle::set_show_in_dock_when_closed,
             crate::logs::open_logs_folder,
+            crate::lifecycle::menu_bar_countdown,
+            crate::lifecycle::set_menu_bar_countdown,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)
@@ -88,7 +91,9 @@ pub fn builder() -> Builder<tauri::Wry> {
         .constant("AGENT_RUN_STATUS_EVENT", AGENT_RUN_STATUS_EVENT)
         .constant("DETECTION_PROMPT_EVENT", DETECTION_PROMPT_EVENT)
         .constant("QUIT_CONFIRM_EVENT", QUIT_CONFIRM_EVENT)
+        .constant("NAVIGATE_EVENT", NAVIGATE_EVENT)
         .typ::<crate::detection::notify::Prompt>()
+        .typ::<crate::lifecycle::NavigateTo>()
 }
 
 #[cfg(test)]

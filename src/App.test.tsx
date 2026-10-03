@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, expect, test, vi } from "vitest";
 import {
   MEETINGS_CHANGED_EVENT,
+  NAVIGATE_EVENT,
   PERMISSION_STATUS_EVENT,
   RECORDING_STATE_EVENT,
 } from "@/ipc/client";
@@ -511,4 +512,24 @@ test("a meeting's attendees show under its title, and a meeting with none shows 
   const names = await screen.findByText("Shantanu, Priya, dev@example.com");
   expect(names.closest("button")?.textContent).toMatch(/Platform Standup/);
   expect(screen.getAllByText(/Shantanu, Priya/)).toHaveLength(1);
+});
+
+test("the menu bar's Open brief and Calendar not connected open those screens", async () => {
+  await renderFinishedApp();
+  await waitFor(() => expect(listening(NAVIGATE_EVENT)).toBe(true));
+
+  act(() => emit(NAVIGATE_EVENT, { to: "brief", title: "Weekly sync" }));
+  await waitFor(() => expect(window.location.hash).toBe("#/brief?title=Weekly+sync"));
+
+  act(() => emit(NAVIGATE_EVENT, { to: "settings" }));
+  await waitFor(() => expect(window.location.hash).toBe("#/settings"));
+});
+
+test("a navigation from the menu bar does not pull a user out of setup", async () => {
+  render(<App />);
+  await waitFor(() => expect(window.location.hash).toBe("#/onboarding"));
+  await waitFor(() => expect(listening(NAVIGATE_EVENT)).toBe(true));
+
+  act(() => emit(NAVIGATE_EVENT, { to: "settings" }));
+  expect(window.location.hash).toBe("#/onboarding");
 });

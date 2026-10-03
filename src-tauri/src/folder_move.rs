@@ -48,6 +48,18 @@ pub fn toggle_recording(app: &AppHandle) -> Result<Status, UiError> {
     )
 }
 
+/// `Recorder::start`, through the gate: the menu bar's **Record** for one
+/// meeting (TUR-77). Starts only from idle; a recording already going is
+/// left alone rather than stopped, which a toggle would do.
+pub fn start_recording(app: &AppHandle) -> Result<Status, UiError> {
+    let recorder = app.state::<Recorder>();
+    gated_toggle(
+        &app.state::<FolderGate>(),
+        || recorder.start(app),
+        |refused| recorder.refuse_start(app, refused),
+    )
+}
+
 /// [`toggle_recording`] without the `AppHandle`, so the refusal path is
 /// testable: `toggle` runs only if the gate lets it, and `refused` hears
 /// the gate's reason when it does not.

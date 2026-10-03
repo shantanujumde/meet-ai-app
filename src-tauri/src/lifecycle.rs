@@ -27,6 +27,7 @@ use tauri::{AppHandle, Emitter as _, Manager as _, RunEvent, Window, WindowEvent
 
 use crate::config::{self, AppConfig};
 use crate::error::UiError;
+use crate::events::NAVIGATE_EVENT;
 use crate::events::QUIT_CONFIRM_EVENT;
 use crate::folder_move::FolderGate;
 use crate::platform;
@@ -240,6 +241,24 @@ fn hide_main_window(app: &AppHandle) {
     }
 }
 
+/// A screen Rust sends the window to, on [`NAVIGATE_EVENT`] (TUR-77).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(tag = "to", rename_all = "camelCase")]
+pub enum NavigateTo {
+    /// The pre-meeting brief for the meeting called `title` (TUR-32).
+    Brief { title: String },
+    /// Settings, where the calendar is connected.
+    Settings,
+}
+
+/// Bring the main window back and send it to `to`.
+pub fn navigate(app: &AppHandle, to: NavigateTo) {
+    show_main_window(app);
+    if let Err(error) = app.emit(NAVIGATE_EVENT, &to) {
+        tracing::warn!(%error, "could not send the window to a screen");
+    }
+}
+
 /// Show the window and ask "Stop recording and quit?" there.
 fn ask_before_quitting(app: &AppHandle) {
     tracing::info!("quit while recording; asking first");
@@ -298,11 +317,42 @@ pub async fn set_show_in_dock_when_closed(
         app.state::<FolderGate>().writing(|| {
             let saved = config::set_app(&AppConfig {
                 show_in_dock_when_closed: show,
+                // TUR-77: the other `app` keys stay as they are.
+                ..config::app()
             })?;
             Ok(AppSettings::from(saved))
         })
     })
     .await?
+}
+
+/// `app.menu_bar_countdown` (TUR-77): whether the next meeting shows next to
+/// the menu-bar icon.
+#[tauri::command]
+#[specta::specta]
+pub async fn menu_bar_countdown() -> Result<bool, UiError> {
+    on_blocking_pool(|| config::app().menu_bar_countdown).await
+}
+
+/// Save "Show next meeting in the menu bar" and return it as saved. The menu
+/// bar picks it up at once rather than at its next minute.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_menu_bar_countdown(app: AppHandle, show: bool) -> Result<bool, UiError> {
+    let handle = app.clone();
+    let saved = on_blocking_pool(move || {
+        handle.state::<FolderGate>().writing(|| {
+            let saved = config::set_app(&AppConfig {
+                menu_bar_countdown: show,
+                ..config::app()
+            })?;
+            Ok(saved.menu_bar_countdown)
+        })
+    })
+    .await??;
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    crate::tray::redraw_soon(&app);
+    Ok(saved)
 }
 
 async fn on_blocking_pool<T: Send + 'static>(
@@ -394,6 +444,7 @@ mod tests {
         assert!(!dock_visible_when_hidden(AppConfig::default()));
         assert!(dock_visible_when_hidden(AppConfig {
             show_in_dock_when_closed: true,
+            ..AppConfig::default()
         }));
     }
 
@@ -401,10 +452,26 @@ mod tests {
     fn the_settings_reach_the_window_in_camel_case() {
         let settings = AppSettings::from(AppConfig {
             show_in_dock_when_closed: true,
+            ..AppConfig::default()
         });
         assert_eq!(
             serde_json::to_value(settings).unwrap(),
             serde_json::json!({ "showInDockWhenClosed": true })
+        );
+    }
+
+    #[test]
+    fn a_navigation_reaches_the_window_tagged_by_screen() {
+        assert_eq!(
+            serde_json::to_value(NavigateTo::Brief {
+                title: "Weekly sync".into()
+            })
+            .unwrap(),
+            serde_json::json!({ "to": "brief", "title": "Weekly sync" })
+        );
+        assert_eq!(
+            serde_json::to_value(NavigateTo::Settings).unwrap(),
+            serde_json::json!({ "to": "settings" })
         );
     }
 }

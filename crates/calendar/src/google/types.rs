@@ -53,6 +53,12 @@ pub struct Event {
     pub ical_uid: Option<String>,
     #[serde(default)]
     pub attendees: Option<Vec<Attendee>>,
+    /// The Google Meet link Google adds to a Meet event (TUR-77).
+    #[serde(default)]
+    pub hangout_link: Option<String>,
+    /// Any conference on the event, Meet or an add-on like Zoom (TUR-77).
+    #[serde(default)]
+    pub conference_data: Option<ConferenceData>,
 }
 
 /// A start or end: `date_time` for a timed event, `date` alone for an
@@ -118,4 +124,23 @@ pub struct ErrorBody {
 pub struct ErrorItem {
     #[serde(default)]
     pub reason: Option<String>,
+}
+
+/// An event's conference: Meet, or an add-on such as Zoom (TUR-77). Only its
+/// entry points are read.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConferenceData {
+    #[serde(default)]
+    pub entry_points: Vec<EntryPoint>,
+}
+
+/// One way into a conference: `video` (the link), `phone`, `sip` or `more`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryPoint {
+    #[serde(default)]
+    pub entry_point_type: Option<String>,
+    #[serde(default)]
+    pub uri: Option<String>,
 }

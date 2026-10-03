@@ -48,6 +48,7 @@ fn event(id: &str, title: &str, start: DateTime<Utc>, minutes: i64, people: &[&s
         all_day: false,
         attendees: people.iter().map(|name| person(name)).collect(),
         ical_uid: None,
+        join_url: None,
     }
 }
 
@@ -234,4 +235,41 @@ fn the_apps_calendar_state_names_the_meeting_through_the_same_path() {
         unreachable!("nothing to write for a denied calendar")
     });
     assert!(matches!(outcome, Outcome::Unreadable(_)), "{outcome:?}");
+}
+
+/// TUR-77: the menu bar's Record names the meeting from the event it was
+/// clicked for, even one hours away that `pick_event` would never choose.
+#[test]
+fn a_pinned_event_names_the_meeting_whenever_it_is() {
+    let root = meetings_root();
+    let later = ::calendar::raw::to_events(
+        [event("LATER", "Later call", at(15, 0), 30, &["A", "B"])],
+        at(0, 0),
+        at(23, 59),
+    );
+    let outcome = name_from(&later[0], |event| {
+        store::meeting_event::apply(root.path(), ID, event).map_err(UiError::from)
+    });
+    assert_eq!(outcome, named("LATER"));
+    assert_eq!(
+        meeting(root.path()).unwrap().title().as_deref(),
+        Some("Later call")
+    );
+}
+
+#[test]
+fn a_pin_is_taken_once_and_can_be_cleared() {
+    let events = ::calendar::raw::to_events(
+        [event("E", "Call", at(10, 0), 30, &["A", "B"])],
+        at(0, 0),
+        at(23, 59),
+    );
+    let pin = PinnedEvent::default();
+    pin.pin(events[0].clone());
+    assert_eq!(pin.take().map(|e| e.id), Some("E".to_string()));
+    assert_eq!(pin.take(), None, "taken by one start only");
+
+    pin.pin(events[0].clone());
+    pin.clear();
+    assert_eq!(pin.take(), None, "a refused start leaves nothing behind");
 }

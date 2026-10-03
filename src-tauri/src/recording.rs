@@ -40,7 +40,7 @@
 //! arrive apart or out of order, and the interrupted-recording notification
 //! is built from that status too.
 
-mod auto_title;
+pub(crate) mod auto_title;
 mod phase;
 mod ticker;
 

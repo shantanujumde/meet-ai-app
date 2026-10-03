@@ -226,6 +226,9 @@ pub async fn todays_meetings(app: AppHandle) -> Result<TodaysMeetings, UiError> 
         let min_attendees = config::detection().min_attendees;
         let (from, to) = today_bounds(&Local::now());
         let events = app.state::<CalendarState>().events_between(from, to)?;
+        // TUR-77: the menu bar's Today follows a fresh read (a grant, an edit).
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        crate::tray::reread_soon(&app);
         Ok(TodaysMeetings::new(events, refresh_minutes, min_attendees))
     })
     .await

@@ -11,7 +11,7 @@
 
 import { useEffect, useRef } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
-import { onMeetingsChanged } from "@/ipc/client";
+import { onMeetingsChanged, onNavigate } from "@/ipc/client";
 import type { RecordingPhase } from "@/ipc/types";
 import { isRevisit } from "@/lib/permissionRoute";
 import { changesMeetingList } from "@/lib/recordingPhase";
@@ -20,6 +20,7 @@ import {
   isOnboardingPath,
   MEETINGS,
   meetingPath,
+  navigationPath,
   ONBOARDING,
   SETTINGS,
   TICKETS,
@@ -133,6 +134,15 @@ function Bootstrap() {
       void loadMeetings({ silent: true });
     });
   }, [loadMeetings]);
+
+  // TUR-77: the menu bar's "Open brief" and "Calendar not connected" open
+  // the window on a screen. Not during setup, which keeps the user inside.
+  useEffect(() => {
+    return onNavigate((to) => {
+      if (useAppStore.getState().onboarding?.completedAt === null) return;
+      navigate(navigationPath(to));
+    });
+  }, [navigate]);
 
   // Refs, not effect state: `navigate` changes identity with every location
   // change, so the effect below re-subscribes often, and the meeting already
