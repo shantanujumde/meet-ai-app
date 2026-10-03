@@ -235,6 +235,8 @@ export const commands = {
 /* Constants */
 export const AGENT_RUN_STATUS_EVENT = "agent-run://status" as const;
 
+export const DETECTION_PROMPT_EVENT = "detection://prompt" as const;
+
 export const MEETINGS_CHANGED_EVENT = "meetings-changed" as const;
 
 export const MODEL_PROGRESS_EVENT = "model://progress" as const;
@@ -550,6 +552,14 @@ export type meet_ai_lib_permission_Pane =
  */
 export type meet_ai_lib_recording_phase_Phase = "idle" | "starting" | "recording" | "stopping";
 
+/**  What the window hears on [`DETECTION_PROMPT_EVENT`]. */
+export type meet_ai_lib_detection_notify_Prompt = {
+	/**  What was noticed. */
+	signal: detect_Signal,
+	/**  Why the user is being asked, as one sentence: "Zoom is open." */
+	reason: string,
+};
+
 /**
  *  How a meeting's recording ended, as the UI names it (TUR-97).
  * 
@@ -600,6 +610,23 @@ export type meet_ai_lib_engine_SelectionView = {
  *  reports it as set up.
  */
 export type meet_ai_lib_sync_tracker_ServerStatus = "connected" | "needs_auth" | "failed" | "pending" | "disabled" | "configured" | "unknown";
+
+/**
+ *  Why meet-ai thinks a meeting is happening.
+ * 
+ *  Carried through to the notification copy, so the user is told *why* they are
+ *  being asked rather than just being asked.
+ */
+export type detect_Signal = 
+/**  A calendar event with enough attendees is starting. */
+{ kind: "calendar"; title: string; attendees: number } | 
+/**
+ *  A known meeting application is running. `process` is its name as
+ *  `processes.json` spells it, e.g. `zoom.us`.
+ */
+{ kind: "process"; process: string } | 
+/**  Something is playing audio through the default output device. */
+{ kind: "audio_activity" };
 
 /**
  *  What the `live_transcript` command returns: enough for a window opened

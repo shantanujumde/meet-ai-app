@@ -9,6 +9,10 @@ version.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+# Not optional, unlike `stt`'s: `Signal` rides on the `detection://prompt`
+# event, so the app always needs its TypeScript shape, and making it a feature
+# would mean editing the app's existing `detect` dependency line.
+specta.workspace = true
 sysinfo.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

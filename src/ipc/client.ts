@@ -18,8 +18,10 @@ import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
 import {
   AGENT_RUN_STATUS_EVENT,
   commands,
+  DETECTION_PROMPT_EVENT,
   MEETINGS_CHANGED_EVENT,
   MODEL_PROGRESS_EVENT,
+  type meet_ai_lib_detection_notify_Prompt,
   PERMISSION_STATUS_EVENT,
   RECORDING_STATE_EVENT,
   TRANSCRIPT_STATUS_EVENT,
@@ -65,6 +67,7 @@ import { toUiError } from "./types";
  */
 export {
   AGENT_RUN_STATUS_EVENT,
+  DETECTION_PROMPT_EVENT,
   MEETINGS_CHANGED_EVENT,
   MODEL_PROGRESS_EVENT,
   PERMISSION_STATUS_EVENT,
@@ -519,4 +522,14 @@ export function onMeetingsChanged(handler: (change: MeetingsChanged) => void): (
 /** Every notes-run change, for every meeting — filter by `meetingId`. */
 export function onNotesRunStatus(handler: (status: NotesRunStatus) => void): () => void {
   return subscribe<NotesRunStatus>(AGENT_RUN_STATUS_EVENT, handler);
+}
+
+/**
+ * A meeting looks like it started and meet-ai is asking whether to record it
+ * (TUR-27): what was noticed (`signal`), and why, as one sentence (`reason`).
+ */
+export type DetectionPrompt = meet_ai_lib_detection_notify_Prompt;
+
+export function onDetectionPrompt(handler: (prompt: DetectionPrompt) => void): () => void {
+  return subscribe<DetectionPrompt>(DETECTION_PROMPT_EVENT, handler);
 }

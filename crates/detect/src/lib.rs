@@ -1,30 +1,55 @@
 //! Meeting detection for meet-ai.
 //!
-//! Phase 5a territory (SPEC §5). Nothing is implemented yet.
-//!
 //! L15: detection never starts a recording on its own. It notifies, and the user
 //! confirms. SPEC §2.3 also rules browser-based meetings out of v1 — Google Meet
 //! in a tab is not detectable without a browser extension, and calendar plus
 //! audio activity covers it.
+//!
+//! - [`processes`]: which process names are meeting apps (`processes.json`).
+//! - [`detector`]: when a running app is worth asking about (TUR-27's rules).
+//! - [`poll`]: the loop that reads the process list and emits [`Signal`]s.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
-/// Process names that mean a meeting app is running (SPEC §2.3).
-pub const MEETING_PROCESSES: &[&str] = &["zoom.us", "Microsoft Teams", "Webex", "Slack", "Discord"];
+pub mod detector;
+pub mod poll;
+pub mod processes;
+
+pub use detector::{CALL_SIGNAL_WINDOW, Detector, RunningProcess};
+pub use poll::{DetectionLoop, POLL_INTERVAL, ProcessSource, SysinfoProcesses, spawn};
 
 /// Why meet-ai thinks a meeting is happening.
 ///
 /// Carried through to the notification copy, so the user is told *why* they are
 /// being asked rather than just being asked.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Signal {
     /// A calendar event with enough attendees is starting.
-    Calendar { title: String, attendees: usize },
-    /// A known meeting application is running.
+    Calendar {
+        title: String,
+        #[specta(type = u32)]
+        attendees: usize,
+    },
+    /// A known meeting application is running. `process` is its name as
+    /// `processes.json` spells it, e.g. `zoom.us`.
     Process { process: String },
     /// Something is playing audio through the default output device.
     AudioActivity,
+}
+
+impl Signal {
+    /// One sentence saying why the user is being asked, for the notification
+    /// and the in-app prompt: "Zoom is open."
+    pub fn reason(&self) -> String {
+        match self {
+            Self::Calendar { title, attendees } => {
+                format!("“{title}” is starting, with {attendees} people invited.")
+            }
+            Self::Process { process } => format!("{} is open.", processes::label(process)),
+            Self::AudioActivity => "Something on your Mac is playing audio.".to_string(),
+        }
+    }
 }
 
 /// Everything that can go wrong while detecting.
@@ -40,7 +65,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_meeting_process_list_is_not_empty() {
-        assert!(MEETING_PROCESSES.contains(&"zoom.us"));
+    fn the_reason_names_the_app_by_its_label() {
+        let zoom = Signal::Process {
+            process: "zoom.us".to_string(),
+        };
+        assert_eq!(zoom.reason(), "Zoom is open.");
+        let teams = Signal::Process {
+            process: "Microsoft Teams".to_string(),
+        };
+        assert_eq!(teams.reason(), "Microsoft Teams is open.");
+    }
+
+    #[test]
+    fn every_signal_has_a_reason() {
+        let calendar = Signal::Calendar {
+            title: "Standup".to_string(),
+            attendees: 4,
+        };
+        assert!(calendar.reason().contains("Standup"));
+        assert!(calendar.reason().contains('4'));
+        assert!(!Signal::AudioActivity.reason().is_empty());
+    }
+
+    #[test]
+    fn a_signal_serialises_with_its_kind() {
+        let zoom = Signal::Process {
+            process: "zoom.us".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_value(&zoom).expect("serialises"),
+            serde_json::json!({ "kind": "process", "process": "zoom.us" })
+        );
     }
 }

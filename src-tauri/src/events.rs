@@ -27,3 +27,7 @@ pub const MEETINGS_CHANGED_EVENT: &str = "meetings-changed";
 
 /// A meeting's notes run changed state (TUR-10): `agent_run::Status`.
 pub const AGENT_RUN_STATUS_EVENT: &str = "agent-run://status";
+
+/// A meeting looks like it started and meet-ai is asking whether to record it
+/// (TUR-27): `detection::notify::Prompt`, the `Signal` and the reason.
+pub const DETECTION_PROMPT_EVENT: &str = "detection://prompt";

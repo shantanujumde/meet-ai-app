@@ -1,0 +1,90 @@
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
+import { describe, expect, test, vi } from "vitest";
+import { DETECTION_PROMPT_EVENT, type DetectionPrompt as Prompt } from "@/ipc/client";
+import type { RecordingStatus } from "@/ipc/types";
+import { ONBOARDING } from "@/lib/routes";
+import { useRecordingStore } from "@/state/recording";
+import { emit, ipc } from "@/test/ipcMock";
+import { DetectionPrompt } from "./DetectionPrompt";
+
+vi.mock("@/ipc/client", async (importOriginal) =>
+  (await import("@/test/ipcMock")).mockClient(await importOriginal()),
+);
+
+const ZOOM: Prompt = {
+  signal: { kind: "process", process: "zoom.us" },
+  reason: "Zoom is open.",
+};
+
+const RECORDING: RecordingStatus = {
+  phase: "recording",
+  meetingId: "2026-10-03-1800-meeting",
+  startedAtMs: 1,
+  error: null,
+};
+
+function show(path = "/meetings") {
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <DetectionPrompt />
+    </MemoryRouter>,
+  );
+}
+
+function prompt(payload: Prompt = ZOOM) {
+  act(() => emit(DETECTION_PROMPT_EVENT, payload));
+}
+
+describe("DetectionPrompt", () => {
+  test("shows nothing until Rust asks", () => {
+    show();
+    expect(screen.queryByRole("region")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Record" })).toBeNull();
+  });
+
+  test("says why it is asking, and Record starts a recording", async () => {
+    show();
+    prompt();
+
+    expect(screen.getByRole("region", { name: "Record this meeting?" })).toBeTruthy();
+    expect(screen.getByText("Zoom is open.")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Record" }));
+    });
+    expect(ipc.toggleRecording).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("region")).toBeNull();
+  });
+
+  test("Dismiss closes it without recording", () => {
+    show();
+    prompt();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("region")).toBeNull();
+    expect(ipc.toggleRecording).not.toHaveBeenCalled();
+  });
+
+  test("no prompt while recording", () => {
+    useRecordingStore.setState({ status: RECORDING });
+    show();
+    prompt();
+    expect(screen.queryByRole("region")).toBeNull();
+  });
+
+  test("a recording started elsewhere answers the prompt", () => {
+    show();
+    prompt();
+    act(() => useRecordingStore.setState({ status: RECORDING }));
+    expect(screen.queryByRole("region")).toBeNull();
+    // And it does not come back when that recording ends.
+    act(() => useRecordingStore.setState({ status: { ...RECORDING, phase: "idle" } }));
+    expect(screen.queryByRole("region")).toBeNull();
+  });
+
+  test("waits while onboarding owns the window", () => {
+    show(ONBOARDING);
+    prompt();
+    expect(screen.queryByRole("region")).toBeNull();
+  });
+});

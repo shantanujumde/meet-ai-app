@@ -1,0 +1,7 @@
+[
+  { "name": "zoom.us", "label": "Zoom", "needs_call_signal": false },
+  { "name": "Microsoft Teams", "label": "Microsoft Teams", "needs_call_signal": false },
+  { "name": "Webex", "label": "Webex", "needs_call_signal": false },
+  { "name": "Slack", "label": "Slack", "needs_call_signal": true },
+  { "name": "Discord", "label": "Discord", "needs_call_signal": true }
+]

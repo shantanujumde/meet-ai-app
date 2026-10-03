@@ -31,12 +31,15 @@ import { Tickets } from "@/routes/Tickets";
 import { useAppStore, watchPermissionStatus } from "@/state/app";
 import { useRecordingStore, watchRecordingState } from "@/state/recording";
 import { watchLiveTranscript } from "@/state/transcript";
+import { DetectionPrompt } from "@/ui/DetectionPrompt";
 import { Shell } from "@/ui/Shell";
 
 export function App() {
   return (
     <HashRouter>
       <Bootstrap />
+      {/* TUR-27: "Record this meeting?" when a meeting app opens. */}
+      <DetectionPrompt />
       <Routes>
         <Route element={<Shell />}>
           <Route index element={<Navigate to={MEETINGS} replace />} />
