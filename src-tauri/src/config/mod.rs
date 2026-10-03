@@ -33,6 +33,9 @@
 //! [`detection_section`]) ahead of Phase 6 for the calendar refresh and
 //! detection loops. They behave like `transcription`: a bad value is logged
 //! and the defaults are used, so startup never fails on them.
+//!
+//! TUR-45 added the `audio` reader ([`audio_section`]) for the retention job,
+//! with the same rule.
 
 use std::path::PathBuf;
 
@@ -46,11 +49,13 @@ use crate::error::UiError;
 mod agent_section;
 #[cfg(test)]
 mod agent_tests;
+mod audio_section;
 mod calendar_section;
 mod detection_section;
 mod file;
 
 pub use agent_section::ConfigError;
+pub use audio_section::audio;
 // TUR-28 (calendar refresh loop) uses these.
 #[allow(unused_imports)]
 pub use calendar_section::{CalendarConfig, Provider, calendar, parse_calendar};
