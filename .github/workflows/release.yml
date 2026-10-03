@@ -4,12 +4,11 @@
 # 1. Every push to main runs `check`. When `check` passes, this workflow runs.
 # 2. release-please reads the Conventional Commit titles merged since the last
 #    tag and opens or updates one release PR. That PR bumps the version in
-#    Cargo.toml, package.json and src-tauri/tauri.conf.json, and adds a
-#    CHANGELOG.md entry above the existing text. Config:
-#    release-please-config.json and .release-please-manifest.json.
-#    `release-pr-fixups` then refreshes Cargo.lock on that PR's branch (every
-#    workspace crate inherits the version) and re-formats the JSON files
-#    release-please rewrote.
+#    Cargo.toml and package.json (src-tauri/tauri.conf.json reads it from
+#    package.json), and adds a CHANGELOG.md entry above the existing text.
+#    It also bumps the workspace crates in Cargo.lock: every one of them
+#    inherits the workspace version. Config: release-please-config.json and
+#    .release-please-manifest.json.
 # 3. Merging the release PR makes release-please tag vX.Y.Z and create the
 #    GitHub release. Only then do `build` and `publish` run: build and sign
 #    the app with the one persistent identity, re-check the signature, zip it,
@@ -63,7 +62,6 @@ jobs:
       tag_name: ${{ steps.rp.outputs.tag_name }}
       version: ${{ steps.rp.outputs.version }}
       sha: ${{ steps.rp.outputs.sha }}
-      pr: ${{ steps.rp.outputs.pr }}
     steps:
       # RELEASE_PLEASE_TOKEN is optional (a fine-grained PAT with contents and
       # pull-requests write on this repo). With it, `check` runs on the
@@ -77,82 +75,6 @@ jobs:
           target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-
-  # Two things the release PR needs that release-please does not do:
-  # - Cargo.lock: every workspace crate inherits the bumped version
-  #   (RELEASING.md "Bump the version").
-  # - Formatting: release-please rewrites tauri.conf.json with JSON.stringify,
-  #   which splits its one-line arrays, and `biome check` in `check` rejects
-  #   that. Biome puts them back.
-  # release-please force-pushes its branch on every update, so this runs
-  # again each time it does.
-  release-pr-fixups:
-    needs: release-please
-    if: needs.release-please.outputs.pr != ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - name: Release PR branch
-        id: branch
-        env:
-          PR_JSON: ${{ needs.release-please.outputs.pr }}
-        run: |
-          branch="$(jq -r '.headBranchName // empty' <<<"$PR_JSON")"
-          if [[ -z "$branch" ]]; then
-            echo "release-please output has no headBranchName" >&2
-            exit 1
-          fi
-          echo "name=$branch" >> "$GITHUB_OUTPUT"
-
-      # No stored credentials: pnpm install runs package scripts, and they
-      # should not find a write token in .git/config. The push below passes
-      # the token itself.
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ steps.branch.outputs.name }}
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        run: |
-          rustup toolchain install
-          cargo --version
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install JS dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Refresh Cargo.lock and format the bumped files
-        run: |
-          cargo metadata --format-version 1 > /dev/null
-          pnpm exec biome format --write package.json src-tauri/tauri.conf.json
-
-      # RELEASE_PLEASE_TOKEN, when set, makes this push start `check` on the
-      # release PR as well (see the release-please step).
-      - name: Commit if anything changed
-        env:
-          BRANCH: ${{ steps.branch.outputs.name }}
-          REPO: ${{ github.repository }}
-          PUSH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-        run: |
-          files=(Cargo.lock package.json src-tauri/tauri.conf.json)
-          if git diff --quiet -- "${files[@]}"; then
-            echo "Release PR needs no fixups."
-            exit 0
-          fi
-          git diff --stat -- "${files[@]}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- "${files[@]}"
-          git commit -m "chore(release): refresh Cargo.lock and format version files"
-          git push "https://x-access-token:${PUSH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/$BRANCH"
 
   build:
     needs: release-please
@@ -192,7 +114,9 @@ jobs:
           ref: ${{ needs.release-please.outputs.sha }}
           persist-credentials: false
 
-      - name: Version in all three files is the release version
+      # tauri.conf.json takes its version from package.json
+      # ("version": "../package.json"), so it has no number of its own.
+      - name: Version files hold the release version
         run: |
           python3 - <<'PY'
           import json, os, sys, tomllib
@@ -200,8 +124,10 @@ jobs:
           found = {
               "Cargo.toml": tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"],
               "package.json": json.load(open("package.json"))["version"],
-              "src-tauri/tauri.conf.json": json.load(open("src-tauri/tauri.conf.json"))["version"],
           }
+          tauri = json.load(open("src-tauri/tauri.conf.json"))["version"]
+          if tauri != "../package.json":
+              found["src-tauri/tauri.conf.json"] = tauri
           bad = {k: v for k, v in found.items() if v != want}
           for k, v in bad.items():
               print(f"::error file={k}::version is {v}, release is {want}")
