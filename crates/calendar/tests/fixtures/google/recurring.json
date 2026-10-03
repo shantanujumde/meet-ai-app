@@ -1,0 +1,50 @@
+{
+  "items": [
+    {
+      "id": "oneonone_20261005T093000Z",
+      "status": "confirmed",
+      "summary": "1:1 with Priya",
+      "start": { "dateTime": "2026-10-05T09:30:00Z" },
+      "end": { "dateTime": "2026-10-05T10:00:00Z" },
+      "recurringEventId": "oneonone",
+      "iCalUID": "oneonone@google.com",
+      "attendees": [
+        { "email": "me@example.com", "self": true, "responseStatus": "accepted" },
+        { "email": "priya@example.com", "displayName": "Priya", "responseStatus": "accepted" }
+      ]
+    },
+    {
+      "id": "oneonone_20261006T093000Z",
+      "status": "cancelled",
+      "recurringEventId": "oneonone",
+      "start": { "dateTime": "2026-10-06T09:30:00Z" },
+      "end": { "dateTime": "2026-10-06T10:00:00Z" }
+    },
+    {
+      "id": "oneonone_20261007T093000Z",
+      "status": "confirmed",
+      "summary": "1:1 with Priya (moved)",
+      "start": { "dateTime": "2026-10-07T11:00:00Z" },
+      "end": { "dateTime": "2026-10-07T11:30:00Z" },
+      "recurringEventId": "oneonone",
+      "iCalUID": "oneonone@google.com",
+      "attendees": [
+        { "email": "me@example.com", "self": true, "responseStatus": "accepted" },
+        { "email": "priya@example.com", "displayName": "Priya", "responseStatus": "accepted" }
+      ]
+    },
+    {
+      "id": "oneonone_20261008T093000Z",
+      "status": "confirmed",
+      "summary": "1:1 with Priya",
+      "start": { "dateTime": "2026-10-08T09:30:00Z" },
+      "end": { "dateTime": "2026-10-08T10:00:00Z" },
+      "recurringEventId": "oneonone",
+      "iCalUID": "oneonone@google.com",
+      "attendees": [
+        { "email": "me@example.com", "self": true, "responseStatus": "declined" },
+        { "email": "priya@example.com", "displayName": "Priya", "responseStatus": "accepted" }
+      ]
+    }
+  ]
+}

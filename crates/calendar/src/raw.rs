@@ -23,6 +23,9 @@ pub struct RawEvent {
     pub all_day: bool,
     #[serde(default)]
     pub attendees: Vec<RawAttendee>,
+    /// The iCalendar UID, when the provider gives one; see [`Event::ical_uid`].
+    #[serde(default)]
+    pub ical_uid: Option<String>,
 }
 
 /// One invitee as a provider read it.
@@ -63,7 +66,7 @@ pub fn to_events(
                 title: e.title,
                 start: e.start,
                 end: e.end,
-                ical_uid: None,
+                ical_uid: e.ical_uid,
             }
         })
         .collect();
@@ -138,6 +141,7 @@ mod tests {
             end,
             all_day: false,
             attendees: vec![],
+            ical_uid: None,
         }
     }
 

@@ -239,6 +239,9 @@ fn raw_event(event: &EKEvent) -> Option<RawEvent> {
             end,
             all_day: event.isAllDay(),
             attendees,
+            // EventKit's external identifier is not always the iCalendar UID
+            // (Exchange gives its own), so none rather than a wrong one.
+            ical_uid: None,
         })
     }
 }

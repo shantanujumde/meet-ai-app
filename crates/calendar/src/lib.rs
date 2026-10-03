@@ -23,6 +23,8 @@
 //! - [`microsoft`] (TUR-47, SPEC §2.7 tier 2): a Microsoft account's calendar
 //!   through Graph `calendarView`, on every OS, and [`windows_tz`], the
 //!   Windows → IANA time-zone table it reads Graph's zone names with.
+//! - [`google`] (TUR-48, SPEC §2.7 tier 3): a Google account's primary
+//!   calendar through `events.list` with `singleEvents=true`, on every OS.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
@@ -31,6 +33,7 @@ use chrono::{DateTime, Utc};
 pub mod eventkit;
 #[cfg(feature = "fake")]
 pub mod fake;
+pub mod google;
 pub mod matching;
 pub mod microsoft;
 pub mod oauth;

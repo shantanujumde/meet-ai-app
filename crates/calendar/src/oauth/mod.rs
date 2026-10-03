@@ -441,6 +441,19 @@ impl CalendarAuth {
         }
     }
 
+    /// The calendar API answered 401 with `rejected`: a fresh access token,
+    /// refreshed rather than cached. Both cloud providers' retry-once calls
+    /// this (Microsoft TUR-47, Google TUR-48), so the renewal is written once.
+    /// [`Error::SignInExpired`] when the refresh is refused.
+    pub fn renew_access_token(
+        &self,
+        provider: ProviderId,
+        rejected: &str,
+    ) -> Result<String, Error> {
+        self.reject_access_token(provider, rejected);
+        self.access_token(provider)
+    }
+
     /// Whether `provider` has a sign-in at all, working or expired: a
     /// refresh token in the keystore or in memory. No network, so the app can
     /// ask before every read which calendars to read (TUR-47).

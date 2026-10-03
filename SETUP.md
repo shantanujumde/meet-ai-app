@@ -211,6 +211,21 @@ that needs a running Secret Service (gnome-keyring or KWallet); without one,
 sign-in works until the app quits. Real sign-in, restart and refresh on each OS
 are in `docs/manual-checks/worktree-tur44.md`.
 
+**Reading the Google calendar (TUR-48).** Add `"google"` to
+`calendar.providers` (for example `["eventkit", "google"]`, or `["google"]`
+on Linux or a Mac whose Calendar app has no Google account). It is read only
+while signed in; until then it is skipped. The app reads the account's
+**primary** calendar with `events.list` (`singleEvents=true`, so each
+occurrence of a repeating meeting is its own event), under the read-only scope
+`calendar.events.readonly`. Cancelled, declined and all-day events are
+skipped. The first sign-in shows "Google hasn't verified this app": choose
+**Advanced → Go to … (unsafe)** once; this is expected for a client of your
+own (SPEC §7, accepted under L17). If today's meetings stop showing after
+about a week, the consent screen is still in *Testing*: switch it to
+**In production** and sign in again. A `403` naming `accessNotConfigured` in
+the log means the Google Calendar API is not enabled in that Cloud project.
+Real-account checks are in `docs/manual-checks/worktree-tur48.md`.
+
 ### 2.6 Runtime, logging, testing
 
 | Crate | Version | Notes |

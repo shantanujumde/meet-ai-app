@@ -51,11 +51,10 @@ impl Provider {
         }
     }
 
-    /// Whether this build can read the provider. EventKit and Microsoft
-    /// (TUR-47) are built; Google is a valid name that is skipped with a log
-    /// line until TUR-48.
+    /// Whether this build can read the provider. All three are built:
+    /// EventKit, Microsoft (TUR-47) and Google (TUR-48).
     pub fn is_available(self) -> bool {
-        matches!(self, Self::EventKit | Self::Microsoft)
+        matches!(self, Self::EventKit | Self::Google | Self::Microsoft)
     }
 
     fn from_config(name: &str) -> Result<Self, ConfigError> {
@@ -148,8 +147,8 @@ impl Default for CalendarConfig {
 
 impl CalendarConfig {
     /// The providers this build can read. A known provider that is not built
-    /// yet (google, microsoft) is logged as "not available yet" and
-    /// skipped, so the rest still work.
+    /// yet is logged as "not available yet" and skipped, so the rest still
+    /// work. Every provider is built today; the filter stays for the next one.
     pub fn available_providers(&self) -> Vec<Provider> {
         self.providers
             .iter()
@@ -422,17 +421,15 @@ mod tests {
     }
 
     #[test]
-    fn a_known_but_unbuilt_provider_is_skipped_not_rejected() {
+    fn every_known_provider_is_available_in_the_order_written() {
         let calendar = parse_calendar(
             r#"{ "calendar": { "providers": ["google", "eventkit", "microsoft"] } }"#,
         )
         .unwrap();
         assert_eq!(
             calendar.available_providers(),
-            vec![Provider::EventKit, Provider::Microsoft]
+            vec![Provider::Google, Provider::EventKit, Provider::Microsoft]
         );
-        let calendar = parse_calendar(r#"{ "calendar": { "providers": ["google"] } }"#).unwrap();
-        assert!(calendar.available_providers().is_empty());
     }
 
     #[test]

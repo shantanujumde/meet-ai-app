@@ -27,6 +27,7 @@ fn raw(id: &str, start: &str, end: &str, people: usize) -> RawEvent {
         end: at(end),
         all_day: false,
         attendees: (0..people).map(|i| person(&format!("P{i}"))).collect(),
+        ical_uid: None,
     }
 }
 
