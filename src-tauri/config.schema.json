@@ -17,6 +17,11 @@
           "type": "boolean",
           "description": "macOS: keep the Dock icon while the main window is closed. false = only the menu-bar item stays, like Granola.",
           "default": false
+        },
+        "menu_bar_countdown": {
+          "type": "boolean",
+          "description": "macOS: show the next meeting next to the menu-bar icon, like \"Weekly sync in 12m\", from an hour before it starts. Off by default.",
+          "default": false
         }
       }
     },

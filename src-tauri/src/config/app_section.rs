@@ -1,9 +1,10 @@
 //! The `app` section of `config.jsonc` (TUR-76): how meet-ai behaves as an
 //! app, apart from any one meeting.
 //!
-//! One key so far, `show_in_dock_when_closed`. Closing the main window hides
-//! it and leaves meet-ai running in the menu bar; on macOS the Dock icon goes
-//! with the window unless this is `true`.
+//! `show_in_dock_when_closed`: closing the main window hides it and leaves
+//! meet-ai running in the menu bar; on macOS the Dock icon goes with the
+//! window unless this is `true`. `menu_bar_countdown` (TUR-77): the next
+//! meeting's countdown next to the menu-bar icon.
 //!
 //! Like `detection`, the app-facing reader [`app`] logs a bad section and
 //! runs with the defaults, so a typo never stops the app from starting.
@@ -23,12 +24,16 @@ pub struct AppConfig {
     /// Keep the Dock icon while the main window is closed (macOS). Off by
     /// default: a closed window leaves only the menu-bar item, like Granola.
     pub show_in_dock_when_closed: bool,
+    /// Show the next meeting next to the menu-bar icon ("Weekly sync in
+    /// 12m") within an hour of its start (TUR-77, macOS). Off by default.
+    pub menu_bar_countdown: bool,
 }
 
 /// `app` as written. Every key optional, so a missing one is the default.
 #[derive(Debug, Default, Deserialize)]
 struct RawApp {
     show_in_dock_when_closed: Option<bool>,
+    menu_bar_countdown: Option<bool>,
 }
 
 /// `app` from the text of `config.jsonc`. Empty text, or no `app` key, is
@@ -42,6 +47,9 @@ pub fn parse_app(raw: &str) -> Result<AppConfig, ConfigError> {
         show_in_dock_when_closed: app
             .show_in_dock_when_closed
             .unwrap_or(defaults.show_in_dock_when_closed),
+        menu_bar_countdown: app
+            .menu_bar_countdown
+            .unwrap_or(defaults.menu_bar_countdown),
     })
 }
 
@@ -65,10 +73,13 @@ pub fn with_app(raw: &str, app: &AppConfig) -> Result<String, ConfigError> {
     with_section(
         raw,
         "app",
-        vec![(
-            "show_in_dock_when_closed",
-            app.show_in_dock_when_closed.into(),
-        )],
+        vec![
+            (
+                "show_in_dock_when_closed",
+                app.show_in_dock_when_closed.into(),
+            ),
+            ("menu_bar_countdown", app.menu_bar_countdown.into()),
+        ],
     )
 }
 
@@ -125,6 +136,7 @@ mod tests {
 }"#;
         let on = AppConfig {
             show_in_dock_when_closed: true,
+            ..AppConfig::default()
         };
         let written = with_app(raw, &on).unwrap();
         assert!(written.contains("// mine"), "{written}");
@@ -143,6 +155,7 @@ mod tests {
         let dir = temp.path().join("app-dir");
         let on = AppConfig {
             show_in_dock_when_closed: true,
+            ..AppConfig::default()
         };
         write_in(&dir, |raw| with_app(raw, &on)).unwrap();
         assert_eq!(parse_app(&read_in(&dir).unwrap()).unwrap(), on);
@@ -157,5 +170,35 @@ mod tests {
             key["default"],
             AppConfig::default().show_in_dock_when_closed
         );
+    }
+
+    #[test]
+    fn the_countdown_is_off_by_default_and_on_with_a_config_edit() {
+        assert!(!AppConfig::default().menu_bar_countdown);
+        let app = parse_app(r#"{ "app": { "menu_bar_countdown": true } }"#).unwrap();
+        assert!(app.menu_bar_countdown);
+        assert!(
+            !app.show_in_dock_when_closed,
+            "the other key keeps its default"
+        );
+        assert!(parse_app(r#"{ "app": { "menu_bar_countdown": 1 } }"#).is_err());
+    }
+
+    #[test]
+    fn saving_the_countdown_keeps_the_dock_switch() {
+        let both = AppConfig {
+            show_in_dock_when_closed: true,
+            menu_bar_countdown: true,
+        };
+        let written = with_app("", &both).unwrap();
+        assert_eq!(parse_app(&written).unwrap(), both);
+    }
+
+    #[test]
+    fn the_schema_countdown_default_matches_the_code_default() {
+        let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+        let key = &schema["properties"]["app"]["properties"]["menu_bar_countdown"];
+        assert_eq!(key["type"], "boolean");
+        assert_eq!(key["default"], AppConfig::default().menu_bar_countdown);
     }
 }
