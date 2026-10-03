@@ -16,6 +16,10 @@
 //! needs a 190 MB download. `just check` runs the Apple half and the pure-VAD
 //! half, which need nothing.
 
+// macOS only: the fixture WAVs are made with macOS `say`
+// (crates/audio/fixtures/generate.sh). TUR-50 makes it portable.
+#![cfg(target_os = "macos")]
+
 mod fixtures;
 
 use stt::sink::CollectingSink;

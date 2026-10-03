@@ -347,6 +347,9 @@ mod tests {
 
     #[test]
     fn golden_output_bytes_at_48k_and_44k1() {
+        if !crate::platform::F32_GOLDEN_HASHES {
+            return;
+        }
         for (rate, golden) in [(48_000u32, GOLDEN_48K), (44_100, GOLDEN_44K1)] {
             let out = resample_all(rate, &noisy_signal(rate as usize * 3, rate));
             assert_eq!((out.len(), fnv1a_f32(&out)), golden, "rate {rate}");
@@ -355,6 +358,9 @@ mod tests {
 
     #[test]
     fn golden_downmix_stereo_bytes() {
+        if !crate::platform::F32_GOLDEN_HASHES {
+            return;
+        }
         let mut out = Vec::new();
         downmix_to_mono(&noisy_signal(2 * 4096, 48_000), 2, &mut out);
         assert_eq!((out.len(), fnv1a_f32(&out)), GOLDEN_DOWNMIX);

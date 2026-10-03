@@ -14,6 +14,12 @@ path = "src/bin/meet-rec.rs"
 name = "drift-check"
 path = "src/bin/drift-check.rs"
 
+# Core Audio only, so it lives in an OS folder (rule R10) and Cargo needs its
+# path; on Windows and Linux it builds as a stub that says so (TUR-36).
+[[example]]
+name = "switch_output"
+path = "examples/macos/switch_output.rs"
+
 [dependencies]
 cpal.workspace = true
 hound.workspace = true

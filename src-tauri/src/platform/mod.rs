@@ -214,3 +214,45 @@ pub fn notifications_blocked(app: &AppHandle) -> bool {
         }
     }
 }
+
+/// Marks a test's fake CLI script executable (`sync/tests.rs`). Off Unix
+/// there is no mode bit to set, and no `/bin/sh` to run such a script with
+/// either; making those tests portable is TUR-54.
+#[cfg(all(test, unix))]
+pub(crate) fn make_executable(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+}
+
+/// Whether a test's fake agent CLI can run here: `agent::fake` and the
+/// `sync/tests.rs` scripts both need `/bin/sh`. Tests that start one return
+/// early where it is false, until TUR-54 makes the fakes portable.
+#[cfg(test)]
+pub(crate) const FAKE_CLI_RUNS: bool = cfg!(unix);
+
+/// First line of a test that starts a fake agent CLI: where
+/// [`FAKE_CLI_RUNS`] is false it says why on stderr and returns, so the CI
+/// log shows the skip instead of a silent `ok`. It writes to stderr directly
+/// because libtest hides `eprintln!` output of passing tests.
+#[cfg(test)]
+macro_rules! skip_without_fake_cli {
+    () => {
+        if !$crate::platform::FAKE_CLI_RUNS {
+            use std::io::Write as _;
+            let _ = writeln!(
+                std::io::stderr(),
+                "skipped {}: the fake agent CLI needs /bin/sh, which this OS lacks (TUR-54)",
+                module_path!()
+            );
+            return;
+        }
+    };
+}
+#[cfg(test)]
+pub(crate) use skip_without_fake_cli;
+
+/// See the Unix version: nothing to set here.
+#[cfg(all(test, not(unix)))]
+pub(crate) fn make_executable(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}

@@ -126,6 +126,8 @@ SOFTWARE.
 - Files:
   - `src-tauri/src/logs/mod.rs` (`plugin`: the tauri-plugin-log size cap,
     rotation and targets) from `src-tauri/src/lib.rs`
+  - `.github/workflows/check.yml` (the "Enable long paths (Windows)" step of
+    the `rust-native` job) from `.github/workflows/build.yml`
 
 MIT License
 
@@ -181,6 +183,42 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Tauri
+
+- URL: https://github.com/tauri-apps/tauri
+- Licence: Apache-2.0 OR MIT (taken under MIT)
+- Copyright: Copyright (c) 2017 - Present Tauri Apps Contributors
+- Commit: 6f6ab1207bb3923c2721fbc67d2fdb1c8deb0c7a
+- Files:
+  - `src-tauri/build.rs` (`embed_manifest_everywhere`) from
+    `crates/tauri/build.rs` (`embed_manifest_for_tests`)
+  - `src-tauri/windows-app-manifest.xml` from
+    `crates/tauri-build/src/windows-app-manifest.xml`
+
+```
+MIT License
+
+Copyright (c) 2017 - Present Tauri Apps Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ## To confirm
 

@@ -15,6 +15,10 @@ pub(crate) type DeviceId = objc2_core_audio::AudioObjectID;
 #[cfg(test)]
 pub(crate) const DEVICE_ACTIVITY: bool = true;
 
+/// The resampler's f32 golden hashes (`resample.rs` tests) were taken here.
+#[cfg(test)]
+pub(crate) const F32_GOLDEN_HASHES: bool = true;
+
 /// Host time "now", in the same clock domain as the process tap's
 /// `AudioTimeStamp.mHostTime` converted via `AudioConvertHostTimeToNanos`
 /// (contract revision 3, §0: "mach_absolute_time, converted to ns via

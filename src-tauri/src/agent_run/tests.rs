@@ -209,6 +209,7 @@ const LONG: Duration = Duration::from_secs(30);
 
 #[test]
 fn a_run_writes_the_notes_and_tasks_and_says_so() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     let dir = root.standup();
     let runs = AgentRuns::default();
@@ -258,6 +259,7 @@ fn a_run_writes_the_notes_and_tasks_and_says_so() {
 
 #[test]
 fn each_agent_failure_writes_nothing_and_says_why() {
+    crate::platform::skip_without_fake_cli!();
     let cases: Vec<(FakeBehavior, Duration, FailureKind, &str)> = vec![
         (
             FakeBehavior::NotInstalled,
@@ -457,6 +459,7 @@ fn a_meeting_with_notes_off_is_never_sent() {
 
 #[test]
 fn cancel_stops_the_run_and_leaves_the_meeting_as_it_was() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     let dir = root.standup();
     let before = snapshot(&dir);
@@ -483,6 +486,7 @@ fn cancel_stops_the_run_and_leaves_the_meeting_as_it_was() {
 
 #[test]
 fn a_second_start_while_running_is_ignored() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     root.standup();
     let runs = AgentRuns::default();
@@ -528,6 +532,7 @@ fn a_second_start_while_running_is_ignored() {
 
 #[test]
 fn quitting_mid_run_leaves_the_meeting_and_retry_works_next_launch() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     let dir = root.standup();
     let before = snapshot(&dir);
@@ -660,6 +665,7 @@ fn switched_off_before_stop_the_meeting_is_never_sent() {
 
 #[test]
 fn switched_back_on_make_notes_now_writes_the_notes() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     let dir = root.standup();
     assert!(switch(&root, None, false).notes_off);
@@ -680,6 +686,7 @@ fn switched_back_on_make_notes_now_writes_the_notes() {
 
 #[test]
 fn switched_off_while_the_agent_works_nothing_is_written() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     let dir = root.standup();
     let root_path = root.path.clone();
@@ -712,6 +719,7 @@ fn notes_switch_off(root: &Path) {
 
 #[test]
 fn switching_off_stops_the_running_run_and_says_notes_off() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     let dir = root.standup();
     let runs = AgentRuns::default();
@@ -739,6 +747,7 @@ fn switching_off_stops_the_running_run_and_says_notes_off() {
 
 #[test]
 fn switching_on_leaves_a_running_run_alone() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     root.standup();
     let runs = AgentRuns::default();
@@ -789,6 +798,7 @@ fn already_final(_: Duration) -> bool {
 
 #[test]
 fn a_slow_transcript_save_makes_the_run_wait_for_the_last_line() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     let dir = root.meeting(STANDUP, Some("[00:00:04] Others: Morning everyone.\n"), &[]);
     let runs = AgentRuns::default();
@@ -836,6 +846,7 @@ fn a_slow_transcript_save_makes_the_run_wait_for_the_last_line() {
 
 #[test]
 fn a_transcript_that_never_becomes_final_starts_no_run_and_offers_retry() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     let dir = root.standup();
     let before = snapshot(&dir);
@@ -931,6 +942,7 @@ fn notes_switched_off_while_the_transcript_saves_creates_no_run() {
 
 #[test]
 fn auto_run_off_or_no_agent_starts_nothing_and_on_writes_the_notes() {
+    crate::platform::skip_without_fake_cli!();
     use crate::config::{ConfigError, Harness};
 
     let root = Root::new();
@@ -988,6 +1000,7 @@ fn auto_run_off_or_no_agent_starts_nothing_and_on_writes_the_notes() {
 
 #[test]
 fn a_folder_moved_mid_run_gets_the_notes_in_its_new_place() {
+    crate::platform::skip_without_fake_cli!();
     let parent = Root::new();
     let old_root = parent.path.join("Meetings");
     let new_root = parent.path.join("Moved");
@@ -1039,6 +1052,7 @@ fn a_folder_moved_mid_run_gets_the_notes_in_its_new_place() {
 
 #[test]
 fn a_save_during_a_folder_move_is_refused_and_writes_nothing() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     let dir = root.standup();
     let before = snapshot(&dir);
@@ -1064,6 +1078,7 @@ fn a_save_during_a_folder_move_is_refused_and_writes_nothing() {
 
 #[test]
 fn a_run_that_cannot_start_writes_nothing_and_says_why() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     let dir = root.standup();
     let before = snapshot(&dir);
@@ -1095,6 +1110,7 @@ fn a_run_that_cannot_start_writes_nothing_and_says_why() {
 
 #[test]
 fn notes_that_cannot_be_saved_say_so() {
+    crate::platform::skip_without_fake_cli!();
     let root = Root::new();
     let dir = root.standup();
     // The tickets folder is a file, so no task can be written into it.
