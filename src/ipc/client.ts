@@ -563,6 +563,21 @@ export async function calendarRefreshMinutes(): Promise<number> {
   return call(() => commands.calendarRefreshMinutes());
 }
 
+// --- audio retention (TUR-45) ---------------------------------------------
+
+/** SPEC §3.5's default for `audio.retention_days`. */
+const DEFAULT_RETENTION_DAYS = 7;
+
+/**
+ * `audio.retention_days` as the app uses it: `-1` keeps audio forever, `0`
+ * deletes it once the transcript is done, otherwise the days. A bad value in
+ * the config reads as the default 7.
+ */
+export async function audioRetentionDays(): Promise<number> {
+  if (!hasBackend()) return DEFAULT_RETENTION_DAYS;
+  return call(() => commands.audioRetentionDays());
+}
+
 // --- pre-meeting brief ----------------------------------------------------
 
 /** Last time's notes and the commits since, for the meeting called `title` (TUR-32). */
