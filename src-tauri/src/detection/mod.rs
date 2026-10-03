@@ -14,6 +14,14 @@
 //! before each meeting with enough attendees it asks through the same path,
 //! counts as a call signal for Slack and Discord, and [`merge`] makes a
 //! reminder and an app prompt for the same call one prompt.
+//!
+//! TUR-78 made all three follow Settings → Notifications while they run: each
+//! loop always starts, and asks the `detection` section ([`live`]) on its own
+//! tick. A switch that is off means its source is never read (no process
+//! list, no device state, no calendar), and [`notify`] drops a prompt whose
+//! switch is off, so turning one off stops it at once. The lead time is the
+//! reminder's [`reminder::ReminderSettings`]; [`actions`] are the prompt's
+//! Join and Record buttons, and [`settings`] the card's commands.
 
 use std::sync::Mutex;
 
@@ -23,9 +31,12 @@ use tauri::{AppHandle, Manager as _};
 
 use crate::lock::lock_or_recover;
 
+pub mod actions;
+pub mod live;
 pub mod merge;
 pub mod notify;
 pub mod reminder;
+pub mod settings;
 
 /// Managed state: the running detection loop, kept so it lives as long as the
 /// app and so later signals (calendar, audio activity) can reach it.
@@ -39,9 +50,17 @@ pub struct Detection {
     reminders: Mutex<Option<reminder::ReminderLoop>>,
     /// The last prompts asked, so one call is asked about once (TUR-30).
     merge: Mutex<merge::Merger>,
+    /// The `detection` section as the loops see it (TUR-78).
+    live: live::Live,
+    /// The events reminded about lately, for the prompt's Join and Record.
+    reminded: Mutex<actions::Reminded>,
 }
 
 impl Detection {
+    /// The `detection` section now (see [`live`]).
+    pub fn config(&self) -> crate::config::DetectionConfig {
+        self.live.get()
+    }
     /// A calendar event was just seen: Slack or Discord being open now counts
     /// as a call. A no-op when detection is off. (Audio activity goes through
     /// [`Self::audio_activity`], which counts as a call signal too.)
@@ -65,14 +84,20 @@ impl Detection {
     }
 }
 
-/// Start watching for meeting apps, unless `processes` (the
-/// `detection.processes` switch) is off.
+/// Start watching for meeting apps. With `detection.processes` off
+/// (`processes` is its value at launch) the loop still runs, so switching it
+/// on applies at once, but the process list is not read until it is.
 pub fn start(app: &AppHandle, processes: bool) {
+    if !processes {
+        tracing::info!("detection.processes is off; not watching for meeting apps until it is on");
+    }
     let recording_app = app.clone();
     let notify_app = app.clone();
     let running = spawn_loop(
-        processes,
-        SysinfoProcesses::new(),
+        Switched::new(
+            SysinfoProcesses::new(),
+            switch(app, |config| config.processes),
+        ),
         move || notify::recording(&recording_app),
         move |signal| notify::notify(&notify_app, &signal),
     );
@@ -84,18 +109,24 @@ pub fn start(app: &AppHandle, processes: bool) {
     }
 }
 
-/// Start watching the mic and speakers (TUR-31), unless `audio_activity` (the
-/// `detection.audio_activity` switch) is off. Call it after [`start`]: what it
-/// sees goes through the process loop, and with `detection.processes` off it
-/// starts one that sees no apps, so audio activity still asks once per call.
+/// Start watching the mic and speakers (TUR-31), where this platform can
+/// read them. Call it after [`start`]: what it sees goes through the process
+/// loop. With `detection.audio_activity` off (`audio_activity` is its value
+/// at launch) the devices are not read until it is on.
 pub fn start_audio_activity(app: &AppHandle, audio_activity: bool) {
     let Some(state) = app.try_state::<Detection>() else {
         tracing::error!("the detection state is missing; audio activity goes unnoticed");
         return;
     };
-    let Some(source) = device_activity(audio_activity) else {
+    if !audio_activity {
+        tracing::info!(
+            "detection.audio_activity is off; not watching the mic and speakers until it is on"
+        );
+    }
+    let Some(source) = device_activity() else {
         return;
     };
+    let source = Switched::new(source, switch(app, |config| config.audio_activity));
     {
         let mut running = lock_or_recover(&state.running);
         if running.is_none() {
@@ -110,7 +141,6 @@ pub fn start_audio_activity(app: &AppHandle, audio_activity: bool) {
     let recording_app = app.clone();
     let fired_app = app.clone();
     let activity = spawn_activity(
-        audio_activity,
         source,
         move || notify::recording(&recording_app),
         move || {
@@ -122,23 +152,34 @@ pub fn start_audio_activity(app: &AppHandle, audio_activity: bool) {
     *lock_or_recover(&state.activity) = activity;
 }
 
-/// Remind a minute before each meeting (TUR-30), unless `calendar` (the
-/// `detection.calendar` switch) is off. Call it after [`start`]: a reminder
-/// counts as a call signal for Slack and Discord. `detection.min_attendees`
-/// and `calendar.refresh_minutes` are read here, once.
+/// Remind before each meeting (TUR-30), as early as
+/// `detection.remind_before_minutes` says (TUR-78). Call it after [`start`]:
+/// a reminder counts as a call signal for Slack and Discord. The lead time,
+/// `detection.min_attendees` and the `detection.calendar` switch are read on
+/// every tick (`calendar` is the switch at launch); `calendar.refresh_minutes`
+/// once, here.
 pub fn start_reminders(app: &AppHandle, calendar: bool) {
     let Some(state) = app.try_state::<Detection>() else {
         tracing::error!("the detection state is missing; meetings go unreminded");
         return;
     };
+    if !calendar {
+        tracing::info!("detection.calendar is off; no meeting reminders until it is on");
+    }
     let fire_app = app.clone();
+    let settings_app = app.clone();
+    let initial = reminder_settings(&state.config()).unwrap_or_default();
     let reminders = spawn_reminders(
-        calendar,
         reminder::AppCalendar(app.clone()),
         reminder::Reminders::new(
-            crate::config::detection().min_attendees as usize,
+            initial,
             chrono::Duration::minutes(i64::from(crate::config::calendar().refresh_minutes)),
         ),
+        move || {
+            settings_app
+                .try_state::<Detection>()
+                .and_then(|state| reminder_settings(&state.config()))
+        },
         move |event| {
             notify::remind(&fire_app, &event);
             // After the reminder, so a Slack prompt this lets through is
@@ -151,27 +192,32 @@ pub fn start_reminders(app: &AppHandle, calendar: bool) {
     *lock_or_recover(&state.reminders) = reminders;
 }
 
-/// [`start_reminders`] without the app, so the switch is testable: `None`,
-/// and the calendar never read, when `calendar` is off.
+/// What the reminder loop works to: `None` with `detection.calendar` off.
+pub fn reminder_settings(
+    config: &crate::config::DetectionConfig,
+) -> Option<reminder::ReminderSettings> {
+    config.calendar.then(|| {
+        reminder::ReminderSettings::new(config.remind_before_minutes, config.min_attendees as usize)
+    })
+}
+
+/// [`start_reminders`] without the app, so the loop is testable.
 fn spawn_reminders<C: reminder::Upcoming>(
-    calendar: bool,
     source: C,
     reminders: reminder::Reminders,
+    settings: impl FnMut() -> Option<reminder::ReminderSettings> + Send + 'static,
     fire: impl FnMut(::calendar::Event) + Send + 'static,
 ) -> Option<reminder::ReminderLoop> {
-    if !calendar {
-        tracing::info!("detection.calendar is off; no meeting reminders");
-        return None;
-    }
     match reminder::spawn(
         reminder::SystemClock,
         source,
         reminders,
         reminder::TICK,
+        settings,
         fire,
     ) {
         Ok(running) => {
-            tracing::info!("reminding a minute before each meeting");
+            tracing::info!("reminding before each meeting");
             Some(running)
         }
         Err(error) => {
@@ -181,13 +227,9 @@ fn spawn_reminders<C: reminder::Upcoming>(
     }
 }
 
-/// The real mic-and-speakers reader, or `None` when the switch is off or
-/// this platform cannot read them (logged once, and no loop starts).
-fn device_activity(audio_activity: bool) -> Option<SystemDevices> {
-    if !audio_activity {
-        tracing::info!("detection.audio_activity is off; not watching the mic and speakers");
-        return None;
-    }
+/// The real mic-and-speakers reader, or `None` when this platform cannot
+/// read them (logged once, and no loop starts).
+fn device_activity() -> Option<SystemDevices> {
     match audio::activity::device_activity() {
         Err(audio::Error::Unsupported) => {
             tracing::info!("audio-activity detection is not supported on this platform");
@@ -212,6 +254,52 @@ impl ActivitySource for SystemDevices {
     }
 }
 
+/// Whether one `detection` switch is on now, for a [`Switched`] source. On
+/// when the state is missing: the loop was started, so it was meant to run.
+fn switch(
+    app: &AppHandle,
+    pick: fn(&crate::config::DetectionConfig) -> bool,
+) -> Box<dyn Fn() -> bool + Send> {
+    let app = app.clone();
+    Box::new(move || {
+        app.try_state::<Detection>()
+            .is_none_or(|state| pick(&state.config()))
+    })
+}
+
+/// A source behind a `detection` switch, asked on every read: off, it is
+/// not read at all and reports nothing (no apps; mic and speakers idle).
+struct Switched<S> {
+    inner: S,
+    on: Box<dyn Fn() -> bool + Send>,
+}
+
+impl<S> Switched<S> {
+    fn new(inner: S, on: Box<dyn Fn() -> bool + Send>) -> Self {
+        Self { inner, on }
+    }
+}
+
+impl<S: ProcessSource> ProcessSource for Switched<S> {
+    fn running(&mut self) -> Result<Vec<RunningProcess>, detect::Error> {
+        if (self.on)() {
+            self.inner.running()
+        } else {
+            Ok(Vec::new())
+        }
+    }
+}
+
+impl<S: ActivitySource> ActivitySource for Switched<S> {
+    fn read(&mut self) -> Result<detect::AudioReading, detect::Error> {
+        if (self.on)() {
+            self.inner.read()
+        } else {
+            Ok(detect::AudioReading::new(false, false))
+        }
+    }
+}
+
 /// A process list that is always empty: with `detection.processes` off, the
 /// loop still runs so audio activity gets the same once-per-call rules, but
 /// it never names an app.
@@ -233,17 +321,12 @@ fn spawn_quiet_loop(
         .ok()
 }
 
-/// [`start_audio_activity`] without the app, so the switch is testable:
-/// `None`, and the devices never read, when `audio_activity` is off.
+/// [`start_audio_activity`] without the app, so the loop is testable.
 fn spawn_activity<S: ActivitySource>(
-    audio_activity: bool,
     source: S,
     recording: impl Fn() -> bool + Send + 'static,
     fired: impl FnMut() + Send + 'static,
 ) -> Option<ActivityLoop> {
-    if !audio_activity {
-        return None;
-    }
     match detect::activity::spawn(source, AUDIO_POLL_INTERVAL, recording, fired) {
         Ok(running) => {
             tracing::info!(interval = ?AUDIO_POLL_INTERVAL, "watching the mic and speakers");
@@ -256,18 +339,12 @@ fn spawn_activity<S: ActivitySource>(
     }
 }
 
-/// [`start`] without the app, so the switch is testable: `None`, and the
-/// process list never read, when `processes` is off.
+/// [`start`] without the app, so the loop is testable.
 fn spawn_loop<S: ProcessSource>(
-    processes: bool,
     source: S,
     recording: impl Fn() -> bool + Send + 'static,
     emit: impl FnMut(Signal) + Send + 'static,
 ) -> Option<DetectionLoop> {
-    if !processes {
-        tracing::info!("detection.processes is off; not watching for meeting apps");
-        return None;
-    }
     match detect::spawn(source, POLL_INTERVAL, recording, emit) {
         Ok(running) => {
             tracing::info!(interval = ?POLL_INTERVAL, "watching for meeting apps");
@@ -304,17 +381,59 @@ mod tests {
         }
     }
 
+    /// A switch the test flips, counting how often it was asked.
+    fn flip(
+        on: bool,
+    ) -> (
+        Arc<std::sync::atomic::AtomicBool>,
+        Arc<AtomicUsize>,
+        Box<dyn Fn() -> bool + Send>,
+    ) {
+        let state = Arc::new(std::sync::atomic::AtomicBool::new(on));
+        let asked = Arc::new(AtomicUsize::new(0));
+        let (read, count) = (Arc::clone(&state), Arc::clone(&asked));
+        let switch = Box::new(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            read.load(Ordering::SeqCst)
+        });
+        (state, asked, switch)
+    }
+
     #[test]
-    fn processes_off_means_no_loop_and_no_process_list() {
+    fn processes_off_never_reads_the_process_list_and_on_applies_live() {
         let polls = Arc::new(AtomicUsize::new(0));
-        let (polled, _rx) = mpsc::channel();
-        let source = Counting {
+        let counting = || Counting {
             polls: Arc::clone(&polls),
-            polled,
+            polled: mpsc::channel().0,
         };
-        let running = spawn_loop(false, source, || false, |_| panic!("no prompt"));
-        assert!(running.is_none());
+        let (on, _, switch) = flip(false);
+        let mut source = Switched::new(counting(), switch);
+        assert_eq!(source.running().unwrap(), Vec::new());
         assert_eq!(polls.load(Ordering::SeqCst), 0);
+        // On again: read on the next poll, no restart.
+        on.store(true, Ordering::SeqCst);
+        assert_eq!(source.running().unwrap().len(), 1);
+        assert_eq!(polls.load(Ordering::SeqCst), 1);
+
+        // And the loop itself runs while the switch is off, asking it.
+        let (_, asked, switch) = flip(false);
+        let (signal_tx, signals) = mpsc::channel();
+        let running = spawn_loop(
+            Switched::new(counting(), switch),
+            || false,
+            move |signal| {
+                let _ = signal_tx.send(signal);
+            },
+        )
+        .expect("the loop runs while the switch is off");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while asked.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        running.stop();
+        assert!(asked.load(Ordering::SeqCst) >= 1, "the switch is asked");
+        assert_eq!(polls.load(Ordering::SeqCst), 1, "and the list is not read");
+        assert!(signals.try_recv().is_err());
     }
 
     #[test]
@@ -327,7 +446,6 @@ mod tests {
         };
         let (signal_tx, signals) = mpsc::channel();
         let running = spawn_loop(
-            true,
             source,
             || false,
             move |signal| {
@@ -364,16 +482,24 @@ mod tests {
     }
 
     #[test]
-    fn audio_activity_off_means_no_loop_and_no_reads() {
+    fn audio_activity_off_never_reads_the_devices_and_never_asks() {
         let reads = Arc::new(AtomicUsize::new(0));
         let (read, _rx) = mpsc::channel();
-        let source = Devices {
-            reads: Arc::clone(&reads),
-            read,
-        };
-        let running = spawn_activity(false, source, || false, || panic!("no prompt"));
-        assert!(running.is_none());
+        let (on, asked, switch) = flip(false);
+        let mut source = Switched::new(
+            Devices {
+                reads: Arc::clone(&reads),
+                read,
+            },
+            switch,
+        );
+        assert_eq!(source.read().unwrap(), AudioReading::new(false, false));
         assert_eq!(reads.load(Ordering::SeqCst), 0);
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
+        // On again: read on the next poll, no restart.
+        on.store(true, Ordering::SeqCst);
+        assert_eq!(source.read().unwrap(), AudioReading::new(true, true));
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -384,7 +510,7 @@ mod tests {
             reads: Arc::clone(&reads),
             read,
         };
-        let running = spawn_activity(true, source, || false, || {}).expect("starts");
+        let running = spawn_activity(source, || false, || {}).expect("starts");
         // The first reading is taken at once; the hold itself is covered by
         // `detect::activity`'s tests with a fake clock.
         read_rx
@@ -429,29 +555,39 @@ mod tests {
     }
 
     fn reminders() -> reminder::Reminders {
-        reminder::Reminders::new(2, chrono::Duration::minutes(15))
+        reminder::Reminders::new(
+            reminder::ReminderSettings::default(),
+            chrono::Duration::minutes(15),
+        )
     }
 
     #[test]
-    fn calendar_off_means_no_reminders_and_no_calendar_reads() {
-        let reads = Arc::new(AtomicUsize::new(0));
-        let running = spawn_reminders(
-            false,
-            CountingCalendar(Arc::clone(&reads)),
-            reminders(),
-            |_| panic!("no reminder"),
+    fn calendar_off_means_no_reminder_settings_and_on_takes_the_lead_time() {
+        let config = crate::config::DetectionConfig {
+            remind_before_minutes: 5,
+            min_attendees: 3,
+            ..crate::config::DetectionConfig::default()
+        };
+        assert_eq!(
+            reminder_settings(&config),
+            Some(reminder::ReminderSettings::new(5, 3))
         );
-        assert!(running.is_none());
-        assert_eq!(reads.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            reminder_settings(&crate::config::DetectionConfig {
+                calendar: false,
+                ..config
+            }),
+            None
+        );
     }
 
     #[test]
     fn calendar_on_starts_the_reminders_and_reads_the_calendar() {
         let reads = Arc::new(AtomicUsize::new(0));
         let running = spawn_reminders(
-            true,
             CountingCalendar(Arc::clone(&reads)),
             reminders(),
+            || Some(reminder::ReminderSettings::default()),
             |_| {},
         )
         .expect("starts");

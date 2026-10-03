@@ -85,6 +85,13 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::logs::open_logs_folder,
             crate::lifecycle::menu_bar_countdown,
             crate::lifecycle::set_menu_bar_countdown,
+            crate::detection::settings::notification_settings,
+            crate::detection::settings::set_notification_settings,
+            crate::detection::settings::os_notifications_blocked,
+            crate::detection::settings::open_notification_settings,
+            crate::detection::settings::send_test_reminder,
+            crate::detection::actions::join_reminded_meeting,
+            crate::detection::actions::record_reminded_meeting,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)
