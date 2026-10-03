@@ -24,7 +24,6 @@ import {
   type meet_ai_lib_calendar_TodayEvent,
   type meet_ai_lib_calendar_TodaysMeetings,
   type meet_ai_lib_detection_notify_Prompt,
-  type meet_ai_lib_retention_AudioRetentionSetting,
   PERMISSION_STATUS_EVENT,
   RECORDING_STATE_EVENT,
   TRANSCRIPT_STATUS_EVENT,
@@ -565,24 +564,6 @@ export async function calendarRefreshMinutes(): Promise<number> {
   return call(() => commands.calendarRefreshMinutes());
 }
 
-// --- audio retention (TUR-45) ---------------------------------------------
-
-/** SPEC §3.5's default for `audio.retention_days`. */
-const DEFAULT_RETENTION_DAYS = 7;
-
-/**
- * `audio.retention_days` as the retention job reads it (TUR-85): `running`
- * with the days (`-1` keeps audio forever, `0` deletes it once the transcript
- * is done), or `paused` when `config.jsonc` could not be read or parsed, or its
- * `audio` section is not valid. Nothing is deleted while paused.
- */
-export type AudioRetention = meet_ai_lib_retention_AudioRetentionSetting;
-
-export async function audioRetentionDays(): Promise<AudioRetention> {
-  if (!hasBackend()) return { state: "running", days: DEFAULT_RETENTION_DAYS };
-  return call(() => commands.audioRetentionDays());
-}
-
 // --- pre-meeting brief ----------------------------------------------------
 
 /** Last time's notes and the commits since, for the meeting called `title` (TUR-32). */
@@ -599,6 +580,8 @@ export * from "./calendar";
 // `subscribe` are exported for such modules.
 export * from "./lifecycle";
 export * from "./logs";
+// Settings' audio retention line (TUR-45, TUR-85).
+export * from "./retention";
 // The Settings speech engine picker (TUR-75).
 export * from "./speech";
 export { call, subscribe };
