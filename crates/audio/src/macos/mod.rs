@@ -19,6 +19,10 @@ pub mod tap;
 /// registering a Core Audio property listener.
 pub mod device_watch;
 
+/// Whether the default mic and speakers are in use by anyone, for the
+/// audio-activity meeting signal (TUR-31) — property reads only, no capture.
+pub mod activity;
+
 /// The real tap/IOProc creation call site (once written) uses
 /// [`crate::AUDIO_PERMISSION_TIMEOUT`] — moved there because [`crate::mic`]
 /// needs the identical bound on `cpal`'s stream creation, and both are the

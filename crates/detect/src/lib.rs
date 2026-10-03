@@ -8,13 +8,18 @@
 //! - [`processes`]: which process names are meeting apps (`processes.json`).
 //! - [`detector`]: when a running app is worth asking about (TUR-27's rules).
 //! - [`poll`]: the loop that reads the process list and emits [`Signal`]s.
+//! - [`activity`]: when the mic and speakers both in use count as a call
+//!   (TUR-31), and the loop that reads them.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+pub mod activity;
 pub mod detector;
 pub mod poll;
 pub mod processes;
+mod worker;
 
+pub use activity::{AUDIO_POLL_INTERVAL, ActivityLoop, ActivitySource, AudioReading};
 pub use detector::{CALL_SIGNAL_WINDOW, Detector, RunningProcess};
 pub use poll::{DetectionLoop, POLL_INTERVAL, ProcessSource, SysinfoProcesses, spawn};
 
@@ -34,7 +39,9 @@ pub enum Signal {
     /// A known meeting application is running. `process` is its name as
     /// `processes.json` spells it, e.g. `zoom.us`.
     Process { process: String },
-    /// Something is playing audio through the default output device.
+    /// The mic and the speakers have both been in use for a while
+    /// (20 s, see [`activity`]), and no known meeting app explains it — a
+    /// call in a browser tab, say.
     AudioActivity,
 }
 
@@ -47,7 +54,9 @@ impl Signal {
                 format!("“{title}” is starting, with {attendees} people invited.")
             }
             Self::Process { process } => format!("{} is open.", processes::label(process)),
-            Self::AudioActivity => "Something on your Mac is playing audio.".to_string(),
+            Self::AudioActivity => {
+                "Your microphone and speakers are both in use, like on a call.".to_string()
+            }
         }
     }
 }
@@ -58,6 +67,9 @@ pub enum Error {
     /// The process list could not be read.
     #[error("could not read the list of running applications")]
     ProcessList(String),
+    /// Whether the default mic and speakers are in use could not be read.
+    #[error("could not read whether the microphone and speakers are in use")]
+    AudioDevices(String),
 }
 
 #[cfg(test)]

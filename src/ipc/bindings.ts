@@ -713,7 +713,11 @@ export type detect_Signal =
  *  `processes.json` spells it, e.g. `zoom.us`.
  */
 { kind: "process"; process: string } | 
-/**  Something is playing audio through the default output device. */
+/**
+ *  The mic and the speakers have both been in use for a while
+ *  (20 s, see [`activity`]), and no known meeting app explains it — a
+ *  call in a browser tab, say.
+ */
 { kind: "audio_activity" };
 
 /**
