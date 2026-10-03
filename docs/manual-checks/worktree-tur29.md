@@ -21,11 +21,9 @@ has its default title ("Meeting"); attendees and the event id only when the
 file has none. No match, or no calendar access, leaves the meeting untitled,
 with one debug line in `meet-ai.log`.
 
-**Not live until TUR-28 is merged.** The app's calendar state (`CalendarState`)
-arrives with TUR-28. Until this branch is rebased on it and
-`impl EventSource for CalendarState` is registered in
-`src-tauri/src/recording/auto_title.rs` (`with_source`), every recording takes
-the "no calendar" path and stays untitled. Run these checks after that wiring.
+The events come from the app's `CalendarState` (TUR-28), the same reader
+the Today pane uses, so whatever providers `calendar.providers` names in
+`config.jsonc` (EventKit today) are the ones searched.
 
 ## 1. Record during a real invite → the list shows its title and attendees
 
