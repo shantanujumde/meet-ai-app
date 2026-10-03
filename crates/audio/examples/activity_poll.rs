@@ -1,6 +1,6 @@
 //! Idle-poll cost of the audio-activity reads (TUR-31).
 //!
-//! Reads `audio::macos::activity::read` every 2 s — the detection loop's
+//! Reads `audio::activity::device_activity` every 2 s — the detection loop's
 //! cadence — for N seconds (default 90), printing each reading, then exits.
 //! Measure it from outside so the number includes everything the process did:
 //!
@@ -10,12 +10,11 @@
 //! ```
 //!
 //! CPU % = (user + sys) / real. Property reads only: no stream, no permission
-//! prompt.
+//! prompt. Off macOS every read fails as unsupported.
 
-#[cfg(target_os = "macos")]
+use std::time::{Duration, Instant};
+
 fn main() {
-    use std::time::{Duration, Instant};
-
     let seconds: u64 = std::env::args()
         .nth(1)
         .and_then(|arg| arg.parse().ok())
@@ -24,7 +23,7 @@ fn main() {
     let end = Instant::now() + Duration::from_secs(seconds);
     let mut reads = 0u32;
     while Instant::now() < end {
-        match audio::macos::activity::read() {
+        match audio::activity::device_activity() {
             Ok(reading) => println!(
                 "input_running={} output_running={}",
                 reading.input_running, reading.output_running
@@ -35,9 +34,4 @@ fn main() {
         std::thread::sleep(interval);
     }
     println!("{reads} reads in {seconds} s");
-}
-
-#[cfg(not(target_os = "macos"))]
-fn main() {
-    eprintln!("activity_poll reads Core Audio and runs on macOS only");
 }

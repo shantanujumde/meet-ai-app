@@ -73,6 +73,10 @@ pub mod wav_repair;
 /// and every anchor formula assumes.
 pub(crate) mod resample;
 
+/// Whether the default mic and speakers are in use by anyone (TUR-31), on
+/// every platform: [`activity::device_activity`].
+pub mod activity;
+
 /// The microphone [`AudioSource`], via `cpal`. Cross-platform on purpose —
 /// unlike the process tap, `cpal` already runs on Windows, so this is not
 /// gated under `macos`.
@@ -206,6 +210,10 @@ pub enum Error {
     /// Writing the WAV file failed.
     #[error("audio i/o failed")]
     Io(#[from] std::io::Error),
+
+    /// A device exists but its state could not be read.
+    #[error("could not read the audio device's state: {0}")]
+    DeviceRead(String),
 
     /// Capture is not implemented for this platform yet.
     #[error("audio capture is not supported on this platform")]

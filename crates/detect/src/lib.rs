@@ -17,11 +17,9 @@ pub mod activity;
 pub mod detector;
 pub mod poll;
 pub mod processes;
+mod worker;
 
-pub use activity::{
-    AUDIO_HOLD, AUDIO_POLL_INTERVAL, AUDIO_REARM, ActivityHold, ActivityLoop, ActivitySource,
-    AudioReading,
-};
+pub use activity::{AUDIO_POLL_INTERVAL, ActivityLoop, ActivitySource, AudioReading};
 pub use detector::{CALL_SIGNAL_WINDOW, Detector, RunningProcess};
 pub use poll::{DetectionLoop, POLL_INTERVAL, ProcessSource, SysinfoProcesses, spawn};
 
@@ -42,7 +40,7 @@ pub enum Signal {
     /// `processes.json` spells it, e.g. `zoom.us`.
     Process { process: String },
     /// The mic and the speakers have both been in use for a while
-    /// ([`activity::AUDIO_HOLD`]), and no known meeting app explains it — a
+    /// (20 s, see [`activity`]), and no known meeting app explains it — a
     /// call in a browser tab, say.
     AudioActivity,
 }

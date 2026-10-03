@@ -23,24 +23,24 @@
 //! ([`crate::DetectionLoop::audio_activity`]), which decides between naming a
 //! meeting app, saying "audio activity", or staying quiet.
 
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::thread::JoinHandle;
+use std::convert::Infallible;
 use std::time::{Duration, Instant};
 
 use crate::Error;
+use crate::worker::Worker;
 
-/// How often the devices are read. Two seconds: well inside [`AUDIO_HOLD`],
+/// How often the devices are read. Two seconds: well inside the 20 s hold,
 /// and each read is four Core Audio property reads.
 pub const AUDIO_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// How long mic and speakers must both be running before it counts as a
 /// call. Long enough to skip a voice memo or a notification sound over a
 /// dictation; short enough to ask before anything worth keeping is said.
-pub const AUDIO_HOLD: Duration = Duration::from_secs(20);
+pub(crate) const AUDIO_HOLD: Duration = Duration::from_secs(20);
 
 /// How long mic and speakers must stay apart after a call before the next
 /// call can ask.
-pub const AUDIO_REARM: Duration = Duration::from_secs(60);
+pub(crate) const AUDIO_REARM: Duration = Duration::from_secs(60);
 
 /// One reading of the default devices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -72,7 +72,7 @@ pub trait ActivitySource: Send + 'static {
 
 /// What audio-activity detection remembers between readings.
 #[derive(Debug, Default)]
-pub struct ActivityHold {
+pub(crate) struct ActivityHold {
     /// When the current both-running stretch began, while armed.
     since: Option<Instant>,
     /// This call already fired, or ran during a recording.
@@ -82,13 +82,13 @@ pub struct ActivityHold {
 }
 
 impl ActivityHold {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// One reading at `now`, with whether meet-ai is recording. `true` means
     /// a call just started: at most once per call.
-    pub fn observe(&mut self, reading: AudioReading, recording: bool, now: Instant) -> bool {
+    pub(crate) fn observe(&mut self, reading: AudioReading, recording: bool, now: Instant) -> bool {
         if recording {
             self.since = None;
             self.handled = true;
@@ -123,27 +123,14 @@ impl ActivityHold {
 
 /// A running audio-activity loop. Dropping it stops the loop and waits for it.
 pub struct ActivityLoop {
-    tx: mpsc::Sender<()>,
-    thread: Option<JoinHandle<()>>,
+    /// It takes no messages; the handle is only for stopping it.
+    worker: Worker<Infallible>,
 }
 
 impl ActivityLoop {
     /// Stop the loop and wait for its thread.
-    pub fn stop(mut self) {
-        self.shut_down();
-    }
-
-    fn shut_down(&mut self) {
-        let _ = self.tx.send(());
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
-
-impl Drop for ActivityLoop {
-    fn drop(&mut self) {
-        self.shut_down();
+    pub fn stop(self) {
+        self.worker.stop();
     }
 }
 
@@ -180,46 +167,34 @@ where
     F: FnMut() + Send + 'static,
     C: FnMut() -> Instant + Send + 'static,
 {
-    let (tx, rx) = mpsc::channel();
-    let thread = std::thread::Builder::new()
-        .name("meet-ai-audio-activity".to_string())
-        .spawn(move || {
-            let mut hold = ActivityHold::new();
-            let mut failing = false;
-            loop {
-                let reading = match source.read() {
-                    Ok(reading) => {
-                        failing = false;
-                        reading
-                    }
-                    Err(error) => {
-                        if failing {
-                            tracing::debug!(%error, "could not read audio device activity");
-                        } else {
-                            tracing::warn!(%error, "could not read audio device activity");
-                        }
-                        failing = true;
-                        AudioReading::default()
-                    }
-                };
-                if hold.observe(reading, recording(), clock()) {
-                    fired();
-                }
-                match rx.recv_timeout(interval) {
-                    Err(RecvTimeoutError::Timeout) => {}
-                    Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
-                }
+    let mut hold = ActivityHold::new();
+    let mut failing = false;
+    let worker = Worker::spawn("meet-ai-audio-activity", interval, move |_| {
+        let reading = match source.read() {
+            Ok(reading) => {
+                failing = false;
+                reading
             }
-        })?;
-    Ok(ActivityLoop {
-        tx,
-        thread: Some(thread),
-    })
+            Err(error) => {
+                if failing {
+                    tracing::debug!(%error, "could not read audio device activity");
+                } else {
+                    tracing::warn!(%error, "could not read audio device activity");
+                }
+                failing = true;
+                AudioReading::default()
+            }
+        };
+        if hold.observe(reading, recording(), clock()) {
+            fired();
+        }
+    })?;
+    Ok(ActivityLoop { worker })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, mpsc};
 
     use super::*;
 

@@ -30,9 +30,10 @@ pub struct Detection {
 }
 
 impl Detection {
-    /// A calendar event or audio activity was just seen: Slack or Discord
-    /// being open now counts as a call. A no-op when detection is off.
-    #[allow(dead_code)] // The calendar refresh loop (TUR-28) and audio activity call this.
+    /// A calendar event was just seen: Slack or Discord being open now counts
+    /// as a call. A no-op when detection is off. (Audio activity goes through
+    /// [`Self::audio_activity`], which counts as a call signal too.)
+    #[allow(dead_code)] // The calendar refresh loop (TUR-30) calls this.
     pub fn call_signal(&self) {
         if let Some(running) = lock_or_recover(&self.running).as_ref() {
             running.call_signal();
@@ -105,38 +106,34 @@ pub fn start_audio_activity(app: &AppHandle, audio_activity: bool) {
     *lock_or_recover(&state.activity) = activity;
 }
 
-/// The real mic-and-speakers reader, or `None` when the switch is off or this
-/// platform has none.
-fn device_activity(audio_activity: bool) -> Option<CoreAudioActivity> {
+/// The real mic-and-speakers reader, or `None` when the switch is off or
+/// this platform cannot read them (logged once, and no loop starts).
+fn device_activity(audio_activity: bool) -> Option<SystemDevices> {
     if !audio_activity {
         tracing::info!("detection.audio_activity is off; not watching the mic and speakers");
         return None;
     }
-    if cfg!(target_os = "macos") {
-        Some(CoreAudioActivity)
-    } else {
-        tracing::info!("audio-activity detection is macOS only");
-        None
+    match audio::activity::device_activity() {
+        Err(audio::Error::Unsupported) => {
+            tracing::info!("audio-activity detection is not supported on this platform");
+            None
+        }
+        // A failed first read is not fatal: the loop counts it as "not in
+        // use" and keeps reading.
+        Ok(_) | Err(_) => Some(SystemDevices),
     }
 }
 
-/// Reads the default devices through `audio::macos::activity`: property reads
-/// only, no capture and no permission prompt.
-struct CoreAudioActivity;
+/// Reads the default devices through [`audio::activity::device_activity`]:
+/// property reads only, no capture and no permission prompt. `detect` does
+/// not depend on `audio`, so the reading is copied into its own type here.
+struct SystemDevices;
 
-impl ActivitySource for CoreAudioActivity {
-    #[cfg(target_os = "macos")]
+impl ActivitySource for SystemDevices {
     fn read(&mut self) -> Result<detect::AudioReading, detect::Error> {
-        audio::macos::activity::read()
+        audio::activity::device_activity()
             .map(|devices| detect::AudioReading::new(devices.input_running, devices.output_running))
             .map_err(|error| detect::Error::AudioDevices(error.to_string()))
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    fn read(&mut self) -> Result<detect::AudioReading, detect::Error> {
-        Err(detect::Error::AudioDevices(
-            "audio-activity detection is macOS only".to_string(),
-        ))
     }
 }
 

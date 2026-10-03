@@ -5,13 +5,12 @@
 //! The loop never records anything (L15). What it emits is a reason to *ask*;
 //! the app turns that into a notification and the user decides.
 
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
 use crate::detector::{Detector, RunningProcess};
+use crate::worker::Worker;
 use crate::{Error, Signal};
 
 /// How often the process list is read. Five seconds: a call is noticed well
@@ -65,23 +64,22 @@ impl ProcessSource for SysinfoProcesses {
 }
 
 enum Message {
-    Stop,
     CallSignal(Instant),
     AudioActivity(Instant),
 }
 
 /// A running detection loop. Dropping it stops the loop and waits for it.
 pub struct DetectionLoop {
-    tx: mpsc::Sender<Message>,
-    thread: Option<JoinHandle<()>>,
+    worker: Worker<Message>,
 }
 
 impl DetectionLoop {
-    /// A calendar event or audio activity was just seen, so Slack or Discord
-    /// being open now counts as a call (see [`crate::detector`]). Polls at
-    /// once rather than waiting out the interval.
+    /// A calendar event was just seen, so Slack or Discord being open now
+    /// counts as a call (see [`crate::detector`]). Polls at once rather than
+    /// waiting out the interval. (Audio activity has its own
+    /// [`Self::audio_activity`], which counts as a call signal too.)
     pub fn call_signal(&self) {
-        let _ = self.tx.send(Message::CallSignal(Instant::now()));
+        self.worker.send(Message::CallSignal(Instant::now()));
     }
 
     /// The mic and speakers have both been in use for a while (see
@@ -89,25 +87,12 @@ impl DetectionLoop {
     /// explains or else for [`Signal::AudioActivity`] (see
     /// [`Detector::audio_activity`]).
     pub fn audio_activity(&self) {
-        let _ = self.tx.send(Message::AudioActivity(Instant::now()));
+        self.worker.send(Message::AudioActivity(Instant::now()));
     }
 
     /// Stop the loop and wait for its thread.
-    pub fn stop(mut self) {
-        self.shut_down();
-    }
-
-    fn shut_down(&mut self) {
-        let _ = self.tx.send(Message::Stop);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
-
-impl Drop for DetectionLoop {
-    fn drop(&mut self) {
-        self.shut_down();
+    pub fn stop(self) {
+        self.worker.stop();
     }
 }
 
@@ -127,45 +112,36 @@ where
     R: Fn() -> bool + Send + 'static,
     E: FnMut(Signal) + Send + 'static,
 {
-    let (tx, rx) = mpsc::channel();
-    let thread = std::thread::Builder::new()
-        .name("meet-ai-detection".to_string())
-        .spawn(move || {
-            let mut detector = Detector::new();
-            // Audio activity waiting for a process list to be weighed against;
-            // kept across a failed read, so it is not lost.
-            let mut audio_activity: Option<Instant> = None;
-            loop {
-                match source.running() {
-                    Ok(running) => {
-                        let signals = match audio_activity.take() {
-                            Some(at) => detector.audio_activity(&running, recording(), at),
-                            None => detector.observe(&running, recording(), Instant::now()),
-                        };
-                        for signal in signals {
-                            emit(signal);
-                        }
-                    }
-                    Err(error) => tracing::warn!(%error, "could not list running processes"),
-                }
-                match rx.recv_timeout(interval) {
-                    Err(RecvTimeoutError::Timeout) => {}
-                    Ok(Message::CallSignal(at)) => detector.call_signal(at),
-                    Ok(Message::AudioActivity(at)) => audio_activity = Some(at),
-                    Ok(Message::Stop) | Err(RecvTimeoutError::Disconnected) => break,
+    let mut detector = Detector::new();
+    // Audio activity waiting for a process list to be weighed against; kept
+    // across a failed read, so it is not lost.
+    let mut audio_activity: Option<Instant> = None;
+    let worker = Worker::spawn("meet-ai-detection", interval, move |message| {
+        match message {
+            Some(Message::CallSignal(at)) => detector.call_signal(at),
+            Some(Message::AudioActivity(at)) => audio_activity = Some(at),
+            None => {}
+        }
+        match source.running() {
+            Ok(running) => {
+                let signals = match audio_activity.take() {
+                    Some(at) => detector.audio_activity(&running, recording(), at),
+                    None => detector.observe(&running, recording(), Instant::now()),
+                };
+                for signal in signals {
+                    emit(signal);
                 }
             }
-        })?;
-    Ok(DetectionLoop {
-        tx,
-        thread: Some(thread),
-    })
+            Err(error) => tracing::warn!(%error, "could not list running processes"),
+        }
+    })?;
+    Ok(DetectionLoop { worker })
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, mpsc};
 
     use super::*;
 

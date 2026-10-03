@@ -715,7 +715,7 @@ export type detect_Signal =
 { kind: "process"; process: string } | 
 /**
  *  The mic and the speakers have both been in use for a while
- *  ([`activity::AUDIO_HOLD`]), and no known meeting app explains it — a
+ *  (20 s, see [`activity`]), and no known meeting app explains it — a
  *  call in a browser tab, say.
  */
 { kind: "audio_activity" };

@@ -14,20 +14,15 @@
 //! The answer does not say *who* is running the device: while meet-ai itself
 //! records, its own mic stream makes the input "running". The caller ignores
 //! readings taken while recording (`detect::activity`).
+//!
+//! Callers outside this crate use [`crate::activity::device_activity`], which
+//! works on every platform.
 
 use objc2_core_audio::{self as ca, AudioObjectID, AudioObjectPropertyAddress};
 
 use super::device_watch::{default_input_device, default_output_device};
 use crate::Error;
-
-/// One reading of the default devices.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct DeviceActivity {
-    /// Some process is running I/O on the default input device (a mic).
-    pub input_running: bool,
-    /// Some process is running I/O on the default output device.
-    pub output_running: bool,
-}
+use crate::activity::DeviceActivity;
 
 /// Read both flags for the current default devices. The default device ids
 /// are re-read every time, so plugging in a headset is followed at once.
@@ -65,7 +60,7 @@ fn is_running_somewhere(device: AudioObjectID) -> Result<bool, Error> {
         )
     };
     if status != 0 {
-        return Err(Error::NoDevice(format!(
+        return Err(Error::DeviceRead(format!(
             "AudioObjectGetPropertyData(DeviceIsRunningSomewhere) on device {device} failed: \
              OSStatus {status}"
         )));
