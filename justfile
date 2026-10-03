@@ -89,7 +89,7 @@ check: check-windows sidecar
 [windows]
 check-windows:
     cargo build --workspace --all-targets
-    cargo test --workspace
+    cargo test --workspace --no-fail-fast
     cargo test -p audio --features audio/stub-audio
     cargo clippy --workspace --all-targets -- -D warnings
 

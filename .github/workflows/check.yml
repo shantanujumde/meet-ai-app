@@ -391,9 +391,10 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo build --workspace --all-targets
 
+      # --no-fail-fast: one run lists every failing test binary, not the first.
       - name: cargo test
         if: runner.os == 'Linux'
-        run: cargo test --workspace
+        run: cargo test --workspace --no-fail-fast
 
       # The no-device audio sources CI is meant to test with (SPEC §8.2).
       - name: cargo test audio (stub-audio)
