@@ -98,6 +98,8 @@ pub fn run() {
         .manage(sync::SyncRuns::default())
         .manage(detection::Detection::default())
         .manage(calendar::CalendarState::default())
+        // TUR-44: Google and Microsoft sign-in; TUR-47/48 read access tokens from it.
+        .manage(calendar::signin::auth())
         .setup(|_app| {
             // TUR-97: before the record shortcut exists, so nothing can be
             // mid-recording while this rewrites a header. Fast — two 44-byte

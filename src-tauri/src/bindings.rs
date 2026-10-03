@@ -66,6 +66,9 @@ pub fn builder() -> Builder<tauri::Wry> {
             agent_run::set_meeting_notes,
             crate::calendar::todays_meetings,
             crate::calendar::calendar_refresh_minutes,
+            crate::calendar::signin::calendar_sign_in,
+            crate::calendar::signin::calendar_sign_out,
+            crate::calendar::signin::calendar_accounts,
             brief::meeting_brief,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)

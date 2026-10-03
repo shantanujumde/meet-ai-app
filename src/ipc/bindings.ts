@@ -245,6 +245,22 @@ export const commands = {
 	 */
 	calendarRefreshMinutes: () => __TAURI_INVOKE<number>("calendar_refresh_minutes"),
 	/**
+	 *  Sign in to Google or Microsoft in the browser, and return the account.
+	 * 
+	 *  Errors: `calendar-not-configured` (no client id; the message names the
+	 *  `config.jsonc` key), `calendar-sign-in-cancelled` (said no, or no reply in
+	 *  5 minutes), `calendar-sign-in-failed` (a bad reply, such as a `state`
+	 *  mismatch; nothing is stored), `calendar-unreachable`.
+	 */
+	calendarSignIn: (provider: meet_ai_lib_calendar_signin_SignInProvider) => typedError<meet_ai_lib_calendar_signin_CalendarAccount, meet_ai_lib_error_UiError>(__TAURI_INVOKE("calendar_sign_in", { provider })),
+	/**  Sign out: forget the access token and delete the stored refresh token. */
+	calendarSignOut: (provider: meet_ai_lib_calendar_signin_SignInProvider) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("calendar_sign_out", { provider })),
+	/**
+	 *  Both providers' sign-in state. The first call after a launch refreshes
+	 *  each stored sign-in once, to learn the account and whether it still works.
+	 */
+	calendarAccounts: () => typedError<meet_ai_lib_calendar_signin_CalendarAccount[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("calendar_accounts")),
+	/**
 	 *  The brief for the meeting called `title`.
 	 * 
 	 *  Runs on the blocking pool: it reads the index, a meeting folder and runs
@@ -358,6 +374,22 @@ export type meet_ai_lib_brief_BriefTicket = {
 	title: string,
 	/**  `open` or `in_progress`; `None` when the file has no valid status. */
 	status: string | null,
+};
+
+/**  One provider's sign-in, for the Settings card. */
+export type meet_ai_lib_calendar_signin_CalendarAccount = {
+	provider: meet_ai_lib_calendar_signin_SignInProvider,
+	/**
+	 *  The email address or username. Display only; `null` when not known
+	 *  yet (offline right after a restart).
+	 */
+	account: string | null,
+	state: meet_ai_lib_calendar_signin_SignInState,
+	/**
+	 *  `false`: the OS keystore refused the token (Linux with no Secret
+	 *  Service), so this sign-in lasts until the app quits.
+	 */
+	remembered: boolean,
 };
 
 /**  One `git log` line. */
@@ -703,6 +735,14 @@ export type meet_ai_lib_engine_SelectionView = {
  *  reports it as set up.
  */
 export type meet_ai_lib_sync_tracker_ServerStatus = "connected" | "needs_auth" | "failed" | "pending" | "disabled" | "configured" | "unknown";
+
+/**  A cloud calendar that needs a sign-in, as the webview names it. */
+export type meet_ai_lib_calendar_signin_SignInProvider = "google" | "microsoft";
+
+/**  Whether a provider is signed in. */
+export type meet_ai_lib_calendar_signin_SignInState = "signed-in" | 
+/**  The provider rejected the stored sign-in: sign in again. */
+"expired" | "signed-out";
 
 /**
  *  Why meet-ai thinks a meeting is happening.
