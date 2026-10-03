@@ -1,14 +1,149 @@
 # Releasing meet-ai
 
-How to cut a release, from version bump to a GitHub release with the signed app
-attached. Written after v0.2.0 (2026-09-28); every command below was run for
-that release. If a step stops being true, fix this file in the same commit.
+How a release gets from merged pull requests to a GitHub release with the
+signed app attached.
+
+Normally this is automatic: `.github/workflows/release.yml` (TUR-34) builds,
+signs and publishes when you merge the release PR. The manual steps further
+down are the fallback, for when the workflow cannot run. They were written
+after v0.2.0 (2026-09-28) and every command in them was run for that release.
+If a step stops being true, fix this file in the same commit.
 
 Distribution is personal only (SPEC §8.1). The app is signed with the local
 self-signed identity from `make-identity.sh`, not a Developer ID, and is not
 notarized.
 
-## Before you start: unlock the signing keychain
+## Automatic release
+
+### How it works
+
+1. Every push to `main` runs `check` (`.github/workflows/check.yml`). When it
+   passes, `release.yml` runs.
+2. [release-please](https://github.com/googleapis/release-please) reads the
+   Conventional Commit titles merged since the last `vX.Y.Z` tag. PRs are
+   squash-merged, so the PR title is the commit title. It opens one release
+   PR, titled `chore(main): release X.Y.Z`, or updates it if it is already
+   open. That PR:
+   - bumps the version in `Cargo.toml` (`[workspace.package]`),
+     `package.json` and `src-tauri/tauri.conf.json`, and in
+     `.release-please-manifest.json`;
+   - adds a `## [X.Y.Z]` entry to `CHANGELOG.md`, above the text already
+     there. The entry is built from the `feat` and `fix` titles (also `perf`
+     and `revert`).
+
+   A follow-up job (`release-pr-fixups`) then pushes one more commit to the
+   release PR. It refreshes `Cargo.lock`, because every workspace crate gets
+   its version from the workspace. It also runs Biome on the two JSON files,
+   because release-please rewrites `tauri.conf.json` in a layout that
+   `biome check` rejects.
+3. Merging any other PR only updates the release PR. Nothing is published.
+4. Merging the release PR makes release-please tag the merge commit `vX.Y.Z`
+   and create the GitHub release. Then, on a `macos-26` runner:
+   - check that `check` passed on that commit;
+   - import the signing identity from the repo secrets into a temporary
+     keychain. The run stops here if its leaf SHA-1 is not `eafb73d2…`;
+   - run `just bundle-signed`;
+   - re-check the signature as in step 6 below (`codesign --verify --deep
+     --strict`, same leaf, version `X.Y.Z`);
+   - `ditto`-zip the app as `meet-ai-X.Y.Z-macos-arm64.zip`, write the
+     `.sha256` file, and verify the unzipped copy again;
+   - delete the temporary keychain, whether the run passed or failed.
+
+   A last job attaches the zip and the checksum to the release. It renames
+   the release `meet-ai X.Y.Z` and puts the step 8 Install section above the
+   changelog notes.
+
+How the next version is chosen (`release-please-config.json`): while the
+version is below 1.0, `feat` bumps the minor number and `fix` bumps the patch
+number. A breaking change (`feat!:`) also bumps only the minor number. To force
+a version, put `Release-As: X.Y.Z` in the body of a commit on `main`.
+
+Only one release run happens at a time (`concurrency: release`), and a run that
+has started is never cancelled. The release jobs run only after a successful
+`check` on a push to `main` in `shantanujumde/meet-ai-app`. Pull requests,
+forks included, never reach them.
+
+### One-time setup
+
+These are done once by the owner, on the Mac that holds the signing keychain.
+
+1. Export the **existing** identity. Do not make a new one: a new
+   certificate resets every user's microphone and system-audio permission
+   (`docs/findings.md` §10.6, §11).
+
+   ```sh
+   K=~/Library/Keychains/meet-ai-signing.keychain-db
+   security unlock-keychain -p meetai "$K"
+   scripts/signing/make-identity.sh --print          # leaf SHA-1: eafb73d2…
+   P12_PASS="$(openssl rand -hex 24)"
+   security export -k "$K" -t identities -f pkcs12 -P "$P12_PASS" -o /tmp/meet-ai-signing.p12
+   ```
+
+2. Store it and its password as repo secrets, then delete the file:
+
+   ```sh
+   base64 -i /tmp/meet-ai-signing.p12 | gh secret set MACOS_SIGNING_P12_BASE64
+   printf '%s' "$P12_PASS" | gh secret set MACOS_SIGNING_P12_PASSWORD
+   rm -P /tmp/meet-ai-signing.p12; unset P12_PASS
+   ```
+
+3. In the repo settings, under Actions → General → Workflow permissions, turn
+   on "Allow GitHub Actions to create and approve pull requests". Without it,
+   release-please cannot open the release PR.
+4. Optional: add a `RELEASE_PLEASE_TOKEN` secret. Use a fine-grained personal
+   access token for this repo only, with Contents and Pull requests set to
+   read and write. GitHub does not start workflows for anything pushed with
+   the built-in `GITHUB_TOKEN`, so without this token the release PR shows no
+   `check` result. `check` still runs when the PR merges, and the build waits
+   for it. If branch protection requires `check` on PRs, you need this token.
+
+### Cutting a release
+
+1. Open the release PR (`chore(main): release X.Y.Z`). Read the version and
+   the changelog entry. To change the wording, edit `CHANGELOG.md` on that
+   branch. To change the version, see `Release-As` above.
+2. Merge it.
+3. About 20–30 minutes later (more with a cold cache), the release shows as
+   Latest with both files attached:
+
+   ```sh
+   gh release view vX.Y.Z --json assets --jq '.assets[].name'
+   ```
+
+4. Smoke-test it (step 9 below). The workflow cannot test the app with real
+   audio.
+
+Clean up `CHANGELOG.md` in a normal PR when you get to it. release-please adds
+each new entry above the old `## [Unreleased]` section. It does not move
+anything out of that section, and it does not update the compare links at the
+bottom.
+
+### When the workflow fails
+
+- **Before the release exists** (in `release-please` or
+  `release-pr-fixups`): fix the cause, then re-run the workflow from the
+  Actions tab. A merge to `main` also starts a new run.
+- **After the release exists** (in `build` or `publish`): the tag and the
+  release are already there, but have no files attached. Fix the cause,
+  then use **Re-run failed jobs** on the same run. That keeps the
+  release-please output, so the same tag is built. A brand new run would not
+  build it again, because release-please has already released it. If CI
+  cannot build it at all, follow steps 6–8 below by hand for that tag. Skip
+  steps 1–5: the version, the changelog, the PR and the tag already exist.
+- **The leaf SHA-1 does not match**: the secret holds a different identity.
+  Export the right one again (One-time setup, steps 1–2). Never rotate the
+  identity to make the run pass.
+- **`check has not passed on <sha>`**: release-please tags the release PR's
+  merge commit, and `check` failed or has not run on that commit. Re-run
+  `check` on it, then re-run the failed jobs.
+
+## Manual fallback
+
+Use this only when the workflow cannot run (Actions down, secrets missing, a
+signing problem only a laptop can fix). Do not run steps 1–5 for a version
+release-please has already tagged.
+
+### Before you start: unlock the signing keychain
 
 `just sign` needs the private key in `~/Library/Keychains/meet-ai-signing.keychain-db`.
 macOS keeps that key encrypted until the keychain is unlocked. The password is
@@ -33,7 +168,7 @@ security set-keychain-settings "$K"
 (`set-keychain-settings -lut 36000`), so run that line again after any
 `--rotate`.
 
-### If macOS starts stacking "Keychain Not Found" dialogs
+#### If macOS starts stacking "Keychain Not Found" dialogs
 
 Symptom: repeated *"A keychain cannot be found to store 'Chrome'"* windows
 piling up on the desktop. Nothing is wrong with the login keychain file — it has
@@ -59,7 +194,7 @@ security list-keychains          # login + meet-ai-signing + System
 Run it in a normal Terminal with your real `$HOME` — under a redirected one it
 writes a different preference file and changes nothing.
 
-## 1. Pick the version
+### 1. Pick the version
 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html), while the version is below 1.0:
 
@@ -73,7 +208,7 @@ git fetch --tags
 git log --oneline "$(git describe --tags --abbrev=0)"..main
 ```
 
-## 2. Bump the version and write the changelog
+### 2. Bump the version and write the changelog
 
 Work on a branch named `release/vX.Y.Z`, cut from the commits you want to ship.
 
@@ -103,7 +238,7 @@ In `CHANGELOG.md`:
    [X.Y.Z]: https://github.com/shantanujumde/meet-ai-app/compare/vPREV...vX.Y.Z
    ```
 
-## 3. Run the health gate
+### 3. Run the health gate
 
 ```sh
 just check
@@ -119,7 +254,7 @@ v0.3.0 that was one `if/else` in `meetings.rs` and line wrapping in the
 Paperclip patch scripts added in 6548320 (PR #3, since deleted); Biome also
 rewrote runs of spaces inside regexes to ` {12}`, which matches the same text.
 
-## 4. Commit, open a PR, merge
+### 4. Commit, open a PR, merge
 
 ```sh
 git add CHANGELOG.md Cargo.lock Cargo.toml package.json src-tauri/tauri.conf.json
@@ -132,7 +267,7 @@ gh pr merge release/vX.Y.Z --merge
 Use a merge commit (`--merge`), not squash, so each commit on the branch keeps its
 own history on `main`.
 
-## 5. Tag the merge commit
+### 5. Tag the merge commit
 
 ```sh
 git checkout main && git pull
@@ -140,7 +275,7 @@ git tag -a vX.Y.Z -m "meet-ai X.Y.Z"
 git push origin vX.Y.Z
 ```
 
-## 6. Build and sign the app from the tag
+### 6. Build and sign the app from the tag
 
 ```sh
 git describe --tags --exact-match    # must print vX.Y.Z
@@ -161,7 +296,7 @@ codesign -d -r- "$APP" 2>&1 | grep -o 'leaf = H"[0-9a-f]*"'      # eafb73d2…
 /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist"   # X.Y.Z
 ```
 
-## 7. Zip the app and make a checksum
+### 7. Zip the app and make a checksum
 
 Use `ditto`, not `zip`. It keeps the code signature intact when the file is
 unzipped.
@@ -172,7 +307,7 @@ Z=meet-ai-X.Y.Z-macos-arm64.zip
 shasum -a 256 "$Z" > "$Z.sha256"
 ```
 
-## 8. Publish the GitHub release
+### 8. Publish the GitHub release
 
 The release notes are an Install section followed by the changelog section for
 this version:
@@ -206,7 +341,7 @@ gh release list
 gh release view vX.Y.Z --json assets --jq '.assets[].name'
 ```
 
-## 9. Smoke-test what you shipped
+### 9. Smoke-test what you shipped
 
 Install the zip from the release, not the local build, and make one recording.
 This is the only check that runs the signed app with real audio.
@@ -234,7 +369,7 @@ target/meet-stt "$M/audio/mic.wav"                  # what you said
 FINDINGS §12 has the v0.3.0 run and what a pass looks like. Delete the test
 meeting folder afterwards.
 
-## When signing goes wrong
+### When signing goes wrong
 
 **`just sign` hangs, or fails with `errSecInternalComponent`.** The keychain is
 locked. Unlock it (see the top of this file) and run `just sign` again. The app
