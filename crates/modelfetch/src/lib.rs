@@ -36,10 +36,21 @@ use retry::RetryPolicy;
 
 /// How long to wait for the server to answer at all.
 ///
-/// Only the *connect* phase is bounded. A slow but live download must not be
-/// killed for being slow — on a bad hotel connection 574 MB legitimately takes
-/// a long time, and cancelling it would throw away resumable progress.
+/// There is no limit on the *whole* download. A slow but live download must
+/// not be killed for being slow — on a bad hotel connection 574 MB
+/// legitimately takes a long time. Silence is bounded separately, by
+/// [`STALL_TIMEOUT`].
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long the server may send nothing at all before the attempt fails.
+///
+/// Applies to the wait for the response headers and to every body chunk, not
+/// to the download as a whole, so a slow connection that keeps trickling bytes
+/// is never cut off. A connection that goes silent (Wi-Fi dropped, the TCP
+/// session never reset) would otherwise leave the progress bar frozen
+/// forever; failing it instead sends it through the retry, which resumes from
+/// the `.part` file.
+pub(crate) const STALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Chunk size for the verification read. Big enough that hashing is I/O-bound.
 const HASH_CHUNK: usize = 1 << 20;
@@ -225,12 +236,24 @@ async fn ensure_with(
 }
 
 /// Stream the remaining bytes into `part_path`, returning the new total.
+///
+/// Fails with [`Error::Download`] — the error the retry acts on — if the
+/// server sends nothing for `stall` while we wait for headers or a chunk.
 pub(crate) async fn download(
     spec: &ModelSpec,
     part_path: &Path,
     resumed: u64,
+    stall: Duration,
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<u64, Error> {
+    let stalled = || {
+        Error::Download(format!(
+            "{}: no data for {} ms; the connection stalled",
+            spec.url,
+            stall.as_millis()
+        ))
+    };
+
     let client = reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .build()
@@ -241,9 +264,9 @@ pub(crate) async fn download(
         request = request.header(reqwest::header::RANGE, format!("bytes={resumed}-"));
     }
 
-    let response = request
-        .send()
+    let response = tokio::time::timeout(stall, request.send())
         .await
+        .map_err(|_| stalled())?
         .map_err(|e| Error::Download(format!("{}: {e}", spec.url)))?;
 
     let status = response.status();
@@ -272,22 +295,38 @@ pub(crate) async fn download(
         .map_err(|e| Error::Download(format!("{}: {e}", part_path.display())))?;
 
     let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| Error::Download(format!("{}: {e}", spec.url)))?;
-        file.write_all(&chunk)
+    // The bytes written so far stay in the `.part` file when this fails or
+    // times out, so the retry resumes from them rather than starting over.
+    let streamed: Result<(), Error> = async {
+        while let Some(chunk) = tokio::time::timeout(stall, stream.next())
             .await
-            .map_err(|e| Error::Download(format!("{}: {e}", part_path.display())))?;
-        written += chunk.len() as u64;
-        on_progress(Progress {
-            downloaded_bytes: written,
-            total_bytes: spec.bytes,
-            verifying: false,
-        });
+            .map_err(|_| stalled())?
+        {
+            let chunk = chunk.map_err(|e| Error::Download(format!("{}: {e}", spec.url)))?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| Error::Download(format!("{}: {e}", part_path.display())))?;
+            written += chunk.len() as u64;
+            on_progress(Progress {
+                downloaded_bytes: written,
+                total_bytes: spec.bytes,
+                verifying: false,
+            });
+        }
+        Ok(())
     }
+    .await;
 
-    file.flush()
+    // Flush even when the stream failed. A `tokio::fs::File` write only
+    // queues the bytes; dropping the handle without a flush lets them land
+    // *after* the retry has measured or truncated the `.part` file, which
+    // resumes from the wrong offset or corrupts it.
+    let flushed = file
+        .flush()
         .await
-        .map_err(|e| Error::Download(format!("{}: {e}", part_path.display())))?;
+        .map_err(|e| Error::Download(format!("{}: {e}", part_path.display())));
+    streamed?;
+    flushed?;
     // The rename below is only atomic with respect to bytes that actually
     // reached the disk, so sync before the digest is computed and trusted.
     file.sync_all()
@@ -490,6 +529,7 @@ mod tests {
         let fast = RetryPolicy {
             max_retries: 0,
             base_delay: Duration::ZERO,
+            stall_timeout: STALL_TIMEOUT,
         };
         let _ = ensure_with(&dead, &dir, &fast, &mut |progress| {
             first.get_or_insert(progress);
