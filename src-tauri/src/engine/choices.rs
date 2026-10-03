@@ -168,7 +168,7 @@ fn check(
 pub(super) fn recommendation() -> Recommendation {
     static PICK: OnceLock<Recommendation> = OnceLock::new();
     PICK.get_or_init(|| {
-        let apple_silicon = cfg!(all(target_os = "macos", target_arch = "aarch64"));
+        let apple_silicon = crate::platform::is_apple_silicon();
         let mut system = sysinfo::System::new();
         system.refresh_memory();
         stt::model::recommended(apple_silicon, system.total_memory())
