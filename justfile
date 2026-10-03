@@ -65,9 +65,15 @@ check: check-windows sidecar
 # framework dependencies are already gated in Cargo.toml, so it cross-checks
 # clean; `cargo check` never links, so cpal's Windows backend needs no MSVC
 # toolchain. `calendar` is here for the same reason, ahead of its Phase 5 deps.
+#
+# Since TUR-42 every crate keeps its OS code in `src/platform/` (quality rule
+# R10), and `agent` joined the list: it has no C dependency at all. The second
+# `cargo check` builds `audio` with `stub-audio`, the no-device sources CI on
+# Windows and Linux runs tests with. The target is only added when missing.
 check-windows:
-    rustup target add x86_64-pc-windows-msvc
-    cargo check --target x86_64-pc-windows-msvc -p audio -p calendar -p stt -p prompts -p detect -p meeting-format
+    rustup target list --installed | grep -qx x86_64-pc-windows-msvc || rustup target add x86_64-pc-windows-msvc
+    cargo check --target x86_64-pc-windows-msvc -p audio -p calendar -p stt -p prompts -p detect -p meeting-format -p agent
+    cargo check --target x86_64-pc-windows-msvc -p audio --features audio/stub-audio
 
 # The TUR-97 gate: does a recording survive the app dying mid-meeting? Drives the
 # real installed app, so it needs a mic, speakers and a signed build; it is not
