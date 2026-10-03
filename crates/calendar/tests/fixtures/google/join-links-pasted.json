@@ -23,7 +23,10 @@
       "hangoutLink": "https://meet.google.com@evil.example/abc-defg-hij",
       "conferenceData": {
         "entryPoints": [
-          { "entryPointType": "video", "uri": "https://evil.example\\@meet.google.com/abc-defg-hij" }
+          {
+            "entryPointType": "video",
+            "uri": "https://evil.example\\@meet.google.com/abc-defg-hij"
+          }
         ]
       },
       "location": "https://evil.example\\@zoom.us/j/1",
