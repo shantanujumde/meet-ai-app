@@ -79,7 +79,7 @@ SOFTWARE.
 
 - URL: https://github.com/fastrepl/anarlog
 - Licence: MIT (the repository's `LICENSE`; `LICENSING.md` puts everything
-  outside `enterprise/**` under it, and both files are outside it)
+  outside `enterprise/**` under it, and every file below is outside it)
 - Copyright: Copyright (c) 2023-present Fastrepl, Inc.
 - Commit: 93deb8642e75a0a2f8ece1bed186da4362213edd
 - Files:
@@ -89,6 +89,9 @@ SOFTWARE.
   - `crates/calendar/src/microsoft/types.rs` (the Graph event models,
     trimmed to the fields we select) from
     `crates/outlook-calendar/src/types.rs`
+  - `crates/calendar/src/google/types.rs` (the Calendar API v3 event models,
+    trimmed to the fields we read) from
+    `crates/google-calendar/src/types.rs`
 
 ```
 MIT License

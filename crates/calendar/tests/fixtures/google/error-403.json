@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": 403,
+    "message": "Google Calendar API has not been used in project 123 before or it is disabled. Account me@example.com.",
+    "errors": [{ "message": "…", "domain": "usageLimits", "reason": "accessNotConfigured" }],
+    "status": "PERMISSION_DENIED"
+  }
+}

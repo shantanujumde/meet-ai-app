@@ -1,0 +1,62 @@
+{
+  "nextPageToken": "page-2",
+  "items": [
+    {
+      "id": "standup_20261005T043000Z",
+      "status": "confirmed",
+      "summary": "Platform Standup",
+      "start": { "dateTime": "2026-10-05T04:30:00Z", "timeZone": "Asia/Kolkata" },
+      "end": { "dateTime": "2026-10-05T04:45:00Z", "timeZone": "Asia/Kolkata" },
+      "recurringEventId": "standup",
+      "iCalUID": "standup@google.com",
+      "attendees": [
+        { "email": "me@example.com", "self": true, "responseStatus": "accepted" },
+        { "email": "priya@example.com", "displayName": "Priya", "responseStatus": "accepted" },
+        { "email": "dev@example.com", "responseStatus": "needsAction" },
+        {
+          "email": "c_room4b@resource.calendar.google.com",
+          "displayName": "Room 4B",
+          "resource": true,
+          "responseStatus": "accepted"
+        }
+      ]
+    },
+    {
+      "id": "holiday",
+      "status": "confirmed",
+      "summary": "Company holiday",
+      "start": { "date": "2026-10-05" },
+      "end": { "date": "2026-10-06" },
+      "iCalUID": "holiday@google.com"
+    },
+    {
+      "id": "pitch",
+      "status": "confirmed",
+      "summary": "Vendor pitch",
+      "start": { "dateTime": "2026-10-05T06:00:00Z" },
+      "end": { "dateTime": "2026-10-05T07:00:00Z" },
+      "iCalUID": "pitch@google.com",
+      "attendees": [
+        {
+          "email": "sam@example.com",
+          "displayName": "Sam",
+          "organizer": true,
+          "responseStatus": "accepted"
+        },
+        { "email": "me@example.com", "self": true, "responseStatus": "declined" }
+      ]
+    },
+    {
+      "id": "offsite",
+      "status": "cancelled",
+      "summary": "Team offsite planning",
+      "start": { "dateTime": "2026-10-05T08:00:00Z" },
+      "end": { "dateTime": "2026-10-05T09:00:00Z" },
+      "iCalUID": "offsite@google.com",
+      "attendees": [
+        { "email": "me@example.com", "self": true, "responseStatus": "accepted" },
+        { "email": "priya@example.com", "responseStatus": "accepted" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "items": [
+    {
+      "id": "review",
+      "status": "tentative",
+      "summary": "Design review",
+      "start": { "dateTime": "2026-10-05T10:00:00Z" },
+      "end": { "dateTime": "2026-10-05T11:00:00Z" },
+      "iCalUID": "review@google.com",
+      "attendees": [
+        { "email": "me@example.com", "self": true, "responseStatus": "tentative" },
+        { "email": "lee@example.com", "displayName": "Lee", "responseStatus": "declined" }
+      ],
+      "someFieldGoogleAddsLater": { "nested": [1, 2, 3] }
+    },
+    {
+      "id": "focus",
+      "summary": "Focus time",
+      "start": { "dateTime": "2026-10-05T12:00:00Z" },
+      "end": { "dateTime": "2026-10-05T13:00:00Z" },
+      "eventType": "focusTime"
+    }
+  ]
+}
