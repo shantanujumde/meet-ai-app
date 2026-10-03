@@ -140,7 +140,7 @@ fn configured_client(provider: ProviderId) -> Option<OAuthClient> {
 /// Made on first use, on a blocking-pool thread: reqwest's blocking client
 /// runs its own runtime and must not be built inside an async one.
 #[derive(Default)]
-struct ReqwestHttp {
+pub(crate) struct ReqwestHttp {
     client: OnceLock<Result<reqwest::blocking::Client, String>>,
 }
 

@@ -51,10 +51,11 @@ impl Provider {
         }
     }
 
-    /// Whether this build can read the provider. Only EventKit is built so
-    /// far; the other two are valid names that are skipped with a log line.
+    /// Whether this build can read the provider. EventKit and Microsoft
+    /// (TUR-47) are built; Google is a valid name that is skipped with a log
+    /// line until TUR-48.
     pub fn is_available(self) -> bool {
-        matches!(self, Self::EventKit)
+        matches!(self, Self::EventKit | Self::Microsoft)
     }
 
     fn from_config(name: &str) -> Result<Self, ConfigError> {
@@ -426,7 +427,10 @@ mod tests {
             r#"{ "calendar": { "providers": ["google", "eventkit", "microsoft"] } }"#,
         )
         .unwrap();
-        assert_eq!(calendar.available_providers(), vec![Provider::EventKit]);
+        assert_eq!(
+            calendar.available_providers(),
+            vec![Provider::EventKit, Provider::Microsoft]
+        );
         let calendar = parse_calendar(r#"{ "calendar": { "providers": ["google"] } }"#).unwrap();
         assert!(calendar.available_providers().is_empty());
     }
