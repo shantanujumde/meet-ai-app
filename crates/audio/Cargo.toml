@@ -29,6 +29,7 @@ hound.workspace = true
 meeting-format.workspace = true
 ringbuf.workspace = true
 rubato.workspace = true
+realfft.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
