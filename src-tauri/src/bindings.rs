@@ -12,6 +12,7 @@ use crate::agent_setup;
 use crate::brief;
 use crate::events::AGENT_RUN_STATUS_EVENT;
 use crate::events::DETECTION_PROMPT_EVENT;
+use crate::events::HOOK_FAILED_EVENT;
 use crate::events::NAVIGATE_EVENT;
 use crate::events::PROMPT_POPUP_EVENT;
 use crate::events::QUIT_CONFIRM_EVENT;
@@ -113,6 +114,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         .constant("QUIT_CONFIRM_EVENT", QUIT_CONFIRM_EVENT)
         .constant("NAVIGATE_EVENT", NAVIGATE_EVENT)
         .constant("PROMPT_POPUP_EVENT", PROMPT_POPUP_EVENT)
+        .constant("HOOK_FAILED_EVENT", HOOK_FAILED_EVENT)
         .constant("RECORD_SHORTCUT_MAC", crate::shortcut::RECORD_SHORTCUT_MAC)
         .constant(
             "RECORD_SHORTCUT_OTHER",
@@ -120,6 +122,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         )
         .typ::<crate::detection::notify::Prompt>()
         .typ::<crate::lifecycle::NavigateTo>()
+        .typ::<crate::hooks::app::HookFailed>()
 }
 
 #[cfg(test)]

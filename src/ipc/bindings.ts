@@ -403,6 +403,8 @@ export const AGENT_RUN_STATUS_EVENT = "agent-run://status" as const;
 
 export const DETECTION_PROMPT_EVENT = "detection://prompt" as const;
 
+export const HOOK_FAILED_EVENT = "hook://failed" as const;
+
 export const MEETINGS_CHANGED_EVENT = "meetings-changed" as const;
 
 export const MODEL_PROGRESS_EVENT = "model://progress" as const;
@@ -683,6 +685,19 @@ export type store_index_Hit = {
 	snippet: string,
 	/**  `HH:MM:SS` into the recording; `None` for a title, notes or ticket hit. */
 	timestamp: string | null,
+};
+
+/**  What [`HOOK_FAILED_EVENT`] carries. */
+export type meet_ai_lib_hooks_app_HookFailed = {
+	/**  The meeting folder name. */
+	meetingId: string,
+	/**
+	 *  The config key: `on_transcript_ready`, `on_analysis_complete` or
+	 *  `on_meeting_end`.
+	 */
+	hook: string,
+	/**  What went wrong, in a few words. */
+	message: string,
 };
 
 /**

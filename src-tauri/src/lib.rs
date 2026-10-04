@@ -21,6 +21,8 @@ mod engine;
 mod error;
 mod events;
 mod folder_move;
+// TUR-63: the user's own commands at three moments of a meeting.
+mod hooks;
 // TUR-76: closing the window hides it; quitting asks first while recording.
 mod lifecycle;
 mod live_transcript;
@@ -163,6 +165,8 @@ pub fn run() {
             // TUR-45: delete audio older than `audio.retention_days`, soon
             // after launch and then daily.
             retention::start(_app.handle());
+            // TUR-63: run the user's hooks when a meeting ends and its notes are written.
+            hooks::app::init(_app.handle());
             // TUR-58: the first instance never records from its flag (SPEC
             // L15, `cli.rs`); it only says so in the log.
             if cli::wants_toggle(&std::env::args().collect::<Vec<_>>()) {
