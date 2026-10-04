@@ -122,7 +122,7 @@ pub fn auth() -> CalendarAuth {
     CalendarAuth::new(
         Box::new(configured_client),
         Box::new(KeyringStore),
-        Box::new(ReqwestHttp::default()),
+        Box::new(SharedHttp),
     )
 }
 
@@ -139,12 +139,26 @@ fn configured_client(provider: ProviderId) -> Option<OAuthClient> {
     })
 }
 
+/// The app's one HTTP client (TUR-90): the sign-in's token requests and
+/// every cloud calendar read go through it.
+static HTTP: ReqwestHttp = ReqwestHttp {
+    client: OnceLock::new(),
+};
+
+/// A handle on [`HTTP`], for whatever wants a boxed [`HttpClient`].
+pub(crate) struct SharedHttp;
+
+impl HttpClient for SharedHttp {
+    fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
+        HTTP.execute(request)
+    }
+}
+
 /// The token endpoint over reqwest's blocking client.
 ///
 /// Made on first use, on a blocking-pool thread: reqwest's blocking client
 /// runs its own runtime and must not be built inside an async one.
-#[derive(Default)]
-pub(crate) struct ReqwestHttp {
+struct ReqwestHttp {
     client: OnceLock<Result<reqwest::blocking::Client, String>>,
 }
 

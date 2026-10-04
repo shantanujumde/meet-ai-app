@@ -20,12 +20,13 @@
 //!   has no HTTP stack and the tests answer for Google from fixture JSON.
 
 use chrono::{DateTime, SecondsFormat, Utc};
-use oauth2::http::{Method, Request, StatusCode, header};
+use oauth2::HttpResponse;
+use oauth2::http::StatusCode;
 use oauth2::url::Url;
-use oauth2::{HttpRequest, HttpResponse};
 
+use crate::cloud::{self, Api, IntoTokenSource};
 use crate::join_url::{extract_join_url, is_safe_join_url};
-use crate::oauth::{CalendarAuth, HttpClient, ProviderId};
+use crate::oauth::{HttpClient, ProviderId};
 use crate::raw::{RawAttendee, RawEvent, to_events};
 use crate::{CalendarProvider, Error, Event};
 
@@ -33,10 +34,18 @@ pub mod types;
 
 use types::{AttendeeResponseStatus, EventStatus};
 
+pub use crate::cloud::TokenSource;
+
 /// The name in errors and on the settings screen: "Google".
-fn provider_name() -> &'static str {
-    ProviderId::Google.display_name()
-}
+const PROVIDER: &str = "Google";
+
+/// How [`cloud::read_pages`] calls Google Calendar.
+const API: Api = Api {
+    provider: PROVIDER,
+    request_name: "Google Calendar",
+    pages_name: "Google",
+    headers: &[],
+};
 
 /// Every read: the signed-in account's primary calendar.
 pub const EVENTS_URL: &str = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
@@ -47,31 +56,6 @@ pub const FIELDS: &str = "nextPageToken,items(id,status,summary,start,end,recurr
 /// Events per page: Google's default is 250, its maximum 2500.
 pub const PAGE_SIZE: u32 = 250;
 
-/// A cap on pages per read (10,000 events), so a server that keeps sending
-/// `nextPageToken` cannot keep a read going forever.
-const MAX_PAGES: usize = 40;
-
-/// Where the Google provider gets its access token.
-pub trait TokenSource: Send + Sync {
-    /// A token that should work now. [`Error::SignInExpired`] when there is
-    /// no sign-in or it was rejected.
-    fn access_token(&self) -> Result<String, Error>;
-
-    /// Google answered 401 with `rejected`: a fresh token, refreshed rather
-    /// than cached.
-    fn renew_access_token(&self, rejected: &str) -> Result<String, Error>;
-}
-
-impl TokenSource for CalendarAuth {
-    fn access_token(&self) -> Result<String, Error> {
-        CalendarAuth::access_token(self, ProviderId::Google)
-    }
-
-    fn renew_access_token(&self, rejected: &str) -> Result<String, Error> {
-        CalendarAuth::renew_access_token(self, ProviderId::Google, rejected)
-    }
-}
-
 /// The signed-in Google account's primary calendar.
 pub struct GoogleProvider {
     tokens: Box<dyn TokenSource>,
@@ -79,56 +63,38 @@ pub struct GoogleProvider {
 }
 
 impl GoogleProvider {
-    pub fn new(tokens: Box<dyn TokenSource>, http: Box<dyn HttpClient>) -> Self {
-        Self { tokens, http }
-    }
-
-    /// One GET with the bearer token. Transport failures are
-    /// [`Error::Unreachable`]; every HTTP status comes back as is.
-    fn get(&self, url: &Url, token: &str) -> Result<HttpResponse, Error> {
-        let request: HttpRequest = Request::builder()
-            .method(Method::GET)
-            .uri(url.as_str())
-            .header(header::AUTHORIZATION, format!("Bearer {token}"))
-            .header(header::ACCEPT, "application/json")
-            .body(Vec::new())
-            // The detail never includes the request: it holds the token.
-            .map_err(|_| unreachable("could not build the Google Calendar request"))?;
-        self.http
-            .execute(request)
-            .map_err(|error| unreachable(error.to_string()))
+    /// `tokens`: any [`TokenSource`], or the app's
+    /// [`CalendarAuth`](crate::oauth::CalendarAuth), which answers for Google.
+    pub fn new<T: IntoTokenSource + ?Sized>(tokens: Box<T>, http: Box<dyn HttpClient>) -> Self {
+        Self {
+            tokens: tokens.into_token_source(ProviderId::Google),
+            http,
+        }
     }
 }
 
 impl CalendarProvider for GoogleProvider {
     fn name(&self) -> &'static str {
-        provider_name()
+        PROVIDER
     }
 
     fn list_events(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Event>, Error> {
-        let mut token = self.tokens.access_token()?;
-        let mut renewed = false;
-        let mut page_token: Option<String> = None;
-        let mut found = Vec::new();
-        for _ in 0..MAX_PAGES {
-            let url = events_url(from, to, page_token.as_deref())?;
-            let mut response = self.get(&url, &token)?;
-            if response.status() == StatusCode::UNAUTHORIZED && !renewed {
-                // Revoked, or expired early: refresh once and try again.
-                renewed = true;
-                token = self.tokens.renew_access_token(&token)?;
-                response = self.get(&url, &token)?;
-            }
-            let page = read_page(&response)?;
-            found.extend(page.items);
-            match page.next_page_token.filter(|next| !next.is_empty()) {
-                Some(next) => page_token = Some(next),
-                None => return Ok(to_events(found.into_iter().filter_map(raw_event), from, to)),
-            }
-        }
-        Err(unreachable(format!(
-            "Google sent more than {MAX_PAGES} pages of events"
-        )))
+        let first = events_url(from, to, None)?;
+        let found = cloud::read_pages(
+            &API,
+            self.tokens.as_ref(),
+            self.http.as_ref(),
+            first,
+            |response| {
+                let page = read_page(response)?;
+                let next = match page.next_page_token.filter(|next| !next.is_empty()) {
+                    Some(next) => Some(events_url(from, to, Some(&next))?),
+                    None => None,
+                };
+                Ok((page.items, next))
+            },
+        )?;
+        Ok(to_events(found.into_iter().filter_map(raw_event), from, to))
     }
 }
 
@@ -162,9 +128,7 @@ fn read_page(response: &HttpResponse) -> Result<types::ListEventsResponse, Error
     let status = response.status();
     if status == StatusCode::UNAUTHORIZED {
         tracing::warn!("Google Calendar rejected a fresh access token; sign in again");
-        return Err(Error::SignInExpired {
-            provider: provider_name(),
-        });
+        return Err(Error::SignInExpired { provider: PROVIDER });
     }
     if !status.is_success() {
         // Google's status and reason ("PERMISSION_DENIED",
@@ -260,8 +224,5 @@ fn join_url(
 }
 
 fn unreachable(detail: impl Into<String>) -> Error {
-    Error::Unreachable {
-        provider: provider_name(),
-        detail: detail.into(),
-    }
+    cloud::unreachable(PROVIDER, detail)
 }
