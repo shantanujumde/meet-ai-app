@@ -38,6 +38,18 @@ export function Settings() {
 
       <EngineSummary />
 
+      {/* TUR-93: the audio settings, in their own section. */}
+      <section className="section" aria-labelledby="audio-heading">
+        <h2 className="section__title" id="audio-heading">
+          Audio
+        </h2>
+        <Card flush>
+          <AudioRetentionRow />
+          {/* TUR-91: keep Bluetooth headphones out of call mode. */}
+          <BluetoothMicSetting />
+        </Card>
+      </section>
+
       <AgentSetup />
 
       {/* TUR-49: where meetings come from. */}
@@ -49,9 +61,6 @@ export function Settings() {
         </h2>
         <Card flush>
           <FolderRow status={rootExists ? "Exists" : "Created on first recording"} />
-          <AudioRetentionRow />
-          {/* TUR-91: keep Bluetooth headphones out of call mode. */}
-          <BluetoothMicSetting />
           <Row>
             <RowLabel
               name="Setup"
