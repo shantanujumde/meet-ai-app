@@ -218,13 +218,11 @@ pub fn sign_in_blocking(
 
 /// Run `work` with the app's [`CalendarAuth`] on the blocking pool: every
 /// call here may wait on the network or the keystore.
-async fn on_blocking_pool<T: Send + 'static>(
+async fn with_auth_on_blocking_pool<T: Send + 'static>(
     app: AppHandle,
     work: impl FnOnce(&AppHandle, &CalendarAuth) -> T + Send + 'static,
 ) -> Result<T, UiError> {
-    tauri::async_runtime::spawn_blocking(move || work(&app, &app.state::<CalendarAuth>()))
-        .await
-        .map_err(|error| UiError::app("task-failed", error.to_string()))
+    crate::error::on_blocking_pool(move || work(&app, &app.state::<CalendarAuth>())).await
 }
 
 /// Sign in to Google or Microsoft in the browser, and return the account.
@@ -240,7 +238,7 @@ pub async fn calendar_sign_in(
     app: AppHandle,
     provider: SignInProvider,
 ) -> Result<CalendarAccount, UiError> {
-    on_blocking_pool(app, move |app, auth| {
+    with_auth_on_blocking_pool(app, move |app, auth| {
         use tauri_plugin_opener::OpenerExt as _;
         let open = |url: &str| {
             app.opener()
@@ -258,7 +256,7 @@ pub async fn calendar_sign_in(
 #[tauri::command]
 #[specta::specta]
 pub async fn calendar_sign_out(app: AppHandle, provider: SignInProvider) -> Result<(), UiError> {
-    on_blocking_pool(app, move |_, auth| {
+    with_auth_on_blocking_pool(app, move |_, auth| {
         auth.sign_out(provider.into()).map_err(UiError::from)
     })
     .await?
@@ -269,7 +267,7 @@ pub async fn calendar_sign_out(app: AppHandle, provider: SignInProvider) -> Resu
 #[tauri::command]
 #[specta::specta]
 pub async fn calendar_accounts(app: AppHandle) -> Result<Vec<CalendarAccount>, UiError> {
-    on_blocking_pool(app, |_, auth| {
+    with_auth_on_blocking_pool(app, |_, auth| {
         auth.accounts()
             .into_iter()
             .map(CalendarAccount::from)
