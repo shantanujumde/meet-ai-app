@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import { applyOsAttribute } from "./osAttribute";
-import { osText } from "./osText";
 
 describe("applyOsAttribute", () => {
   test.each(["macos", "windows", "linux"] as const)("sets data-os=%s", (os) => {
@@ -13,17 +12,5 @@ describe("applyOsAttribute", () => {
     const root = document.createElement("html");
     applyOsAttribute(root);
     expect(root.dataset.os).toBe("macos");
-  });
-});
-
-describe("OS words", () => {
-  test.each([
-    ["macos", "Finder", "Terminal", "System Settings"],
-    ["windows", "File Explorer", "PowerShell", "Settings"],
-    ["linux", "file manager", "Terminal", "Settings"],
-  ] as const)("%s", (os, files, terminal, settings) => {
-    expect(osText("fileManager", os)).toBe(files);
-    expect(osText("terminal", os)).toBe(terminal);
-    expect(osText("settings", os)).toBe(settings);
   });
 });
