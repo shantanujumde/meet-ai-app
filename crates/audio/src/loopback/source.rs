@@ -17,7 +17,7 @@ use ringbuf::traits::{Consumer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
 use super::capture::{Capture, CaptureStats};
-use super::clock::{frames_to_ns, ns_to_frames};
+use super::clock::{GapRule, frames_to_ns, ns_to_frames};
 use super::splice::{GapMark, Piece, splice};
 use crate::pipeline::Pipeline;
 use crate::rate_meter::{FixedRates, Rates};
@@ -80,6 +80,13 @@ pub trait Backend: Send + 'static {
         format: &Format,
         capture: Capture,
     ) -> Result<Box<dyn LiveStream>, Error>;
+
+    /// How late a packet must start to be a gap (TUR-38), read after
+    /// [`Self::format`]. TUR-37's rule unless the backend knows its times
+    /// better (PipeWire) or worse (PulseAudio).
+    fn gap_rule(&self) -> GapRule {
+        GapRule::WASAPI
+    }
 }
 
 /// Pause every stream a failed start had opened, before the error goes back.
@@ -189,7 +196,8 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
             Arc::clone(&last_ns),
             format.channels,
             Arc::clone(&stats),
-        );
+        )
+        .with_gap_rule(self.backend.gap_rule());
         let stream = match self.backend.start_capture(&format, capture) {
             Ok(stream) => stream,
             Err(e) => {

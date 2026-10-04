@@ -65,6 +65,14 @@ windows = { workspace = true, features = ["Win32_System_Performance"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libpulse-binding.workspace = true
+# TUR-38: cpal's PipeWire host first, then PulseAudio, then ALSA (cpal's own
+# `default_host` order). PipeWire records the default sink (system audio);
+# ALSA cannot reach a monitor at all. Links libpipewire-0.3 and libpulse
+# (`libpipewire-0.3-dev`, `libpulse-dev`). Never bundle libpipewire or libspa
+# in an AppImage: they load plugins from a build-time path and capture
+# silence on other distros.
+cpal = { workspace = true, features = ["pipewire", "pulseaudio"] }
+libc.workspace = true
 
 [dev-dependencies]
 # Test-only: temp folders and the shared tone generator.

@@ -120,6 +120,11 @@ SOFTWARE.
     `crates/audio/src/platform/windows/render_in_use.rs` (the render-session
     walk) from `render_device_in_use` and `has_foreign_active_session` in
     `crates/audio-actual/src/speaker/windows.rs` (TUR-95)
+  - `crates/audio/src/platform/linux/devices.rs` (`server_defaults`: the
+    default sink read from the server info, from `get_default_sink_name`) and
+    `crates/audio/src/loopback/sound_server.rs` (`system_capture_device`: the
+    PulseAudio `<sink>.monitor` source, from `resolve_monitor_device`) from
+    `crates/audio-actual/src/speaker/linux.rs` (TUR-38)
 
 ```
 MIT License
@@ -332,6 +337,9 @@ SOFTWARE.
   - `crates/audio/src/platform/windows_loopback.rs` (`start_keepalive`: a
     render stream of zeros on the captured device, from
     `build_silence_keepalive`) from `crates/scap-cpal/src/lib.rs` (TUR-37)
+  - `crates/audio/src/loopback/cpal_stream.rs` (`start_silence`: the same
+    render stream of zeros, for the Linux default sink, from
+    `build_silence_keepalive`) from `crates/scap-cpal/src/lib.rs` (TUR-38)
 
 ```
 MIT License
@@ -370,6 +378,9 @@ SOFTWARE.
   - `crates/audio/src/loopback/clock.rs` (`qpc_to_ns`: QPC ticks to ns on
     the 100 ns grid, from `Stream::now`) from
     `src/host/wasapi/stream.rs` (TUR-37)
+  - `crates/audio/src/platform/linux/clock.rs` (`host_now_ns`:
+    `clock_gettime(CLOCK_MONOTONIC)`, from `monotonic_stream_instant`) from
+    `src/host/pipewire/stream.rs` (TUR-38)
 
 ## Whisper
 
