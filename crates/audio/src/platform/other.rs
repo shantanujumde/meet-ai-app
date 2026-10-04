@@ -35,6 +35,12 @@ pub(crate) fn default_input_device() -> Result<DeviceId, Error> {
     Err(Error::Unsupported)
 }
 
+/// No input-device list yet, so the microphone stays the default input
+/// (TUR-91's Bluetooth choice is macOS only).
+pub(crate) fn input_devices() -> Result<Vec<crate::mic_choice::InputDevice>, Error> {
+    Err(Error::Unsupported)
+}
+
 /// SPEC §8.2's Windows port is a stub, not held to the drift gate, so a
 /// process-relative monotonic clock is sufficient here — there is no second
 /// channel on that platform yet for it to be compared against.

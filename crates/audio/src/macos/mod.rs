@@ -35,6 +35,9 @@ pub mod device_watch;
 /// audio-activity meeting signal (TUR-31) — property reads only, no capture.
 pub mod activity;
 
+/// The input devices Core Audio lists, for the microphone choice (TUR-91).
+mod input_devices;
+
 /// The functions [`crate::platform`] routes to on macOS.
 pub(crate) mod platform;
 

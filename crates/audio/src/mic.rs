@@ -17,6 +17,7 @@ use cpal::{SampleFormat, Stream, StreamConfig};
 use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
+use crate::mic_choice::{self, MicChoice};
 use crate::pipeline::Pipeline;
 use crate::platform::host_now_ns;
 use crate::rate_meter::{CallbackMeter, FixedRates, Rates};
@@ -151,9 +152,7 @@ impl MicSource {
     /// [`Error`] back instead of hanging with it.
     fn build(dest: PathBuf, tee: Option<Tee>) -> Result<Built, Error> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or_else(|| Error::NoDevice("no default input device".to_string()))?;
+        let device = pick_device(&host)?;
         let supported = device
             .default_input_config()
             .map_err(|e| Error::NoDevice(format!("no usable input config: {e}")))?;
@@ -382,5 +381,56 @@ impl AudioSource for MicSource {
 
     fn device_rate(&self) -> Option<u32> {
         self.rates.as_ref().map(|rates| rates.effective())
+    }
+}
+
+/// The input device to open: the default, unless [`mic_choice::choose`]
+/// picks another (TUR-91: the Mac's own mic when the default is Bluetooth).
+/// The choice and its reason are logged; any failure to list or find the
+/// chosen device falls back to the default, as before.
+fn pick_device(host: &cpal::Host) -> Result<cpal::Device, Error> {
+    let default = || {
+        host.default_input_device()
+            .ok_or_else(|| Error::NoDevice("no default input device".to_string()))
+    };
+    let devices = match crate::platform::input_devices() {
+        Ok(devices) => devices,
+        Err(Error::Unsupported) => return default(),
+        Err(error) => {
+            tracing::info!("microphone: the default input ({error} while listing devices)");
+            return default();
+        }
+    };
+    match mic_choice::choose(&devices, mic_choice::use_builtin_with_bluetooth()) {
+        MicChoice::Default { reason } => {
+            let name = devices
+                .iter()
+                .find(|d| d.is_default)
+                .map(|d| d.name.as_str());
+            tracing::info!(
+                "microphone: the default input {:?}, because {reason}",
+                name.unwrap_or("(unknown)")
+            );
+            default()
+        }
+        MicChoice::Device { uid, name, reason } => {
+            let found = host
+                .input_devices()
+                .ok()
+                .and_then(|mut all| all.find(|d| d.id().is_ok_and(|id| id.id() == uid)));
+            match found {
+                Some(device) => {
+                    tracing::info!("microphone: {name:?} instead of the default, because {reason}");
+                    Ok(device)
+                }
+                None => {
+                    tracing::info!(
+                        "microphone: the default input; {name:?} was chosen but cpal does not \
+                         list it"
+                    );
+                    default()
+                }
+            }
+        }
     }
 }
