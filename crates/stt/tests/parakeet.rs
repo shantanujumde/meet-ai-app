@@ -11,8 +11,7 @@
 //! cargo test -p stt --test parakeet -- --ignored --nocapture
 //! ```
 //!
-//! The fixture WAVs come from `crates/audio/fixtures/generate.sh`, which needs
-//! macOS `say` until TUR-50 makes them portable.
+//! The fixture WAVs are committed under `crates/audio/fixtures`.
 
 mod fixtures;
 
@@ -46,7 +45,6 @@ fn engine() -> ParakeetEngine {
 #[test]
 #[ignore = "needs parakeet model"]
 fn parakeet_writes_nothing_for_silence() {
-    fixtures::ensure();
     let mut engine = engine();
     for name in ["silence-30s.wav", "room-tone-30s.wav"] {
         let mut sink = CollectingSink::new();
@@ -65,7 +63,6 @@ fn parakeet_writes_nothing_for_silence() {
 #[test]
 #[ignore = "needs parakeet model"]
 fn parakeet_live_writes_nothing_for_silence() {
-    fixtures::ensure();
     let mut engine = engine();
     for name in ["silence-30s.wav", "room-tone-30s.wav"] {
         let pcm = stt::read_wav_16k_mono(&fixtures::path(name)).unwrap();
@@ -89,7 +86,6 @@ fn parakeet_live_writes_nothing_for_silence() {
 #[test]
 #[ignore = "needs parakeet model"]
 fn parakeet_reads_both_tracks_accurately_and_labels_them_correctly() {
-    fixtures::ensure();
     let reference = fixtures::Reference::load();
     let mut engine = engine();
 
