@@ -189,11 +189,14 @@ impl<'a> AppleUnavailable<'a> {
 /// happened, so the UI can tell a genuine incompatibility (this Mac is too
 /// old, or this build was not given the sidecar) apart from "not ready yet"
 /// (the on-device model for this locale has not finished installing).
+///
+/// Off macOS there is no Apple engine at all, so it says that instead of "the
+/// sidecar was not found" (TUR-52).
 fn apple_unavailable_detail(apple: &Option<Result<Probe, Error>>, locale: &str) -> String {
     match AppleUnavailable::of(apple) {
-        AppleUnavailable::NoSidecar => {
-            "the meet-stt sidecar was not found in the app bundle".to_string()
-        }
+        AppleUnavailable::NoSidecar => crate::platform::APPLE_SPEECH_UNSUPPORTED
+            .unwrap_or("the meet-stt sidecar was not found in the app bundle")
+            .to_string(),
         AppleUnavailable::ProbeFailed(error) => error.to_string(),
         AppleUnavailable::TooOld(reason) => reason.to_string(),
         // Falling back to "below macOS 26" here would be a false claim, so
@@ -246,13 +249,7 @@ fn decide(
                 });
             }
             // A4's rule: a value that cannot work here is an error that says
-            // why, not a silent switch. Off macOS there is no Apple engine at
-            // all, so say that instead of "the sidecar was not found".
-            if let Some(why) = crate::platform::APPLE_SPEECH_UNSUPPORTED {
-                return Err(Error::EngineUnavailable(format!(
-                    "Apple's speech engine cannot be used: {why}"
-                )));
-            }
+            // why, not a silent switch.
             let detail = apple_unavailable_detail(apple, &environment.locale);
             Err(Error::EngineUnavailable(format!(
                 "Apple's speech engine cannot be used: {detail}"
@@ -279,6 +276,15 @@ fn decide(
                     engine: Kind::AppleSpeech,
                     reason: "this Mac has Apple's on-device speech engine, which needs no download"
                         .into(),
+                })
+            } else if environment.whisper_model.is_some()
+                && apple.is_none()
+                && crate::platform::APPLE_SPEECH_UNSUPPORTED.is_some()
+            {
+                // Not a fallback here: whisper is this OS's only engine.
+                Ok(Selection {
+                    engine: Kind::Whisper,
+                    reason: "whisper is the speech engine on this system".into(),
                 })
             } else if environment.whisper_model.is_some() {
                 let detail = apple_unavailable_detail(apple, &environment.locale);
@@ -355,9 +361,15 @@ mod tests {
         let selection = resolve(Preference::Auto, &env).unwrap();
         assert_eq!(selection.engine, Kind::Whisper);
         // The success case still gets to say *why* Apple's was skipped —
-        // not just that whisper was picked instead.
+        // not just that whisper was picked instead. Off macOS whisper is the
+        // only engine, not a fallback (TUR-52).
+        let expected = if crate::platform::APPLE_SPEECH_UNSUPPORTED.is_some() {
+            "whisper is the speech engine on this system"
+        } else {
+            "meet-stt sidecar was not found"
+        };
         assert!(
-            selection.reason.contains("meet-stt sidecar was not found"),
+            selection.reason.contains(expected),
             "unhelpful reason: {}",
             selection.reason
         );
@@ -379,8 +391,10 @@ mod tests {
         // setup (not ready yet). The message must say which.
         let error = resolve(Preference::Auto, &environment()).unwrap_err();
         let message = error.to_string();
+        let why =
+            crate::platform::APPLE_SPEECH_UNSUPPORTED.unwrap_or("meet-stt sidecar was not found");
         assert!(
-            message.contains("meet-stt sidecar was not found"),
+            message.contains(why),
             "message does not explain why Apple's engine is unavailable: {message}"
         );
         assert!(
@@ -410,6 +424,31 @@ mod tests {
             Some(why) => assert!(message.contains(why), "unhelpful message: {message}"),
             None => assert!(message.contains("meet-stt"), "unhelpful message: {message}"),
         }
+    }
+
+    #[test]
+    fn auto_where_apple_cannot_exist_never_blames_the_sidecar() {
+        if crate::platform::APPLE_SPEECH_UNSUPPORTED.is_none() {
+            return;
+        }
+        let mut env = environment();
+        let error = resolve(Preference::Auto, &env).unwrap_err().to_string();
+        assert!(!error.contains("meet-stt"), "blames the sidecar: {error}");
+        assert!(error.contains("part of macOS"), "unhelpful: {error}");
+
+        env.whisper_model = Some(PathBuf::from("/tmp/ggml-small.en-q5_1.bin"));
+        let selection = resolve(Preference::Auto, &env).unwrap();
+        assert_eq!(selection.engine, Kind::Whisper);
+        assert!(
+            !selection.reason.contains("meet-stt"),
+            "{}",
+            selection.reason
+        );
+        assert!(
+            !selection.reason.contains("fallback"),
+            "{}",
+            selection.reason
+        );
     }
 
     #[test]
