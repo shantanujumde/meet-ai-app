@@ -12,7 +12,6 @@ use serde_json::{Value, json};
 /// How the fake `codex` behaves, as `fake-cli` profiles: `debug models` and
 /// `mcp list` get their own settings (`models.*`, `mcp.*`); anything else is
 /// `codex exec`. Logs land in the test's folder (`mcp/` for the server list).
-/// `Fake::give` maps the old `*.src` names onto these settings.
 fn configure(cli: &test_support::FakeCli, dir: &Path) {
     let mcp = dir.join("mcp");
     std::fs::create_dir(&mcp).unwrap();
@@ -78,7 +77,7 @@ fn good_notes() -> Value {
 }
 
 /// A fake `codex` in a folder of its own, plus a separate work root, so the
-/// files the script records never land where the run's folders are made.
+/// files the fake records never land where the run's folders are made.
 struct Fake {
     dir: tempfile::TempDir,
     cli: test_support::FakeCli,
@@ -101,37 +100,51 @@ impl Fake {
         Box::new(CodexHarness::with_binary(self.cli.path()))
     }
 
-    /// Sets one input of the fake, under the name the old shell fake used:
-    /// `code`, `stderr`, `sleep`, `reply`, `echo_prompt` for `codex exec`,
-    /// `mcp`, `mcp_code` for `mcp list`, `models` for `debug models`.
-    fn give(&self, name: &str, text: &str) -> &Self {
-        match name {
-            "code.src" => {
-                self.cli.set("code", text).set("models.code", text);
-            }
-            "stderr.src" => {
-                self.cli.set("stderr", text);
-            }
-            "sleep.src" => {
-                self.cli.set("sleep", text);
-            }
-            "reply.src" => {
-                self.cli.set("reply_file", text);
-            }
-            "echo_prompt.src" => {
-                self.cli.set("echo_stdin_stderr", "1");
-            }
-            "mcp.src" => {
-                self.cli.set("mcp.stdout", text);
-            }
-            "mcp_code.src" => {
-                self.cli.set("mcp.code", text);
-            }
-            "models.src" => {
-                self.cli.set("models.stdout", text);
-            }
-            other => panic!("the fake codex has no input {other}"),
-        }
+    /// The exit code of `codex exec` and `codex debug models`.
+    fn exit_code(&self, code: &str) -> &Self {
+        self.cli.set("code", code).set("models.code", code);
+        self
+    }
+
+    /// What `codex exec` prints on stderr.
+    fn stderr(&self, text: &str) -> &Self {
+        self.cli.set("stderr", text);
+        self
+    }
+
+    /// How long `codex exec` sleeps before it replies, in seconds.
+    fn sleep(&self, secs: &str) -> &Self {
+        self.cli.set("sleep", secs);
+        self
+    }
+
+    /// What `codex exec` writes to its `-o` reply file.
+    fn reply(&self, text: &str) -> &Self {
+        self.cli.set("reply_file", text);
+        self
+    }
+
+    /// Makes `codex exec` print the prompt it read on stderr, as Codex does.
+    fn echo_prompt(&self) -> &Self {
+        self.cli.set("echo_stdin_stderr", "1");
+        self
+    }
+
+    /// What `codex mcp list --json` prints.
+    fn mcp_list(&self, text: &str) -> &Self {
+        self.cli.set("mcp.stdout", text);
+        self
+    }
+
+    /// The exit code of `codex mcp list`.
+    fn mcp_exit_code(&self, code: &str) -> &Self {
+        self.cli.set("mcp.code", code);
+        self
+    }
+
+    /// What `codex debug models` prints.
+    fn models_list(&self, text: &str) -> &Self {
+        self.cli.set("models.stdout", text);
         self
     }
 
@@ -191,7 +204,7 @@ fn name_of(path: &Path) -> String {
 #[test]
 fn a_notes_run_starts_codex_with_no_user_config_and_returns_the_reply_file() {
     let fake = Fake::new();
-    fake.give("reply.src", &good_notes().to_string());
+    fake.reply(&good_notes().to_string());
     let codex = fake.harness();
     assert_eq!(codex.id(), "codex");
 
@@ -247,7 +260,7 @@ fn a_notes_run_starts_codex_with_no_user_config_and_returns_the_reply_file() {
 #[test]
 fn a_notes_run_passes_the_model_only_when_one_is_set() {
     let fake = Fake::new();
-    fake.give("reply.src", &good_notes().to_string());
+    fake.reply(&good_notes().to_string());
     let codex = fake.harness();
 
     let mut job = fake.notes_job();
@@ -294,8 +307,7 @@ fn sync_job(fake: &Fake, tools: &[&str]) -> Job {
 fn a_sync_run_pre_approves_only_the_tracker_and_turns_every_other_server_off() {
     let fake = Fake::new();
     let reply = json!({ "issue_key": "ENG-42", "url": "https://linear.app/acme/issue/ENG-42" });
-    fake.give("reply.src", &reply.to_string())
-        .give("mcp.src", MCP_LIST);
+    fake.reply(&reply.to_string()).mcp_list(MCP_LIST);
     let job = sync_job(&fake, &["mcp__linear__*"]);
 
     assert_eq!(fake.harness().run(&job).unwrap(), reply);
@@ -349,8 +361,7 @@ fn a_sync_run_pre_approves_only_the_tracker_and_turns_every_other_server_off() {
 fn a_sync_run_with_listed_tools_pre_approves_each_one() {
     let fake = Fake::new();
     let reply = json!({ "issue_key": "ENG-42", "url": "https://linear.app/acme/issue/ENG-42" });
-    fake.give("reply.src", &reply.to_string())
-        .give("mcp.src", MCP_LIST);
+    fake.reply(&reply.to_string()).mcp_list(MCP_LIST);
     let job = sync_job(&fake, &["mcp__linear__create_issue"]);
 
     assert_eq!(fake.harness().run(&job).unwrap(), reply);
@@ -363,8 +374,7 @@ fn a_sync_run_with_listed_tools_pre_approves_each_one() {
 #[test]
 fn a_sync_run_stops_before_codex_runs_when_the_server_list_cannot_be_read() {
     let fake = Fake::new();
-    fake.give("mcp.src", "Error: bad config")
-        .give("mcp_code.src", "1");
+    fake.mcp_list("Error: bad config").mcp_exit_code("1");
     let err = fake
         .harness()
         .run(&sync_job(&fake, &["mcp__linear__*"]))
@@ -383,7 +393,7 @@ fn a_sync_run_stops_before_codex_runs_when_the_server_list_cannot_be_read() {
     assert_empty(fake.root.path());
 
     // A list that is not JSON stops it too.
-    fake.give("mcp_code.src", "0");
+    fake.mcp_exit_code("0");
     let err = fake
         .harness()
         .run(&sync_job(&fake, &["mcp__linear__*"]))
@@ -395,7 +405,7 @@ fn a_sync_run_stops_before_codex_runs_when_the_server_list_cannot_be_read() {
 #[test]
 fn a_sync_run_to_a_server_codex_does_not_have_never_starts() {
     let fake = Fake::new();
-    fake.give("mcp.src", MCP_LIST);
+    fake.mcp_list(MCP_LIST);
     for (tracker, words) in [
         ("mcp__jira__*", "Codex has no MCP server named \"jira\""),
         ("mcp__computer-use__*", "is turned off in Codex"),
@@ -417,8 +427,7 @@ fn a_sync_run_to_a_server_codex_does_not_have_never_starts() {
 #[test]
 fn a_codex_that_fails_reports_its_exit_code_and_stderr() {
     let fake = Fake::new();
-    fake.give("code.src", "3")
-        .give("stderr.src", "login expired\n");
+    fake.exit_code("3").stderr("login expired\n");
     let err = fake.harness().run(&fake.notes_job()).unwrap_err();
     let AgentError::CliFailed { status, stderr } = &err else {
         panic!("expected CliFailed, got {err:?}")
@@ -431,10 +440,9 @@ fn a_codex_that_fails_reports_its_exit_code_and_stderr() {
 #[test]
 fn a_failed_run_does_not_pass_on_the_prompt_codex_echoes() {
     let fake = Fake::new();
-    fake.give("code.src", "1").give("echo_prompt.src", "").give(
-        "stderr.src",
-        "OpenAI Codex v0.152.1\nERROR: stream disconnected\n",
-    );
+    fake.exit_code("1")
+        .echo_prompt()
+        .stderr("OpenAI Codex v0.152.1\nERROR: stream disconnected\n");
     let err = fake.harness().run(&fake.notes_job()).unwrap_err();
     let AgentError::CliFailed { stderr, .. } = &err else {
         panic!("expected CliFailed, got {err:?}")
@@ -454,7 +462,7 @@ fn a_codex_that_writes_no_reply_file_is_invalid_json() {
 #[test]
 fn a_reply_file_that_is_not_json_is_invalid_json() {
     let fake = Fake::new();
-    fake.give("reply.src", "Sure! Here are your notes: SECRET");
+    fake.reply("Sure! Here are your notes: SECRET");
     let err = fake.harness().run(&fake.notes_job()).unwrap_err();
     assert!(matches!(err, AgentError::InvalidJson { .. }), "{err:?}");
     assert!(!err.to_string().contains("SECRET"), "{err}");
@@ -466,7 +474,7 @@ fn a_reply_file_that_breaks_the_schema_is_rejected_without_quoting_it() {
     let fake = Fake::new();
     let mut reply = good_notes();
     reply["tasks"][0]["transcript_ref"] = json!("SECRET-MINUTE");
-    fake.give("reply.src", &reply.to_string());
+    fake.reply(&reply.to_string());
     let err = fake.harness().run(&fake.notes_job()).unwrap_err();
     let AgentError::SchemaMismatch { errors } = &err else {
         panic!("expected SchemaMismatch, got {err:?}")
@@ -500,8 +508,7 @@ fn a_codex_that_is_not_installed_is_not_found() {
 #[test]
 fn a_run_past_its_time_limit_is_killed() {
     let fake = Fake::new();
-    fake.give("sleep.src", "30")
-        .give("reply.src", &good_notes().to_string());
+    fake.sleep("30").reply(&good_notes().to_string());
     let mut job = fake.notes_job();
     job.timeout = Duration::from_millis(300);
     let start = Instant::now();
@@ -518,9 +525,7 @@ fn a_run_past_its_time_limit_is_killed() {
 #[test]
 fn models_are_the_listed_ones_from_codex_debug_models() {
     let fake = Fake::new();
-    fake.give(
-        "models.src",
-        r#"{"models":[{"slug":"gpt-5.6-sol","visibility":"list","priority":1},{"slug":"gpt-5.6-terra","visibility":"list","priority":2},{"slug":"gpt-daybreak-blue-latest","visibility":"hide","priority":3},{"slug":"gpt-5.5","visibility":"list","priority":7}]}"#,
+    fake.models_list(r#"{"models":[{"slug":"gpt-5.6-sol","visibility":"list","priority":1},{"slug":"gpt-5.6-terra","visibility":"list","priority":2},{"slug":"gpt-daybreak-blue-latest","visibility":"hide","priority":3},{"slug":"gpt-5.5","visibility":"list","priority":7}]}"#,
     );
     assert_eq!(
         fake.harness().models(),
@@ -531,11 +536,10 @@ fn models_are_the_listed_ones_from_codex_debug_models() {
 #[test]
 fn models_are_empty_when_codex_cannot_list_them() {
     let fake = Fake::new();
-    fake.give("models.src", "not json at all");
+    fake.models_list("not json at all");
     assert!(fake.harness().models().is_empty());
 
-    fake.give("models.src", r#"{"models":[]}"#)
-        .give("code.src", "1");
+    fake.models_list(r#"{"models":[]}"#).exit_code("1");
     assert!(fake.harness().models().is_empty());
 
     let missing = CodexHarness::with_binary(fake.dir.path().join("no-such-codex"));
