@@ -1,4 +1,3 @@
-// @vitest-environment node
 /// <reference types="node" />
 /**
  * TUR-102: every text colour holds WCAG AA on every surface it sits on, in
