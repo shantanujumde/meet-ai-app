@@ -26,8 +26,8 @@ describe("model sizes", () => {
   });
 
   test("nonsense in gets a dash, not NaN", () => {
-    expect(formatBytes(Number.NaN)).toBe("—");
-    expect(formatBytes(-1)).toBe("—");
+    expect(formatBytes(Number.NaN)).toBe("unknown size");
+    expect(formatBytes(-1)).toBe("unknown size");
   });
 });
 

@@ -15,7 +15,7 @@
  * every other source.
  */
 export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  if (!Number.isFinite(bytes) || bytes < 0) return "unknown size";
   if (bytes < 1_000) return `${bytes} bytes`;
   if (bytes < 1_000_000) return `${Math.round(bytes / 1_000)} KB`;
   if (bytes < 1_000_000_000) return `${Math.round(bytes / 1_000_000)} MB`;

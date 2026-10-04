@@ -176,7 +176,7 @@ function TodayRow({ event, minAttendees }: { event: TodayEvent; minAttendees: nu
       <li
         className={cn(rowVariants({ divided: false }), "opacity-50")}
         aria-disabled
-        title={`Fewer than ${minAttendees} people, so meet-ai treats it as a solo block`}
+        title={`Fewer than ${minAttendees} people, so meet-ai does not remind you about it`}
       >
         {body}
       </li>
