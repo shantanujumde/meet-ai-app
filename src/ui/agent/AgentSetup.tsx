@@ -10,9 +10,12 @@
  * their status fills in, the same way the engine row does.
  */
 
+import { Bot, RefreshCw } from "lucide-react";
 import { useId } from "react";
 import type { AgentChoice, AgentCli } from "@/ipc/types";
-import { Button, ButtonRow, Card, Prose } from "@/ui/primitives";
+import { IconSquare } from "@/ui/icons";
+import { Button, ButtonRow, Card, Prose, Row } from "@/ui/primitives";
+import { SettingsSection } from "@/ui/settings/SettingsSection";
 import { ErrorState } from "@/ui/states";
 import { ModelField, PathField } from "./AgentDetails";
 import { AgentOption, AgentStatus, agentDetail, SignInCommand } from "./AgentOption";
@@ -26,72 +29,77 @@ export function AgentSetup() {
   const { choice, agents, detecting } = setup;
 
   return (
-    <section className="section" aria-labelledby={`${group}-heading`}>
-      <div className="section__header">
-        <h2 className="section__title" id={`${group}-heading`}>
-          Notes
-        </h2>
-        <p className="section__hint">Written by your own agent, on your own account</p>
-      </div>
-
-      {setup.loadError ? (
+    <SettingsSection
+      title="Notes"
+      description="Written by your own agent, on your own account"
+      after={
         <>
-          <ErrorState error={setup.loadError} />
-          <Prose>Picking an agent below fixes this.</Prose>
+          <ButtonRow>
+            <Button size="small" icon={RefreshCw} disabled={detecting} onClick={setup.checkAgain}>
+              {detecting ? "Checking…" : "Check again"}
+            </Button>
+          </ButtonRow>
+
+          {setup.detectError ? <ErrorState error={setup.detectError} /> : null}
+          {setup.saveError ? <ErrorState error={setup.saveError} /> : null}
+
+          {choice ? (
+            <PickedAgent
+              choice={choice}
+              agents={agents}
+              onModel={setup.setModel}
+              onPath={setup.setBinaryPath}
+            />
+          ) : null}
         </>
+      }
+    >
+      {setup.loadError ? (
+        <Row>
+          <span className="flex min-w-0 flex-col gap-2">
+            <ErrorState error={setup.loadError} />
+            <Prose>Picking an agent below fixes this.</Prose>
+          </span>
+        </Row>
       ) : null}
 
       <fieldset className="contents">
         <legend className="sr-only">Who writes your notes</legend>
-        <Card flush>
-          {AGENT_IDS.map((id) => {
-            const { name, cli } = agentInfo(id, agents);
-            return (
-              <AgentOption
-                key={id}
-                group={group}
-                value={id}
-                name={name}
-                detail={agentDetail(cli, detecting)}
-                checked={choice?.harness === id}
-                onPick={() => setup.pick(id)}
-                status={<AgentStatus cli={cli} detecting={detecting} />}
-              >
-                {!detecting && cli?.state === "signed-out" ? (
-                  <SignInCommand command={cli.signInCommand} />
-                ) : null}
-              </AgentOption>
-            );
-          })}
-          <AgentOption
-            group={group}
-            value="none"
-            name="None, I'll copy the prompt"
-            detail="After each call, Copy prompt puts the notes prompt on the clipboard for any agent you like"
-            checked={choice?.harness === "none"}
-            onPick={() => setup.pick("none")}
-          />
-        </Card>
-      </fieldset>
-
-      <ButtonRow>
-        <Button size="small" disabled={detecting} onClick={setup.checkAgain}>
-          {detecting ? "Checking…" : "Check again"}
-        </Button>
-      </ButtonRow>
-
-      {setup.detectError ? <ErrorState error={setup.detectError} /> : null}
-      {setup.saveError ? <ErrorState error={setup.saveError} /> : null}
-
-      {choice ? (
-        <PickedAgent
-          choice={choice}
-          agents={agents}
-          onModel={setup.setModel}
-          onPath={setup.setBinaryPath}
+        <Row>
+          <span className="flex min-w-0 items-center gap-5">
+            <IconSquare icon={Bot} />
+            <span className="text-body font-semibold">Agent</span>
+          </span>
+        </Row>
+        {AGENT_IDS.map((id) => {
+          const { name, cli } = agentInfo(id, agents);
+          return (
+            <AgentOption
+              key={id}
+              group={group}
+              value={id}
+              name={name}
+              detail={agentDetail(cli, detecting)}
+              checked={choice?.harness === id}
+              onPick={() => setup.pick(id)}
+              status={<AgentStatus cli={cli} detecting={detecting} />}
+            >
+              {!detecting && cli?.state === "signed-out" ? (
+                <SignInCommand command={cli.signInCommand} />
+              ) : null}
+            </AgentOption>
+          );
+        })}
+        <AgentOption
+          group={group}
+          value="none"
+          name="None, I'll copy the prompt"
+          detail="After each call, Copy prompt puts the notes prompt on the clipboard for any agent you like"
+          checked={choice?.harness === "none"}
+          onPick={() => setup.pick("none")}
         />
-      ) : null}
-    </section>
+      </fieldset>
+    </SettingsSection>
   );
 }
 

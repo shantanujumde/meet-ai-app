@@ -6,8 +6,10 @@
  * Whisper there depends on which models are here.
  */
 
+import { AudioLines } from "lucide-react";
 import { useId } from "react";
-import { Card, Prose } from "@/ui/primitives";
+import { IconSquare } from "@/ui/icons";
+import { Card, Prose, Row } from "@/ui/primitives";
 import { Checking, ErrorState } from "@/ui/states";
 import { ModelRow } from "./ModelRow";
 import { engineInUse } from "./tags";
@@ -33,6 +35,12 @@ export function ModelList({ speech }: { speech: Speech }) {
         <legend className="sr-only">Whisper model</legend>
         {choices && !whisperRuns ? <Prose>{WHISPER_ONLY_NOTE}</Prose> : null}
         <Card flush>
+          <Row>
+            <span className="flex min-w-0 items-center gap-5">
+              <IconSquare icon={AudioLines} />
+              <span className="text-body font-semibold">Whisper models</span>
+            </span>
+          </Row>
           {models.map((model) => {
             const picked = choices?.model === model.id;
             return (

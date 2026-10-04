@@ -10,10 +10,12 @@
  * nothing below moves when it fills in.
  */
 
+import { Download, Mic } from "lucide-react";
 import { type ReactNode, useId } from "react";
 import type { EngineChoice, EngineChoices } from "@/ipc/types";
 import { formatBytes } from "@/lib/format";
-import { Button, Card, Row, RowValue, rowDetailVariants } from "@/ui/primitives";
+import { IconSquare } from "@/ui/icons";
+import { Button, Row, RowValue, rowDetailVariants } from "@/ui/primitives";
 import { Radio } from "@/ui/Radio";
 import { Checking, ErrorState } from "@/ui/states";
 import { DownloadProgress } from "./DownloadProgress";
@@ -75,72 +77,84 @@ export function EnginePicker({
   return (
     <fieldset className="contents">
       <legend className="sr-only">Speech engine</legend>
-      <Card flush>
-        <EngineOption
-          group={group}
-          value="auto"
-          name="Automatic (recommended)"
-          detail={autoDetail(choices)}
-          checked={choices?.engine === "auto"}
-          disabled={!ready}
-          onPick={onPick}
-          status={checking ? <Checking label="Checking…" /> : null}
-        />
-        <EngineOption
-          group={group}
-          value="apple-speech"
-          name="Apple (built in)"
-          detail={appleDetail(choices)}
-          reason={choices?.apple.available === false ? choices.apple.reason : null}
-          checked={choices?.engine === "apple-speech"}
-          disabled={!ready || !choices.apple.available}
-          onPick={onPick}
-        />
-        <EngineOption
-          group={group}
-          value="whisper"
-          name="Whisper"
-          detail={WHISPER_DETAIL}
-          reason={choices?.whisper.available === false ? choices.whisper.reason : null}
-          checked={choices?.engine === "whisper"}
-          disabled={!ready || !choices.whisper.available}
-          onPick={onPick}
-        />
-        <EngineOption
-          group={group}
-          value="parakeet"
-          name="Parakeet"
-          detail={parakeetDetail(choices)}
-          reason={choices?.parakeet.available === false ? choices.parakeet.reason : null}
-          checked={choices?.engine === "parakeet"}
-          disabled={!ready || !choices.parakeet.available}
-          onPick={onPick}
-          status={
-            parakeetMissing ? (
-              <Button size="small" disabled={parakeetBusy} onClick={onDownloadParakeet}>
-                {parakeetBusy ? "Downloading…" : "Download"}
-              </Button>
-            ) : null
-          }
-        >
-          {parakeetBusy && choices ? (
-            <DownloadProgress
-              progress={parakeetDownload.progress}
-              total={choices.parakeetModel.bytes}
-            />
-          ) : null}
-          {parakeetDownload.error ? (
-            <ErrorState
-              error={parakeetDownload.error}
-              busy={parakeetBusy}
-              onRemedy={onDownloadParakeet}
-            />
-          ) : null}
-        </EngineOption>
-      </Card>
+      <Row>
+        <span className="flex min-w-0 items-center gap-5">
+          <IconSquare icon={Mic} />
+          <span className="text-body font-semibold">Engine</span>
+        </span>
+      </Row>
+      <EngineOption
+        group={group}
+        value="auto"
+        name="Automatic (recommended)"
+        detail={autoDetail(choices)}
+        checked={choices?.engine === "auto"}
+        disabled={!ready}
+        onPick={onPick}
+        status={checking ? <Checking label="Checking…" /> : null}
+      />
+      <EngineOption
+        group={group}
+        value="apple-speech"
+        name="Apple (built in)"
+        detail={appleDetail(choices)}
+        reason={choices?.apple.available === false ? choices.apple.reason : null}
+        checked={choices?.engine === "apple-speech"}
+        disabled={!ready || !choices.apple.available}
+        onPick={onPick}
+      />
+      <EngineOption
+        group={group}
+        value="whisper"
+        name="Whisper"
+        detail={WHISPER_DETAIL}
+        reason={choices?.whisper.available === false ? choices.whisper.reason : null}
+        checked={choices?.engine === "whisper"}
+        disabled={!ready || !choices.whisper.available}
+        onPick={onPick}
+      />
+      <EngineOption
+        group={group}
+        value="parakeet"
+        name="Parakeet"
+        detail={parakeetDetail(choices)}
+        reason={choices?.parakeet.available === false ? choices.parakeet.reason : null}
+        checked={choices?.engine === "parakeet"}
+        disabled={!ready || !choices.parakeet.available}
+        onPick={onPick}
+        status={
+          parakeetMissing ? (
+            <Button
+              size="small"
+              icon={Download}
+              disabled={parakeetBusy}
+              onClick={onDownloadParakeet}
+            >
+              {parakeetBusy ? "Downloading…" : "Download"}
+            </Button>
+          ) : null
+        }
+      >
+        {parakeetBusy && choices ? (
+          <DownloadProgress
+            progress={parakeetDownload.progress}
+            total={choices.parakeetModel.bytes}
+          />
+        ) : null}
+        {parakeetDownload.error ? (
+          <ErrorState
+            error={parakeetDownload.error}
+            busy={parakeetBusy}
+            onRemedy={onDownloadParakeet}
+          />
+        ) : null}
+      </EngineOption>
     </fieldset>
   );
 }
+
+/** The engine options sit one indent in, past the group's icon square. */
+const OPTION_INDENT = "pl-10";
 
 function EngineOption({
   group,
@@ -168,7 +182,7 @@ function EngineOption({
   children?: ReactNode;
 }) {
   return (
-    <Row stacked>
+    <Row stacked className={OPTION_INDENT}>
       <div className="flex justify-between gap-5">
         {/* flex-1, so the empty space up to the status picks the row too. */}
         <Radio

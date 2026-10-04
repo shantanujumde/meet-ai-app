@@ -11,6 +11,7 @@
  * itself, through its own MCP connection.
  */
 
+import { ListTodo, RefreshCw } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { setTracker, trackerServers, trackerSettings } from "@/ipc/client";
 import type {
@@ -22,7 +23,9 @@ import type {
   UiError,
 } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
-import { Button, ButtonRow, Card, Prose } from "./primitives";
+import { Icon } from "./icons";
+import { Button, ButtonRow, Prose } from "./primitives";
+import { SettingsSection } from "./settings/SettingsSection";
 import { Checking, InlineError } from "./states";
 
 const TRACKERS: { value: Tracker; label: string }[] = [
@@ -106,62 +109,54 @@ export function TrackerSettings() {
   const harness = saved?.harness ?? null;
 
   return (
-    <section className="section" aria-labelledby="tracker-heading">
-      <div className="section__header">
-        <h2 className="section__title" id="tracker-heading">
+    <SettingsSection title="Tracker" description="Where Sync creates issues for your tasks">
+      <form className="flex flex-col gap-5 py-6" onSubmit={(event) => void save(event)}>
+        {harness ? <AgentLine harness={harness} /> : null}
+        {loadError ? <InlineError error={loadError} /> : null}
+
+        <label className={LABEL}>
           Tracker
-        </h2>
-        <p className="section__hint">Where Sync creates issues for your tasks</p>
-      </div>
-      <Card>
-        <form className="flex flex-col gap-5" onSubmit={(event) => void save(event)}>
-          {harness ? <AgentLine harness={harness} /> : null}
-          {loadError ? <InlineError error={loadError} /> : null}
-
-          <label className={LABEL}>
-            Tracker
-            <select
-              className={FIELD}
-              value={tracker}
-              onChange={(event) => {
-                setTrackerChoice(event.target.value as Tracker);
-                setJustSaved(false);
-              }}
-            >
-              {TRACKERS.map((each) => (
-                <option key={each.value} value={each.value}>
-                  {each.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <ServerPicker
-            value={server}
-            onChange={(value) => {
-              setServer(value);
+          <select
+            className={FIELD}
+            value={tracker}
+            onChange={(event) => {
+              setTrackerChoice(event.target.value as Tracker);
               setJustSaved(false);
             }}
-          />
+          >
+            {TRACKERS.map((each) => (
+              <option key={each.value} value={each.value}>
+                {each.label}
+              </option>
+            ))}
+          </select>
+        </label>
 
-          <Prose>{tipFor(harness)}</Prose>
-          <Prose>
-            meet-ai never stores tracker tokens. The agent signs in to your tracker through its own
-            connection.
-          </Prose>
+        <ServerPicker
+          value={server}
+          onChange={(value) => {
+            setServer(value);
+            setJustSaved(false);
+          }}
+        />
 
-          {saveError ? <InlineError error={saveError} /> : null}
-          <ButtonRow>
-            <Button type="submit" disabled={!canSave}>
-              {saving ? "Saving…" : "Save"}
-            </Button>
-            <span className="text-footnote text-fg-secondary" role="status" aria-live="polite">
-              {justSaved ? "Saved" : ""}
-            </span>
-          </ButtonRow>
-        </form>
-      </Card>
-    </section>
+        <Prose>{tipFor(harness)}</Prose>
+        <Prose>
+          meet-ai never stores tracker tokens. The agent signs in to your tracker through its own
+          connection.
+        </Prose>
+
+        {saveError ? <InlineError error={saveError} /> : null}
+        <ButtonRow>
+          <Button type="submit" disabled={!canSave}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+          <span className="text-footnote text-fg-secondary" role="status" aria-live="polite">
+            {justSaved ? "Saved" : ""}
+          </span>
+        </ButtonRow>
+      </form>
+    </SettingsSection>
   );
 }
 
@@ -169,14 +164,18 @@ export function TrackerSettings() {
 function AgentLine({ harness }: { harness: Harness }) {
   if (harness === "none") {
     return (
-      <p className="text-callout text-warning">
+      <p className="flex items-center gap-3 text-callout text-warning">
+        <Icon icon={ListTodo} />
         No agent is set up. Sync needs Claude Code or Codex to create issues.
       </p>
     );
   }
   return (
-    <p className="text-callout text-fg-secondary">
-      Sync runs in <span className="font-medium text-fg-primary">{HARNESS_NAME[harness]}</span>.
+    <p className="flex items-center gap-3 text-callout text-fg-secondary">
+      <Icon icon={ListTodo} />
+      <span>
+        Sync runs in <span className="font-medium text-fg-primary">{HARNESS_NAME[harness]}</span>.
+      </span>
     </p>
   );
 }
@@ -245,7 +244,7 @@ function ServerPicker({ value, onChange }: { value: string; onChange: (value: st
             Your agent has no servers added yet.
           </span>
         ) : null}
-        <Button size="small" disabled={checking} onClick={() => void check()}>
+        <Button size="small" icon={RefreshCw} disabled={checking} onClick={() => void check()}>
           Check again
         </Button>
       </ButtonRow>

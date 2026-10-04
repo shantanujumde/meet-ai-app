@@ -20,6 +20,15 @@
  * reminder for a fake meeting, which never records.
  */
 
+import {
+  AppWindow,
+  AudioLines,
+  Bell,
+  FlaskConical,
+  Settings as Gear,
+  Timer,
+  Users,
+} from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import {
   notificationSettings,
@@ -31,8 +40,10 @@ import {
 } from "@/ipc/client";
 import { toUiError, type UiError } from "@/ipc/types";
 import { osText } from "@/lib/osText";
-import { Button, Card, Row, RowLabel } from "./primitives";
+import type { LucideIcon } from "./icons";
+import { Button } from "./primitives";
 import { Switch } from "./SettingSwitch";
+import { SettingsRow, SettingsSection } from "./settings/SettingsSection";
 import { ErrorState } from "./states";
 
 export const REMIND_LABEL = "Remind me before meetings";
@@ -112,88 +123,89 @@ export function NotificationSettings() {
       : LEAD_MINUTES;
 
   return (
-    <section className="section" aria-labelledby="notifications-heading">
-      <h2 className="section__title" id="notifications-heading">
-        Notifications
-      </h2>
-      <Card flush>
-        <SwitchRow
-          label={REMIND_LABEL}
-          detail="Before each meeting on your calendar, with Join and Record."
-          on={settings?.remind ?? false}
-          disabled={disabled}
-          onChange={(remind) => void save({ remind })}
-        />
-        <SelectRow
-          label={LEAD_LABEL}
-          value={settings?.remindBeforeMinutes ?? 1}
-          disabled={disabled || settings?.remind === false}
-          options={leadChoices.map((minutes) => ({ value: minutes, label: leadLabel(minutes) }))}
-          onChange={(remindBeforeMinutes) => void save({ remindBeforeMinutes })}
-        />
-        <SwitchRow
-          label={PROCESSES_LABEL}
-          detail="Zoom, Teams, Webex and the like, even without an invite."
-          on={settings?.processes ?? false}
-          disabled={disabled}
-          onChange={(processes) => void save({ processes })}
-        />
-        <SwitchRow
-          label={AUDIO_LABEL}
-          detail="Like a call in a browser tab."
-          on={settings?.audioActivity ?? false}
-          disabled={disabled}
-          onChange={(audioActivity) => void save({ audioActivity })}
-        />
-        <SelectRow
-          label={ATTENDEES_LABEL}
-          detail="Calendar events with fewer people invited never remind."
-          value={settings?.minAttendees ?? 2}
-          disabled={disabled}
-          options={ATTENDEE_COUNTS.map((count) => ({
-            value: count,
-            label: `${count} ${count === 1 ? "person" : "people"}`,
-          }))}
-          onChange={(minAttendees) => void save({ minAttendees })}
-        />
-        {blocked ? (
-          <Row>
-            <RowLabel
-              name="macOS is blocking meet-ai's notifications"
-              detail="The prompt still waits in the meet-ai window."
-              mono={false}
-            />
+    <SettingsSection title="Notifications" after={error ? <ErrorState error={error} /> : null}>
+      <SwitchRow
+        icon={Bell}
+        label={REMIND_LABEL}
+        detail="Before each meeting on your calendar, with Join and Record."
+        on={settings?.remind ?? false}
+        disabled={disabled}
+        onChange={(remind) => void save({ remind })}
+      />
+      <SelectRow
+        icon={Timer}
+        label={LEAD_LABEL}
+        value={settings?.remindBeforeMinutes ?? 1}
+        disabled={disabled || settings?.remind === false}
+        options={leadChoices.map((minutes) => ({ value: minutes, label: leadLabel(minutes) }))}
+        onChange={(remindBeforeMinutes) => void save({ remindBeforeMinutes })}
+      />
+      <SwitchRow
+        icon={AppWindow}
+        label={PROCESSES_LABEL}
+        detail="Zoom, Teams, Webex and the like, even without an invite."
+        on={settings?.processes ?? false}
+        disabled={disabled}
+        onChange={(processes) => void save({ processes })}
+      />
+      <SwitchRow
+        icon={AudioLines}
+        label={AUDIO_LABEL}
+        detail="Like a call in a browser tab."
+        on={settings?.audioActivity ?? false}
+        disabled={disabled}
+        onChange={(audioActivity) => void save({ audioActivity })}
+      />
+      <SelectRow
+        icon={Users}
+        label={ATTENDEES_LABEL}
+        detail="Calendar events with fewer people invited never remind."
+        value={settings?.minAttendees ?? 2}
+        disabled={disabled}
+        options={ATTENDEE_COUNTS.map((count) => ({
+          value: count,
+          label: `${count} ${count === 1 ? "person" : "people"}`,
+        }))}
+        onChange={(minAttendees) => void save({ minAttendees })}
+      />
+      {blocked ? (
+        <SettingsRow
+          icon={Gear}
+          name="macOS is blocking meet-ai's notifications"
+          detail="The prompt still waits in the meet-ai window."
+          control={
             <Button
               size="small"
               onClick={() => void openNotificationSettings().catch((e) => setError(toUiError(e)))}
             >
               Open {osText("settings")}
             </Button>
-          </Row>
-        ) : null}
-        <Row>
-          <RowLabel
-            name="Test"
-            detail={testNote ?? "Shows a reminder for a fake meeting. It never records."}
-            mono={false}
-          />
-          <Button size="small" onClick={() => void test()}>
+          }
+        />
+      ) : null}
+      <SettingsRow
+        icon={FlaskConical}
+        name="Test"
+        detail={testNote ?? "Shows a reminder for a fake meeting. It never records."}
+        control={
+          <Button size="small" icon={Bell} onClick={() => void test()}>
             Send a test reminder
           </Button>
-        </Row>
-      </Card>
-      {error ? <ErrorState error={error} /> : null}
-    </section>
+        }
+      />
+    </SettingsSection>
   );
 }
 
 function SwitchRow({
+  icon,
   label,
   detail,
   on,
   disabled,
   onChange,
 }: {
+  icon: LucideIcon;
   label: string;
   detail: string;
   on: boolean;
@@ -202,14 +214,17 @@ function SwitchRow({
 }) {
   const id = useId();
   return (
-    <Row>
-      <RowLabel name={<label htmlFor={id}>{label}</label>} detail={detail} mono={false} />
-      <Switch id={id} on={on} disabled={disabled} onChange={onChange} />
-    </Row>
+    <SettingsRow
+      icon={icon}
+      name={<label htmlFor={id}>{label}</label>}
+      detail={detail}
+      control={<Switch id={id} on={on} disabled={disabled} onChange={onChange} />}
+    />
   );
 }
 
 function SelectRow({
+  icon,
   label,
   detail,
   value,
@@ -217,6 +232,7 @@ function SelectRow({
   disabled,
   onChange,
 }: {
+  icon: LucideIcon;
   label: string;
   detail?: string;
   value: number;
@@ -226,21 +242,25 @@ function SelectRow({
 }) {
   const id = useId();
   return (
-    <Row>
-      <RowLabel name={<label htmlFor={id}>{label}</label>} detail={detail} mono={false} />
-      <select
-        id={id}
-        className={SELECT}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(Number(event.target.value))}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </Row>
+    <SettingsRow
+      icon={icon}
+      name={<label htmlFor={id}>{label}</label>}
+      detail={detail}
+      control={
+        <select
+          id={id}
+          className={SELECT}
+          value={value}
+          disabled={disabled}
+          onChange={(event) => onChange(Number(event.target.value))}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      }
+    />
   );
 }

@@ -14,12 +14,14 @@
  */
 
 import { open } from "@tauri-apps/plugin-dialog";
+import { Cpu, FolderInput } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { hasBackend } from "@/ipc/client";
 import { NO_BACKEND } from "@/ipc/errors";
 import type { AgentChoice, AgentCli, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { osText } from "@/lib/osText";
+import { IconSquare } from "@/ui/icons";
 import { Button, Row, RowLabel, RowValue, rowDetailVariants } from "@/ui/primitives";
 import { ErrorState } from "@/ui/states";
 import { defaultModelText, modelChoices, modelText } from "./agents";
@@ -57,10 +59,13 @@ export function ModelField({
 
   return (
     <Row stacked>
-      <label htmlFor={id} className="flex flex-col gap-1">
-        <span className="text-body font-medium">Model</span>
-        <span className={rowDetailVariants({ mono: false })}>
-          {`Any model name ${name} accepts. Leave it blank to let ${name} pick.`}
+      <label htmlFor={id} className="flex min-w-0 items-start gap-5">
+        <IconSquare icon={Cpu} />
+        <span className="flex min-w-0 flex-col gap-1">
+          <span className="text-body font-medium">Model</span>
+          <span className={rowDetailVariants({ mono: false })}>
+            {`Any model name ${name} accepts. Leave it blank to let ${name} pick.`}
+          </span>
         </span>
       </label>
       <input
@@ -166,6 +171,7 @@ export function PathField({
     <Row stacked>
       <div className="flex justify-between gap-5">
         <RowLabel
+          icon={FolderInput}
           name={`Where ${name} is`}
           detail={manual ? `${where} (chosen by you)` : `${where} (found automatically)`}
         />

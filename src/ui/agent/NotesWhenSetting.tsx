@@ -5,11 +5,14 @@
  * shows "Make notes now" instead. Settings only, not onboarding.
  */
 
+import { Clock } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { notesAutoRun, saveNotesAutoRun } from "@/ipc/client";
 import { toUiError, type UiError } from "@/ipc/types";
-import { Card, Row, rowDetailVariants } from "@/ui/primitives";
+import { IconSquare } from "@/ui/icons";
+import { Row, rowDetailVariants } from "@/ui/primitives";
 import { Radio } from "@/ui/Radio";
+import { SettingsSection } from "@/ui/settings/SettingsSection";
 import { ErrorState } from "@/ui/states";
 
 export const NOTES_AUTO_LABEL = "Automatically after the call";
@@ -63,31 +66,31 @@ export function NotesWhenSetting() {
   };
 
   return (
-    <section className="section" aria-labelledby={`${group}-heading`}>
-      <h2 className="section__title" id={`${group}-heading`}>
-        When notes run
-      </h2>
+    <SettingsSection title="When notes run" after={error ? <ErrorState error={error} /> : null}>
       <fieldset className="contents">
         <legend className="sr-only">When notes run</legend>
-        <Card flush>
-          {CHOICES.map((choice) => (
-            <Row key={choice.value}>
-              <Radio
-                name={group}
-                value={choice.value}
-                checked={on === choice.on}
-                disabled={busy || on === null}
-                onChange={() => void change(choice.on)}
-                className="flex-1"
-              >
-                <span className="text-body font-medium">{choice.name}</span>
-                <span className={rowDetailVariants({ mono: false })}>{choice.detail}</span>
-              </Radio>
-            </Row>
-          ))}
-        </Card>
+        <Row>
+          <span className="flex min-w-0 items-center gap-5">
+            <IconSquare icon={Clock} />
+            <span className="text-body font-semibold">After a call</span>
+          </span>
+        </Row>
+        {CHOICES.map((choice) => (
+          <Row key={choice.value}>
+            <Radio
+              name={group}
+              value={choice.value}
+              checked={on === choice.on}
+              disabled={busy || on === null}
+              onChange={() => void change(choice.on)}
+              className="flex-1 pl-10"
+            >
+              <span className="text-body font-medium">{choice.name}</span>
+              <span className={rowDetailVariants({ mono: false })}>{choice.detail}</span>
+            </Radio>
+          </Row>
+        ))}
       </fieldset>
-      {error ? <ErrorState error={error} /> : null}
-    </section>
+    </SettingsSection>
   );
 }

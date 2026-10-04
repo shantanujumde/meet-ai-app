@@ -16,6 +16,7 @@
  * on the network after a launch, so each row says it is checking until then.
  */
 
+import { Calendar } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import {
   type CalendarAccount,
@@ -28,8 +29,9 @@ import {
   setCalendarApp,
 } from "@/ipc/client";
 import { toUiError, type UiError } from "@/ipc/types";
-import { Button, ButtonRow, Card, Row, RowLabel } from "../primitives";
+import { Button, ButtonRow, Row, RowLabel } from "../primitives";
 import { SettingSwitch } from "../SettingSwitch";
+import { SettingsSection } from "../settings/SettingsSection";
 import { Checking, InlineError } from "../states";
 import { notConfiguredCopy, PROVIDER_NAME, signInLabel } from "./copy";
 import { WAITING_FOR_BROWSER } from "./SignInButtons";
@@ -79,19 +81,19 @@ export function CalendarSettings() {
     ]);
 
   return (
-    <section className="section" aria-labelledby="calendars-heading">
-      <div className="section__header">
-        <h2 className="section__title" id="calendars-heading">
-          Calendars
-        </h2>
-        <p className="section__hint">Where meetings come from</p>
-      </div>
+    <SettingsSection
+      title="Calendars"
+      description="Where meetings come from"
+      after={error ? <InlineError error={error} /> : null}
+    >
       {sources === null ? (
         error ? null : (
-          <Checking label="Reading your calendar settings…" />
+          <Row>
+            <Checking label="Reading your calendar settings…" />
+          </Row>
         )
       ) : (
-        <Card flush>
+        <>
           {sources.calendarAppAvailable ? <CalendarAppRow onSaved={setSources} /> : null}
           {SIGN_IN_PROVIDERS.map((provider) => (
             <SignInRow
@@ -109,10 +111,9 @@ export function CalendarSettings() {
               onSources={setSources}
             />
           ))}
-        </Card>
+        </>
       )}
-      {error ? <InlineError error={error} /> : null}
-    </section>
+    </SettingsSection>
   );
 }
 
@@ -124,6 +125,7 @@ const loadCalendarApp = () => calendarSources().then((sources) => sources.calend
 function CalendarAppRow({ onSaved }: { onSaved: (sources: CalendarSources) => void }) {
   return (
     <SettingSwitch
+      icon={Calendar}
       label={CALENDAR_APP_LABEL}
       detail="Every account already in Calendar.app on this Mac. No sign-in needed."
       load={loadCalendarApp}
@@ -209,7 +211,7 @@ function SignInRow({
   return (
     <>
       <Row role="group" aria-label={name}>
-        <RowLabel name={name} detail={detail} mono={false} />
+        <RowLabel icon={Calendar} name={name} detail={detail} mono={false} />
         {action}
       </Row>
       {error ? (
