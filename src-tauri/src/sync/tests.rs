@@ -1,5 +1,6 @@
 //! Sync with a fake agent: `FakeHarness`, and fake `claude` / `codex`
-//! scripts run through the real harnesses. No real CLI, no tracker.
+//! programs (`test_support::FakeCli`) run through the real harnesses. No real
+//! CLI, no tracker.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -75,7 +76,6 @@ fn reply(id: serde_json::Value, url: serde_json::Value) -> FakeHarness {
 
 #[test]
 fn a_reply_with_a_key_and_link_is_written_to_the_ticket() {
-    crate::platform::skip_without_fake_cli!();
     let root = meetings_root();
     let summary = sync_with(root.path(), &reply(json!("ENG-42"), json!(URL))).unwrap();
     assert_eq!(summary.synced_to.as_deref(), Some("linear"));
@@ -97,7 +97,6 @@ fn a_reply_with_a_key_and_link_is_written_to_the_ticket() {
 /// no issue key. That is "not synced": an error, and the file untouched.
 #[test]
 fn a_reply_with_no_key_is_not_synced_and_writes_nothing() {
-    crate::platform::skip_without_fake_cli!();
     for (id, url) in [
         (json!(null), json!(null)),
         (json!(""), json!("")),
@@ -121,7 +120,6 @@ fn a_reply_with_no_key_is_not_synced_and_writes_nothing() {
 
 #[test]
 fn a_ticket_already_synced_is_not_synced_again() {
-    crate::platform::skip_without_fake_cli!();
     let root = meetings_root();
     sync_with(root.path(), &reply(json!("ENG-42"), json!(URL))).unwrap();
     // A second run would make a second issue; it must not start at all.
@@ -136,7 +134,6 @@ fn a_ticket_already_synced_is_not_synced_again() {
 
 #[test]
 fn agent_failures_keep_their_own_kind_and_write_nothing() {
-    crate::platform::skip_without_fake_cli!();
     let cases = [
         (FakeBehavior::NotSignedIn, "agent-not-signed-in"),
         (FakeBehavior::NotInstalled, "agent-not-installed"),
@@ -167,7 +164,6 @@ fn agent_failures_keep_their_own_kind_and_write_nothing() {
 
 #[test]
 fn cancel_stops_the_run() {
-    crate::platform::skip_without_fake_cli!();
     let root = meetings_root();
     let runs = SyncRuns::default();
     let claim = runs.claim("TICK-0001").unwrap();
@@ -243,19 +239,13 @@ fn no_tracker_server_means_no_run() {
 
 // --- fake CLIs through the real harnesses ----------------------------------
 
-/// Writes an executable `name` script into `dir` that saves its arguments
-/// (one per line) to `args.txt` and its stdin to `stdin.txt`, then runs
-/// `then`.
-fn fake_cli(dir: &Path, name: &str, then: &str) -> PathBuf {
-    let path = dir.join(name);
-    let script = format!(
-        "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > '{args}'\ncat > '{stdin}'\n{then}\n",
-        args = dir.join("args.txt").display(),
-        stdin = dir.join("stdin.txt").display(),
-    );
-    fs::write(&path, script).unwrap();
-    crate::platform::make_executable(&path).unwrap();
-    path
+/// A fake `name` CLI in `dir`: the portable `fake-cli` program (TUR-50, was a
+/// `/bin/sh` script). It saves its arguments (one per line) to `argv.log` and
+/// its stdin to `stdin.log` in `dir`, and replies as the caller sets it up.
+fn fake_cli(dir: &Path, name: &str) -> test_support::FakeCli {
+    let cli = test_support::FakeCli::install(dir, name);
+    cli.set("log_dir", dir.display().to_string());
+    cli
 }
 
 fn agent_config(harness: HarnessChoice, binary: PathBuf) -> AgentConfig {
@@ -268,22 +258,22 @@ fn agent_config(harness: HarnessChoice, binary: PathBuf) -> AgentConfig {
 
 #[test]
 fn claude_gets_only_the_task_and_only_the_tracker_tools() {
-    crate::platform::skip_without_fake_cli!();
     let root = meetings_root();
     let bin = tempfile::tempdir().unwrap();
     let envelope = json!({
         "type": "result", "subtype": "success", "is_error": false,
         "structured_output": { "external_id": "ENG-42", "external_url": URL },
     });
-    let script = fake_cli(bin.path(), "claude", &format!("printf '%s' '{envelope}'"));
-    let agent = agent_config(HarnessChoice::ClaudeCode, script);
+    let cli = fake_cli(bin.path(), "claude");
+    cli.set("stdout", envelope.to_string());
+    let agent = agent_config(HarnessChoice::ClaudeCode, cli.path().to_path_buf());
     let harness = harness_for(&agent).unwrap();
     assert_eq!(harness.id(), "claude-code");
 
     let summary = sync_with(root.path(), harness.as_ref()).unwrap();
     assert_eq!(summary.external_id.as_deref(), Some("ENG-42"));
 
-    let args = fs::read_to_string(bin.path().join("args.txt")).unwrap();
+    let args = fs::read_to_string(bin.path().join("argv.log")).unwrap();
     let args: Vec<&str> = args.lines().collect();
     let at = args.iter().position(|a| *a == "--allowedTools").unwrap();
     assert_eq!(args[at + 1], "mcp__claude_ai_Linear__*", "{args:?}");
@@ -293,7 +283,7 @@ fn claude_gets_only_the_task_and_only_the_tracker_tools() {
     );
     assert!(!args.contains(&"--strict-mcp-config"), "{args:?}");
 
-    let stdin = fs::read_to_string(bin.path().join("stdin.txt")).unwrap();
+    let stdin = fs::read_to_string(bin.path().join("stdin.log")).unwrap();
     assert!(stdin.contains("Fix the login redirect"), "{stdin}");
     assert!(stdin.contains("Sam"), "{stdin}");
     assert!(stdin.contains("Friday"), "{stdin}");
@@ -321,18 +311,27 @@ fn assert_no_local_path(root: &Path, prompt: &str) {
 /// exit 0, and a reply with no issue key.
 #[test]
 fn a_refused_codex_sync_exits_0_and_is_not_synced() {
-    crate::platform::skip_without_fake_cli!();
     let root = meetings_root();
     let before = fs::read(ticket_path(root.path())).unwrap();
     let bin = tempfile::tempdir().unwrap();
-    let write_reply = r#"out=""; prev=""
-case " $* " in *" mcp list "*) echo '[{"name":"linear"}]'; exit 0;; esac
-for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
-printf '%s' '{"external_id":null,"external_url":null}' > "$out""#;
-    let script = fake_cli(bin.path(), "codex", write_reply);
+    // `codex mcp list` lists the tracker server; `codex exec` writes a reply
+    // with no issue key to the file after `-o`. `mcp list` logs to its own
+    // folder so the `exec` call's logs are the ones checked below.
+    let cli = fake_cli(bin.path(), "codex");
+    let mcp_logs = bin.path().join("mcp");
+    fs::create_dir(&mcp_logs).unwrap();
+    cli.set("profiles", "mcp list\tmcp\n")
+        .set("mcp.stdout", r#"[{"name":"linear"}]"#)
+        .set("mcp.log_dir", mcp_logs.display().to_string())
+        .set("reply_file_after", "-o")
+        .set("reply_file", r#"{"external_id":null,"external_url":null}"#);
     let mut settings = settings();
     settings.tickets.tracker_mcp = "linear".into();
-    let harness = harness_for(&agent_config(HarnessChoice::Codex, script)).unwrap();
+    let harness = harness_for(&agent_config(
+        HarnessChoice::Codex,
+        cli.path().to_path_buf(),
+    ))
+    .unwrap();
     assert_eq!(harness.id(), "codex");
 
     let err = run(
@@ -347,11 +346,11 @@ printf '%s' '{"external_id":null,"external_url":null}' > "$out""#;
     assert_eq!(err.kind, "sync-not-done", "{}", err.message);
     assert_eq!(fs::read(ticket_path(root.path())).unwrap(), before);
 
-    let args = fs::read_to_string(bin.path().join("args.txt")).unwrap();
+    let args = fs::read_to_string(bin.path().join("argv.log")).unwrap();
     assert!(args.starts_with("exec\n"), "{args}");
     // `mcp__linear__*` is "all of linear's tools": no narrowing setting.
     assert!(!args.contains("enabled_tools"), "{args}");
-    let stdin = fs::read_to_string(bin.path().join("stdin.txt")).unwrap();
+    let stdin = fs::read_to_string(bin.path().join("stdin.log")).unwrap();
     assert!(!stdin.contains(SECRET), "the transcript leaked: {stdin}");
     assert_no_local_path(root.path(), &stdin);
 }

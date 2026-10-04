@@ -123,6 +123,8 @@ winreg.workspace = true
 # The notes-run tests drive the fake agent CLI (TUR-10), and so do
 # the Sync tests, with fake `claude` / `codex` scripts too (TUR-11).
 agent = { workspace = true, features = ["test-support"] }
+# The fake `claude` / `codex` programs the Sync tests install (TUR-50).
+test-support.workspace = true
 # `calendar::fake::FakeProvider` for the Today pane tests (TUR-28).
 # Also names recordings from fixture events, without Calendar.app (TUR-29).
 calendar = { workspace = true, features = ["fake"] }

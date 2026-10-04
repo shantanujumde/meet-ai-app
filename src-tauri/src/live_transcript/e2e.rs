@@ -16,7 +16,7 @@
 //! cargo test -p meet-ai --lib live_transcript::e2e -- --ignored --nocapture --test-threads=1
 //! ```
 //!
-//! The fixtures are generated, not committed: `just fixtures` first.
+//! The fixture WAVs are committed (TUR-50); `just fixtures` only remakes them.
 
 #![cfg(test)]
 

@@ -1,12 +1,11 @@
-//! Golden-output tests for the per-chunk audio path: resampler, WAV writer and
-//! tee. The expected hashes were computed from the code *before* the Phase 5
-//! allocation clean-up, on fully deterministic synthetic audio, so any change to
-//! output bytes (not just to behaviour) fails here.
-
-// macOS only: the hashes were taken there, and each OS's libm rounds the `sin`
-// in the synthetic signal differently (Linux and Windows disagree with macOS and
-// with each other). TUR-50 makes it portable.
-#![cfg(target_os = "macos")]
+//! Golden-output tests for the per-chunk audio path: WAV writer and tee, on
+//! fully deterministic synthetic audio, so any change to output bytes (not
+//! just to behaviour) fails here.
+//!
+//! Every OS (TUR-50). The signal used `f32::sin`, which each OS's libm rounds
+//! differently, so the hashes only held on macOS. It is now built from integer
+//! phase and `+ - * /` alone, which IEEE 754 rounds the same everywhere, and
+//! the hashes were taken again from the code on main at the time.
 
 use std::path::PathBuf;
 
@@ -23,6 +22,19 @@ fn fnv1a(bytes: impl IntoIterator<Item = u8>) -> u64 {
     h
 }
 
+/// A sine-shaped tone in `[-1, 1]` with no libm call: the phase is exact
+/// integer arithmetic, and each half wave is the parabola `4q(1 - q)`.
+fn tone(n: usize, freq_hz: u64, rate: u32) -> f32 {
+    let rate = u64::from(rate);
+    let phase = (n as u64 * freq_hz % rate) as f32 / rate as f32;
+    let (q, sign) = if phase < 0.5 {
+        (phase * 2.0, 1.0)
+    } else {
+        (phase * 2.0 - 1.0, -1.0)
+    };
+    sign * 4.0 * q * (1.0 - q)
+}
+
 /// Deterministic mixed signal: two tones plus xorshift noise.
 fn signal(frames: usize, rate: u32) -> Vec<f32> {
     let mut state = 0x2545_F491_4F6C_DD1D_u64;
@@ -32,10 +44,7 @@ fn signal(frames: usize, rate: u32) -> Vec<f32> {
             state ^= state >> 7;
             state ^= state << 17;
             let noise = (state % 2001) as f32 / 1000.0 - 1.0;
-            let t = n as f32 / rate as f32;
-            0.4 * (2.0 * std::f32::consts::PI * 440.0 * t).sin()
-                + 0.2 * (2.0 * std::f32::consts::PI * 3_100.0 * t).sin()
-                + 0.05 * noise
+            0.4 * tone(n, 440, rate) + 0.2 * tone(n, 3_100, rate) + 0.05 * noise
         })
         .collect()
 }
@@ -110,5 +119,5 @@ fn golden_tee_stream() {
     assert_eq!((bytes.len(), fnv1a(bytes.iter().copied())), GOLDEN_TEE);
 }
 
-const GOLDEN_WAV: (usize, u64) = (98522, 7810372124852571015);
-const GOLDEN_TEE: (usize, u64) = (64014, 4913780262349703497);
+const GOLDEN_WAV: (usize, u64) = (98522, 18105884560157062769);
+const GOLDEN_TEE: (usize, u64) = (64014, 12437531075396230644);

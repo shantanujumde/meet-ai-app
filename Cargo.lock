@@ -3601,6 +3601,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-specta",
  "tempfile",
+ "test-support",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -3,3 +3,5 @@ crates/store/tests/fixtures/** text eol=lf
 # Prompt templates are compiled in with include_str! and their tests match exact
 # "\n" text; a CRLF checkout on Windows would change both (TUR-36).
 crates/prompts/templates/** text eol=lf
+# The committed fixture audio (TUR-50): never line-ending converted or diffed.
+crates/audio/fixtures/**/*.wav binary

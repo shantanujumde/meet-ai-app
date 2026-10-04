@@ -34,8 +34,6 @@ fn assert_speaker_split(utterances: &[stt::Utterance], expected: Speaker) {
 
 #[test]
 fn apple_reads_both_tracks_accurately_and_labels_them_correctly() {
-    fixtures::ensure();
-
     let Some(binary) = fixtures::sidecar() else {
         eprintln!("SKIPPED: target/meet-stt is not built — run `just sidecar`");
         return;
@@ -92,8 +90,6 @@ fn apple_reads_both_tracks_accurately_and_labels_them_correctly() {
 /// long before anyone noticed it in a real meeting.
 #[test]
 fn apple_timestamps_land_within_a_second_of_the_real_utterance() {
-    fixtures::ensure();
-
     let Some(binary) = fixtures::sidecar() else {
         eprintln!("SKIPPED: target/meet-stt is not built — run `just sidecar`");
         return;
@@ -143,8 +139,6 @@ fn apple_timestamps_land_within_a_second_of_the_real_utterance() {
 
 #[test]
 fn a_full_meeting_folder_becomes_one_interleaved_transcript() {
-    fixtures::ensure();
-
     let Some(binary) = fixtures::sidecar() else {
         eprintln!("SKIPPED: target/meet-stt is not built — run `just sidecar`");
         return;
@@ -215,8 +209,6 @@ fn a_full_meeting_folder_becomes_one_interleaved_transcript() {
 #[test]
 fn whisper_reads_the_same_recording_accurately() {
     use stt::whisper::{WhisperConfig, WhisperEngine};
-
-    fixtures::ensure();
 
     let Some(model) = fixtures::whisper_model() else {
         panic!("whisper-model-tests is on but no model is present");

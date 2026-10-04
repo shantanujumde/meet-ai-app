@@ -1,0 +1,10 @@
+{"utterances":[
+  {"start_sec":7,"speaker":"you","text":"Sessions are still in memory, that is the blocker."},
+  {"start_sec":20,"speaker":"you","text":"About two days, mostly moving them into Redis."},
+  {"start_sec":38,"speaker":"you","text":"I will write it up after this call."},
+  {"start_sec":52,"speaker":"you","text":"No, that is everything from me."},
+  {"start_sec":1,"speaker":"others","text":"Morning everyone, let us start with the API work."},
+  {"start_sec":14,"speaker":"others","text":"How long do you think that will take?"},
+  {"start_sec":30,"speaker":"others","text":"Okay, let us put that in a ticket for this sprint."},
+  {"start_sec":46,"speaker":"others","text":"Anything else blocking you this week?"}
+]}

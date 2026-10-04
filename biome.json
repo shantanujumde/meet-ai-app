@@ -12,7 +12,8 @@
       "!design-system",
       "!spikes",
       "!src/ipc/bindings.ts",
-      "!crates/audio/fixtures/segments"
+      "!crates/audio/fixtures/segments",
+      "!crates/audio/fixtures/two-speaker-60s"
     ]
   },
   "css": {

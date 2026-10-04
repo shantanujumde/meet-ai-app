@@ -1,16 +1,14 @@
 //! Shared fixture plumbing for the Phase 1 test suite.
 //!
 //! The WAVs live in `crates/audio/fixtures/` because SPEC §2.9 and §6 put them
-//! there — one fixture set for the whole workspace, not one per crate. They are
-//! generated rather than committed (see `generate.sh`), so every test that
-//! needs them calls [`ensure`] first and skips loudly if the generator has not
-//! been run.
+//! there — one fixture set for the whole workspace, not one per crate. They
+//! are committed (TUR-50): `generate.sh` makes them with macOS `say`, which
+//! Windows and Linux do not have, so a test can no longer make them on first
+//! use. Rerun `just fixtures` on a Mac only to change them.
 
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::Once;
 
 /// `crates/audio/fixtures/`.
 pub fn dir() -> PathBuf {
@@ -22,30 +20,6 @@ pub fn dir() -> PathBuf {
 
 pub fn path(relative: &str) -> PathBuf {
     dir().join(relative)
-}
-
-static GENERATE: Once = Once::new();
-
-/// Generate the fixture WAVs if they are not already there.
-///
-/// Running the generator from the test suite rather than requiring
-/// `just fixtures` first means a fresh clone can `cargo test -p stt` and have
-/// it work. It is a no-op once the files exist.
-pub fn ensure() {
-    GENERATE.call_once(|| {
-        let marker = path("silence-30s.wav");
-        if marker.is_file() {
-            return;
-        }
-        let script = dir().join("generate.sh");
-        eprintln!("generating fixtures with {}", script.display());
-        let status = Command::new("bash").arg(&script).status();
-        match status {
-            Ok(status) if status.success() => {}
-            Ok(status) => eprintln!("fixture generation exited with {status}"),
-            Err(error) => eprintln!("could not run {}: {error}", script.display()),
-        }
-    });
 }
 
 /// The `meet-stt` sidecar, if `just sidecar` has built it.
@@ -98,7 +72,7 @@ pub struct ReferenceUtterance {
 impl Reference {
     pub fn load() -> Self {
         let body = std::fs::read_to_string(path("two-speaker-60s/reference.json"))
-            .expect("reference.json — run crates/audio/fixtures/generate.sh");
+            .expect("reference.json");
         serde_json::from_str(&body).expect("reference.json is valid JSON")
     }
 

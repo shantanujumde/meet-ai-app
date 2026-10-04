@@ -11,9 +11,9 @@
 //! The whisper half is opt-in behind `whisper-model-tests` because it needs a
 //! 190 MB model; the replay half needs nothing and runs in `just check`.
 
-// macOS only: the fixture WAVs are made with macOS `say`
-// (crates/audio/fixtures/generate.sh). TUR-50 makes it portable.
-#![cfg(target_os = "macos")]
+// Every OS (TUR-50): the fixture WAVs are committed. The Apple tests skip
+// themselves, with a SKIPPED line, where the meet-stt sidecar is not built,
+// which is everywhere but a Mac.
 
 mod fixtures;
 
@@ -28,11 +28,9 @@ use stt::{SeqCounter, SessionOptions, Speaker, SttEngine};
 /// span on.
 #[test]
 fn thirty_seconds_of_quiet_streams_no_lines_and_no_tail() {
-    fixtures::ensure();
-
     for name in ["silence-30s.wav", "room-tone-30s.wav"] {
-        let pcm = stt::read_wav_16k_mono(&fixtures::path(name))
-            .unwrap_or_else(|e| panic!("{name}: {e} — run crates/audio/fixtures/generate.sh"));
+        let pcm =
+            stt::read_wav_16k_mono(&fixtures::path(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
 
         let sink = SharedCollector::new();
         let seen = CollectingListener::new();
@@ -76,8 +74,6 @@ fn thirty_seconds_of_quiet_streams_no_lines_and_no_tail() {
 /// must end with no live line for either speaker.
 #[test]
 fn a_silent_two_track_meeting_ends_with_an_empty_pane() {
-    fixtures::ensure();
-
     let seq = SeqCounter::new();
     let sink = SharedCollector::new();
     let seen = CollectingListener::new();
@@ -118,8 +114,6 @@ fn a_silent_two_track_meeting_ends_with_an_empty_pane() {
 /// increasing across *both* speakers, and nothing volatile on disk.
 #[test]
 fn the_two_track_fixture_honours_the_tail_contract() {
-    fixtures::ensure();
-
     let seq = SeqCounter::new();
     let sink = SharedCollector::new();
     let seen = CollectingListener::new();
@@ -184,8 +178,6 @@ fn the_two_track_fixture_honours_the_tail_contract() {
 /// `transcript.md`, which is a bug the user notices and cannot explain.
 #[test]
 fn streaming_a_track_gives_the_same_lines_as_transcribing_it() {
-    fixtures::ensure();
-
     let wav = fixtures::path("two-speaker-60s/mic.wav");
 
     let live = SharedCollector::new();
@@ -250,16 +242,14 @@ fn the_apple_engine_reports_that_it_streams() {
 /// speech in is neither shown nor written.
 #[test]
 fn apple_streams_nothing_settled_over_thirty_quiet_seconds() {
-    fixtures::ensure();
-
     let Some(binary) = fixtures::sidecar() else {
         eprintln!("SKIPPED: target/meet-stt is not built — run `just sidecar`");
         return;
     };
 
     for name in ["silence-30s.wav", "room-tone-30s.wav"] {
-        let pcm = stt::read_wav_16k_mono(&fixtures::path(name))
-            .unwrap_or_else(|e| panic!("{name}: {e} — run crates/audio/fixtures/generate.sh"));
+        let pcm =
+            stt::read_wav_16k_mono(&fixtures::path(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
 
         let sink = SharedCollector::new();
         let seen = CollectingListener::new();
@@ -316,8 +306,6 @@ fn apple_streams_nothing_settled_over_thirty_quiet_seconds() {
 /// batch.
 #[test]
 fn apple_streams_the_same_lines_it_batches() {
-    fixtures::ensure();
-
     let Some(binary) = fixtures::sidecar() else {
         eprintln!("SKIPPED: target/meet-stt is not built — run `just sidecar`");
         return;
@@ -363,8 +351,6 @@ fn apple_streams_the_same_lines_it_batches() {
 #[test]
 fn whisper_streams_nothing_over_thirty_quiet_seconds() {
     use stt::whisper::{WhisperConfig, WhisperEngine};
-
-    fixtures::ensure();
 
     let Some(model) = fixtures::whisper_model() else {
         panic!("whisper-model-tests is on but no model is present; run `just model`");
@@ -415,8 +401,6 @@ fn whisper_streams_nothing_over_thirty_quiet_seconds() {
 #[test]
 fn whisper_streams_the_same_lines_it_batches() {
     use stt::whisper::{WhisperConfig, WhisperEngine};
-
-    fixtures::ensure();
 
     let Some(model) = fixtures::whisper_model() else {
         panic!("whisper-model-tests is on but no model is present; run `just model`");

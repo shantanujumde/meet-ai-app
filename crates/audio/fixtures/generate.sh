@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Generate the fixture WAVs named in SPEC §6.
 #
-# Run via `just fixtures`. Needs ffmpeg and macOS `say`; both are already
-# required by the setup. Output is deterministic enough to be regenerated on any
-# machine rather than committed — these are ~5 MB of audio and git is the wrong
-# place for them (.gitignore excludes *.wav here).
+# Run via `just fixtures`. Needs ffmpeg and macOS `say`, so it only runs on a
+# Mac. The WAVs it writes are committed (TUR-50): the Windows and Linux CI jobs
+# have no `say`, and the stt tests read these files on every OS. Rerun this
+# only to change a fixture, then commit the new WAVs; `say` voices can change
+# between macOS versions, so a rerun is not byte-identical and the accuracy
+# and timestamp tests should be rerun on a Mac before committing.
 #
 # Why synthetic speech rather than a recorded clip: the reference text is the
 # point. `reference.json` is the ground truth the Phase-1 accuracy test measures

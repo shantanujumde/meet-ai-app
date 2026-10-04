@@ -191,8 +191,6 @@ fn killing_the_sidecar_leaves_the_writer_alive_with_a_broken_pipe() {
 /// stdout, this catches it here rather than in a user's meeting.
 #[test]
 fn transcription_emits_nothing_but_json_lines() {
-    fixtures::ensure();
-
     let Some(binary) = sidecar_or_skip() else {
         return;
     };

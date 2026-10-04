@@ -84,6 +84,8 @@ tempfile.workspace = true
 # The fixture WAVs are ~3 MB of silence and tone; generating them is instant and
 # keeps them out of git. `just fixtures` writes them; the tests regenerate any
 # that are missing so a fresh clone can run `cargo test -p stt` immediately.
+# TUR-50: no longer so. They are made with macOS `say`, so they are committed
+# and every OS reads them; see crates/audio/fixtures/generate.sh.
 [features]
 default = []
 # Opt-in: runs the accuracy + silence gate against a real downloaded whisper
