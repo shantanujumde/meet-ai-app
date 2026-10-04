@@ -140,6 +140,10 @@ impl Speaker {
 /// flushes through Rust's `sync_all`. Fine for a checkpoint every five
 /// seconds or a notes save; not for a hot loop.
 ///
+/// On Windows the rename is retried for about 300 ms while another program
+/// (antivirus, the search indexer, an editor) holds the file; see
+/// `platform::rename`.
+///
 /// Does not create `path`'s folder; a caller that may be first to write there
 /// creates it.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -159,13 +163,20 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        std::fs::rename(&tmp, path)
+        platform::rename(&tmp, path)
     })();
     if written.is_err() {
         std::fs::remove_file(&tmp).ok();
     }
     written?;
     platform::sync_dir(dir)
+}
+
+/// Whether the raw OS error `code` means another program holds the file
+/// (Windows' sharing and lock violations, 32 and 33); always `false`
+/// elsewhere. One definition for every crate that asks.
+pub fn is_lock_violation(code: i32) -> bool {
+    platform::is_lock_violation(code)
 }
 
 /// Every temp name this process hands out is distinct, across threads.

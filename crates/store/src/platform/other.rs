@@ -6,6 +6,9 @@ pub(crate) fn is_lock_violation(_code: i32) -> bool {
     false
 }
 
+/// Nothing to do: the dot name already hides `.app`.
+pub(crate) fn hide_app_dir(_dir: &std::path::Path) {}
+
 #[cfg(test)]
 pub(crate) mod test_lock {
     //! On Unix an open file can still be deleted, so the test makes the

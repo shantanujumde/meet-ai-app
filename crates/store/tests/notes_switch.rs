@@ -150,7 +150,7 @@ fn off_creates_meeting_md_with_the_key_when_there_was_none() {
         fs::read_to_string(dir.join(TRANSCRIPT_FILE)).unwrap(),
         TRANSCRIPT
     );
-    let meeting_md = fs::canonicalize(dir.join(MEETING_FILE)).unwrap();
+    let meeting_md = dunce::canonicalize(dir.join(MEETING_FILE)).unwrap();
     assert!(writes.is_suppressed(&meeting_md, Instant::now()));
 }
 
@@ -240,7 +240,7 @@ fn on_when_already_on_leaves_meeting_md_alone() {
         fs::read_to_string(dir.join(MEETING_FILE)).unwrap(),
         WRAPPED_UP
     );
-    let meeting_md = fs::canonicalize(dir.join(MEETING_FILE)).unwrap();
+    let meeting_md = dunce::canonicalize(dir.join(MEETING_FILE)).unwrap();
     assert!(!writes.is_suppressed(&meeting_md, Instant::now()));
 }
 
@@ -255,7 +255,7 @@ fn off_twice_writes_once() {
     notes_switch::set(&root.path, STANDUP, false, &writes).unwrap();
 
     assert_eq!(fs::read(dir.join(MEETING_FILE)).unwrap(), first);
-    let meeting_md = fs::canonicalize(dir.join(MEETING_FILE)).unwrap();
+    let meeting_md = dunce::canonicalize(dir.join(MEETING_FILE)).unwrap();
     assert!(
         !writes.is_suppressed(&meeting_md, Instant::now()),
         "nothing changed, so nothing was written"

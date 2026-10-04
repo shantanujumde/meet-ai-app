@@ -71,7 +71,7 @@ pub fn reset() -> Result<State, UiError> {
 fn write(state: &State) -> Result<(), UiError> {
     let path = path()?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        store::create_app_dir(parent)?;
     }
     let body = serde_json::to_string_pretty(state)
         .map_err(|error| UiError::app("serialize", error.to_string()))?;

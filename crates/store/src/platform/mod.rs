@@ -27,6 +27,12 @@ pub(crate) fn is_lock_violation(code: i32) -> bool {
     os::is_lock_violation(code)
 }
 
+/// Hide `<root>/.app` where a dot name does not (Windows). Best effort: a
+/// failure is logged, never fatal; a missing folder is left alone.
+pub(crate) fn hide_app_dir(dir: &std::path::Path) {
+    os::hide_app_dir(dir)
+}
+
 /// Test-only: make a meeting's WAVs undeletable the way this OS does it.
 #[cfg(test)]
 pub(crate) use os::test_lock;
