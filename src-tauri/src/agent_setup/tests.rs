@@ -351,6 +351,43 @@ fn saving_keeps_auto_run_and_the_time_limit() {
 }
 
 #[test]
+fn saving_manual_writes_auto_run_false_and_a_reload_keeps_it() {
+    let current = AgentConfig {
+        harness: Harness::Codex,
+        model: Some("gpt-5.6-terra".into()),
+        timeout_sec: 42,
+        ..AgentConfig::default()
+    };
+    let raw = config::with_agent("{}", &current).unwrap();
+
+    let manual = with_auto_run(false, config::parse_agent(&raw)).unwrap();
+    let raw = config::with_agent(&raw, &manual).unwrap();
+    assert!(raw.contains("\"auto_run\": false"), "{raw}");
+    let reloaded = config::parse_agent(&raw).unwrap();
+    assert_eq!(
+        reloaded,
+        AgentConfig {
+            auto_run: false,
+            ..current.clone()
+        }
+    );
+
+    let auto = with_auto_run(true, Ok(reloaded)).unwrap();
+    let raw = config::with_agent(&raw, &auto).unwrap();
+    assert_eq!(config::parse_agent(&raw).unwrap(), current);
+}
+
+#[test]
+fn the_auto_manual_choice_is_not_saved_over_a_bad_config() {
+    for error in [
+        ConfigError::UnknownHarness("codx".into()),
+        ConfigError::Invalid("broken".into()),
+    ] {
+        assert!(with_auto_run(false, Err(error)).is_err());
+    }
+}
+
+#[test]
 fn a_blank_model_is_saved_as_null_for_every_harness() {
     for harness in [AgentHarness::ClaudeCode, AgentHarness::Codex] {
         let saved = merged(&choice(harness, "  ", Some("")), Ok(AgentConfig::default())).unwrap();

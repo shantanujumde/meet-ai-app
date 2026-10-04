@@ -10,9 +10,16 @@
 //! - [`save_agent_choice`]: write the pick back, keeping the rest of the file.
 //! - [`test_agent`]: the real notes run on a sample transcript ([`test_run`]).
 //!
+//! Settings alone has two more (TUR-101): [`notes_auto_run`] and
+//! [`save_notes_auto_run`], whether notes start on their own after a call
+//! (`agent.auto_run`) or only from the meeting's "Make notes now".
+//!
 //! The types below are what the window sends and gets back. They are kept
 //! apart from [`AgentConfig`] on purpose: the screen sends a path as text and
-//! never sees `auto_run` or `timeout_sec`, which saving keeps as they were.
+//! never sees `auto_run` or `timeout_sec`, which saving the pick keeps as
+//! they were. `auto_run` is saved on its own by [`save_notes_auto_run`], so a
+//! pick and a flip of the Auto / Manual choice landing close together never
+//! put each other's old value back.
 
 use std::path::PathBuf;
 
@@ -174,6 +181,28 @@ pub async fn save_agent_choice(
     on_blocking_pool(move || app.state::<FolderGate>().writing(|| save(choice))).await?
 }
 
+/// `agent.auto_run`: true when notes start on their own after a call, false
+/// when they start only from the meeting's "Make notes now" (TUR-101).
+#[tauri::command]
+#[specta::specta]
+pub async fn notes_auto_run() -> Result<bool, UiError> {
+    on_blocking_pool(|| Ok(config::agent()?.auto_run)).await?
+}
+
+/// Save `agent.auto_run`, keeping the rest of `agent`, and return it as read
+/// back from disk. Through the [`FolderGate`] like every other writer.
+#[tauri::command]
+#[specta::specta]
+pub async fn save_notes_auto_run(app: AppHandle, on: bool) -> Result<bool, UiError> {
+    on_blocking_pool(move || {
+        app.state::<FolderGate>().writing(|| {
+            config::update_agent(|current| with_auto_run(on, current))?;
+            Ok(config::agent()?.auto_run)
+        })
+    })
+    .await?
+}
+
 /// Run the sample meeting through the picked CLI, the same way the notes run
 /// after a call does, and return what came back.
 #[tauri::command]
@@ -257,6 +286,20 @@ fn merged(
         binary_path: choice.binary_path(),
         auto_run: current.auto_run,
         timeout_sec: current.timeout_sec,
+    })
+}
+
+/// The `agent` section to save with `auto_run` set to `on` and everything
+/// else as it is now. A file that cannot be read (an unknown harness too) is
+/// refused rather than rewritten with defaults: only the agent picker may
+/// replace the harness.
+fn with_auto_run(
+    on: bool,
+    current: Result<AgentConfig, ConfigError>,
+) -> Result<AgentConfig, ConfigError> {
+    Ok(AgentConfig {
+        auto_run: on,
+        ..current?
     })
 }
 

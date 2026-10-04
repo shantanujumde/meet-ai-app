@@ -179,6 +179,16 @@ export const commands = {
 	 */
 	testAgent: (choice: meet_ai_lib_agent_setup_AgentChoice) => typedError<meet_ai_lib_agent_setup_AgentTestResult, meet_ai_lib_error_UiError>(__TAURI_INVOKE("test_agent", { choice })),
 	/**
+	 *  `agent.auto_run`: true when notes start on their own after a call, false
+	 *  when they start only from the meeting's "Make notes now" (TUR-101).
+	 */
+	notesAutoRun: () => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("notes_auto_run")),
+	/**
+	 *  Save `agent.auto_run`, keeping the rest of `agent`, and return it as read
+	 *  back from disk. Through the [`FolderGate`] like every other writer.
+	 */
+	saveNotesAutoRun: (on: boolean) => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("save_notes_auto_run", { on })),
+	/**
 	 *  Search every meeting's transcript, notes, summary and tickets.
 	 * 
 	 *  Runs on the blocking pool: the first call after launch can still be

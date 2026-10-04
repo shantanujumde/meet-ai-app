@@ -13,6 +13,10 @@
  * **Make notes now** — including when its last run was refused because notes
  * were off, or cancelled by the switch.
  *
+ * With notes set to run only when asked (TUR-101, `agent.auto_run` off),
+ * nothing starts at Stop, and a meeting with no notes offers the same
+ * **Make notes now** as its main state.
+ *
  * The run itself is the page's {@link useNotesRun}, passed in, so the switch
  * and this pane read the same answers. The review screen passes the switch in
  * as `toggle` (TUR-81): with one, the section always shows — while recording
@@ -80,7 +84,7 @@ export function NotesRun({
    */
   live?: boolean;
 }) {
-  const { state, notes, busy, error, start, cancel, switchedOn } = run;
+  const { state, notes, busy, error, start, cancel, switchedOn, manual } = run;
 
   // No run panel until both answers are in, so the page does not flash a
   // start button for a meeting that already has notes.
@@ -98,6 +102,7 @@ export function NotesRun({
           canStart,
           busy,
           justSwitchedOn: switchedOn,
+          manual,
           start,
           cancel,
         });
@@ -143,6 +148,7 @@ function runPanel({
   canStart,
   busy,
   justSwitchedOn,
+  manual,
   start,
   cancel,
 }: {
@@ -152,6 +158,8 @@ function runPanel({
   busy: boolean;
   /** Notes were just switched back on here: the user is asking for them. */
   justSwitchedOn: boolean;
+  /** Notes run only when asked (TUR-101): starting them is the main state. */
+  manual: boolean;
   start: () => void;
   cancel: () => void;
 }): ReactNode {
@@ -182,10 +190,14 @@ function runPanel({
       );
     case "idle":
       if (hasNotes || !canStart) return null;
-      if (justSwitchedOn) {
+      if (justSwitchedOn || manual) {
         return (
           <RunCard
-            status={<span className="text-body font-medium">Notes are on for this meeting</span>}
+            status={
+              <span className="text-body font-medium">
+                {justSwitchedOn ? "Notes are on for this meeting" : "Notes run when you ask"}
+              </span>
+            }
             body="Your agent can write a summary, the decisions and the tasks from this transcript."
           >
             <Button size="small" disabled={busy} onClick={start}>

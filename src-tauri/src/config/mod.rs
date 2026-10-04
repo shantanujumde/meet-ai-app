@@ -87,6 +87,9 @@ pub use file::set_transcription;
 pub use file::{agent, set_agent, set_tickets, tickets};
 // TUR-90: the Setup screen's save merges under the config write lock.
 pub use file::update_agent;
+// TUR-101: the agent setup tests write and read `agent` back as text.
+#[cfg(test)]
+pub(crate) use {agent_section::parse_agent, file::with_agent};
 
 const FILE: &str = "config.jsonc";
 

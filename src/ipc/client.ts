@@ -574,6 +574,8 @@ export * from "./lifecycle";
 export * from "./logs";
 // Settings' Bluetooth mic switch (TUR-91).
 export * from "./micSetting";
+// Settings' notes Auto / Manual picker (TUR-101).
+export * from "./notesAutoRun";
 export * from "./notifications";
 // Settings' audio retention line (TUR-45, TUR-85).
 export * from "./retention";

@@ -389,3 +389,46 @@ describe("the notes switch", () => {
     expect(theSwitch()).not.toBeDisabled();
   });
 });
+
+describe("notes only when I click (TUR-101)", () => {
+  const OFF: MeetingNotes = { notesOff: true, analyzedBy: null, sections: [] };
+
+  test("a meeting with no notes offers Make notes now as its main state, which starts the run", async () => {
+    ipc.notesAutoRun.mockResolvedValue(false);
+    given({ state: "idle" });
+    renderRun({ withSwitch: true });
+
+    expect(await screen.findByText("Notes run when you ask")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Write notes" })).toBeNull();
+    expect(startNotesRun).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Make notes now" }));
+    await waitFor(() => expect(startNotesRun).toHaveBeenCalledWith(ID));
+    expect(await screen.findByText("Writing notes…")).toBeTruthy();
+  });
+
+  test("the per-meeting switch still hides and brings back the button", async () => {
+    ipc.notesAutoRun.mockResolvedValue(false);
+    given({ state: "idle" });
+    setMeetingNotes.mockResolvedValueOnce(OFF);
+    renderRun({ withSwitch: true });
+    expect(await screen.findByRole("button", { name: "Make notes now" })).toBeTruthy();
+
+    const toggle = screen.getByRole("switch", { name: "Make notes for this meeting" });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setMeetingNotes).toHaveBeenCalledWith(ID, false));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Make notes now" })).toBeNull(),
+    );
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setMeetingNotes).toHaveBeenCalledWith(ID, true));
+    expect(await screen.findByRole("button", { name: "Make notes now" })).toBeTruthy();
+  });
+
+  test("automatic mode still shows Write notes, as before", async () => {
+    given({ state: "idle" });
+    renderRun();
+    expect(await screen.findByRole("button", { name: "Write notes" })).toBeTruthy();
+    expect(screen.queryByText("Notes run when you ask")).toBeNull();
+  });
+});
