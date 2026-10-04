@@ -56,11 +56,13 @@ export const commands = {
 	/**  The silent launch-time check — no chime (see `permission::quick`). */
 	permissionQuick: () => __TAURI_INVOKE<meet_ai_lib_permission_Status>("permission_quick"),
 	/**
-	 *  Open System Settings at the pane the user needs.
+	 *  Open the OS settings page the user needs (TUR-51: per OS, see
+	 *  [`crate::settings_links`]).
 	 * 
-	 *  Falls back to the Privacy & Security root if the anchored URL is refused,
-	 *  which is the behaviour SPEC §8.1 asks for. The on-screen steps name the pane
-	 *  as well, so the instructions still work even if both fail.
+	 *  On macOS that is the anchored Privacy & Security pane, falling back to the
+	 *  pane root if the anchor is refused, which is the behaviour SPEC §8.1 asks
+	 *  for. The on-screen steps name the pane as well, so the instructions still
+	 *  work even if both fail.
 	 */
 	openPrivacySettings: (pane: meet_ai_lib_permission_Pane) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("open_privacy_settings", { pane })),
 	/**

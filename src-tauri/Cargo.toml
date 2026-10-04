@@ -53,6 +53,7 @@ tauri-plugin-fs.workspace = true
 tauri-plugin-log.workspace = true
 tauri-plugin-notification.workspace = true
 tauri-plugin-opener.workspace = true
+tauri-plugin-os.workspace = true
 # Calendar sign-in (TUR-44): the loopback listener, and the one HTTP client the
 # token exchange and refresh go through. `reqwest-blocking` makes oauth2's own
 # `SyncHttpClient` impl for `reqwest::blocking::Client` available; the calls

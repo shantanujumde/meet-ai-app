@@ -183,28 +183,46 @@ pub fn permission_quick() -> permission::Status {
     permission::quick()
 }
 
-/// Open System Settings at the pane the user needs.
+/// Open the OS settings page the user needs (TUR-51: per OS, see
+/// [`crate::settings_links`]).
 ///
-/// Falls back to the Privacy & Security root if the anchored URL is refused,
-/// which is the behaviour SPEC §8.1 asks for. The on-screen steps name the pane
-/// as well, so the instructions still work even if both fail.
+/// On macOS that is the anchored Privacy & Security pane, falling back to the
+/// pane root if the anchor is refused, which is the behaviour SPEC §8.1 asks
+/// for. The on-screen steps name the pane as well, so the instructions still
+/// work even if both fail.
 #[tauri::command]
 #[specta::specta]
 pub fn open_privacy_settings(app: AppHandle, pane: permission::Pane) -> Result<(), UiError> {
-    match app.opener().open_url(pane.url(), None::<&str>) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            tracing::warn!(%error, url = pane.url(), "anchored settings link failed; falling back to the pane root");
-            app.opener()
-                .open_url(permission::PRIVACY_ROOT_URL, None::<&str>)
-                .map_err(|error| {
-                    UiError::app(
-                        "open-failed",
-                        format!("meet-ai could not open System Settings: {error}"),
-                    )
-                })
+    let mut last_error = "this system has no settings page for it".to_string();
+    for target in crate::settings_links::targets_here(pane) {
+        let opened = match &target {
+            crate::settings_links::Target::Url(url) => app
+                .opener()
+                .open_url(*url, None::<&str>)
+                .map_err(|error| error.to_string()),
+            crate::settings_links::Target::Command(program, args) => {
+                std::process::Command::new(program)
+                    .args(args)
+                    .spawn()
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            }
+        };
+        match opened {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                tracing::warn!(%error, ?target, "settings link failed; trying the next one");
+                last_error = error;
+            }
         }
     }
+    Err(UiError::app(
+        "open-failed",
+        format!(
+            "meet-ai could not open {}: {last_error}",
+            crate::settings_links::settings_name(std::env::consts::OS)
+        ),
+    ))
 }
 
 /// The onboarding flag is a file under the meetings root (see

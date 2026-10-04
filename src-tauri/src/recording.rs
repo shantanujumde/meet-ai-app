@@ -263,6 +263,9 @@ impl Recorder {
                 UiError::app("permission-denied", permission.refusal_message()),
             ));
         }
+        // TUR-51: off macOS no check played the chime, so play it now as a
+        // plain start sound (a no-op on macOS, where the check just did).
+        audio::permission_check::start_sound();
 
         let started = chrono::Local::now();
         // TUR-97: each candidate id is published before its folder exists, so

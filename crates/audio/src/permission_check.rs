@@ -51,6 +51,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::{AudioSource, Error, chime, platform};
 
+pub mod start_sound;
 pub mod verdict;
 
 /// Where one channel's check landed.
@@ -66,6 +67,9 @@ pub enum ChannelState {
     /// "denied" would send a user with no output device to instructions that
     /// cannot help them.
     Unmeasurable,
+    /// The OS has no permission for this channel (Linux; system audio on
+    /// Windows). Counts as allowed (TUR-51).
+    NotApplicable,
 }
 
 /// One channel's result, with the sentence the onboarding screen can show.
@@ -177,6 +181,13 @@ pub fn check_mic_with(mut source: Box<dyn AudioSource>) -> ChannelResult {
 /// yet (`crate::platform`).
 pub fn check_system() -> ChannelResult {
     platform::check_system()
+}
+
+/// The plain start sound, on an OS where [`check_system`] did not just play
+/// the chime as its positive control (TUR-51). A no-op on macOS, where it
+/// did. Blocks until the sound has finished; a failure is only logged.
+pub fn start_sound() {
+    platform::start_sound();
 }
 
 /// [`check_system`]'s closed loop against `system`, a system-audio source

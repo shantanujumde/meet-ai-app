@@ -81,20 +81,32 @@ impl Status {
 
     /// Why a recording was refused, naming the switch that is off.
     pub fn refusal_message(&self) -> String {
-        let names: Vec<&str> = self.denied.iter().map(|pane| pane.label()).collect();
-        match names.as_slice() {
-            [] => "meet-ai did not start recording: it is not allowed to record this Mac's audio."
-                .to_string(),
-            [one] => format!(
-                "meet-ai did not start recording: {one} is switched off for meet-ai in System \
-                 Settings, so it cannot record you."
-            ),
-            _ => format!(
-                "meet-ai did not start recording: {} are switched off for meet-ai in System \
-                 Settings, so it cannot record you.",
-                names.join(" and ")
-            ),
+        refusal_message(&self.denied, std::env::consts::OS)
+    }
+}
+
+/// [`Status::refusal_message`] for `os`, naming its settings app (TUR-51).
+fn refusal_message(denied: &[Pane], os: &str) -> String {
+    let names: Vec<&str> = denied.iter().map(|pane| pane.label()).collect();
+    let settings = crate::settings_links::settings_name(os);
+    let machine = if os == "macos" {
+        "this Mac's"
+    } else {
+        "this computer's"
+    };
+    match names.as_slice() {
+        [] => {
+            format!("meet-ai did not start recording: it is not allowed to record {machine} audio.")
         }
+        [one] => format!(
+            "meet-ai did not start recording: {one} is switched off for meet-ai in {settings}, \
+             so it cannot record you."
+        ),
+        _ => format!(
+            "meet-ai did not start recording: {} are switched off for meet-ai in {settings}, so \
+             it cannot record you.",
+            names.join(" and ")
+        ),
     }
 }
 
@@ -183,18 +195,27 @@ pub fn quick() -> Status {
 /// that cannot help them (a false denial) or lets a broken check pass silently
 /// (a false grant).
 fn combine(mic: ChannelResult, system: ChannelResult) -> Status {
+    // TUR-51: a channel the OS has no permission for (Linux; system audio on
+    // Windows) counts as allowed.
+    let allowed =
+        |state: &ChannelState| matches!(state, ChannelState::Granted | ChannelState::NotApplicable);
     let state = if mic.state == ChannelState::Denied || system.state == ChannelState::Denied {
         State::Denied
-    } else if mic.state == ChannelState::Granted && system.state == ChannelState::Granted {
+    } else if allowed(&mic.state) && allowed(&system.state) {
         State::Granted
     } else {
         State::Unknown
     };
 
+    let both_measured = mic.state == ChannelState::Granted && system.state == ChannelState::Granted;
     let detail = match state {
-        State::Granted => "meet-ai played a short tone and confirmed it can hear both the \
-                            microphone and system audio."
+        State::Granted if both_measured => "meet-ai played a short tone and confirmed it can \
+                                            hear both the microphone and system audio."
             .to_string(),
+        State::Granted => format!(
+            "meet-ai can record. microphone: {}. system audio: {}.",
+            mic.detail, system.detail
+        ),
         State::Denied => format!(
             "microphone: {}. system audio: {}.",
             mic.detail, system.detail
@@ -439,6 +460,54 @@ mod tests {
             reading(ChannelState::Unmeasurable),
         );
         assert_eq!(status.state, State::Unknown);
+    }
+
+    #[test]
+    fn the_refusal_names_each_os_settings_app() {
+        assert_eq!(
+            refusal_message(&[Pane::Microphone], "macos"),
+            "meet-ai did not start recording: Microphone is switched off for meet-ai in System \
+             Settings, so it cannot record you."
+        );
+        assert!(refusal_message(&[Pane::Microphone], "windows").contains("in Windows Settings"));
+        assert_eq!(
+            refusal_message(&[], "macos"),
+            "meet-ai did not start recording: it is not allowed to record this Mac's audio."
+        );
+    }
+
+    #[test]
+    fn a_channel_without_a_permission_counts_as_allowed() {
+        // Linux: neither channel has a permission.
+        let linux = combine(
+            reading(ChannelState::NotApplicable),
+            reading(ChannelState::NotApplicable),
+        );
+        assert_eq!(linux.state, State::Granted);
+        assert!(!linux.blocks_recording());
+
+        // Windows: the mic opened, loopback needs no permission.
+        let windows = combine(
+            reading(ChannelState::Granted),
+            reading(ChannelState::NotApplicable),
+        );
+        assert_eq!(windows.state, State::Granted);
+
+        // A denied microphone still refuses, whatever the other side says.
+        let denied = combine(
+            reading(ChannelState::Denied),
+            reading(ChannelState::NotApplicable),
+        );
+        assert_eq!(denied.state, State::Denied);
+        assert_eq!(denied.denied, vec![Pane::Microphone]);
+        assert!(denied.blocks_recording());
+
+        // Not applicable never stands in for a check that could not run.
+        let unknown = combine(
+            reading(ChannelState::Unmeasurable),
+            reading(ChannelState::NotApplicable),
+        );
+        assert_eq!(unknown.state, State::Unknown);
     }
 
     #[test]
