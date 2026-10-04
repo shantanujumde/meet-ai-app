@@ -1,11 +1,11 @@
 # TUR-100: popup surface
 
-Contrast (computed from token values, popup card composed over a black and a white backdrop; WCAG):
+Contrast (computed from token values, popup card composed over a black and a white backdrop; WCAG; border composed over the button fill over the card; the fill alone is only 1.06 to 1.09, so the edge carries the 3:1):
 
-| Mode | Primary text | Secondary text | Dismiss/neutral border (`text-secondary` colour) |
+| Mode | Primary text | Secondary text | Dismiss/neutral border (`border-fg-secondary`) vs card |
 |---|---|---|---|
-| Light | 14.1 to 15.1 | 4.66 to 4.76 | same as secondary text, >= 4.66 |
-| Dark | 13.1 to 14.7 | 6.74 to 7.27 | same as secondary text, >= 6.74 |
+| Light | 14.1 to 15.1 | 4.66 to 4.76 | 4.97 to 5.09 |
+| Dark | 13.1 to 14.7 | 6.74 to 7.27 | 6.53 to 7.09 |
 
 ## Visual check over a busy backdrop (skipped: needs the running app)
 

@@ -26,7 +26,7 @@ import { toUiError } from "@/ipc/types";
 import { Button, ButtonRow } from "./primitives";
 
 /** The neutral buttons' default fill is glass, which vanishes on a solid card: give them a visible fill and edge. */
-const QUIET_EDGE = "border-separator-strong bg-glass-sunken";
+const QUIET_EDGE = "border-fg-secondary bg-glass-sunken";
 
 export function PromptPopup() {
   const [shown, setShown] = useState<PopupPrompt | null>(null);

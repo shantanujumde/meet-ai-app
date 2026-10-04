@@ -224,7 +224,7 @@
     --surface-glass-regular: var(--white-a10);
     --surface-glass-clear:   var(--white-a04);
     --surface-glass-raised:  var(--white-a14);
-    --surface-popup:         rgba(28, 28, 32, 0.96);
+    --surface-popup:         color-mix(in srgb, var(--gray-900) 96%, transparent);
     --surface-glass-sunken:  var(--black-a20);
 
     --surface-canvas:      var(--gray-950);
@@ -274,7 +274,7 @@
   --surface-glass-regular: var(--white-a10);
   --surface-glass-clear:   var(--white-a04);
   --surface-glass-raised:  var(--white-a14);
-  --surface-popup:         rgba(28, 28, 32, 0.96);
+  --surface-popup:         color-mix(in srgb, var(--gray-900) 96%, transparent);
   --surface-content:       rgba(28, 28, 32, 0.72);
   --rim-highlight: var(--white-a20);
   --rim-shadow:    var(--black-a45);
