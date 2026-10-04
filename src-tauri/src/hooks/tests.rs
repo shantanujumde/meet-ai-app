@@ -45,7 +45,7 @@ fn a_timeout_kills_the_hook_and_the_child_it_started() {
     // hook at 1 s. The trailing comment swallows the folder argument.
     let command = if windows() {
         format!(
-            "start /b cmd /c \"ping -n 4 127.0.0.1 >nul & echo late> {late_s}\" & ping -n 10 127.0.0.1 >nul & rem"
+            "start /b cmd /c \"%SystemRoot%\\System32\\ping.exe -n 4 127.0.0.1 >nul & echo late> {late_s}\" & %SystemRoot%\\System32\\ping.exe -n 10 127.0.0.1 >nul & rem"
         )
     } else {
         format!("(sleep 2; echo late > '{late_s}') & sleep 10; wait #")
