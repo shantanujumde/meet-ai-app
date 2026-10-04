@@ -18,7 +18,14 @@
 //!   and `stdin.log` (all of stdin) into this folder. Without it, stdin is
 //!   read to its end and dropped, or echoed to stdout when `echo_stdin` is
 //!   `1`.
+//! - `log_append`: appends the arguments joined by spaces, then a newline, to
+//!   this file (one line per call).
 //! - `expect_args`: exits 7 unless the arguments joined by spaces are this.
+//! - `cases`: replies picked by the arguments, one per line:
+//!   `<prefix>\t<code>\t<stdout>\t<stderr>`, where `\n` in the two texts is
+//!   a newline. The first line whose prefix starts the arguments joined by
+//!   spaces wins (`*` matches anything) and replaces `stdout`, `stderr` and
+//!   `code`; no match exits 7.
 //! - `print_cwd`: `1` prints the working folder and its entry count.
 //! - `grandchild_pid_file`: starts a copy of itself that sleeps 30 s and
 //!   writes that copy's pid to this file. With `grandchild_keeps_stdout` set
@@ -71,6 +78,22 @@ fn run() -> io::Result<u8> {
         std::fs::write(dir.join("stdin.log"), &stdin)?;
     }
 
+    if let Some(path) = settings.get("log_append") {
+        let mut log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        writeln!(log, "{args}")?;
+    }
+
+    let case = match settings.get("cases") {
+        Some(cases) => match pick_case(&cases, &args) {
+            Some(case) => Some(case),
+            None => return Ok(7),
+        },
+        None => None,
+    };
+
     if let Some(expected) = settings.get("expect_args")
         && expected != args
     {
@@ -110,7 +133,11 @@ fn run() -> io::Result<u8> {
     if let Some(n) = settings.number("stdout_pad")? {
         write_repeated(&mut out, b'0', n)?;
     }
-    if let Some(text) = settings.get("stdout") {
+    let stdout = case
+        .as_ref()
+        .map(|c| c.stdout.clone())
+        .or_else(|| settings.get("stdout"));
+    if let Some(text) = stdout {
         out.write_all(text.as_bytes())?;
     }
     out.flush()?;
@@ -119,15 +146,48 @@ fn run() -> io::Result<u8> {
     if let Some(n) = settings.number("stderr_pad")? {
         write_repeated(&mut err, b'a', n)?;
     }
-    if let Some(text) = settings.get("stderr") {
+    let stderr = case
+        .as_ref()
+        .map(|c| c.stderr.clone())
+        .or_else(|| settings.get("stderr"));
+    if let Some(text) = stderr {
         err.write_all(text.as_bytes())?;
     }
     err.flush()?;
+
+    if let Some(case) = case {
+        return Ok(case.code);
+    }
 
     match settings.number("code")? {
         Some(code) => u8::try_from(code).map_err(io::Error::other),
         None => Ok(0),
     }
+}
+
+/// One line of the `cases` setting.
+struct Case {
+    code: u8,
+    stdout: String,
+    stderr: String,
+}
+
+/// The first case whose prefix starts `args`.
+fn pick_case(cases: &str, args: &str) -> Option<Case> {
+    cases.lines().find_map(|line| {
+        let mut parts = line.split('\t');
+        let prefix = parts.next()?;
+        if prefix != "*" && !args.starts_with(prefix) {
+            return None;
+        }
+        let code = parts.next().unwrap_or("0").trim().parse().unwrap_or(101);
+        let unescape = |s: Option<&str>| s.unwrap_or("").replace("\\n", "\n");
+        Some(Case {
+            code,
+            stdout: unescape(parts.next()),
+            stderr: unescape(parts.next()),
+        })
+    })
 }
 
 /// The working folder, canonical, then how many entries it holds.
