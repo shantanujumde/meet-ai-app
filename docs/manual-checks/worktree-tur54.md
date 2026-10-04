@@ -39,9 +39,10 @@ jobs on the PR.
   runs `closing_the_job_kills_the_tree_without_a_kill_call`, which closes that
   job without any kill call. On unix a crashed app still leaves its process
   group running (no kill-on-close there).
-- `crates/agent/src/detect.rs` keeps its `#[cfg(unix)]` test module and its one
-  `R10_DEBT` entry (manager's answer A1: TUR-53 edits that file now). Follow-up:
-  move those tests onto `test_support::FakeCli`.
+- `detect.rs`'s tests run `fake-cli` on every OS now and the R10 debt list is
+  empty. The four tests about macOS app bundles and the Claude desktop app's
+  `Library/Application Support` folder moved to `platform/macos.rs` (Mac-only
+  paths; on Windows a copy there would also need an `.exe` ending).
 - Still unix-only, not R10 debt (integration tests may gate themselves):
   `crates/agent/tests/claude.rs`, `crates/agent/tests/codex_fake.rs`, and the
   `src-tauri` tests behind `skip_without_fake_cli!` / `FAKE_CLI_RUNS`

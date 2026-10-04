@@ -743,9 +743,9 @@ R10_FIND_AWK='
 # file still fails (even one spelled the same). Matters for --r10-tree only: on
 # added lines, an untouched old cfg never counts. Better than editing an entry:
 # make the test portable and drop it.
-#   crates/agent/src/detect.rs      unix-only /bin/sh fake CLI tests; port them to
-#                                   test_support::FakeCli (follow-up after TUR-53)
-R10_DEBT='crates/agent/src/detect.rs|#[cfg(unix)]'
+# Empty since TUR-54. R10_DEBT_SELFTEST is only for
+# scripts/quality-rules-selftest.sh, which checks the mechanism still works.
+R10_DEBT=${R10_DEBT_SELFTEST:-}
 
 rule_r10() {
   local f=$1 first last
@@ -768,7 +768,7 @@ rule_r10() {
     key="$f|$(sed -n "${first}p" "$f" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
     if [ "$(printf '%s\n' "$seen" | grep -cFx -- "$key")" -lt "$(printf '%s\n' "$R10_DEBT" | grep -cFx -- "$key")" ]; then
       seen="$seen$key"$'\n'
-      [ "$R10_TREE" = 1 ] && report warn R10 "$f" "$first" "known OS cfg outside a platform module (R10_DEBT in scripts/quality-rules.sh); port its tests to test_support::FakeCli"
+      [ "$R10_TREE" = 1 ] && report warn R10 "$f" "$first" "known OS cfg outside a platform module (R10_DEBT in scripts/quality-rules.sh); make it portable and drop the entry"
       continue
     fi
     # Only a cfg with at least one added line counts.

@@ -76,8 +76,8 @@ check: check-windows sidecar
 # toolchain. `calendar` is here for the same reason, ahead of its Phase 5 deps.
 #
 # Since TUR-42 every crate keeps its OS code in `src/platform/` (quality rule
-# R10; `store` since TUR-89, and one unix-only test gate in `agent`, detect.rs, waits
-# for a port to the TUR-54 fake CLI), and `agent` joined the list: it has no C dependency at all. The second
+# R10; `store` since TUR-89, `agent`'s tests since TUR-54), and `agent` joined
+# the list: it has no C dependency at all. The second
 # `cargo check` builds `audio` with `stub-audio`, the no-device sources CI on
 # Windows and Linux runs tests with. The target is only added when missing.
 #

@@ -325,8 +325,9 @@ printf '#[cfg(unix)]\nfn a() {}\n' >crates/x/src/old.rs
 printf '#[cfg(windows)]\nfn a() {}\n' >crates/x/src/platform/windows.rs
 printf '#[cfg(not(any(target_os = "android", target_os = "ios")))]\nmod tray;\n' >src-tauri/src/lib.rs
 # A known-debt line (R10_DEBT, keyed on its text, not its line number: here
-# at line 3, not 401 as on main), then a new cfg with the same text and one
+# at line 3; the real list is empty since TUR-54, so this sets one), then a new cfg with the same text and one
 # with other text below it.
+export R10_DEBT_SELFTEST="crates/agent/src/detect.rs|#[cfg(unix)]"
 {
   echo '// line 1'
   echo '// line 2'
@@ -352,6 +353,7 @@ else
   echo "FAIL R10: the known-debt lines pass a normal (added-lines) run"
   failed=$((failed + 1))
 fi
+unset R10_DEBT_SELFTEST
 git rm -rq crates/x crates/agent src-tauri
 git commit -q -m "untree"
 ran=$((ran + 1))
