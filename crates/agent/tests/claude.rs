@@ -1,6 +1,6 @@
 //! The Claude Code runner, driven against a fake `claude` on `PATH`.
 //!
-//! The fake is a small shell script that records what it was given (its
+//! The fake is `fake-cli` (test-support), which records what it was given (its
 //! arguments, stdin and working folder) and prints whatever the test told it
 //! to. That checks the exact command line and the reply handling without the
 //! real CLI or a network.
@@ -8,35 +8,20 @@
 //! Two `#[ignore]`d tests at the bottom run the real, signed-in `claude`. They
 //! cost money and need a login, so they only run by hand.
 
-#![cfg(unix)]
-
 use std::ffi::OsString;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent::{AgentError, ClaudeHarness, Harness, Job};
 use serde_json::{Value, json};
 
-/// The fake `claude`. Every file it reads or writes sits next to it in `bin/`.
-const FAKE_CLAUDE: &str = r#"#!/bin/sh
-d=$(dirname "$0")
-printf '%s\n' "$@" > "$d/args.txt"
-pwd -P > "$d/cwd.txt"
-ls -A > "$d/listing.txt"
-cat > "$d/stdin.txt"
-if [ -f "$d/stdout.txt" ]; then cat "$d/stdout.txt"; fi
-if [ -f "$d/stderr.txt" ]; then cat "$d/stderr.txt" >&2; fi
-if [ -f "$d/code.txt" ]; then exit "$(cat "$d/code.txt")"; fi
-exit 0
-"#;
-
 /// A fake `claude` in its own temp folder, plus a separate work root for the
 /// runs. Both are deleted when it is dropped.
 struct Fake {
-    _home: tempfile::TempDir,
+    home: tempfile::TempDir,
     bin: PathBuf,
+    cli: test_support::FakeCli,
     work_root: tempfile::TempDir,
 }
 
@@ -45,19 +30,19 @@ impl Fake {
         let home = tempfile::tempdir().unwrap();
         let bin = home.path().join("bin");
         fs::create_dir(&bin).unwrap();
-        let script = bin.join("claude");
-        fs::write(&script, FAKE_CLAUDE).unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let cli = test_support::FakeCli::install(&bin, "claude");
+        cli.set("log_dir", home.path().display().to_string());
         Self {
-            _home: home,
+            home,
             bin,
+            cli,
             work_root: tempfile::tempdir().unwrap(),
         }
     }
 
     /// Absolute path to the fake binary.
     fn binary(&self) -> PathBuf {
-        self.bin.join("claude")
+        self.cli.path().to_path_buf()
     }
 
     /// A harness that finds the fake by name, on its `PATH`.
@@ -67,19 +52,19 @@ impl Fake {
 
     /// What the fake prints on stdout.
     fn stdout(&self, text: &str) -> &Self {
-        fs::write(self.bin.join("stdout.txt"), text).unwrap();
+        self.cli.set("stdout", text);
         self
     }
 
     /// What the fake prints on stderr.
     fn stderr(&self, text: &str) -> &Self {
-        fs::write(self.bin.join("stderr.txt"), text).unwrap();
+        self.cli.set("stderr", text);
         self
     }
 
     /// The fake's exit code.
     fn exit_code(&self, code: i32) -> &Self {
-        fs::write(self.bin.join("code.txt"), code.to_string()).unwrap();
+        self.cli.set("code", code.to_string());
         self
     }
 
@@ -105,30 +90,37 @@ impl Fake {
 
     /// The arguments the fake was started with, or `None` if it never ran.
     fn args(&self) -> Option<Vec<String>> {
-        let text = fs::read_to_string(self.bin.join("args.txt")).ok()?;
+        let text = fs::read_to_string(self.log("argv.log")).ok()?;
         let text = text.strip_suffix('\n').unwrap_or(&text);
         Some(text.split('\n').map(str::to_owned).collect())
     }
 
     /// Everything the fake read from stdin.
     fn stdin(&self) -> String {
-        fs::read_to_string(self.bin.join("stdin.txt")).unwrap()
+        fs::read_to_string(self.log("stdin.log")).unwrap()
     }
 
     /// The folder the fake ran in.
     fn cwd(&self) -> PathBuf {
-        PathBuf::from(fs::read_to_string(self.bin.join("cwd.txt")).unwrap().trim())
+        let report = fs::read_to_string(self.log("cwd.log")).unwrap();
+        PathBuf::from(report.lines().next().unwrap())
     }
 
-    /// What `ls -A` printed in the folder the fake ran in.
-    fn listing(&self) -> String {
-        fs::read_to_string(self.bin.join("listing.txt")).unwrap()
+    /// How many entries the folder the fake ran in held.
+    fn entries_in_cwd(&self) -> usize {
+        let report = fs::read_to_string(self.log("cwd.log")).unwrap();
+        report.lines().nth(1).unwrap().trim().parse().unwrap()
+    }
+
+    /// Where the fake writes one of its logs.
+    fn log(&self, name: &str) -> PathBuf {
+        self.home.path().join(name)
     }
 }
 
-/// `bin` first, then just enough of the system for the script's own tools.
-fn search_path(bin: &Path) -> String {
-    format!("{}:/usr/bin:/bin", bin.display())
+/// A `PATH` of just `bin`: `fake-cli` needs nothing else.
+fn search_path(bin: &Path) -> OsString {
+    std::env::join_paths([bin]).unwrap()
 }
 
 /// A small, strict reply schema.
@@ -240,7 +232,7 @@ fn a_notes_run_sends_the_exact_flags_and_the_prompt_only_on_stdin() {
     );
     let name = cwd.file_name().unwrap().to_string_lossy().into_owned();
     assert!(name.starts_with("meet-ai-agent-"), "{name}");
-    assert_eq!(fake.listing(), "", "the working folder was not empty");
+    assert_eq!(fake.entries_in_cwd(), 0, "the working folder was not empty");
     assert!(!cwd.exists(), "the working folder was not deleted");
     assert_eq!(fs::read_dir(fake.work_root.path()).unwrap().count(), 0);
 }
@@ -466,7 +458,7 @@ fn a_binary_path_override_works_without_it_on_the_path() {
     fake.stdout(&envelope(&reply));
     let harness = ClaudeHarness::new()
         .with_binary(fake.binary())
-        .with_search_path("/usr/bin:/bin");
+        .with_search_path(search_path(tempfile::tempdir().unwrap().path()));
     assert_eq!(harness.run(&fake.notes_job("p")).unwrap(), reply);
     assert!(fake.args().is_some());
 }
