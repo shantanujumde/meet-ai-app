@@ -135,8 +135,7 @@ pub(super) fn supervise(
     // thread end, so Stop and the notes run (`TranscriptFinal`) both get the
     // file in time order. Only when every session has let go of the sink: a
     // line appended to the old file after the rename would be lost.
-    if sink.is_last() {
-        drop(sink);
+    if sink.release() {
         sort_by_time(&transcript);
     } else {
         tracing::warn!(

@@ -19,7 +19,7 @@
  * off before it ends. One {@link useNotesRun} serves the switch and the run.
  */
 
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useNotesRun } from "@/hooks/useNotesRun";
 import {
@@ -123,20 +123,27 @@ function MeetingReview({ id }: { id: string }) {
     void load(id);
   }, [id, load]);
 
+  // Bumped by every rename, so a summary read that started before one does
+  // not land after it and put the agent's title back over the user's.
+  const renames = useRef(0);
+
   // Only the summary: replacing the whole detail would hand the notes pane
   // what is on disk while the user may still be typing.
   const refreshSummary = useCallback(async (meetingId: string) => {
+    const before = renames.current;
     let summary: MeetingDetail["summary"];
     try {
       summary = (await readMeeting(meetingId)).summary;
     } catch {
       return; // The header keeps what it had.
     }
+    if (renames.current !== before) return;
     setDetail((current) => (current?.summary.id === meetingId ? { ...current, summary } : current));
   }, []);
 
   const rename = useCallback(
     async (title: string) => {
+      renames.current += 1;
       const saved = await renameMeeting(id, title);
       setDetail((current) =>
         current?.summary.id === id

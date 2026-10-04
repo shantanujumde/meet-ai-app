@@ -295,7 +295,7 @@ describe("Review's header", () => {
       meetingDetail({ summary: { id: ID, title: "Standup" }, lines: [transcriptLine()] }),
     );
     renderReview();
-    fireEvent.click(await screen.findByRole("button", { name: "Rename meeting" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Rename meeting/ }));
     return screen.getByRole<HTMLInputElement>("textbox", { name: "Meeting title" });
   }
 
@@ -313,7 +313,7 @@ describe("Review's header", () => {
       await within(header).findByRole("heading", { level: 1, name: "Budget review" }),
     ).toBeTruthy();
     await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Rename meeting" })),
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Rename meeting/ })),
     );
   });
 
@@ -332,7 +332,7 @@ describe("Review's header", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Standup" })).toBeTruthy();
 
     for (const value of ["   ", "Standup"]) {
-      fireEvent.click(screen.getByRole("button", { name: "Rename meeting" }));
+      fireEvent.click(screen.getByRole("button", { name: /^Rename meeting/ }));
       const again = screen.getByRole("textbox", { name: "Meeting title" });
       fireEvent.change(again, { target: { value } });
       fireEvent.keyDown(again, { key: "Enter" });

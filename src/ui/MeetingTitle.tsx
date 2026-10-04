@@ -6,7 +6,9 @@
  * kept from then on (`store::meeting_title`).
  *
  * The title reads as the page's big heading. It is a button inside the
- * `<h1>`, named "Rename meeting": a click or Enter swaps it for a text field.
+ * `<h1>`, named "Rename meeting: <title>" so the words on screen are part of
+ * its name (Voice Control's "click Standup" finds it): a click or Enter swaps
+ * it for a text field, still inside the `<h1>`.
  * In the field Enter saves, Escape puts the old title back, and clicking away
  * saves. A blank field saves nothing and keeps the old title. The heading
  * keeps the title as its name, so VoiceOver's heading list still reads it.
@@ -22,7 +24,8 @@ import { ErrorState } from "./states";
 
 export const RENAME_LABEL = "Rename meeting";
 
-/** Matches `store::meeting_title::MAX_TITLE_CHARS`, so the field stops where Rust would cut. */
+/** Near `store::meeting_title::MAX_TITLE_CHARS`, which has the last word: the field
+ * counts UTF-16 units and Rust counts chars, so an emoji title stops a little early. */
 export const MAX_TITLE_CHARS = 80;
 
 /** Padding the button and the field share, pulled back out so the words line up with the meta line. */
@@ -92,37 +95,43 @@ export function MeetingTitle({
     }
   }
 
+  const shown = saving ?? title;
   return (
     <>
       {editing ? (
-        <input
-          ref={field}
-          aria-label="Meeting title"
-          className={cn(
-            "page__title w-full min-w-0 border-[0.5px] border-separator bg-glass-sunken text-fg-primary",
-            INSET,
-          )}
-          value={draft}
-          maxLength={MAX_TITLE_CHARS}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={(event) => void save(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              refocus.current = true;
-              void save(event.currentTarget.value);
-            } else if (event.key === "Escape") {
-              event.preventDefault();
-              cancel();
-            }
-          }}
-        />
+        <h1 className="page__title" aria-label={title}>
+          <input
+            ref={field}
+            aria-label="Meeting title"
+            className={cn(
+              "w-full min-w-0 border-[0.5px] border-separator bg-glass-sunken text-fg-primary",
+              INSET,
+            )}
+            value={draft}
+            maxLength={MAX_TITLE_CHARS}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={(event) => void save(event.target.value)}
+            onKeyDown={(event) => {
+              // Enter also confirms a word in an input method (Japanese,
+              // Chinese); that must not save a half-typed title.
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === "Enter") {
+                event.preventDefault();
+                refocus.current = true;
+                void save(event.currentTarget.value);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                cancel();
+              }
+            }}
+          />
+        </h1>
       ) : (
-        <h1 className="page__title wrap-anywhere" aria-label={saving ?? title}>
+        <h1 className="page__title wrap-anywhere" aria-label={shown}>
           <button
             ref={button}
             type="button"
-            aria-label={RENAME_LABEL}
+            aria-label={`${RENAME_LABEL}: ${shown}`}
             title={RENAME_LABEL}
             aria-busy={saving !== null}
             className={cn(
@@ -132,7 +141,7 @@ export function MeetingTitle({
             )}
             onClick={open}
           >
-            <span className="min-w-0 wrap-anywhere">{saving ?? title}</span>
+            <span className="min-w-0 wrap-anywhere">{shown}</span>
             <Icon
               icon={Pencil}
               className="text-fg-tertiary opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"

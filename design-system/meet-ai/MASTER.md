@@ -167,7 +167,9 @@ Notes that will cost time if missed:
 | `--text-caption1` | 11px | 400 | Timestamps, speaker labels |
 | `--text-caption2` | 10px | 500 | Badges, counts |
 
-Line length in the notes pane is capped at `--notes-measure` (68ch). Transcript
+Line length in the notes pane follows the page column, like the cards above it
+(TUR-103: a 68ch cap left its right edge out of line with them); `--notes-measure`
+(68ch) still caps notices and empty-state text. Transcript
 lines are short by nature and need no cap.
 
 Use tabular figures for timestamps so the transcript does not shift as the clock
@@ -258,7 +260,7 @@ The content layer. **Opaque**, because this is where sustained reading and
 writing happen, and translucency under body text is fatiguing.
 
 - Fill `--surface-content`, padding `--notes-pad` (24px)
-- Text 14px at 1.6 line height, measure capped at 68ch
+- Text 14px at 1.6 line height, as wide as the page column (the cards' width)
 - Scrolls under the floating toolbar with `.scroll-edge --top-only`
 - Autosaves. Per SPEC, markdown on disk is the source of truth, so the pane owns
   no state the file does not have.

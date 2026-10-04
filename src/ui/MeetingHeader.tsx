@@ -77,7 +77,8 @@ export function MeetingHeader({
     <header className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-5">
         <div className="flex min-w-0 flex-col gap-3">
-          <MeetingTitle title={summary.title} onRename={onRename} />
+          {/* Keyed: a rename error or a save in flight belongs to one meeting. */}
+          <MeetingTitle key={summary.id} title={summary.title} onRename={onRename} />
           <MetaLine summary={summary} live={live} interrupted={interrupted} />
         </div>
         <div className="flex shrink-0 items-center gap-2">
