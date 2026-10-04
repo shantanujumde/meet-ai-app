@@ -383,7 +383,7 @@ mod tests {
         // delivered, "the self-write never arrived" would pass on its own.
         let sibling = folder.join("meeting.md");
         std::fs::write(&sibling, "edited by an agent").unwrap();
-        let sibling = std::fs::canonicalize(&sibling).unwrap();
+        let sibling = dunce::canonicalize(&sibling).unwrap();
 
         let mut sibling_seen = false;
         let deadline = Instant::now() + WATCH_DEBOUNCE + Duration::from_secs(5);
