@@ -66,9 +66,13 @@ fn trend_tracker_reports_ppm_and_ms_per_min() {
 fn constant_lag_is_offset_not_drift() {
     let reference = noise(SR as usize * 60, 11);
     let observed = delayed(&reference, |_| 320.0); // 20 ms
-    let report =
-        analyze_audio_drift(&reference, &observed, SR, &AudioDriftConfig::for_sample_rate(SR))
-            .expect("measurable");
+    let report = analyze_audio_drift(
+        &reference,
+        &observed,
+        SR,
+        &AudioDriftConfig::for_sample_rate(SR),
+    )
+    .expect("measurable");
     assert!((report.offset_ms() - 20.0).abs() < 0.1, "{report:?}");
     assert!(report.max_drift_ms() < 0.1, "{report:?}");
     assert!(report.fit.ppm.unwrap().abs() < 1.0, "{report:?}");
@@ -81,9 +85,13 @@ fn linear_drift_is_measured_in_ppm_and_ms_per_min() {
     let seconds = 120usize;
     let reference = noise(SR as usize * seconds, 5);
     let observed = delayed(&reference, |i| 160.0 + i as f64 * 100e-6);
-    let report =
-        analyze_audio_drift(&reference, &observed, SR, &AudioDriftConfig::for_sample_rate(SR))
-            .expect("measurable");
+    let report = analyze_audio_drift(
+        &reference,
+        &observed,
+        SR,
+        &AudioDriftConfig::for_sample_rate(SR),
+    )
+    .expect("measurable");
     let ppm = report.fit.ppm.unwrap();
     assert!((ppm - 100.0).abs() < 5.0, "ppm {ppm}");
     let ms_min = report.fit.ms_per_min.unwrap();
@@ -98,7 +106,10 @@ fn silence_is_not_measurable() {
     let quiet = vec![0.0f32; SR as usize * 30];
     let err = analyze_audio_drift(&quiet, &quiet, SR, &AudioDriftConfig::for_sample_rate(SR))
         .unwrap_err();
-    assert!(matches!(err, AudioDriftError::NotEnoughSignal { .. }), "{err}");
+    assert!(
+        matches!(err, AudioDriftError::NotEnoughSignal { .. }),
+        "{err}"
+    );
 }
 
 #[test]
@@ -106,9 +117,17 @@ fn unrelated_tracks_never_lock() {
     // Headphones: the mic hears something the speakers never played.
     let reference = noise(SR as usize * 60, 1);
     let observed = noise(SR as usize * 60, 2);
-    let err = analyze_audio_drift(&reference, &observed, SR, &AudioDriftConfig::for_sample_rate(SR))
-        .unwrap_err();
-    assert!(matches!(err, AudioDriftError::NotEnoughSignal { .. }), "{err}");
+    let err = analyze_audio_drift(
+        &reference,
+        &observed,
+        SR,
+        &AudioDriftConfig::for_sample_rate(SR),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, AudioDriftError::NotEnoughSignal { .. }),
+        "{err}"
+    );
 }
 
 #[test]
@@ -129,9 +148,13 @@ fn a_lost_lock_is_counted_and_reacquired() {
     let other = noise(SR as usize * 30, 22);
     let start = SR as usize * 45;
     observed[start..start + other.len()].copy_from_slice(&other);
-    let report =
-        analyze_audio_drift(&reference, &observed, SR, &AudioDriftConfig::for_sample_rate(SR))
-            .expect("measurable");
+    let report = analyze_audio_drift(
+        &reference,
+        &observed,
+        SR,
+        &AudioDriftConfig::for_sample_rate(SR),
+    )
+    .expect("measurable");
     assert_eq!(report.losses, 1, "{report:?}");
     assert_eq!(report.locks, 2, "{report:?}");
     assert!(report.max_drift_ms() < 0.1);
