@@ -269,6 +269,9 @@ export const ipc = {
   setMenuBarCountdown: vi.fn<typeof Client.setMenuBarCountdown>(async (show) => show),
   builtinMicWithBluetooth: vi.fn<typeof Client.builtinMicWithBluetooth>(async () => true),
   setBuiltinMicWithBluetooth: vi.fn<typeof Client.setBuiltinMicWithBluetooth>(async (on) => on),
+  // TUR-58: meet-ai does not start at login until the user says so.
+  startAtLogin: vi.fn<typeof Client.startAtLogin>(async () => false),
+  setStartAtLogin: vi.fn<typeof Client.setStartAtLogin>(async (enabled) => enabled),
 
   // TUR-78: the SPEC §3.5 detection defaults, and notifications allowed.
   notificationSettings: vi.fn<typeof Client.notificationSettings>(async () => ({

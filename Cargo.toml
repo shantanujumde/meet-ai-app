@@ -133,6 +133,10 @@ tauri-plugin-opener = "=2.5.5"
 # The OS name for per-OS wording in the window (TUR-51, `src/lib/osText.ts`).
 tauri-plugin-os = "=2.3.2"
 tauri-plugin-single-instance = "=2.4.4"
+# "Start at login" (TUR-58): LaunchAgent, Run key, XDG autostart.
+tauri-plugin-autostart = "=2.5.1"
+# The Windows taskbar theme, for the tray icon (TUR-58).
+winreg = "=0.55.0"
 tauri-plugin-updater = "=2.11.0"
 
 # --- generated TypeScript bindings (Phase 2) ---

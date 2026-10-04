@@ -21,6 +21,7 @@ import { FolderRow } from "@/ui/FolderRow";
 import { LogsFolderRow } from "@/ui/LogsFolderRow";
 import { MenuBarCountdownSetting } from "@/ui/MenuBarCountdownSetting";
 import { NotificationSettings } from "@/ui/NotificationSettings";
+import { StartAtLoginSetting } from "@/ui/StartAtLoginSetting";
 import { Button, Card, Row, RowLabel } from "@/ui/primitives";
 import { ErrorState } from "@/ui/states";
 import { TrackerSettings } from "@/ui/TrackerSettings";
@@ -87,6 +88,8 @@ export function Settings() {
           <DockSetting />
           {/* TUR-77: the next meeting's countdown next to the icon. */}
           <MenuBarCountdownSetting />
+          {/* TUR-58: open meet-ai when you log in. Off by default. */}
+          <StartAtLoginSetting />
         </Card>
       </section>
 

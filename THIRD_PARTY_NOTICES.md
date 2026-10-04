@@ -148,6 +148,10 @@ SOFTWARE.
     `cmd /C start "" ms-settings:privacy-microphone` fallback) from
     `src-tauri/src/commands/audio.rs`, at commit
     73ab851c2b6242283759a4c101b60f0ece132f08 (TUR-51)
+  - `src-tauri/src/tray/icons.rs` (the tray icon pick by OS and taskbar
+    theme) and `src-tauri/src/platform/windows.rs` (`taskbar_is_light`, the
+    `SystemUsesLightTheme` read) from `src-tauri/src/tray.rs`, at commit
+    73ab851c2b6242283759a4c101b60f0ece132f08 (TUR-58)
 
 MIT License
 

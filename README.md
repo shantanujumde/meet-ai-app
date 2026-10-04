@@ -71,6 +71,26 @@ just bundle-signed
 [`CONTRIBUTING.md`](./CONTRIBUTING.md#4-code-signing--needed-before-any-audio-work)
 has the details.
 
+## Record from a keyboard shortcut
+
+Press ⌘⇧R on macOS, or Ctrl+Alt+R on Windows and Linux, to start or stop a
+recording from anywhere. The tray (menu bar) icon's menu does the same.
+
+On Linux under Wayland, apps cannot register global shortcuts, so bind the
+command `meet-ai --toggle-recording` to a key yourself. It reaches the meet-ai
+that is already running and toggles there. If meet-ai is not running, the
+command only opens it; it never starts a recording on its own.
+
+- GNOME: Settings, Keyboard, View and Customize Shortcuts, Custom Shortcuts,
+  Add Shortcut. Name it `meet-ai record`, set the command to
+  `meet-ai --toggle-recording`, and pick a key such as Ctrl+Alt+R.
+- KDE Plasma: System Settings, Keyboard, Shortcuts, Add New, Command or
+  Script. Set the command to `meet-ai --toggle-recording` and pick a key.
+
+Use the full path to the `meet-ai` binary if it is not on your `PATH`.
+On GNOME without the AppIndicator extension there is no tray icon; launch
+meet-ai again to bring its window back.
+
 ## Contributing
 
 1. Fork the repo and make a branch from `main`.

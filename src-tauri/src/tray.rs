@@ -22,23 +22,28 @@ use tauri::{AppHandle, Listener as _, Manager as _};
 
 use crate::recording::{self, Phase};
 
+mod icons;
 mod menu_model;
 mod today;
 
 pub use today::{redraw_soon, reread_soon};
 
-/// The menu-bar glyph: "m.", the brand symbol, drawn on the 16px pixel grid by
-/// the brand build (`design-system/meet-ai/brand/tools/build.mjs`) and
-/// rasterised by its `render.sh`. Never hand-exported.
-///
-/// The 2x raster is the one embedded. `tray-icon` sizes every status-item image
-/// to 18pt tall whatever it is handed, so the larger art is the one with pixels
-/// to spare when AppKit scales it.
-///
-/// Embedded rather than bundled as a resource: a resource that fails to copy
-/// leaves a menu-bar item with no icon at all, and that is a far worse failure
-/// than a slightly bigger binary.
-const TEMPLATE_ICON: &[u8] = include_bytes!("../icons/meet-aiTemplate@2x.png");
+// The menu-bar glyph: "m.", the brand symbol, drawn on the 16px pixel grid by
+// the brand build (`design-system/meet-ai/brand/tools/build.mjs`) and
+// rasterised by its `render.sh`. Never hand-exported.
+//
+// The 2x raster is the one embedded. `tray-icon` sizes every status-item image
+// to 18pt tall whatever it is handed, so the larger art is the one with pixels
+// to spare when AppKit scales it.
+//
+// Embedded rather than bundled as a resource: a resource that fails to copy
+// leaves a menu-bar item with no icon at all, and that is a far worse failure
+// than a slightly bigger binary.
+//
+// TUR-58: the bytes live in `icons.rs` now, with the Windows and Linux
+// variants beside them; [`current_art`] picks one.
+pub use icons::TrayOs;
+use icons::{TrayArt, pick};
 
 /// Every menu-bar item's id starts with this, `today.rs`'s too. Menu events
 /// reach every handler, so the app menu's own items (`app-quit`, Edit's
@@ -73,19 +78,22 @@ fn build(app: &AppHandle) -> tauri::Result<()> {
         menu_model::build_menu_model(&menu_model::CalendarRead::Pending, &chrono::Local::now(), 0);
     let menu = today::menu(app, &first, &fixed)?;
 
+    let art = current_art(false);
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(Image::from_bytes(TEMPLATE_ICON)?)
-        .icon_as_template(true)
+        .icon(Image::from_bytes(art.png)?)
+        .icon_as_template(art.template)
         .tooltip("meet-ai")
         .menu(&menu)
         // Left-click opens the menu rather than silently toggling a recording.
+        // TUR-58: and the menu is the only way in on Linux, whose tray sends
+        // no click events at all, so every action lives in it.
         // A menu-bar item that starts capturing audio on a stray click is not a
         // thing to ship.
         .show_menu_on_left_click(true)
         .on_menu_event(on_menu_event)
         .build(app)?;
 
-    watch_recording_state(app, toggle);
+    watch_recording_state(app, toggle, art);
     today::start(app, TRAY_ID, fixed);
     Ok(())
 }
@@ -97,16 +105,49 @@ fn build(app: &AppHandle) -> tauri::Result<()> {
 /// is used only as a nudge — the phase is then read back from the one recorder
 /// everything else reads, so the label cannot drift from the real state even if
 /// an event is missed.
-fn watch_recording_state(app: &AppHandle, toggle: MenuItem<tauri::Wry>) {
+///
+/// TUR-58: the icon follows too, off macOS (idle or recording, and the
+/// Windows taskbar theme as it is now). On macOS [`current_art`] never
+/// changes, so the icon is never touched there.
+fn watch_recording_state(app: &AppHandle, toggle: MenuItem<tauri::Wry>, first: TrayArt) {
     let handle = app.clone();
+    let shown = std::sync::Mutex::new(first);
     app.listen(crate::events::RECORDING_STATE_EVENT, move |_event| {
         let Some(recorder) = handle.try_state::<recording::Recorder>() else {
             return;
         };
-        if let Err(error) = toggle.set_text(label_for(recorder.status().phase)) {
+        let phase = recorder.status().phase;
+        if let Err(error) = toggle.set_text(label_for(phase)) {
             tracing::warn!(%error, "could not relabel the menu-bar recording item");
         }
+        let art = current_art(phase != Phase::Idle);
+        let Ok(mut shown) = shown.lock() else {
+            return;
+        };
+        if *shown != art {
+            if let Err(error) = set_art(&handle, art) {
+                tracing::warn!(%error, "could not change the tray icon");
+            }
+            *shown = art;
+        }
     });
+}
+
+/// The picture for this OS and taskbar right now.
+fn current_art(recording: bool) -> TrayArt {
+    pick(
+        crate::platform::TRAY_OS,
+        crate::platform::taskbar_is_light(),
+        recording,
+    )
+}
+
+fn set_art(app: &AppHandle, art: TrayArt) -> tauri::Result<()> {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return Ok(());
+    };
+    tray.set_icon(Some(Image::from_bytes(art.png)?))?;
+    tray.set_icon_as_template(art.template)
 }
 
 /// What the recording item says right now.

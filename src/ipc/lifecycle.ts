@@ -53,6 +53,17 @@ export function setMenuBarCountdown(show: boolean): Promise<boolean> {
   return call(() => commands.setMenuBarCountdown(show));
 }
 
+/** "Start at login" (TUR-58). The OS login item is the truth; off by default. */
+export async function startAtLogin(): Promise<boolean> {
+  if (!hasBackend()) return false;
+  return call(() => commands.startAtLogin());
+}
+
+/** Turn "Start at login" on or off. Resolves to what the OS now says. */
+export function setStartAtLogin(enabled: boolean): Promise<boolean> {
+  return call(() => commands.setStartAtLogin(enabled));
+}
+
 /**
  * Rust wants the window on a screen (TUR-77): the menu bar's "Open brief"
  * and "Calendar not connected".
