@@ -444,9 +444,8 @@ jobs:
         run: echo 'LIBCLANG_PATH=C:/Program Files/LLVM/bin' >> "$GITHUB_ENV"
 
       # ggml-vulkan (TUR-61), as in check.yml's rust-native job: the SDK to
-      # build it, and the SDK's vulkan-1.dll (Khronos loader, Apache-2.0) in
-      # src-tauri/vulkan/, which tauri.windows.conf.json bundles beside
-      # meet-ai.exe.
+      # build it, and the Khronos loader vulkan-1.dll in src-tauri/vulkan/,
+      # which tauri.windows.conf.json bundles beside meet-ai.exe.
       # Adapted from github.com/cjpais/Handy/.github/workflows/build.yml @ 73ab851c2b6242283759a4c101b60f0ece132f08 (MIT)
       - name: Install the Vulkan SDK (Windows)
         if: runner.os == 'Windows'
@@ -455,21 +454,28 @@ jobs:
           version: 1.4.309.0
           cache: true
 
-      # Adapted from github.com/Zackriya-Solutions/meetily/.github/workflows/build-windows.yml @ a2cb62e827da7ef59f65064c97233efb2313878e (MIT)
+      # The x64 loader from LunarG's Vulkan Runtime components, pinned by
+      # SHA-256, into src-tauri/vulkan/ for tauri.windows.conf.json to bundle
+      # beside meet-ai.exe (as in check.yml).
       - name: Vulkan loader for the installer (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VULKAN_RT_URL: https://sdk.lunarg.com/sdk/download/1.4.309.0/windows/VulkanRT-1.4.309.0-Components.zip
+          VULKAN_RT_SHA256: 7d969f4d7b44e387667d3148f61559497c22d50cbe3d50adc9e5409afbce2df1
         run: |
-          sdk="$(cygpath -u "$VULKAN_SDK")"
-          for dir in "$sdk/Bin" "$sdk/runtime/x64"; do
-            if [ -f "$dir/vulkan-1.dll" ]; then
-              echo "Vulkan loader: $dir/vulkan-1.dll"
-              mkdir -p src-tauri/vulkan
-              cp "$dir/vulkan-1.dll" src-tauri/vulkan/vulkan-1.dll
-              exit 0
-            fi
-          done
-          echo "::error::no vulkan-1.dll in the Vulkan SDK ($VULKAN_SDK)"
-          exit 1
+          $zip = Join-Path $env:RUNNER_TEMP 'vulkan-rt.zip'
+          Invoke-WebRequest -Uri $env:VULKAN_RT_URL -OutFile $zip -MaximumRetryCount 5 -RetryIntervalSec 5
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:VULKAN_RT_SHA256) {
+            Write-Error "Vulkan Runtime zip has SHA-256 $hash, expected $env:VULKAN_RT_SHA256"
+            exit 1
+          }
+          $out = Join-Path $env:RUNNER_TEMP 'vulkan-rt'
+          Expand-Archive $zip -DestinationPath $out -Force
+          New-Item -ItemType Directory -Force src-tauri/vulkan | Out-Null
+          Copy-Item (Join-Path $out 'VulkanRT-1.4.309.0-Components/x64/vulkan-1.dll') src-tauri/vulkan/
+          Get-Item src-tauri/vulkan/vulkan-1.dll | Format-List FullName, Length
 
       # LunarG's list for this runner's Ubuntu release (jammy for the deb,
       # noble for the AppImage).

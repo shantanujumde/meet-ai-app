@@ -396,33 +396,35 @@ jobs:
           version: 1.4.309.0
           cache: true
 
-      # meet-ai.exe and the test binaries link vulkan-1.dll. The SDK's copy is
-      # the Khronos loader (Apache-2.0): it goes into src-tauri/vulkan/, which
-      # tauri.windows.conf.json bundles beside meet-ai.exe so the app starts on
-      # a PC with no GPU driver, and tauri-build needs it there before any
-      # build. Its folder goes on PATH for the tests when System32 has none.
-      # Adapted from github.com/Zackriya-Solutions/meetily/.github/workflows/build-windows.yml @ a2cb62e827da7ef59f65064c97233efb2313878e (MIT)
+      # meet-ai.exe and the test binaries link vulkan-1.dll. The SDK the
+      # action installs has none, so take the x64 loader from LunarG's Vulkan
+      # Runtime components for the same release, pinned by SHA-256. It goes
+      # into src-tauri/vulkan/, which tauri.windows.conf.json bundles beside
+      # meet-ai.exe so the app starts on a PC with no GPU driver (tauri-build
+      # needs it there before any build), and on PATH for the tests when
+      # System32 has none.
       - name: Vulkan loader for the app and the tests (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VULKAN_RT_URL: https://sdk.lunarg.com/sdk/download/1.4.309.0/windows/VulkanRT-1.4.309.0-Components.zip
+          VULKAN_RT_SHA256: 7d969f4d7b44e387667d3148f61559497c22d50cbe3d50adc9e5409afbce2df1
         run: |
-          sdk="$(cygpath -u "$VULKAN_SDK")"
-          loader=""
-          for dir in "$sdk/Bin" "$sdk/runtime/x64"; do
-            if [ -f "$dir/vulkan-1.dll" ]; then
-              loader="$dir/vulkan-1.dll"
-              break
-            fi
-          done
-          if [ -z "$loader" ]; then
-            echo "::error::no vulkan-1.dll in the Vulkan SDK ($VULKAN_SDK)"
+          $zip = Join-Path $env:RUNNER_TEMP 'vulkan-rt.zip'
+          Invoke-WebRequest -Uri $env:VULKAN_RT_URL -OutFile $zip -MaximumRetryCount 5 -RetryIntervalSec 5
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:VULKAN_RT_SHA256) {
+            Write-Error "Vulkan Runtime zip has SHA-256 $hash, expected $env:VULKAN_RT_SHA256"
             exit 1
-          fi
-          echo "Vulkan loader: $loader"
-          mkdir -p src-tauri/vulkan
-          cp "$loader" src-tauri/vulkan/vulkan-1.dll
-          if [ ! -f "$(cygpath -u "$SYSTEMROOT")/System32/vulkan-1.dll" ]; then
-            cygpath -w "$(dirname "$loader")" >> "$GITHUB_PATH"
-          fi
+          }
+          $out = Join-Path $env:RUNNER_TEMP 'vulkan-rt'
+          Expand-Archive $zip -DestinationPath $out -Force
+          New-Item -ItemType Directory -Force src-tauri/vulkan | Out-Null
+          Copy-Item (Join-Path $out 'VulkanRT-1.4.309.0-Components/x64/vulkan-1.dll') src-tauri/vulkan/
+          Get-Item src-tauri/vulkan/vulkan-1.dll | Format-List FullName, Length
+          if (-not (Test-Path (Join-Path $env:SystemRoot 'System32/vulkan-1.dll'))) {
+            (Resolve-Path src-tauri/vulkan).Path | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
 
       # cmake and a C++ compiler build whisper.cpp; libclang is for bindgen.
       # build-essential (g++) comes with the Tauri packages above.
@@ -504,12 +506,19 @@ jobs:
               echo "::error file=$cache::GGML_NATIVE is not OFF"
               exit 1
             }
-            grep -H '^GGML_VULKAN:' "$cache"
-            grep -q '^GGML_VULKAN:[A-Z]*=ON$' "$cache" || {
-              echo "::error file=$cache::GGML_VULKAN is not ON"
-              exit 1
-            }
           done
+          # Vulkan: at least one build linked ggml-vulkan (a cache restored
+          # from main may hold an older CPU-only build next to it).
+          vulkan=0
+          for output in target/debug/build/whisper-rs-sys-*/output; do
+            dir="$(dirname "$output")"
+            echo "$dir: $(grep -h '^GGML_VULKAN:' "$dir/out/build/CMakeCache.txt" 2>/dev/null || echo 'no CMakeCache'), $(grep -c 'ggml-vulkan' "$output" || true) ggml-vulkan link line(s)"
+            if grep -q 'rustc-link-lib=static=ggml-vulkan' "$output"; then vulkan=1; fi
+          done
+          if [ "$vulkan" -eq 0 ]; then
+            echo "::error::no whisper.cpp build under target/debug/build linked ggml-vulkan"
+            exit 1
+          fi
 
       - uses: pnpm/action-setup@v4
 

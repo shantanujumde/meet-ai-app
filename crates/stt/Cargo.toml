@@ -55,13 +55,14 @@ whisper-rs = { workspace = true, features = ["metal", "tracing_backend", "raw-ap
 
 # Vulkan on Windows x64 and Linux (TUR-61); Windows on ARM stays CPU only, as
 # in Handy (its Adreno Vulkan drivers are immature). Building it needs the
-# Vulkan SDK (headers, glslc; check.yml installs it), and the binary links the
-# Vulkan loader at load time: vulkan-1.dll comes with Windows GPU drivers (a PC
-# without one is a manual check, docs/manual-checks/worktree-tur61.md), and the
-# .deb depends on libvulkan1 (tauri.linux.conf.json). whisper-rs-sys 0.15 has no dynamic-backends switch, so the backend
-# is compiled in; a machine without a Vulkan driver gets no GPU device from
-# ggml and whisper runs on the CPU. `platform/other.rs` asks ggml for its
-# devices at run time, so no list of targets is repeated in code.
+# Vulkan SDK (headers, glslc; check.yml installs it). whisper-rs-sys 0.15 has
+# no dynamic-backends switch, so the backend is compiled in and the binary
+# links the Vulkan loader at load time: the Windows installer ships
+# vulkan-1.dll beside meet-ai.exe (tauri.windows.conf.json), and the .deb
+# depends on libvulkan1 (tauri.linux.conf.json). A machine without a Vulkan
+# driver gets no GPU device from ggml, and whisper runs on the CPU.
+# `platform/other.rs` asks ggml for its devices at run time, so no list of
+# targets is repeated in code.
 [target.'cfg(any(target_os = "linux", all(target_os = "windows", target_arch = "x86_64")))'.dependencies]
 whisper-rs = { workspace = true, features = ["vulkan", "tracing_backend", "raw-api"] }
 

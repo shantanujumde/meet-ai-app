@@ -295,10 +295,6 @@ SOFTWARE.
 - Files:
   - `crates/stt/cmake/force-portable-ggml.cmake` from
     `.github/force-portable-ggml.cmake`
-  - `.github/workflows/check.yml` and `.github/workflows/release.yml` (the
-    "Vulkan loader" steps: where in the SDK to find `vulkan-1.dll`, and
-    copying it for the installer) from `.github/workflows/build-windows.yml`
-    (TUR-61)
 
 MIT License
 
@@ -431,19 +427,104 @@ shows the same credit (`stt::model::parakeet::CREDIT`).
 ## Vulkan Loader
 
 - URL: https://github.com/KhronosGroup/Vulkan-Loader
-- Licence: Apache-2.0 (full text in our [`LICENSE`](./LICENSE); the
-  repository ships no `NOTICE` file, and its `LICENSE.txt` says the few files
-  under another licence are under more permissive ones)
-- Copyright: Copyright (c) 2014-2023 The Khronos Group Inc., Copyright (c)
-  2014-2023 Valve Corporation, Copyright (c) 2014-2023 LunarG, Inc., and the
-  other holders named in each source file
+- Licence: Apache-2.0 AND MIT (LunarG's Vulkan Runtime: the loader is
+  Apache-2.0, full text in our [`LICENSE`](./LICENSE); the MIT parts it
+  carries are listed in `VulkanRT-License.txt`, below as shipped. The
+  repository has no `NOTICE` file.)
+- Copyright: Copyright (c) 2015-2025 The Khronos Group Inc., Copyright (c)
+  2015-2025 LunarG, Inc., Copyright (c) 2015-2025 Valve Corporation
 - Commit: fa5f2bf40baa15c22be61e393e1dded6c06ee503 (the
-  `vulkan-sdk-1.4.309.0` tag, the SDK check.yml installs)
+  `vulkan-sdk-1.4.309.0` tag; the binary is LunarG's Vulkan Runtime
+  1.4.309.0 build of it)
 - Files:
-  - `vulkan-1.dll`, unmodified, next to `meet-ai.exe` in the Windows
+  - `vulkan-1.dll` (x64), unmodified, next to `meet-ai.exe` in the Windows
     installer (`bundle.resources` in `src-tauri/tauri.windows.conf.json`),
-    copied from the Vulkan SDK 1.4.309.0 by check.yml and release.yml
-    (TUR-61). Not in the repository.
+    from `VulkanRT-1.4.309.0-Components.zip`
+    (https://sdk.lunarg.com/sdk/download/1.4.309.0/windows/VulkanRT-1.4.309.0-Components.zip,
+    SHA-256 pinned in check.yml and release.yml) (TUR-61). Not in the
+    repository.
+
+```
+Copyright (c) 2015-2025 The Khronos Group Inc.
+Copyright (c) 2015-2025 LunarG, Inc.
+Copyright (c) 2015-2025 Valve Corporation
+
+The Vulkan Runtime is comprised of 100% open-source components (MIT, and
+Apache 2.0). The text of such licenses is included below along with the
+copyrights.
+
+ALL INFORMATION HERE IS PROVIDED "AS IS." LUNARG MAKES NO REPRESENTATIONS OR
+WARRANTIES, EXPRESS OR IMPLIED, WITH REGARD TO THIS LIST OR ITS ACCURACY OR
+COMPLETENESS, OR WITH RESPECT TO ANY RESULTS TO BE OBTAINED FROM USE OR
+DISTRIBUTION OF THE LIST. BY USING OR DISTRIBUTING THIS LIST, YOU AGREE THAT
+IN NO EVENT SHALL LUNARG BE HELD LIABLE FOR ANY DAMAGES WHATSOEVER RESULTING
+FROM ANY USE OR DISTRIBUTION OF THIS LIST, INCLUDING, WITHOUT LIMITATION, ANY
+SPECIAL, CONSEQUENTIAL, INCIDENTAL OR OTHER DIRECT OR INDIRECT DAMAGES.
+
+=========================Apache 2.0=========================
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this file except in compliance with the License. You may obtain a copy
+of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on as "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See
+the License for the specific language governing permissions and limitations
+under the License.
+
+============================MIT============================
+
+Copyright (c) 2009 Dave Gamble
+Copyright (c) 2015-2025 The Khronos Group Inc.
+Copyright (c) 2015-2025 Valve Corporation
+Copyright (c) 2015-2025 LunarG, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+============================MIT============================
+
+Copyright (c) 2014 joseph werle <joseph.werle@gmail.com>
+Copyright (c) 2015-2025 The Khronos Group Inc.
+Copyright (c) 2015-2025 Valve Corporation
+Copyright (c) 2015-2025 LunarG, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and/or associated documentation files (the "Materials"), to
+deal in the Materials without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+sell copies of the Materials, and to permit persons to whom the Materials are
+furnished to do so, subject to the following conditions:
+
+The above copyright notice(s) and this permission notice shall be included in
+all copies or substantial portions of the Materials.
+
+THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE MATERIALS OR THE
+USE OR OTHER DEALINGS IN THE MATERIALS.
+```
 
 ## To confirm
 

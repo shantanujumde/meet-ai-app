@@ -45,9 +45,10 @@ PC, no running app).
    install folder, the app starts, the log shows `devices=[]`, and a
    recording transcribes on the CPU. Without the shipped DLL the app would not
    start at all, because whisper-rs-sys 0.15 links the loader at load time.
-   Why skipped: needs such a Windows machine. Also check that the SDK path
-   check.yml copies the DLL from (`Bin` or `runtime/x64`) is the one the CI
-   log names.
+   Why skipped: needs such a Windows machine. The DLL is the x64 loader from
+   LunarG's `VulkanRT-1.4.309.0-Components.zip` (SHA-256 pinned in
+   check.yml), because the SDK `humbletim/install-vulkan-sdk` installs has no
+   `vulkan-1.dll` (seen in CI run 37212465978).
 5. **GPU crash fallback.** On a GPU machine, start a recording, and while
    whisper is loading or before the first line appears, kill the app hard
    (`taskkill /F /IM meet-ai.exe`, `kill -9`). Start it again and record.
@@ -71,8 +72,9 @@ PC, no running app).
    from a branch.
 8. **Windows developers.** `cargo build` of `src-tauri` on Windows now needs
    `src-tauri/vulkan/vulkan-1.dll` (tauri-build copies every bundle resource
-   and fails on a missing one). Copy it from `%VULKAN_SDK%\Bin` (or
-   `runtime\x64`) once. Why skipped: no Windows machine here.
+   and fails on a missing one). Take `x64/vulkan-1.dll` from
+   `VulkanRT-1.4.309.0-Components.zip` (URL in check.yml) once. Why skipped:
+   no Windows machine here.
 
 ## Known limits
 
