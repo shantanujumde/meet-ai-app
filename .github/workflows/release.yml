@@ -4,7 +4,8 @@
 # 1. Every push to main runs `check`. When `check` passes, this workflow runs.
 # 2. release-please reads the Conventional Commit titles merged since the last
 #    tag and opens or updates one release PR. That PR bumps the version in
-#    Cargo.toml, package.json and src-tauri/tauri.conf.json, and adds a CHANGELOG.md entry above the existing text.
+#    Cargo.toml and package.json (src-tauri/tauri.conf.json reads it from
+#    package.json), and adds a CHANGELOG.md entry above the existing text.
 #    It also bumps the workspace crates in Cargo.lock: every one of them
 #    inherits the workspace version. Config: release-please-config.json and
 #    .release-please-manifest.json.
@@ -365,8 +366,8 @@ jobs:
           ref: ${{ needs.release-please.outputs.sha }}
           persist-credentials: false
 
-      # tauri.conf.json is in release-please's extra-files, so it holds a
-      # number; "../package.json" (the value before the first bump) is fine.
+      # tauri.conf.json takes its version from package.json
+      # ("version": "../package.json"), so it has no number of its own.
       - name: Version files hold the release version
         run: |
           py=python3

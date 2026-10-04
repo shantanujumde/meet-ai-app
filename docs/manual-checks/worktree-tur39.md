@@ -19,8 +19,9 @@ valid JSON. Nothing below could run on this Mac.
    SmartScreen "More info → Run anyway" note.
    Why skipped: needs a real release run.
 2. **tauri.conf.json follows the release.** On the next release PR, check
-   that release-please changed `src-tauri/tauri.conf.json` `"version"` from
-   `"../package.json"` to the new number, and the built apps report it.
+   that `src-tauri/tauri.conf.json` `"version"` stays `"../package.json"`
+   (no bump; the app version follows package.json) and the built apps report
+   the release version.
    Why skipped: needs release-please to run on main.
 3. **AppImage without a webkit pin.** If the ubuntu-24.04 AppImage build
    fails or the AppImage shows a blank window, pin
