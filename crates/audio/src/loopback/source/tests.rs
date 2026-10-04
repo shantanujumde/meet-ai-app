@@ -2,7 +2,7 @@
 //! and gap filling, silent buffers and the clock end to end, with no device.
 
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::*;
 

@@ -7,10 +7,9 @@
 //! itself with, which is OS code and comes from `crate::platform`.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
@@ -24,7 +23,7 @@ use crate::platform::host_now_ns;
 use crate::platform::input_callback_ns;
 use crate::rate_meter::{CallbackMeter, FixedRates, Rates};
 use crate::tee::Tee;
-use crate::wav_writer::WavWriter;
+use crate::track::{IDLE_POLL, TrackWriter};
 use crate::{AudioSource, Channel, Error};
 
 /// Ring buffer capacity, in raw (device-rate, interleaved) samples. 4 s at
@@ -33,19 +32,6 @@ use crate::{AudioSource, Channel, Error};
 /// rather than to hold steady-state backlog.
 const RING_CAPACITY_SAMPLES: usize = 48_000 * 2 * 4;
 
-/// How long the worker thread sleeps when the ring buffer is empty, between
-/// polls. Short enough that it never becomes the dominant source of latency
-/// against the 200 ms drift gate; long enough not to spin a core.
-const IDLE_POLL: Duration = Duration::from_millis(2);
-
-struct Shared {
-    writer: WavWriter,
-    /// Frames written to `writer` so far — the same count [`AudioSource::position`]
-    /// reports, latched together with `last_host_ns` from the same write.
-    frames: u64,
-    last_host_ns: u64,
-}
-
 /// Everything [`MicSource::start`] needs to hand back once the stream is
 /// actually live.
 struct Built {
@@ -53,18 +39,18 @@ struct Built {
     rates: Arc<FixedRates>,
     worker: JoinHandle<()>,
     running: Arc<AtomicBool>,
-    shared: Arc<Mutex<Shared>>,
+    track: TrackWriter,
 }
 
 /// The microphone capture channel: a `cpal` input stream feeding a resampler
-/// and a [`WavWriter`] through a lock-free ring buffer, per SPEC §2.3's
+/// and a [`crate::wav_writer::WavWriter`] through a lock-free ring buffer, per SPEC §2.3's
 /// requirement that the real-time audio callback never blocks, allocates, or
 /// touches the filesystem.
 pub struct MicSource {
     stream: Option<Stream>,
     worker: Option<JoinHandle<()>>,
     running: Arc<AtomicBool>,
-    shared: Option<Arc<Mutex<Shared>>>,
+    track: Option<TrackWriter>,
     /// The live-transcription copy, if one was asked for ([`AudioSource::tee`]).
     tee: Option<Tee>,
     /// The reported and measured device rates (TUR-87), while running.
@@ -83,7 +69,7 @@ impl MicSource {
             stream: None,
             worker: None,
             running: Arc::new(AtomicBool::new(false)),
-            shared: None,
+            track: None,
             tee: None,
             rates: None,
         }
@@ -96,29 +82,17 @@ impl MicSource {
         mut consumer: HeapCons<f32>,
         mut pipeline: Pipeline,
         rates: Arc<FixedRates>,
-        shared: Arc<Mutex<Shared>>,
+        track: TrackWriter,
         last_cb_host_ns: Arc<AtomicU64>,
         running: Arc<AtomicBool>,
         tee: Option<Tee>,
     ) {
         let mut sink = |frames: &[i16]| {
-            let host_ns = last_cb_host_ns.load(Ordering::Relaxed);
-            let Ok(mut guard) = shared.lock() else {
-                tracing::warn!("mic writer mutex poisoned; dropping this chunk");
-                return;
-            };
-            if guard.writer.append(frames).is_err() {
-                tracing::warn!("mic wav writer append failed; dropping this chunk");
-                return;
-            }
-            guard.frames += frames.len() as u64;
-            guard.last_host_ns = host_ns;
-            // Released before the tee sees anything: the tee never blocks,
-            // but `position()` has no reason to wait on it either way.
-            drop(guard);
-            if let Some(tee) = &tee {
-                tee.offer(frames);
-            }
+            track.append(
+                frames,
+                last_cb_host_ns.load(Ordering::Relaxed),
+                tee.as_ref(),
+            );
         };
         // Sized once; `pop_slice` only refills it.
         let mut scratch = vec![0.0f32; 4096];
@@ -174,20 +148,9 @@ impl MicSource {
         // `dest` a previous `MicSource` already wrote to — the WAV stays one
         // continuous per-channel archive across segments (contract:
         // "concatenated in idx order"), only the OS-level stream is rebuilt.
-        // `Shared::frames` still starts at 0 here regardless: it is
-        // segment-relative (`crate::segments`'s per-segment frame counts),
-        // while `WavWriter::open_append` is what carries the file-wide,
-        // cross-segment total the header must keep declaring.
-        let writer = if dest.exists() {
-            WavWriter::open_append(&dest)?
-        } else {
-            WavWriter::create(&dest)?
-        };
-        let shared = Arc::new(Mutex::new(Shared {
-            writer,
-            frames: 0,
-            last_host_ns: 0,
-        }));
+        // `TrackWriter::open` creates the file or appends to it, with a
+        // segment-relative frame count (see its doc).
+        let track = TrackWriter::open(&dest, "microphone")?;
 
         let rb = HeapRb::<f32>::new(RING_CAPACITY_SAMPLES);
         let (mut producer, consumer) = rb.split();
@@ -248,7 +211,7 @@ impl MicSource {
         let worker = std::thread::Builder::new()
             .name("meet-rec-mic-worker".to_string())
             .spawn({
-                let shared = Arc::clone(&shared);
+                let track = track.clone();
                 let running = Arc::clone(&running);
                 let rates = Arc::clone(&rates);
                 let pipeline = Pipeline::new("microphone", channels, device_rate);
@@ -257,7 +220,7 @@ impl MicSource {
                         consumer,
                         pipeline,
                         rates,
-                        shared,
+                        track,
                         last_cb_host_ns,
                         running,
                         tee,
@@ -271,7 +234,7 @@ impl MicSource {
             rates,
             worker,
             running,
-            shared,
+            track,
         })
     }
 }
@@ -304,7 +267,7 @@ impl AudioSource for MicSource {
         self.rates = Some(built.rates);
         self.worker = Some(built.worker);
         self.running = built.running;
-        self.shared = Some(built.shared);
+        self.track = Some(built.track);
         Ok(())
     }
 
@@ -316,10 +279,8 @@ impl AudioSource for MicSource {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
-        if let Some(shared) = &self.shared {
-            let mut guard = shared.lock().expect("mic writer mutex poisoned");
-            guard.writer.fsync_data()?;
-            guard.writer.patch_header()?;
+        if let Some(track) = &self.track {
+            track.finish()?;
         }
         Ok(())
     }
@@ -329,46 +290,27 @@ impl AudioSource for MicSource {
     }
 
     fn position(&self) -> Option<(u64, u64)> {
-        let shared = self.shared.as_ref()?;
-        let guard = shared.lock().expect("mic writer mutex poisoned");
-        if guard.last_host_ns == 0 {
-            None
-        } else {
-            Some((guard.last_host_ns, guard.frames))
-        }
+        self.track.as_ref()?.position()
     }
 
     fn fsync_data(&mut self) -> Result<(), Error> {
-        let Some(shared) = &self.shared else {
-            return Ok(());
-        };
-        let mut guard = shared.lock().expect("mic writer mutex poisoned");
-        guard.writer.fsync_data()?;
+        if let Some(track) = &self.track {
+            track.fsync_data()?;
+        }
         Ok(())
     }
 
     fn patch_header(&mut self) -> Result<(), Error> {
-        let Some(shared) = &self.shared else {
-            return Ok(());
-        };
-        let mut guard = shared.lock().expect("mic writer mutex poisoned");
-        guard.writer.patch_header()?;
+        if let Some(track) = &self.track {
+            track.patch_header()?;
+        }
         Ok(())
     }
 
     fn pad_leading_silence(&mut self, frames: u64) -> Result<(), Error> {
-        let Some(shared) = &self.shared else {
-            return Ok(());
-        };
-        // Locking here excludes the worker thread's own `shared.lock()` in
-        // `worker_loop` for the duration of the splice, so no append can land
-        // between our read-the-tail and write-the-pad steps.
-        let mut guard = shared.lock().expect("mic writer mutex poisoned");
-        guard.writer.prepend_silence(frames)?;
-        guard.frames += frames;
-        drop(guard);
-        if let Some(tee) = &self.tee {
-            tee.offer_silence(frames);
+        // The track's lock excludes the worker's appends for the splice.
+        if let Some(track) = &self.track {
+            track.pad_leading_silence(frames, self.tee.as_ref())?;
         }
         Ok(())
     }

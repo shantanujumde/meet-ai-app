@@ -31,7 +31,7 @@ const CAPTURE_FORMATS: [SampleFormat; 3] =
 
 /// Samples the callback's conversion buffer starts with; grown (once) if a
 /// packet is ever larger.
-const SCRATCH_SAMPLES: usize = 16_384;
+const CALLBACK_CONVERT_SAMPLES: usize = 16_384;
 
 /// The loopback source on the default output device.
 pub(crate) fn system_source() -> Option<Box<dyn AudioSource>> {
@@ -140,7 +140,7 @@ impl Backend for WasapiLoopback {
             config.buffer_size
         );
 
-        let mut scratch = vec![0.0f32; SCRATCH_SAMPLES];
+        let mut scratch = vec![0.0f32; CALLBACK_CONVERT_SAMPLES];
         let on_packet = move |data: &Data, info: &InputCallbackInfo| {
             let n = data.len();
             if scratch.len() < n {

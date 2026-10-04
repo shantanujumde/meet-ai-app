@@ -1,5 +1,5 @@
 //! The loopback [`AudioSource`] (TUR-37): an OS [`Backend`]'s packets to a
-//! 16 kHz `system.wav`, through the same [`Pipeline`] and [`WavWriter`] as
+//! 16 kHz `system.wav`, through the same [`Pipeline`] and [`TrackWriter`] as
 //! the microphone, with the silence keepalive and gap filling on top.
 //!
 //! The [`Backend`] is the only OS code: on Windows a `cpal` input stream on
@@ -9,10 +9,9 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 use ringbuf::traits::{Consumer, Split};
 use ringbuf::{HeapCons, HeapRb};
@@ -24,7 +23,7 @@ use crate::pipeline::Pipeline;
 use crate::rate_meter::{FixedRates, Rates};
 use crate::segments::SAMPLE_RATE_HZ;
 use crate::tee::Tee;
-use crate::wav_writer::WavWriter;
+use crate::track::{IDLE_POLL, TrackWriter};
 use crate::{AudioSource, Channel, Error};
 
 /// What the log calls this channel.
@@ -36,11 +35,9 @@ const RING_SECONDS: usize = 4;
 /// Gap marks the callback can queue before the worker takes them.
 const MARK_CAPACITY: usize = 256;
 
-/// How long the worker sleeps when there is nothing to do.
-const IDLE_POLL: Duration = Duration::from_millis(2);
-
-/// Samples the worker takes from the ring at a time.
-const SCRATCH_SAMPLES: usize = 4096;
+/// Samples the worker takes from the ring at a time, and the length of its
+/// buffers of zeros for gap silence.
+const WORKER_POP_SAMPLES: usize = 4096;
 
 /// The start of every gap goes through the resampler as zeros, so the
 /// audio before it (and the filter's tail) comes out first and in order;
@@ -85,18 +82,11 @@ pub trait Backend: Send + 'static {
     ) -> Result<Box<dyn LiveStream>, Error>;
 }
 
-/// What the worker writes and [`AudioSource::position`] reads.
-struct Shared {
-    writer: WavWriter,
-    /// Frames written this segment, latched with `last_host_ns`.
-    frames: u64,
-    last_host_ns: u64,
-}
-
-fn lock(shared: &Mutex<Shared>) -> MutexGuard<'_, Shared> {
-    // A panic mid-append leaves the writer as consistent as an I/O error
-    // would; keep recording rather than lose the rest of the track.
-    shared.lock().unwrap_or_else(PoisonError::into_inner)
+/// Pause every stream a failed start had opened, before the error goes back.
+fn abandon(streams: impl IntoIterator<Item = Box<dyn LiveStream>>) {
+    for mut stream in streams {
+        stream.pause();
+    }
 }
 
 /// System audio from an output device's loopback, as an [`AudioSource`].
@@ -106,7 +96,7 @@ pub struct LoopbackSource<B: Backend> {
     keepalive: Option<Box<dyn LiveStream>>,
     worker: Option<JoinHandle<()>>,
     running: Arc<AtomicBool>,
-    shared: Option<Arc<Mutex<Shared>>>,
+    track: Option<TrackWriter>,
     tee: Option<Tee>,
     rates: Option<Arc<FixedRates>>,
 }
@@ -119,7 +109,7 @@ impl<B: Backend> LoopbackSource<B> {
             keepalive: None,
             worker: None,
             running: Arc::new(AtomicBool::new(false)),
-            shared: None,
+            track: None,
             tee: None,
             rates: None,
         }
@@ -170,16 +160,7 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
         );
 
         // Same as the microphone: a reopened segment appends to the same file.
-        let writer = if dest.exists() {
-            WavWriter::open_append(&dest)?
-        } else {
-            WavWriter::create(&dest)?
-        };
-        let shared = Arc::new(Mutex::new(Shared {
-            writer,
-            frames: 0,
-            last_host_ns: 0,
-        }));
+        let track = TrackWriter::open(&dest, LABEL)?;
         let rates = FixedRates::new(LABEL, format.rate);
         let ring = RING_SECONDS * format.rate as usize * format.channels;
         let (producer, consumer) = HeapRb::<f32>::new(ring).split();
@@ -212,9 +193,7 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
         let stream = match self.backend.start_capture(&format, capture) {
             Ok(stream) => stream,
             Err(e) => {
-                if let Some(mut keepalive) = keepalive {
-                    keepalive.pause();
-                }
+                abandon(keepalive);
                 return Err(e);
             }
         };
@@ -225,7 +204,7 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
             marks,
             pipeline: Pipeline::new(LABEL, format.channels, format.rate),
             rates: Arc::clone(&rates),
-            shared: Arc::clone(&shared),
+            track: track.clone(),
             last_ns,
             running: Arc::clone(&running),
             tee: self.tee.clone(),
@@ -238,11 +217,7 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
         let handle = match spawned {
             Ok(handle) => handle,
             Err(e) => {
-                let mut stream = stream;
-                stream.pause();
-                if let Some(mut keepalive) = keepalive {
-                    keepalive.pause();
-                }
+                abandon(std::iter::once(stream).chain(keepalive));
                 return Err(Error::Io(e));
             }
         };
@@ -251,17 +226,15 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
         self.keepalive = keepalive;
         self.worker = Some(handle);
         self.running = running;
-        self.shared = Some(shared);
+        self.track = Some(track);
         self.rates = Some(rates);
         Ok(())
     }
 
     fn stop(&mut self) -> Result<(), Error> {
         self.halt();
-        if let Some(shared) = &self.shared {
-            let mut guard = lock(shared);
-            guard.writer.fsync_data()?;
-            guard.writer.patch_header()?;
+        if let Some(track) = &self.track {
+            track.finish()?;
         }
         Ok(())
     }
@@ -271,35 +244,27 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
     }
 
     fn position(&self) -> Option<(u64, u64)> {
-        let guard = lock(self.shared.as_ref()?);
-        (guard.last_host_ns != 0).then_some((guard.last_host_ns, guard.frames))
+        self.track.as_ref()?.position()
     }
 
     fn fsync_data(&mut self) -> Result<(), Error> {
-        if let Some(shared) = &self.shared {
-            lock(shared).writer.fsync_data()?;
+        if let Some(track) = &self.track {
+            track.fsync_data()?;
         }
         Ok(())
     }
 
     fn patch_header(&mut self) -> Result<(), Error> {
-        if let Some(shared) = &self.shared {
-            lock(shared).writer.patch_header()?;
+        if let Some(track) = &self.track {
+            track.patch_header()?;
         }
         Ok(())
     }
 
     fn pad_leading_silence(&mut self, frames: u64) -> Result<(), Error> {
-        let Some(shared) = &self.shared else {
-            return Ok(());
-        };
-        // Holding the lock keeps the worker's appends out of the splice.
-        let mut guard = lock(shared);
-        guard.writer.prepend_silence(frames)?;
-        guard.frames += frames;
-        drop(guard);
-        if let Some(tee) = &self.tee {
-            tee.offer_silence(frames);
+        // The track's lock keeps the worker's appends out of the splice.
+        if let Some(track) = &self.track {
+            track.pad_leading_silence(frames, self.tee.as_ref())?;
         }
         Ok(())
     }
@@ -317,14 +282,14 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
     }
 }
 
-/// The worker thread: ring to [`Pipeline`] to [`WavWriter`], with the gap
+/// The worker thread: ring to [`Pipeline`] to [`TrackWriter`], with the gap
 /// marks spliced in as silence.
 struct Worker {
     consumer: HeapCons<f32>,
     marks: HeapCons<GapMark>,
     pipeline: Pipeline,
     rates: Arc<FixedRates>,
-    shared: Arc<Mutex<Shared>>,
+    track: TrackWriter,
     last_ns: Arc<AtomicU64>,
     running: Arc<AtomicBool>,
     tee: Option<Tee>,
@@ -339,7 +304,7 @@ impl Worker {
             mut marks,
             mut pipeline,
             rates,
-            shared,
+            track,
             last_ns,
             running,
             tee,
@@ -347,23 +312,12 @@ impl Worker {
             channels,
         } = self;
         let mut sink = |frames: &[i16]| {
-            let host_ns = last_ns.load(Ordering::Acquire);
-            let mut guard = lock(&shared);
-            if guard.writer.append(frames).is_err() {
-                tracing::warn!("{LABEL} wav writer append failed; dropping this chunk");
-                return;
-            }
-            guard.frames += frames.len() as u64;
-            guard.last_host_ns = host_ns;
-            drop(guard);
-            if let Some(tee) = &tee {
-                tee.offer(frames);
-            }
+            track.append(frames, last_ns.load(Ordering::Acquire), tee.as_ref());
         };
         let mut silence = Silence::new(channels);
         let mut pending: VecDeque<GapMark> = VecDeque::new();
         let mut consumed: u64 = 0;
-        let mut scratch = vec![0.0f32; SCRATCH_SAMPLES];
+        let mut scratch = vec![0.0f32; WORKER_POP_SAMPLES];
         loop {
             // Samples first, marks second: a mark is pushed before the
             // samples after it, so every mark these samples need is here.
@@ -415,8 +369,8 @@ impl Silence {
         let channels = channels.max(1);
         Self {
             channels,
-            device: vec![0.0; (SCRATCH_SAMPLES / channels).max(1) * channels],
-            output: vec![0; SCRATCH_SAMPLES],
+            device: vec![0.0; (WORKER_POP_SAMPLES / channels).max(1) * channels],
+            output: vec![0; WORKER_POP_SAMPLES],
         }
     }
 
