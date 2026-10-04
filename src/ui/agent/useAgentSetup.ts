@@ -31,9 +31,15 @@ export function useAgentSetup() {
   // Only the newest detection may write its answer. "Check again" pressed
   // twice must not let the slower, older run win.
   const detectRun = useRef(0);
+  // The same for saves: a model typed then blurred, then a suggestion
+  // clicked, are two saves in flight, and only the newest may land.
+  const saveRun = useRef(0);
+  // The last model each agent had, so None → Claude Code finds it again.
+  const lastModel = useRef<Partial<Record<AgentHarness, string>>>({});
 
   const apply = useCallback((next: AgentChoice | null) => {
     current.current = next;
+    if (next && next.harness !== "none") lastModel.current[next.harness] = next.model;
     setChoice(next);
   }, []);
 
@@ -75,15 +81,19 @@ export function useAgentSetup() {
 
   const save = useCallback(
     async (next: AgentChoice) => {
+      const run = ++saveRun.current;
       const previous = current.current;
       apply(next);
       setSaveError(null);
       try {
         const saved = await saveAgentChoice(next);
+        // A newer save started meanwhile: its answer is the one to show.
+        if (run !== saveRun.current) return;
         apply(saved);
         setLoadError(null);
         if (detectKey(saved) !== detectKey(previous)) void detect(saved);
       } catch (thrown) {
+        if (run !== saveRun.current) return;
         apply(previous);
         setSaveError(toUiError(thrown));
       }
@@ -92,15 +102,16 @@ export function useAgentSetup() {
   );
 
   /**
-   * Pick an agent, or `none`. A new agent starts on Default (a blank model:
-   * the agent picks its own) and its own path. `none` keeps the model, so
-   * switching back finds it.
+   * Pick an agent, or `none`. An agent starts on the model it last had
+   * here, else Default (a blank model: the agent picks its own), and on its
+   * own path. `none` keeps the model, and each agent's last one is
+   * remembered, so None → Claude Code finds it again.
    */
   const pick = useCallback(
     (harness: AgentHarness) => {
       const was = current.current;
       if (was?.harness === harness) return;
-      const model = harness === "none" ? (was?.model ?? "") : "";
+      const model = harness === "none" ? (was?.model ?? "") : (lastModel.current[harness] ?? "");
       void save({ harness, model, binaryPath: null });
     },
     [save],
