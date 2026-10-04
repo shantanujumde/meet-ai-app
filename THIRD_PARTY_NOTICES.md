@@ -104,6 +104,9 @@ SOFTWARE.
     inputs, and its readiness test) from `crates/detect/src/list/linux.rs`
   - `crates/detect/processes.json` (the Linux meeting-app process names) from
     `crates/detect/src/app/linux.rs`
+  - `crates/audio/src/loopback/follower.rs` (`EndpointFollower`: switch
+    only after two agreeing reads, and its four tests) from
+    `crates/audio-actual/src/speaker/windows.rs` (TUR-37)
 
 ```
 MIT License
@@ -293,6 +296,59 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Cap
+
+- URL: https://github.com/CapSoftware/Cap
+- Licence: MIT (the repository's `LICENSE` puts the `scap-*` and
+  `cap-camera*` crates under `licenses/LICENSE-MIT` and everything else under
+  AGPL-3.0; only `crates/scap-cpal` was copied from)
+- Copyright: Copyright (c) 2023 Cap Software, Inc.
+- Commit: a2a6bd8b1948c48fe92936c265c8402d7fa8ddb3
+- Files:
+  - `crates/audio/src/loopback/buffer.rs` (`safe_buffer_size`: about 80 ms
+    of frames, clamped) from `crates/scap-cpal/src/lib.rs` (TUR-37)
+  - `crates/audio/src/platform/windows_loopback.rs` (`start_keepalive`: a
+    render stream of zeros on the captured device, from
+    `build_silence_keepalive`) from `crates/scap-cpal/src/lib.rs` (TUR-37)
+
+```
+MIT License
+
+Copyright (c) 2023 Cap Software, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## cpal
+
+- URL: https://github.com/RustAudio/cpal
+- Licence: Apache-2.0 (full text in our [`LICENSE`](./LICENSE); cpal ships
+  no `NOTICE` file)
+- Copyright: The CPAL contributors (cpal's `LICENSE` carries no copyright
+  line of its own)
+- Commit: e1612d5d98152f8dc2a62e1b51ef7cbf4f7f26b7 (the `v0.18.2` tag, the
+  version we depend on)
+- Files:
+  - `crates/audio/src/loopback/clock.rs` (`qpc_to_ns`: QPC ticks to ns on
+    the 100 ns grid, from `Stream::now`) from
+    `src/host/wasapi/stream.rs` (TUR-37)
 
 ## To confirm
 

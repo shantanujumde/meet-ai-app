@@ -51,6 +51,15 @@ mod windows_permission;
 #[cfg_attr(feature = "stub-audio", allow(dead_code, unused_imports))]
 mod linux_permission;
 
+// TUR-37: WASAPI loopback, the QPC clock and the default-device watch.
+#[cfg(target_os = "windows")]
+#[cfg_attr(feature = "stub-audio", allow(dead_code, unused_imports))]
+mod windows_devices;
+
+#[cfg(target_os = "windows")]
+#[cfg_attr(feature = "stub-audio", allow(dead_code, unused_imports))]
+mod windows_loopback;
+
 #[cfg(feature = "stub-audio")]
 mod stub;
 
@@ -85,6 +94,8 @@ pub(crate) use os::input_devices;
 pub(crate) use os::{
     DeviceId, default_input_device, default_output_device, device_activity, host_now_ns,
 };
+// The capture time a microphone callback carries, where it shares the host clock (TUR-37).
+pub(crate) use os::input_callback_ns;
 
 // Capture and permission checks: the real OS, or no-ops under `stub-audio`.
 #[cfg(not(feature = "stub-audio"))]

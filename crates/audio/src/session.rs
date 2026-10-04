@@ -193,7 +193,8 @@ pub struct RecordingSession {
     started: Instant,
     last_checkpoint: Instant,
     /// Kept so [`reopen_segment`] can hand them to the rebuilt sources. Only
-    /// macOS watches for device changes today, so only macOS reads it back.
+    /// macOS and Windows (TUR-37) watch for device changes today, so only
+    /// they read it back.
     tees: Tees,
     /// `None` on a platform with no device watch yet (`crate::platform`):
     /// [`RecordingSession::tick`] then never sees a change.
@@ -344,7 +345,7 @@ impl RecordingSession {
     }
 
     /// Run one iteration of the poll loop: check for a default-device change
-    /// (macOS only — SPEC §5's AirPods-swap gate) and, if
+    /// (macOS and Windows: SPEC §5's AirPods-swap gate) and, if
     /// [`crate::segments::CHECKPOINT_INTERVAL_S`] has elapsed since the last
     /// one, run an ordinary checkpoint. The caller decides how often to call
     /// this; nothing here sleeps or blocks on a timer of its own.

@@ -128,6 +128,7 @@ process-wrap = { version = "=10.0.1", default-features = false, features = [
 ] }
 # The `CREATE_NO_WINDOW` flag type process-wrap takes on Windows (TUR-54).
 # Same version process-wrap itself pulls, so no second copy.
+# Also the performance counter, the clock both tracks' positions use on Windows (TUR-37).
 windows = { version = "=0.62.2", default-features = false }
 
 # --- tauri (SETUP.md §2.1) ---
