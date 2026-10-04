@@ -16,6 +16,9 @@ dist/
 
 # Tauri generated
 src-tauri/gen/
+# The Vulkan loader shipped beside meet-ai.exe on Windows (TUR-61), copied
+# from the Vulkan SDK by check.yml; never committed.
+src-tauri/vulkan/
 
 # Signing keys. Never commit one — the updater private key lives in secure
 # custody, not in the repo (SETUP.md step 1.2).

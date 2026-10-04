@@ -174,6 +174,11 @@ SOFTWARE.
   - `src/lib/osText.ts` (`shortcutLabel`: OS-aware modifier key names)
     from `src/lib/utils/keyboard.ts`, at commit
     73ab851c2b6242283759a4c101b60f0ece132f08 (TUR-58)
+  - `.github/workflows/check.yml` (the "Install the Vulkan SDK (Windows)"
+    and "Install the Vulkan SDK (Linux)" steps of the `rust-native` job:
+    `humbletim/install-vulkan-sdk`, LunarG's apt list and
+    `mesa-vulkan-drivers`) from `.github/workflows/build.yml`, at commit
+    73ab851c2b6242283759a4c101b60f0ece132f08 (TUR-61)
 
 MIT License
 
@@ -290,6 +295,9 @@ SOFTWARE.
 - Files:
   - `crates/stt/cmake/force-portable-ggml.cmake` from
     `.github/force-portable-ggml.cmake`
+  - `.github/workflows/check.yml` (the "Vulkan loader for the test
+    binaries (Windows)" step: where to look for `vulkan-1.dll`) from
+    `.github/workflows/build-windows.yml` (TUR-61)
 
 MIT License
 
@@ -418,6 +426,23 @@ shows the same credit (`stt::model::parakeet::CREDIT`).
   from NVIDIA's model): `encoder-model.int8.onnx`,
   `decoder_joint-model.int8.onnx` and `vocab.txt`, pinned by SHA-256 in
   `crates/stt/src/model/parakeet.rs`. meet-ai does not change them.
+
+## Vulkan Loader
+
+- URL: https://github.com/KhronosGroup/Vulkan-Loader
+- Licence: Apache-2.0 (full text in our [`LICENSE`](./LICENSE); the
+  repository ships no `NOTICE` file, and its `LICENSE.txt` says the few files
+  under another licence are under more permissive ones)
+- Copyright: Copyright (c) 2014-2023 The Khronos Group Inc., Copyright (c)
+  2014-2023 Valve Corporation, Copyright (c) 2014-2023 LunarG, Inc., and the
+  other holders named in each source file
+- Commit: fa5f2bf40baa15c22be61e393e1dded6c06ee503 (the
+  `vulkan-sdk-1.4.309.0` tag, the SDK check.yml installs)
+- Files:
+  - `vulkan-1.dll`, unmodified, next to `meet-ai.exe` in the Windows
+    installer (`bundle.resources` in `src-tauri/tauri.windows.conf.json`),
+    copied from the Vulkan SDK 1.4.309.0 by check.yml (TUR-61). Not in the
+    repository.
 
 ## To confirm
 
