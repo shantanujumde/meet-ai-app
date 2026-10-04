@@ -13,6 +13,7 @@
 import { useAppStore } from "@/state/app";
 import { AudioRetentionRow } from "@/ui/AudioRetentionRow";
 import { AgentSetup } from "@/ui/agent/AgentSetup";
+import { BluetoothMicSetting } from "@/ui/BluetoothMicSetting";
 import { CalendarSettings } from "@/ui/calendar/CalendarSettings";
 import { DockSetting } from "@/ui/DockSetting";
 import { EngineSummary } from "@/ui/engine/EngineSummary";
@@ -49,6 +50,8 @@ export function Settings() {
         <Card flush>
           <FolderRow status={rootExists ? "Exists" : "Created on first recording"} />
           <AudioRetentionRow />
+          {/* TUR-91: keep Bluetooth headphones out of call mode. */}
+          <BluetoothMicSetting />
           <Row>
             <RowLabel
               name="Setup"
