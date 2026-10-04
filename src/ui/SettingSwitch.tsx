@@ -75,7 +75,6 @@ export function SettingSwitch({
   label: string;
   detail: ReactNode;
   /** Read on mount; pass a function defined outside the component. */
-  /** Read on mount; pass a function defined outside the component. */
   load: () => Promise<boolean>;
   save: (on: boolean) => Promise<boolean>;
 }) {
