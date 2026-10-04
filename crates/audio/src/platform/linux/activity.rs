@@ -58,7 +58,7 @@ pub(crate) fn device_activity() -> Result<DeviceActivity, Error> {
     Ok(reading_without_our_own(&capture, &render))
 }
 
-fn read_error(message: impl Into<String>) -> Error {
+pub(super) fn read_error(message: impl Into<String>) -> Error {
     Error::DeviceRead(message.into())
 }
 
@@ -162,7 +162,7 @@ fn readiness(state: State) -> Readiness {
     }
 }
 
-fn wait_for_ready(mainloop: &mut Mainloop, context: &Context) -> Result<(), Error> {
+pub(super) fn wait_for_ready(mainloop: &mut Mainloop, context: &Context) -> Result<(), Error> {
     let deadline = Instant::now() + OPERATION_TIMEOUT;
     loop {
         match readiness(context.get_state()) {
@@ -209,7 +209,7 @@ fn wait_for_listing<T: ?Sized>(
     }
 }
 
-fn iterate(mainloop: &mut Mainloop, what: &str) -> Result<(), Error> {
+pub(super) fn iterate(mainloop: &mut Mainloop, what: &str) -> Result<(), Error> {
     match mainloop.iterate(false) {
         IterateResult::Success(0) => std::thread::sleep(IDLE_SLEEP),
         IterateResult::Success(_) => {}

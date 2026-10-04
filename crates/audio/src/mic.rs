@@ -16,6 +16,7 @@ use cpal::{SampleFormat, Stream, StreamConfig};
 use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
+use crate::loopback::sound_server::{SoundServer, is_alsa_null};
 use crate::mic_choice::{self, MicChoice};
 use crate::pipeline::Pipeline;
 use crate::platform::host_now_ns;
@@ -328,11 +329,35 @@ impl AudioSource for MicSource {
     }
 }
 
+/// The input device to open ([`choose_device`]), never ALSA's `null`
+/// device: it opens, "records" silence with no clock behind it, and its
+/// callback spins the CPU (TUR-38, anarlog #7485).
+fn pick_device(host: &cpal::Host) -> Result<cpal::Device, Error> {
+    let device = choose_device(host)?;
+    let server = SoundServer::from_host_name(host.id().name());
+    let id = device
+        .id()
+        .map(|id| id.id().to_string())
+        .unwrap_or_default();
+    let description = device
+        .description()
+        .map(|d| d.name().to_string())
+        .unwrap_or_default();
+    if is_alsa_null(server, &id, &description) {
+        return Err(Error::NoDevice(
+            "the default input is ALSA's null device, which records only silence; \
+             choose a real microphone as the default input"
+                .to_string(),
+        ));
+    }
+    Ok(device)
+}
+
 /// The input device to open: the default, unless [`mic_choice::choose`]
 /// picks another (TUR-91: the Mac's own mic when the default is Bluetooth).
 /// The choice and its reason are logged; any failure to list or find the
 /// chosen device falls back to the default, as before.
-fn pick_device(host: &cpal::Host) -> Result<cpal::Device, Error> {
+fn choose_device(host: &cpal::Host) -> Result<cpal::Device, Error> {
     let default = || {
         host.default_input_device()
             .ok_or_else(|| Error::NoDevice("no default input device".to_string()))

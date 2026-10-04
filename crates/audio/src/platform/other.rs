@@ -12,8 +12,8 @@ use crate::{AudioSource, Error};
 
 /// A default-device id. Never produced here: [`default_output_device`] and
 /// [`default_input_device`] always fail.
-// Windows brings its own device watch (TUR-37).
-#[cfg_attr(target_os = "windows", allow(dead_code))]
+// Windows (TUR-37) and Linux (TUR-38) bring their own device watch.
+#[cfg_attr(any(target_os = "windows", target_os = "linux"), allow(dead_code))]
 pub(crate) type DeviceId = u32;
 
 /// [`device_activity`] has no reading to give here.
@@ -34,15 +34,15 @@ pub(crate) const F32_GOLDEN_HASHES: bool = false;
 
 /// No default-device watch yet, so a recording never reopens its segment on a
 /// device change.
-// Windows brings its own device watch (TUR-37).
-#[cfg_attr(target_os = "windows", allow(dead_code))]
+// Windows (TUR-37) and Linux (TUR-38) bring their own device watch.
+#[cfg_attr(any(target_os = "windows", target_os = "linux"), allow(dead_code))]
 pub(crate) fn default_output_device() -> Result<DeviceId, Error> {
     Err(Error::Unsupported)
 }
 
 /// See [`default_output_device`].
-// Windows brings its own device watch (TUR-37).
-#[cfg_attr(target_os = "windows", allow(dead_code))]
+// Windows (TUR-37) and Linux (TUR-38) bring their own device watch.
+#[cfg_attr(any(target_os = "windows", target_os = "linux"), allow(dead_code))]
 pub(crate) fn default_input_device() -> Result<DeviceId, Error> {
     Err(Error::Unsupported)
 }
@@ -56,8 +56,8 @@ pub(crate) fn input_devices() -> Result<Vec<crate::mic_choice::InputDevice>, Err
 /// SPEC §8.2's Windows port is a stub, not held to the drift gate, so a
 /// process-relative monotonic clock is sufficient here — there is no second
 /// channel on that platform yet for it to be compared against.
-// Windows brings its own clock (TUR-37).
-#[cfg_attr(target_os = "windows", allow(dead_code))]
+// Windows (TUR-37) and Linux (TUR-38) bring their own clock.
+#[cfg_attr(any(target_os = "windows", target_os = "linux"), allow(dead_code))]
 pub(crate) fn host_now_ns() -> u64 {
     use std::sync::OnceLock;
     use std::time::Instant;
@@ -66,16 +66,16 @@ pub(crate) fn host_now_ns() -> u64 {
 }
 
 /// No system-audio capture yet: the recording is microphone-only.
-// Windows brings its own loopback source (TUR-37).
-#[cfg_attr(target_os = "windows", allow(dead_code))]
+// Windows (TUR-37) and Linux (TUR-38) bring their own loopback source.
+#[cfg_attr(any(target_os = "windows", target_os = "linux"), allow(dead_code))]
 pub(crate) fn system_source() -> Option<Box<dyn AudioSource>> {
     None
 }
 
 /// The microphone's callbacks are stamped with [`host_now_ns`] when they run:
 /// no capture time from the OS is known to share that clock here.
-// Windows brings its own clock (TUR-37).
-#[cfg_attr(target_os = "windows", allow(dead_code))]
+// Windows (TUR-37) and Linux (TUR-38) bring their own clock.
+#[cfg_attr(any(target_os = "windows", target_os = "linux"), allow(dead_code))]
 pub(crate) fn input_callback_ns(_info: &cpal::InputCallbackInfo) -> Option<u64> {
     None
 }
