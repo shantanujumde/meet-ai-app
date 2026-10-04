@@ -74,6 +74,24 @@ pub trait Harness: Send + Sync {
     /// Runs `job` and returns the reply, already checked against
     /// `job.schema`.
     fn run(&self, job: &Job) -> Result<serde_json::Value, AgentError>;
+
+    /// [`Harness::run`], plus the model the CLI says it ran, when it says.
+    /// Only Claude Code says (its result envelope's `modelUsage`); the
+    /// default is `run` with no model.
+    fn run_reply(&self, job: &Job) -> Result<Reply, AgentError> {
+        self.run(job).map(|value| Reply { value, model: None })
+    }
+}
+
+/// A finished run's answer, from [`Harness::run_reply`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reply {
+    /// The reply, checked against the job's schema.
+    pub value: serde_json::Value,
+    /// The model the CLI reports it ran, e.g. `claude-sonnet-4-5-20250929`.
+    /// `None` when it does not say: Codex, the fake, or an envelope without
+    /// the field.
+    pub model: Option<String>,
 }
 
 #[cfg(test)]

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::process::{self, CliExit};
-use crate::{AgentError, Harness, Install, Job, JobKind, OutputCheck, parse_json};
+use crate::{AgentError, Harness, Install, Job, JobKind, OutputCheck, Reply, parse_json};
 
 /// The harness id, as written to `agent.harness` and `analyzed_by`.
 pub const ID: &str = "claude-code";
@@ -150,12 +150,21 @@ impl Harness for ClaudeHarness {
     }
 
     fn run(&self, job: &Job) -> Result<serde_json::Value, AgentError> {
+        self.run_reply(job).map(|reply| reply.value)
+    }
+
+    /// The reply, and the model the envelope's `modelUsage` names.
+    fn run_reply(&self, job: &Job) -> Result<Reply, AgentError> {
         let args = self.args(job)?;
         let check = OutputCheck::new(&job.schema)?;
         let dir = process::fresh_work_dir(job)?;
         let exit = process::run_cli_exit(DISPLAY_NAME, self.command(args), job, dir.path())?;
         drop(dir);
-        check.check(reply(exit)?)
+        let reply = reply(exit)?;
+        Ok(Reply {
+            value: check.check(reply.value)?,
+            model: reply.model,
+        })
     }
 }
 
@@ -245,6 +254,11 @@ struct Envelope {
     result: Option<String>,
     #[serde(default)]
     structured_output: Option<serde_json::Value>,
+    /// Tokens and cost per model the run used, keyed by the model's full id
+    /// (the Agent SDK's `SDKResultMessage.modelUsage`). Read only for which
+    /// model ran; see [`Envelope::model`].
+    #[serde(default, rename = "modelUsage")]
+    model_usage: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl Envelope {
@@ -254,6 +268,31 @@ impl Envelope {
                 .subtype
                 .as_deref()
                 .is_some_and(|subtype| subtype.starts_with("error"))
+    }
+
+    /// The model that did the run, by the envelope's `modelUsage`: the only
+    /// one listed, or, when a run also used a small helper model, the one
+    /// that wrote the most output tokens (the first listed on a tie). `None`
+    /// when the envelope has no usable `modelUsage`.
+    fn model(&self) -> Option<String> {
+        let usage = self.model_usage.as_ref()?;
+        let output_tokens = |usage: &serde_json::Value| {
+            usage
+                .get("outputTokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        };
+        let mut best: Option<(&String, u64)> = None;
+        for (name, usage) in usage {
+            if name.trim().is_empty() {
+                continue;
+            }
+            let tokens = output_tokens(usage);
+            if best.is_none_or(|(_, most)| tokens > most) {
+                best = Some((name, tokens));
+            }
+        }
+        best.map(|(name, _)| name.trim().to_owned())
     }
 
     /// Whether the error text says nobody is signed in.
@@ -301,8 +340,8 @@ impl Envelope {
 }
 
 /// The `structured_output` of a finished run, not yet checked against the
-/// schema.
-fn reply(exit: CliExit) -> Result<serde_json::Value, AgentError> {
+/// schema, and the model the envelope names.
+fn reply(exit: CliExit) -> Result<Reply, AgentError> {
     let envelope = serde_json::from_str::<Envelope>(exit.stdout.trim()).ok();
     if !exit.success() {
         return Err(match envelope {
@@ -326,11 +365,13 @@ fn reply(exit: CliExit) -> Result<serde_json::Value, AgentError> {
     if envelope.is_error() {
         return Err(envelope.error(&exit));
     }
-    envelope
+    let model = envelope.model();
+    let value = envelope
         .structured_output
         .ok_or_else(|| AgentError::InvalidJson {
             reason: "the reply had no structured_output".to_owned(),
-        })
+        })?;
+    Ok(Reply { value, model })
 }
 
 #[cfg(test)]
@@ -343,6 +384,61 @@ mod tests {
             stdout: stdout.to_owned(),
             stderr: stderr.to_owned(),
             stdout_overflowed: false,
+        }
+    }
+
+    /// A `claude -p --output-format json` result envelope, shaped after the
+    /// Agent SDK's documented `SDKResultMessage` (`modelUsage` keyed by model
+    /// id; code.claude.com/docs/en/agent-sdk/cost-tracking). Not captured
+    /// from a real run: TUR-90's manual check is to capture one and replace
+    /// this sample. The haiku entry is the small helper model Claude Code
+    /// can use beside the main one.
+    const SAMPLE_ENVELOPE: &str = r#"{
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "duration_ms": 41210,
+        "num_turns": 1,
+        "result": "",
+        "session_id": "00000000-0000-0000-0000-000000000000",
+        "total_cost_usd": 0.0631,
+        "usage": { "input_tokens": 12, "output_tokens": 1450 },
+        "modelUsage": {
+            "claude-haiku-4-5-20251001": {
+                "inputTokens": 410, "outputTokens": 22,
+                "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0,
+                "webSearchRequests": 0, "costUSD": 0.0005, "contextWindow": 200000
+            },
+            "claude-sonnet-4-5-20250929": {
+                "inputTokens": 12, "outputTokens": 1450,
+                "cacheReadInputTokens": 0, "cacheCreationInputTokens": 9800,
+                "webSearchRequests": 0, "costUSD": 0.0626, "contextWindow": 200000
+            }
+        },
+        "structured_output": { "ok": true }
+    }"#;
+
+    #[test]
+    fn the_envelope_names_the_model_that_did_the_work() {
+        let reply = reply(exit(0, SAMPLE_ENVELOPE, "")).unwrap();
+        assert_eq!(reply.value, serde_json::json!({ "ok": true }));
+        assert_eq!(reply.model.as_deref(), Some("claude-sonnet-4-5-20250929"));
+    }
+
+    #[test]
+    fn one_model_in_the_usage_is_that_model_and_none_is_no_model() {
+        let one = r#"{"type":"result","subtype":"success","is_error":false,
+            "modelUsage":{"claude-opus-4-1":{}},"structured_output":{}}"#;
+        assert_eq!(
+            reply(exit(0, one, "")).unwrap().model.as_deref(),
+            Some("claude-opus-4-1")
+        );
+        for stdout in [
+            r#"{"type":"result","subtype":"success","structured_output":{}}"#,
+            r#"{"type":"result","subtype":"success","modelUsage":{},"structured_output":{}}"#,
+            r#"{"type":"result","subtype":"success","modelUsage":{" ":{}},"structured_output":{}}"#,
+        ] {
+            assert_eq!(reply(exit(0, stdout, "")).unwrap().model, None, "{stdout}");
         }
     }
 
