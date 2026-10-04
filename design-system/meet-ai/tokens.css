@@ -413,6 +413,9 @@
   --sidebar-fill:     var(--surface-sidebar);
   --sidebar-pad:      var(--space-5);
   --sidebar-row-h:    30px;
+  /* TUR-103: the meeting list fades out at both ends instead of cutting a
+     row in half under its heading. */
+  --sidebar-list-fade: var(--space-5);
   --sidebar-row-radius: var(--radius-control);
   --sidebar-row-hover:  var(--surface-control);
   /* The current page: a solid accent pill with white text and icon. */
