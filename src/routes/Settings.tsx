@@ -13,6 +13,7 @@
 import { useAppStore } from "@/state/app";
 import { AudioRetentionRow } from "@/ui/AudioRetentionRow";
 import { AgentSetup } from "@/ui/agent/AgentSetup";
+import { NotesWhenSetting } from "@/ui/agent/NotesWhenSetting";
 import { BluetoothMicSetting } from "@/ui/BluetoothMicSetting";
 import { CalendarSettings } from "@/ui/calendar/CalendarSettings";
 import { DockSetting } from "@/ui/DockSetting";
@@ -52,6 +53,8 @@ export function Settings() {
       </section>
 
       <AgentSetup />
+      {/* TUR-101: notes after the call, or only from "Make notes now". */}
+      <NotesWhenSetting />
 
       {/* TUR-49: where meetings come from. */}
       <CalendarSettings />

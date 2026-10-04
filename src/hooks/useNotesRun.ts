@@ -28,6 +28,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelNotesRun,
   meetingNotes,
+  notesAutoRun,
   notesRunStatus,
   onNotesRunStatus,
   setMeetingNotes,
@@ -63,6 +64,12 @@ export type NotesRun = {
    * notes now": the user has just asked for them.
    */
   switchedOn: boolean;
+  /**
+   * Notes run only when asked (`agent.auto_run` off, TUR-101): a meeting
+   * with no notes offers "Make notes now" as its main state. False until the
+   * setting is read, and when it cannot be, as Rust then runs on its own.
+   */
+  manual: boolean;
 };
 
 type ForMeeting<T> = { meetingId: string; value: T };
@@ -79,6 +86,7 @@ export function useNotesRun(meetingId: string, onChanged?: () => void): NotesRun
   const [switchingFor, setSwitchingFor] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<ForMeeting<UiError> | null>(null);
   const [switchedOnFor, setSwitchedOnFor] = useState<string | null>(null);
+  const [manual, setManual] = useState(false);
 
   // The meeting on screen, or null once unmounted: every async answer checks
   // it before it is allowed to change anything.
@@ -143,6 +151,21 @@ export function useNotesRun(meetingId: string, onChanged?: () => void): NotesRun
       stop();
     };
   }, [meetingId, apply, refreshNotes]);
+
+  // Read once per view: Settings is another screen, so it cannot change
+  // while this one is open.
+  useEffect(() => {
+    let live = true;
+    notesAutoRun().then(
+      (auto) => {
+        if (live) setManual(!auto);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const request = useCallback(
     async (run: (id: string) => Promise<NotesRunStatus>) => {
@@ -224,5 +247,6 @@ export function useNotesRun(meetingId: string, onChanged?: () => void): NotesRun
     switching: switchingFor === meetingId,
     switchError: switchError?.meetingId === meetingId ? switchError.value : null,
     switchedOn: switchedOnFor === meetingId,
+    manual,
   };
 }
