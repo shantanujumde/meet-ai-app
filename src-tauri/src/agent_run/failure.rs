@@ -125,7 +125,7 @@ pub fn no_transcript() -> Failure {
 pub fn notes_off() -> Failure {
     failure(
         FailureKind::NotesOff,
-        "Notes are switched off for this meeting, so nothing was sent.",
+        "Notes are turned off for this meeting, so nothing was sent.",
     )
 }
 
