@@ -16,6 +16,8 @@
 mod activity;
 mod clock;
 mod devices;
+// TUR-65: the default sink's active port, for the headphone warning.
+mod headphones;
 mod loopback;
 
 #[cfg(test)]
@@ -30,4 +32,5 @@ pub(crate) use activity::{DEVICE_ACTIVITY, DEVICE_ACTIVITY_NEEDS_SERVER};
 // TUR-38: system audio, the host clock and the device watch.
 pub(crate) use clock::{host_now_ns, input_callback_ns};
 pub(crate) use devices::{DeviceId, default_input_device, default_output_device};
+pub(crate) use headphones::default_output_info;
 pub(crate) use loopback::system_source;

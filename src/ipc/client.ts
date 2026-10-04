@@ -579,6 +579,8 @@ export async function calendarRefreshMinutes(): Promise<number> {
 export * from "./appearance";
 export * from "./brief";
 export * from "./calendar";
+// The recording window's "No headphones" banner (TUR-65).
+export * from "./headphones";
 // Closing and quitting (TUR-76). Re-exported, so every caller (and
 // `@/test/ipcMock`) keeps the one `@/ipc/client` import; `call` and
 // `subscribe` are exported for such modules.

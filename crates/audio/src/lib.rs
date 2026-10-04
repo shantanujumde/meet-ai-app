@@ -100,6 +100,10 @@ pub mod mic;
 /// Bluetooth, so headphones stay in playback mode (TUR-91).
 pub mod mic_choice;
 
+/// Whether the default output is speakers or headphones, for the "No
+/// headphones" warning (TUR-65, SPEC L6).
+pub mod headphones;
+
 /// System audio from an output device's loopback (TUR-37): the shared gap
 /// filling, clock, silent-buffer and device-switch logic, and the
 /// [`AudioSource`] built on them. Windows' WASAPI backend is in `platform`.

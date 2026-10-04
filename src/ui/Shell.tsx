@@ -29,6 +29,7 @@ import { isOnboardingPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
 import appIcon from "../../design-system/meet-ai/brand/meet-ai-appicon-16-fullcolor.svg";
+import { HeadphoneBanner } from "./HeadphoneBanner";
 import { Button, IconButton } from "./primitives";
 import { RecordControl } from "./RecordControl";
 import { Sidebar } from "./Sidebar";
@@ -126,6 +127,9 @@ export function Shell() {
             </Button>
           </div>
         ) : null}
+
+        {/* TUR-65: quiet, below the two above, and only while recording. */}
+        <HeadphoneBanner status={status} />
 
         <Outlet />
       </main>

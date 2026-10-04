@@ -12,6 +12,7 @@ use crate::agent_setup;
 use crate::brief;
 use crate::events::AGENT_RUN_STATUS_EVENT;
 use crate::events::DETECTION_PROMPT_EVENT;
+use crate::events::HEADPHONE_WARNING_EVENT;
 use crate::events::HOOK_FAILED_EVENT;
 use crate::events::NAVIGATE_EVENT;
 use crate::events::PROMPT_POPUP_EVENT;
@@ -106,6 +107,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::autostart::set_start_at_login,
             crate::appearance::appearance_settings,
             crate::appearance::set_appearance,
+            crate::headphone_warning::headphone_warning,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)
@@ -119,6 +121,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         .constant("NAVIGATE_EVENT", NAVIGATE_EVENT)
         .constant("PROMPT_POPUP_EVENT", PROMPT_POPUP_EVENT)
         .constant("HOOK_FAILED_EVENT", HOOK_FAILED_EVENT)
+        .constant("HEADPHONE_WARNING_EVENT", HEADPHONE_WARNING_EVENT)
         .constant("RECORD_SHORTCUT_MAC", crate::shortcut::RECORD_SHORTCUT_MAC)
         .constant(
             "RECORD_SHORTCUT_OTHER",

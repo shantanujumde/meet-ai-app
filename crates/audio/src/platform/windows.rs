@@ -14,6 +14,8 @@
 //! outside `platform/` has to change when those are filled in.
 
 mod activity;
+// TUR-65: the default output's form factor and bus, for the headphone warning.
+mod headphones;
 // TUR-95: the render endpoint other apps are playing to.
 mod render_in_use;
 
@@ -31,4 +33,5 @@ pub(crate) use super::windows_permission::{check_mic, check_system, stored_mic_d
 pub(crate) use activity::device_activity;
 #[cfg(test)]
 pub(crate) use activity::{DEVICE_ACTIVITY, DEVICE_ACTIVITY_NEEDS_SERVER};
+pub(crate) use headphones::default_output_info;
 pub(crate) use render_in_use::render_endpoint_to_follow;

@@ -419,12 +419,24 @@ export const commands = {
 	 *  appearance changes at once.
 	 */
 	setAppearance: (appearance: meet_ai_lib_config_appearance_section_AppearanceConfig) => typedError<meet_ai_lib_config_appearance_section_AppearanceConfig, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_appearance", { appearance })),
+	/**
+	 *  The warning for the recording in progress, `None` when nothing is
+	 *  recording or the output has not been read yet.
+	 */
+	headphoneWarning: () => __TAURI_INVOKE<{
+	/**  The meeting being recorded. */
+	meetingId: string,
+	/**  Show the banner: the output is speakers and the setting is on. */
+	show: boolean,
+} | null>("headphone_warning"),
 };
 
 /* Constants */
 export const AGENT_RUN_STATUS_EVENT = "agent-run://status" as const;
 
 export const DETECTION_PROMPT_EVENT = "detection://prompt" as const;
+
+export const HEADPHONE_WARNING_EVENT = "headphones://warning" as const;
 
 export const HOOK_FAILED_EVENT = "hook://failed" as const;
 
@@ -706,6 +718,17 @@ export type meet_ai_lib_agent_run_FailureKind =
 "notes-off" | 
 /**  The answer was fine but writing `meeting.md` or the tickets failed. */
 "write-failed";
+
+/**
+ *  What [`HEADPHONE_WARNING_EVENT`] carries, and [`headphone_warning`]
+ *  returns.
+ */
+export type meet_ai_lib_headphone_warning_HeadphoneWarning = {
+	/**  The meeting being recorded. */
+	meetingId: string,
+	/**  Show the banner: the output is speakers and the setting is on. */
+	show: boolean,
+};
 
 /**  One search result. */
 export type store_index_Hit = {
