@@ -142,6 +142,17 @@ describe("EngineSummary: the engine picker", () => {
     expect(setTranscription).toHaveBeenCalledWith("whisper", "small.en-q5_1");
   });
 
+  test("picking Whisper before the model list loads still saves, with the saved model", async () => {
+    const user = userEvent.setup();
+    engineChoices.mockResolvedValue(choices());
+    modelCatalogue.mockReturnValue(new Promise(() => {}));
+    render(<EngineSummary />);
+    await waitFor(() => expect(screen.queryByText("Checking…")).toBeNull());
+
+    await user.click(screen.getByText("Whisper"));
+    expect(setTranscription).toHaveBeenCalledWith("whisper", "large-v3-turbo-q5_0");
+  });
+
   test("Apple is disabled with the backend's reason", async () => {
     engineChoices.mockResolvedValue(
       choices({ auto: null, apple: { available: false, reason: "Needs macOS 26 or later." } }),

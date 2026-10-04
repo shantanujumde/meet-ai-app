@@ -118,7 +118,10 @@ export function useSpeech() {
     (engine: EngineChoice) => {
       if (!choices) return;
       let model = choices.model;
-      if (engine === "whisper") {
+      // The model list may still be loading: then the saved model goes as
+      // it is, and the backend refuses it if it is not downloaded, rather
+      // than the click doing nothing (TUR-90).
+      if (engine === "whisper" && models !== null) {
         const installed = (models ?? []).filter((m) => m.installed);
         if (!installed.some((m) => m.id === model)) {
           const pick = installed.find((m) => m.recommended !== null) ?? installed[0];
