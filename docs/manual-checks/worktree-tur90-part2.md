@@ -1,4 +1,4 @@
-# worktree-tur91 manual checks (TUR-90 part 2, calendar cleanup)
+# worktree-tur90-part2 manual checks (TUR-90 part 2, calendar cleanup)
 
 The shared token source and paging loop are covered by the existing Google
 and Microsoft fixture tests (unchanged, same counts). What needs a real

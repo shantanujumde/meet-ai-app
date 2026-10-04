@@ -11,8 +11,7 @@ clean 44100 Hz then 16000 Hz pair from the owner's log.
 Needs the running app, so it was not run here.
 
 1. Open Settings.
-   Expect: an "Audio" section right after the speech engine card, with the
-   audio retention row and "Use the Mac's own mic when Bluetooth headphones are
-   connected". The "Files" section no longer has either row.
+   Expect: the Audio section looks like the other sections (heading, card,
+   rows). Where it sits is checked by `src/routes/Settings.test.tsx`.
 2. Flip the Bluetooth row and reopen Settings.
    Expect: the choice is kept.
