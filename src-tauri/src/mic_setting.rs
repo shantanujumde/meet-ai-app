@@ -11,7 +11,7 @@
 use tauri::{AppHandle, Manager as _};
 
 use crate::config;
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::folder_move::FolderGate;
 
 /// Read the setting from `config.jsonc` and hand it to the audio crate.
@@ -38,12 +38,4 @@ pub async fn set_builtin_mic_with_bluetooth(app: AppHandle, on: bool) -> Result<
     .await??;
     audio::mic_choice::set_use_builtin_with_bluetooth(saved);
     Ok(saved)
-}
-
-async fn on_blocking_pool<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, UiError> {
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|error| UiError::app("task-failed", error.to_string()))
 }

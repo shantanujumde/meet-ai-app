@@ -265,7 +265,7 @@ impl From<Error> for UiError {
 #[tauri::command]
 #[specta::specta]
 pub async fn todays_meetings(app: AppHandle) -> Result<TodaysMeetings, UiError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::error::on_blocking_pool(move || {
         let refresh_minutes = config::calendar().refresh_minutes;
         let min_attendees = config::detection().min_attendees;
         let (from, to) = today_bounds(&Local::now());
@@ -276,8 +276,7 @@ pub async fn todays_meetings(app: AppHandle) -> Result<TodaysMeetings, UiError> 
         crate::tray::reread_soon(&app, &events);
         Ok(TodaysMeetings::new(events, refresh_minutes, min_attendees))
     })
-    .await
-    .map_err(|error| UiError::app("task-failed", error.to_string()))?
+    .await?
 }
 
 /// `calendar.refresh_minutes` alone: a config read, never the calendar. The

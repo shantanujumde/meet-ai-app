@@ -5,12 +5,27 @@ Bluetooth buds as the default input, `audio::mic` opened the buds' mic, and
 macOS switched the buds from playback mode (A2DP) to headset mode (HFP). Now,
 when the default input is Bluetooth and the Mac has a built-in mic, the
 built-in mic is recorded, so the buds stay in playback mode. Setting:
-Settings > Files > "Use the Mac's own mic when Bluetooth headphones are
+Settings > Audio > "Use the Mac's own mic when Bluetooth headphones are
 connected" (`audio.use_builtin_mic_with_bluetooth`, default on).
 
 The choice is unit-tested with fake device lists (`audio::mic_choice`).
 Nothing below could run here: each needs a signed build, the running app,
 real speakers or headphones, and the owner's Bluetooth buds.
+
+## Evidence from the owner's log
+
+`~/Meetings/.app/logs/meet-ai.log`, 2026-10-04, read-only. The buds were in
+playback mode (44100 Hz) until the mic opened, then dropped to call mode
+(16000 Hz). This is the problem the setting fixes:
+
+- line 260, 05:46:47: `system tap rates (measured): ... output device
+  Some(44100.0) Hz ... effective_rate 44100 Hz`
+- line 265, 05:46:48: `microphone device rate 16000 Hz, 1 ch, F32 (cpal
+  default input config)`
+
+Lines 256 to 259 of the same recording are left out on purpose: the tap was
+still at 16000 Hz there and only moved to 44100 Hz, so they do not show a clean
+playback-mode start.
 
 ## Run by hand
 
