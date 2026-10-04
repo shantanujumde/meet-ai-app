@@ -68,6 +68,11 @@ mod windows_render_choice;
 #[cfg(feature = "stub-audio")]
 mod stub;
 
+// TUR-65: what the default output is, for the headphone warning. Always the
+// real OS read, under `stub-audio` too.
+mod headphones;
+pub(crate) use headphones::default_output_info;
+
 /// What `lib.rs` re-exports to other crates: `audio::macos` on macOS, nothing
 /// elsewhere.
 pub mod public {
