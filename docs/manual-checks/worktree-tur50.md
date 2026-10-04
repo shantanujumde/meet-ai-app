@@ -62,14 +62,14 @@ skip without it.
    another Mac will usually show the speech WAVs changed (`say` voices differ
    across macOS versions). That is expected; commit them only on purpose.
 
-## Decisions taken without an answer
+## Decisions
 
-- Q1 (`.agent/QUESTION.md`): the two speech tracks are 1.92 MB each on disk
-  (60 s of 16 kHz mono s16le), over the "under 1 MB" default; git stores them
-  compressed at about 300 KB each, since 80% of each track is digital
-  silence. Committed as they are (pick a) rather than shortening the meeting,
-  which would change `reference.json` and every timestamp test. The two
-  quiet fixtures are 0.96 MB each.
+- Q1/A1: the two speech tracks are 1.92 MB each on disk (60 s of 16 kHz
+  mono s16le), over the "under 1 MB" default; git stores them compressed at
+  about 300 KB each, since 80% of each track is digital silence. Committed as
+  they are (answer: a), rather than shortening the meeting (which would
+  change `reference.json` and every timestamp test) or switching to FLAC.
+  The two quiet fixtures are 0.96 MB each.
 
 ## Not done
 
