@@ -115,7 +115,7 @@ const COPY: Record<string, ErrorCopy> = {
   },
   "model/checksum": {
     headline: "The downloaded file is not the one meet-ai expected",
-    body: "The whole file arrived, but its checksum (a code that proves the file is the right one) does not match the one meet-ai expects for this model. The download may be damaged, or someone may have changed the file on the way. meet-ai deleted it without opening it, so nothing unchecked ever runs.",
+    body: "The whole file arrived, but its checksum (a code that proves the file is the right one) does not match the one meet-ai expects for this model. The download may be damaged, or someone may have tampered with the file on the way. meet-ai deleted it without opening it, so nothing unchecked ever runs.",
     actionLabel: "Download again from scratch",
     remedy: { action: "redownload" },
     security: true,
