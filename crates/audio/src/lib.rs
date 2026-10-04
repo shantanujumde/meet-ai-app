@@ -100,6 +100,11 @@ pub mod mic;
 /// Bluetooth, so headphones stay in playback mode (TUR-91).
 pub mod mic_choice;
 
+/// System audio from an output device's loopback (TUR-37): the shared gap
+/// filling, clock, silent-buffer and device-switch logic, and the
+/// [`AudioSource`] built on them. Windows' WASAPI backend is in `platform`.
+pub mod loopback;
+
 /// The real audio-permission measurement: runs the [`chime`] positive control
 /// against a live [`macos::tap::SystemSource`], and a start/stop probe against
 /// [`mic::MicSource`]. This is the "measurement" `src-tauri/src/permission.rs`
