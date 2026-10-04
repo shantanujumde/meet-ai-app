@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type { DetectionPrompt, PopupAnswer, PopupPrompt } from "@/ipc/client";
+import type { DetectionPrompt } from "@/ipc/client";
+import type { PopupAnswer, PopupPrompt } from "@/ipc/promptPopup";
 import type { RecordingStatus } from "@/ipc/types";
 import { PromptPopup } from "./PromptPopup";
 
@@ -12,6 +13,13 @@ const fake = vi.hoisted(() => ({
 }));
 
 vi.mock("@/ipc/client", () => ({
+  onRecordingState: (handler: (status: unknown) => void) => {
+    fake.onRecording = handler;
+    return () => {};
+  },
+}));
+
+vi.mock("@/ipc/promptPopup", () => ({
   promptPopupCurrent: () => Promise.resolve(fake.current),
   answerPromptPopup: (id: number, answer: PopupAnswer) => {
     fake.answers.push([id, answer]);
@@ -19,10 +27,6 @@ vi.mock("@/ipc/client", () => ({
   },
   onPromptPopup: (handler: (shown: unknown) => void) => {
     fake.onPrompt = handler;
-    return () => {};
-  },
-  onRecordingState: (handler: (status: unknown) => void) => {
-    fake.onRecording = handler;
     return () => {};
   },
 }));

@@ -14,14 +14,14 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { onRecordingState } from "@/ipc/client";
 import {
   answerPromptPopup,
   onPromptPopup,
-  onRecordingState,
   type PopupAnswer,
   type PopupPrompt,
   promptPopupCurrent,
-} from "@/ipc/client";
+} from "@/ipc/promptPopup";
 import { toUiError } from "@/ipc/types";
 import { Button, ButtonRow } from "./primitives";
 

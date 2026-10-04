@@ -24,10 +24,7 @@ import {
   type meet_ai_lib_calendar_TodayEvent,
   type meet_ai_lib_calendar_TodaysMeetings,
   type meet_ai_lib_detection_notify_Prompt,
-  type meet_ai_lib_detection_popup_PopupAnswer,
-  type meet_ai_lib_detection_popup_PopupPrompt,
   PERMISSION_STATUS_EVENT,
-  PROMPT_POPUP_EVENT,
   RECORDING_STATE_EVENT,
   TRANSCRIPT_STATUS_EVENT,
   TRANSCRIPT_UPDATE_EVENT,
@@ -538,27 +535,6 @@ export type DetectionPrompt = meet_ai_lib_detection_notify_Prompt;
 
 export function onDetectionPrompt(handler: (prompt: DetectionPrompt) => void): () => void {
   return subscribe<DetectionPrompt>(DETECTION_PROMPT_EVENT, handler);
-}
-
-// --- the prompt popup window (TUR-59, Windows and Linux) --------------------
-
-/** What the popup shows: the prompt, and the id an answer names. */
-export type PopupPrompt = meet_ai_lib_detection_popup_PopupPrompt;
-export type PopupAnswer = meet_ai_lib_detection_popup_PopupAnswer;
-
-/** The prompt on screen, for a popup that just loaded. Without a backend, none. */
-export async function promptPopupCurrent(): Promise<PopupPrompt | null> {
-  if (!hasBackend()) return null;
-  return call(() => commands.promptPopupCurrent());
-}
-
-/** A popup button was pressed. Rust closes the popup and starts what it says. */
-export function answerPromptPopup(id: number, answer: PopupAnswer): Promise<void> {
-  return narrow(() => commands.answerPromptPopup(id, answer));
-}
-
-export function onPromptPopup(handler: (shown: PopupPrompt) => void): () => void {
-  return subscribe<PopupPrompt>(PROMPT_POPUP_EVENT, handler);
 }
 
 // --- today's meetings (TUR-28) ----------------------------------------------
