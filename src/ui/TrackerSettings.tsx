@@ -183,9 +183,9 @@ function AgentLine({ harness }: { harness: Harness }) {
 
 function tipFor(harness: Harness | null): string {
   if (harness === "codex") {
-    return "The agent runs in an empty folder, so only servers in your own Codex setup load. Add one with `codex mcp add …`.";
+    return "The agent runs in an empty folder, so it only loads servers (tracker connections, also called MCP servers) from your own Codex setup. Add one with `codex mcp add …`.";
   }
-  return "The agent runs in an empty folder, so only servers added for your user load. Add one with `claude mcp add --scope user …`.";
+  return "The agent runs in an empty folder, so it only loads servers (tracker connections, also called MCP servers) added for your user. Add one with `claude mcp add --scope user …`.";
 }
 
 /**
@@ -230,7 +230,7 @@ function ServerPicker({ value, onChange }: { value: string; onChange: (value: st
             <option value="">Pick a server…</option>
             {servers.map((each) => (
               <option key={each.name} value={each.name}>
-                {`${each.name} — ${STATUS_WORDS[each.status]}`}
+                {`${each.name} (${STATUS_WORDS[each.status]})`}
               </option>
             ))}
           </select>
