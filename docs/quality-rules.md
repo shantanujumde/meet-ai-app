@@ -353,9 +353,9 @@ slipped in earlier is caught the next time someone edits the file.
 Files checked:
 
 - non-test `.ts` / `.tsx` under `src/` (not `src/ipc/bindings.ts`, which is
-  generated, and not `*.test.*`, `*.spec.*` or `src/test/`)
+  generated, not `*.d.ts`, and not `*.test.*`, `*.spec.*` or `src/test/`)
 - `.rs` under `src-tauri/src/`, up to the test module (`TEST_START_AWK`);
-  `*/e2e.rs` and the other Rust test files are skipped. Its strings reach the
+  Rust test files (`is_rust_test_file`, which includes `*/e2e.rs`) are skipped. Its strings reach the
   window (errors), the menu bar and notifications.
 
 Comments are skipped: `//` to the end of the line (but not the `//` in

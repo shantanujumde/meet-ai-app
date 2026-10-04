@@ -56,6 +56,8 @@ RULES="$RULES rule_r9"
 RUN_ONCE="rule_r7"
 # R10 (TUR-42): OS-specific cfg outside a platform module.
 RULES="$RULES rule_r10"
+# R11 (TUR-92): em dash in user-facing text.
+RULES="$RULES rule_r11"
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "quality-rules: not inside a git repository" >&2
@@ -190,7 +192,7 @@ cfg_test_item_lines() {
 is_rust_test_file() {
   case $1 in
     tests/* | */tests/* | */benches/* | benches/*) return 0 ;;
-    *_test.rs | *_tests.rs | */tests.rs | *_e2e.rs) return 0 ;;
+    *_test.rs | *_tests.rs | */tests.rs | *_e2e.rs | */e2e.rs) return 0 ;;
   esac
   return 1
 }
@@ -810,7 +812,6 @@ rule_r11() {
     src/*.ts | src/*.tsx) is_ts_test_file "$f" && return ;;
     src-tauri/src/*.rs)
       is_rust_test_file "$f" && return
-      case $f in */e2e.rs) return ;; esac
       stop=$(test_start "$f")
       ;;
     *) return ;;
@@ -819,7 +820,6 @@ rule_r11() {
     report error R11 "$f" "$n" "em dash (—) in user-facing text; use a full stop, comma, colon or brackets instead (docs/quality-rules.md R11)"
   done
 }
-RULES="$RULES rule_r11"
 
 # --- main ------------------------------------------------------------------
 
