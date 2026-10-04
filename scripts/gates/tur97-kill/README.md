@@ -162,6 +162,40 @@ the app didn't notice the sleep.
 its own:
 `python3 scripts/gates/tur97-kill/check.py wav <file.wav> --expect-seconds 60`.
 
+## Windows and Linux (TUR-50)
+
+`gate.ps1` (Windows) and `gate-linux.sh` (Linux) run the same `kill -9`
+gate against the installed app on those OSes:
+
+```
+pwsh scripts/gates/tur97-kill/gate.ps1 [-App PATH] [-Seconds N] [-Out DIR] [-Keep] [-Play FILE.wav]
+scripts/gates/tur97-kill/gate-linux.sh [--app PATH] [--seconds N] [--out DIR] [--keep] [--play FILE.wav]
+```
+
+| | Windows | Linux |
+| --- | --- | --- |
+| Default program | `%LOCALAPPDATA%\meet-ai\meet-ai.exe` (NSIS, current user) | `/usr/bin/meet-ai` (the .deb) |
+| Hard ending | `taskkill /F /PID <pid>` | `kill -9 <pid>` |
+| Starts the recording with | `meet-ai.exe --toggle-recording` | `meet-ai --toggle-recording` |
+| Ends the relaunch with | `taskkill` without `/F`, then `/F` after 20 s | `SIGTERM`, then `kill -9` after 20 s |
+
+Both default program paths are where the installers are expected to put the
+app; check them on a real install and pass `-App` / `--app` if they differ.
+The toggle flag reaches the running app through its single-instance guard
+(TUR-58), so no keystroke is sent and no extra permission is needed. Both
+record into a temp meetings root (`MEET_AI_MEETINGS_ROOT`) inside the
+evidence folder, with the onboarding flag set there, and read the app log
+from `<root>/.app/logs/meet-ai.log`.
+
+Checks 1-6 and 8 are the same as above, through the same `check.py` and
+`drift-check`. Check 7 is skipped: `meet-stt` is macOS only. `--play` plays a
+WAV through the default output during the recording so `system.wav` has
+sound in it (`crates/audio/fixtures/two-speaker-60s/system.wav` works). How
+long the relaunch takes to end is written to `run.log`, not graded: neither
+OS has an equivalent of the macOS Quit command for a script to send.
+
+There is no `--end quit` or `--verify-only` mode on these OSes yet.
+
 ## Results (2026-09-30)
 
 | Build | Ending | Result | Header lag | `segments.json` | drift-check |
