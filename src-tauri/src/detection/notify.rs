@@ -275,7 +275,7 @@ mod tests {
 
     fn zoom() -> Signal {
         Signal::Process {
-            process: detect::processes::name_of("Zoom"),
+            process: detect::processes::name_of("Zoom").to_string(),
         }
     }
 

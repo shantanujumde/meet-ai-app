@@ -466,7 +466,7 @@ mod tests {
         assert_eq!(
             signal,
             Signal::Process {
-                process: detect::processes::name_of("Zoom")
+                process: detect::processes::name_of("Zoom").to_string()
             }
         );
         running.stop();
