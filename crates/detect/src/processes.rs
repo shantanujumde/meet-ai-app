@@ -67,9 +67,9 @@ fn find_in<'a>(list: &'a [MeetingProcess], process_name: &str) -> Option<&'a Mee
 }
 
 /// This OS's process name for the app labelled `label`, e.g. `zoom.us` for
-/// `Zoom` on macOS: tests use it so one test runs on every OS.
-#[cfg(test)]
-pub(crate) fn name_of(label: &str) -> &'static str {
+/// `Zoom` on macOS, or `"no such app"`. Lets one test run on every OS, here
+/// and in the app's tests.
+pub fn name_of(label: &str) -> &'static str {
     meeting_processes()
         .iter()
         .find(|known| known.label == label)
@@ -222,12 +222,7 @@ mod tests {
 
     #[test]
     fn a_label_falls_back_to_the_process_name() {
-        let zoom = match std::env::consts::OS {
-            "windows" => "Zoom.exe",
-            "linux" => "zoom",
-            _ => "zoom.us",
-        };
-        assert_eq!(label(zoom), "Zoom");
+        assert_eq!(label(name_of("Zoom")), "Zoom");
         assert_eq!(label("SomethingElse"), "SomethingElse");
     }
 

@@ -273,18 +273,9 @@ mod tests {
 
     use super::*;
 
-    /// Zoom's process name on this OS (`zoom.us`, `Zoom.exe`, `zoom`).
-    fn zoom_name() -> String {
-        detect::processes::meeting_processes()
-            .iter()
-            .find(|known| known.label == "Zoom")
-            .map(|known| known.name.clone())
-            .unwrap_or_default()
-    }
-
     fn zoom() -> Signal {
         Signal::Process {
-            process: zoom_name(),
+            process: detect::processes::name_of("Zoom"),
         }
     }
 
@@ -322,7 +313,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&prompt).expect("serialises"),
             serde_json::json!({
-                "signal": { "kind": "process", "process": zoom_name() },
+                "signal": { "kind": "process", "process": detect::processes::name_of("Zoom") },
                 "reason": "Zoom is open.",
                 "updateOnly": false,
                 "eventId": null,

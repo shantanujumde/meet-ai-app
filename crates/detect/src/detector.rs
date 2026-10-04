@@ -106,10 +106,10 @@ impl Detector {
         }
 
         // Re-arm every session whose pids have all exited.
-        self.handled.retain(|name, handled| {
+        self.handled.retain(|label, handled| {
             let alive = apps
                 .iter()
-                .find(|(app, _)| &app.label == name)
+                .find(|(app, _)| &app.label == label)
                 .map(|(_, pids)| pids);
             handled.retain(|pid| alive.is_some_and(|pids| pids.contains(pid)));
             !handled.is_empty()

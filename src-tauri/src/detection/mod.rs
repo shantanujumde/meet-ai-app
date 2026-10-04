@@ -369,15 +369,6 @@ mod tests {
 
     use super::*;
 
-    /// Zoom's process name on this OS (`zoom.us`, `Zoom.exe`, `zoom`).
-    fn zoom_name() -> String {
-        detect::processes::meeting_processes()
-            .iter()
-            .find(|known| known.label == "Zoom")
-            .map(|known| known.name.clone())
-            .unwrap_or_default()
-    }
-
     struct Counting {
         polls: Arc<AtomicUsize>,
         polled: mpsc::Sender<()>,
@@ -387,7 +378,10 @@ mod tests {
         fn running(&mut self) -> Result<Vec<RunningProcess>, detect::Error> {
             self.polls.fetch_add(1, Ordering::SeqCst);
             let _ = self.polled.send(());
-            Ok(vec![RunningProcess::new(42, zoom_name())])
+            Ok(vec![RunningProcess::new(
+                42,
+                detect::processes::name_of("Zoom"),
+            )])
         }
     }
 
@@ -472,7 +466,7 @@ mod tests {
         assert_eq!(
             signal,
             Signal::Process {
-                process: zoom_name()
+                process: detect::processes::name_of("Zoom")
             }
         );
         running.stop();
