@@ -74,7 +74,7 @@ fn read_streams(
     let into = Rc::clone(&capture);
     let operation = introspect.get_source_output_info_list(move |result| {
         into.borrow_mut()
-            .take(result.map(|info| (info.corked, &info.proplist)))
+            .take(item(result, |info| (info.corked, &info.proplist)))
     });
     wait_for_listing(mainloop, &capture, operation, "source outputs")?;
 
@@ -82,7 +82,7 @@ fn read_streams(
     let into = Rc::clone(&render);
     let operation = introspect.get_sink_input_info_list(move |result| {
         into.borrow_mut()
-            .take(result.map(|info| (info.corked, &info.proplist)))
+            .take(item(result, |info| (info.corked, &info.proplist)))
     });
     wait_for_listing(mainloop, &render, operation, "sink inputs")?;
 
@@ -106,21 +106,16 @@ enum Item<'a> {
     Error,
 }
 
-/// `ListResult` has no `map`; this is it, for both stream-info types.
-trait MapItem<'a, T> {
-    fn map(self, f: impl FnOnce(&'a T) -> (bool, &'a Proplist)) -> Item<'a>;
-}
-
-impl<'a, T> MapItem<'a, T> for ListResult<&'a T> {
-    fn map(self, f: impl FnOnce(&'a T) -> (bool, &'a Proplist)) -> Item<'a> {
-        match self {
-            ListResult::Item(info) => {
-                let (corked, proplist) = f(info);
-                Item::Stream(corked, proplist)
-            }
-            ListResult::End => Item::End,
-            ListResult::Error => Item::Error,
+/// One stream-list callback result, down to what [`Listing`] keeps. The same
+/// for source outputs and sink inputs.
+fn item<'a, T>(result: ListResult<&'a T>, fields: fn(&'a T) -> (bool, &'a Proplist)) -> Item<'a> {
+    match result {
+        ListResult::Item(info) => {
+            let (corked, proplist) = fields(info);
+            Item::Stream(corked, proplist)
         }
+        ListResult::End => Item::End,
+        ListResult::Error => Item::Error,
     }
 }
 
