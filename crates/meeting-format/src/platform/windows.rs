@@ -27,6 +27,12 @@ pub(crate) fn rename(from: &Path, to: &Path) -> io::Result<()> {
     rename_with(from, to, &RENAME_BACKOFF_MS)
 }
 
+/// Another program holds the file: a sharing or byte-range lock violation.
+/// `store` asks this too (retention skips a held WAV), so the codes live here.
+pub(crate) fn is_lock_violation(code: i32) -> bool {
+    matches!(code, ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)
+}
+
 fn is_held(error: &io::Error) -> bool {
     matches!(
         error.raw_os_error(),
@@ -96,12 +102,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("notes.md");
         std::fs::write(&path, b"old").unwrap();
-        let _held = hold(&path);
+        let held = hold(&path);
         let error = crate::write_atomic(&path, b"new").unwrap_err();
         let message = error.to_string();
         assert!(message.contains("notes.md"), "{message}");
         assert!(message.contains("another program"), "{message}");
-        drop(_held);
+        drop(held);
         assert_eq!(std::fs::read(&path).unwrap(), b"old");
         // The failed write left no temp file behind.
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);

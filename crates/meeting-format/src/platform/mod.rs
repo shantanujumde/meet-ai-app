@@ -29,6 +29,15 @@ pub(crate) use windows::sync_dir;
 #[cfg(windows)]
 pub(crate) use windows::rename;
 
+#[cfg(windows)]
+pub(crate) use windows::is_lock_violation;
+
+/// Every OS but Windows: no extra codes mean "another program holds it".
+#[cfg(not(windows))]
+pub(crate) fn is_lock_violation(_code: i32) -> bool {
+    false
+}
+
 /// Every OS but Windows: a plain `rename(2)`. Unix renames over a file
 /// another program holds open, so there is nothing to retry.
 #[cfg(not(windows))]

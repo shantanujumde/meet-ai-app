@@ -172,6 +172,13 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     platform::sync_dir(dir)
 }
 
+/// Whether the raw OS error `code` means another program holds the file
+/// (Windows' sharing and lock violations, 32 and 33); always `false`
+/// elsewhere. One definition for every crate that asks.
+pub fn is_lock_violation(code: i32) -> bool {
+    platform::is_lock_violation(code)
+}
+
 /// Every temp name this process hands out is distinct, across threads.
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 

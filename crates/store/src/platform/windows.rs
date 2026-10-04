@@ -3,7 +3,7 @@
 /// `ERROR_SHARING_VIOLATION` (32) and `ERROR_LOCK_VIOLATION` (33): a player
 /// or a backup tool holding the WAV open without delete sharing.
 pub(crate) fn is_lock_violation(code: i32) -> bool {
-    matches!(code, 32 | 33)
+    meeting_format::is_lock_violation(code)
 }
 
 /// Windows' `ReadDirectoryChangesW` watches a tree with one handle; there is

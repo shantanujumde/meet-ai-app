@@ -6,10 +6,12 @@ pub(crate) fn is_lock_violation(_code: i32) -> bool {
     false
 }
 
+/// `ENOSPC`: what inotify reports when `max_user_watches` is used up.
+const ENOSPC: i32 = 28;
+
 /// `ENOSPC` on Linux: inotify's `max_user_watches` is used up. macOS's
 /// FSEvents watches a tree with one stream and never reports it.
 pub(crate) fn is_out_of_watches(code: i32) -> bool {
-    const ENOSPC: i32 = 28;
     code == ENOSPC
 }
 
