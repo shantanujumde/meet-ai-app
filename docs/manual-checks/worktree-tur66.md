@@ -6,7 +6,7 @@ scratch folder signed three dummy files with a throwaway key
 (`tauri signer generate --ci`, never `~/.tauri`), ran `updater-json.py`, and
 got a manifest with all six keys and the `.sig` contents as signatures.
 
-Decision (Q1, my pick, no answer yet): `createUpdaterArtifacts` is NOT set in
+Decision (Q1, answered A1: b): `createUpdaterArtifacts` is NOT set in
 `tauri.conf.json`. With it on, `pnpm tauri build` fails without
 `TAURI_SIGNING_PRIVATE_KEY` (check.yml bundle jobs, local `just build`), and
 on macOS Tauri would tar the .app before `just sign` re-signs it. release.yml

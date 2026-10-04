@@ -53,7 +53,9 @@
     "updater": {
       "active": false,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUzNTc3MzIyOUE1RTlCQjMKUldTem0xNmFJbk5YVTV4aVcxbjFDbUwzTTFJNTdIdHBqczZXSktmRmVWV1lyb2xBeGJMM0NVSjUK",
-      "endpoints": ["https://github.com/shantanujumde/meet-ai-app/releases/latest/download/latest.json"]
+      "endpoints": [
+        "https://github.com/shantanujumde/meet-ai-app/releases/latest/download/latest.json"
+      ]
     }
   }
 }
