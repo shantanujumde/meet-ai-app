@@ -10,9 +10,11 @@
 #    inherits the workspace version. Config: release-please-config.json and
 #    .release-please-manifest.json.
 # 3. Merging the release PR makes release-please tag vX.Y.Z and create the
-#    GitHub release. Only then do `build` and `publish` run: build and sign
-#    the app with the one persistent identity, re-check the signature, zip it,
-#    checksum it, and attach both to the release. Every other merge publishes
+#    GitHub release. Only then do `build`, `build-other` and `publish` run:
+#    build and sign the macOS app with the one persistent identity, re-check
+#    the signature, zip it; build the Windows NSIS installer, the .deb and the
+#    AppImage (unsigned, marked preview); checksum each file and attach them
+#    all to the release. Every other merge publishes
 #    nothing.
 #
 # Security:
@@ -295,8 +297,226 @@ jobs:
           fi
           rm -f "$RUNNER_TEMP/meet-ai-signing.p12" "$RUNNER_TEMP/meet-ai-signing-cert.pem"
 
+  # Windows and Linux (TUR-39). The macOS `build` job above is unchanged.
+  # Same flags as check.yml's `rust-native` job: Windows long paths, libclang
+  # for bindgen, the Ubuntu apt list from TUR-36, GGML_NATIVE=OFF. Unsigned:
+  # Windows signing is its own ticket. Each leg uploads its file and .sha256
+  # as `release-files-<name>`; `publish` downloads every `release-files*`.
+  # deb builds on 22.04 so the package needs only that release's glibc.
+  # Matrix shape adapted from github.com/cjpais/Handy/.github/workflows/build.yml @ ffbc9504cbf004ce4819d2ca872fcea92be0fddf (MIT)
+  build-other:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    name: build (${{ matrix.name }})
+    strategy:
+      # One leg failing must not cancel the others: re-run only that leg.
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            bundle: nsis
+            ext: exe
+            asset: windows-x64-setup.exe
+          - name: linux-deb
+            os: ubuntu-22.04
+            bundle: deb
+            ext: deb
+            asset: linux-amd64.deb
+          - name: linux-appimage
+            os: ubuntu-24.04
+            bundle: appimage
+            ext: AppImage
+            asset: linux-x86_64.AppImage
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    env:
+      VERSION: ${{ needs.release-please.outputs.version }}
+      RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Same guard as the macOS job: `check` passed on the shipped commit.
+      - name: check passed on the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          passed="$(gh api "repos/$GH_REPO/actions/workflows/check.yml/runs?head_sha=$RELEASE_SHA&event=push&status=success" --jq '.total_count')"
+          if [[ "$passed" == "0" ]]; then
+            echo "::error::check has not passed on $RELEASE_SHA. Re-run check on that commit, then re-run this workflow's failed jobs."
+            exit 1
+          fi
+
+      # Adapted from github.com/cjpais/Handy/.github/workflows/build.yml @ ffbc9504cbf004ce4819d2ca872fcea92be0fddf (MIT)
+      - name: Enable long paths (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+            -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+          git config --system core.longpaths true
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+          persist-credentials: false
+
+      # tauri.conf.json takes its version from package.json
+      # ("version": "../package.json"), so it has no number of its own.
+      - name: Version files hold the release version
+        run: |
+          py=python3
+          if [ "$RUNNER_OS" = Windows ]; then py=python; fi
+          "$py" - <<'PY'
+          import json, os, re, sys
+          want = os.environ["VERSION"]
+          cargo = open("Cargo.toml", encoding="utf-8").read()
+          m = re.search(r'^\[workspace\.package\][^\[]*?^version\s*=\s*"([^"]+)"', cargo, re.M | re.S)
+          found = {
+              "Cargo.toml": m.group(1) if m else "missing",
+              "package.json": json.load(open("package.json", encoding="utf-8"))["version"],
+          }
+          tauri = json.load(open("src-tauri/tauri.conf.json", encoding="utf-8"))["version"]
+          if tauri != "../package.json":
+              found["src-tauri/tauri.conf.json"] = tauri
+          bad = {k: v for k, v in found.items() if v != want}
+          for k, v in bad.items():
+              print(f"::error file={k}::version is {v}, release is {want}")
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install
+          rustc --version
+
+      # The apt list from check.yml's rust-native job (TUR-36), plus the
+      # whisper.cpp build tools. No webkit pin: Handy and zmk-studio pin
+      # libwebkit2gtk-4.1-dev=2.44.0-2 on 24.04 for the AppImage (reason
+      # unverified); add it here only if the AppImage build fails without it.
+      - name: Install Linux system packages
+        if: runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+            libasound2-dev libpulse-dev patchelf \
+            cmake clang libclang-dev
+
+      - name: Point bindgen at libclang (Windows)
+        if: runner.os == 'Windows'
+        run: echo 'LIBCLANG_PATH=C:/Program Files/LLVM/bin' >> "$GITHUB_ENV"
+
+      # Forces GGML_NATIVE OFF inside whisper.cpp's cmake project, as in
+      # check.yml: no -march=native, so no illegal-instruction crash on a
+      # user's older CPU.
+      - name: Build whisper.cpp portably (GGML_NATIVE=OFF)
+        run: |
+          root="$(pwd -W 2>/dev/null || pwd)"
+          echo "CMAKE_PROJECT_INCLUDE=$root/crates/stt/cmake/force-portable-ggml.cmake" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.name }}
+          cache-on-failure: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The Tauri CLI downloads NSIS / linuxdeploy tools from GitHub, so a
+      # failed attempt is retried; a retry reuses the compiled crates.
+      # AppImage: never bundle libpipewire/libspa (TUR-38). Nothing links
+      # them yet; when Linux recording lands they must come from the user's
+      # system, because a bundled copy can mismatch the running PipeWire
+      # daemon.
+      - name: pnpm tauri build
+        env:
+          BUNDLE: ${{ matrix.bundle }}
+        run: |
+          args=(--bundles "$BUNDLE")
+          if [ "$RUNNER_OS" = Linux ]; then args+=(--no-sign); fi
+          for attempt in 1 2 3; do
+            if pnpm tauri build "${args[@]}"; then exit 0; fi
+            echo "::warning::pnpm tauri build failed (attempt $attempt of 3)"
+            sleep 15
+          done
+          exit 1
+
+      - name: whisper.cpp was built portably
+        run: |
+          shopt -s nullglob
+          caches=(target/release/build/whisper-rs-sys-*/out/build/CMakeCache.txt)
+          if [ "${#caches[@]}" -eq 0 ]; then
+            echo "::error::no whisper.cpp CMakeCache.txt under target/release/build"
+            exit 1
+          fi
+          for cache in "${caches[@]}"; do
+            grep -q '^GGML_NATIVE:BOOL=OFF$' "$cache" || {
+              echo "::error file=$cache::GGML_NATIVE is not OFF"
+              exit 1
+            }
+          done
+
+      - name: AppImage carries no libpipewire/libspa
+        if: matrix.bundle == 'appimage'
+        run: |
+          shopt -s nullglob
+          dirs=(target/release/bundle/appimage/*.AppDir)
+          if [ "${#dirs[@]}" -eq 0 ]; then
+            echo "::warning::no AppDir left to inspect"
+            exit 0
+          fi
+          if find "${dirs[@]}" -name 'libpipewire*' -o -name 'libspa*' | grep .; then
+            echo "::error::the AppImage bundles libpipewire/libspa (TUR-38)"
+            exit 1
+          fi
+
+      # One file per leg, renamed to the release's naming scheme, plus a
+      # sha256sum line that `shasum -a 256 -c` also reads.
+      - name: Rename and checksum
+        env:
+          BUNDLE: ${{ matrix.bundle }}
+          EXT: ${{ matrix.ext }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(target/release/bundle/"$BUNDLE"/*."$EXT")
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "::error::expected one .$EXT in target/release/bundle/$BUNDLE, found ${#files[@]}: ${files[*]}"
+            exit 1
+          fi
+          OUT="$RUNNER_TEMP/release-out"
+          mkdir -p "$OUT"
+          F="meet-ai-${VERSION}-${ASSET}"
+          cp "${files[0]}" "$OUT/$F"
+          (cd "$OUT" && sha256sum "$F" > "$F.sha256" && sha256sum -c "$F.sha256")
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-files-${{ matrix.name }}
+          path: ${{ env.OUT }}/
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
-    needs: [release-please, build]
+    needs: [release-please, build, build-other]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -307,23 +527,30 @@ jobs:
       TAG: ${{ needs.release-please.outputs.tag_name }}
       VERSION: ${{ needs.release-please.outputs.version }}
     steps:
+      # `release-files` (macOS) and `release-files-<name>` (build-other),
+      # merged into one folder.
       - uses: actions/download-artifact@v8
         with:
-          name: release-files
+          pattern: release-files*
+          merge-multiple: true
           path: release-out
 
       - name: Check the files
         working-directory: release-out
         run: |
-          Z="meet-ai-${VERSION}-macos-arm64.zip"
           ls -l
-          shasum -a 256 -c "$Z.sha256"
+          for f in \
+            "meet-ai-${VERSION}-macos-arm64.zip" \
+            "meet-ai-${VERSION}-windows-x64-setup.exe" \
+            "meet-ai-${VERSION}-linux-amd64.deb" \
+            "meet-ai-${VERSION}-linux-x86_64.AppImage"; do
+            shasum -a 256 -c "$f.sha256"
+          done
 
       - name: Attach the files
         working-directory: release-out
         run: |
-          Z="meet-ai-${VERSION}-macos-arm64.zip"
-          gh release upload "$TAG" "$Z" "$Z.sha256" --clobber
+          gh release upload "$TAG" ./* --clobber
 
       # RELEASING.md "Publish the GitHub release": the Install section, then
       # the changelog notes release-please wrote. Skipped if a re-run already
@@ -332,12 +559,17 @@ jobs:
         run: |
           set -euo pipefail
           Z="meet-ai-${VERSION}-macos-arm64.zip"
+          W="meet-ai-${VERSION}-windows-x64-setup.exe"
+          D="meet-ai-${VERSION}-linux-amd64.deb"
+          A="meet-ai-${VERSION}-linux-x86_64.AppImage"
           body="$(gh release view "$TAG" --json body --jq '.body')"
           if grep -q '^## Install$' <<<"$body"; then
             notes="$body"
           else
             notes="$(cat <<EOF
           ## Install
+
+          ### macOS
 
           Download \`$Z\` (Apple silicon, macOS 26+), unzip, and move \`meet-ai.app\` to \`/Applications\`.
 
@@ -347,7 +579,19 @@ jobs:
           xattr -dr com.apple.quarantine /Applications/meet-ai.app
           \`\`\`
 
-          Verify the download against \`$Z.sha256\` with \`shasum -a 256 -c\`.
+          ### Windows (preview: can't record yet)
+
+          Download \`$W\` (64-bit Windows) and run it. The installer is not signed yet, so SmartScreen warns on first run: choose **More info → Run anyway**.
+
+          ### Linux (preview: can't record yet)
+
+          Debian or Ubuntu (22.04 or later): download \`$D\` and install it with \`sudo apt install ./$D\`.
+
+          Any other x86_64 distribution: download \`$A\`, then \`chmod +x $A\` and run it.
+
+          ### Checksums
+
+          Each file has a \`.sha256\` next to it. Check a download with \`shasum -a 256 -c <file>.sha256\` (macOS) or \`sha256sum -c <file>.sha256\` (Linux, Git Bash on Windows).
 
           EOF
           )"
