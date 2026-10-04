@@ -743,9 +743,9 @@ R10_FIND_AWK='
 # file still fails (even one spelled the same). Matters for --r10-tree only: on
 # added lines, an untouched old cfg never counts. Better than editing an entry:
 # make the test portable and drop it.
-# Empty since TUR-54. R10_DEBT_SELFTEST is only for
-# scripts/quality-rules-selftest.sh, which checks the mechanism still works.
-R10_DEBT=${R10_DEBT_SELFTEST:-}
+# Empty since TUR-54. scripts/quality-rules-selftest.sh puts an entry in its
+# own copy of this file to check the mechanism still works.
+R10_DEBT=''
 
 rule_r10() {
   local f=$1 first last
