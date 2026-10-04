@@ -16,3 +16,8 @@ specta.workspace = true
 sysinfo.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[features]
+# `processes::name_of`, this OS's process name for a label, for the app's
+# tests. Off in the app build.
+test-util = []

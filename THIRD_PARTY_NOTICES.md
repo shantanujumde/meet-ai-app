@@ -96,6 +96,14 @@ SOFTWARE.
   - `crates/calendar/src/google/types.rs` (the Calendar API v3 event models,
     trimmed to the fields we read) from
     `crates/google-calendar/src/types.rs`
+  - `crates/audio/src/platform/windows/activity.rs` (the COM guard and the
+    WASAPI capture-session walk, extended to render endpoints, and the
+    `sysinfo` pid → name lookup) from `crates/detect/src/list/windows.rs`
+  - `crates/audio/src/platform/linux/activity.rs` (the libpulse main loop,
+    context-readiness wait and source-output listing, extended to sink
+    inputs, and its readiness test) from `crates/detect/src/list/linux.rs`
+  - `crates/detect/processes.json` (the Linux meeting-app process names) from
+    `crates/detect/src/app/linux.rs`
 
 ```
 MIT License

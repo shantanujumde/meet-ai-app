@@ -16,6 +16,10 @@ pub(crate) type DeviceId = objc2_core_audio::AudioObjectID;
 #[cfg(test)]
 pub(crate) const DEVICE_ACTIVITY: bool = true;
 
+/// Property reads need no sound server here.
+#[cfg(test)]
+pub(crate) const DEVICE_ACTIVITY_NEEDS_SERVER: bool = false;
+
 /// The resampler's f32 golden hashes (`resample.rs` tests) were taken here.
 #[cfg(test)]
 pub(crate) const F32_GOLDEN_HASHES: bool = true;

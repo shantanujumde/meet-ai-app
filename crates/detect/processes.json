@@ -1,7 +1,42 @@
 [
-  { "name": "zoom.us", "label": "Zoom", "needs_call_signal": false },
-  { "name": "Microsoft Teams", "label": "Microsoft Teams", "needs_call_signal": false },
-  { "name": "Webex", "label": "Webex", "needs_call_signal": false },
-  { "name": "Slack", "label": "Slack", "needs_call_signal": true },
-  { "name": "Discord", "label": "Discord", "needs_call_signal": true }
+  { "os": "macos", "name": "zoom.us", "label": "Zoom", "needs_call_signal": false },
+  {
+    "os": "macos",
+    "name": "Microsoft Teams",
+    "label": "Microsoft Teams",
+    "needs_call_signal": false
+  },
+  { "os": "macos", "name": "Webex", "label": "Webex", "needs_call_signal": false },
+  { "os": "macos", "name": "Slack", "label": "Slack", "needs_call_signal": true },
+  { "os": "macos", "name": "Discord", "label": "Discord", "needs_call_signal": true },
+  { "os": "windows", "name": "Zoom.exe", "label": "Zoom", "needs_call_signal": false },
+  {
+    "os": "windows",
+    "name": "ms-teams.exe",
+    "label": "Microsoft Teams",
+    "needs_call_signal": false
+  },
+  {
+    "os": "windows",
+    "name": "ms-teams_modulehost.exe",
+    "label": "Microsoft Teams",
+    "needs_call_signal": false
+  },
+  { "os": "windows", "name": "Teams.exe", "label": "Microsoft Teams", "needs_call_signal": false },
+  { "os": "windows", "name": "Webex.exe", "label": "Webex", "needs_call_signal": false },
+  { "os": "windows", "name": "CiscoCollabHost.exe", "label": "Webex", "needs_call_signal": false },
+  { "os": "windows", "name": "slack.exe", "label": "Slack", "needs_call_signal": true },
+  { "os": "windows", "name": "Discord.exe", "label": "Discord", "needs_call_signal": true },
+  { "os": "linux", "name": "zoom", "label": "Zoom", "needs_call_signal": false },
+  {
+    "os": "linux",
+    "name": "teams-for-linux",
+    "label": "Microsoft Teams",
+    "needs_call_signal": false
+  },
+  { "os": "linux", "name": "teams", "label": "Microsoft Teams", "needs_call_signal": false },
+  { "os": "linux", "name": "webex", "label": "Webex", "needs_call_signal": false },
+  { "os": "linux", "name": "CiscoCollabHost", "label": "Webex", "needs_call_signal": false },
+  { "os": "linux", "name": "slack", "label": "Slack", "needs_call_signal": true },
+  { "os": "linux", "name": "discord", "label": "Discord", "needs_call_signal": true }
 ]

@@ -24,6 +24,10 @@
 //!    call is named as Slack. It prompts on its own only when no meeting app
 //!    prompts for it and nothing prompted in the last [`CALL_SIGNAL_WINDOW`]
 //!    — Zoom opening and then its call starting asks once, not twice.
+//! 5. **One app, one session, whatever its processes are called.** Apps are
+//!    grouped by their `processes.json` label, so new Teams on Windows
+//!    (`ms-teams.exe` plus the `ms-teams_modulehost.exe` that holds the call)
+//!    is one Teams session and asks once (TUR-60).
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -54,7 +58,7 @@ impl RunningProcess {
 /// What detection remembers between polls.
 #[derive(Debug, Default)]
 pub struct Detector {
-    /// Per meeting app (its `processes.json` name), the pids of the session
+    /// Per meeting app (its `processes.json` label), the pids of the session
     /// already prompted for or seen while recording.
     handled: HashMap<String, HashSet<u32>>,
     /// When the last calendar or audio-activity signal arrived.
@@ -93,7 +97,7 @@ impl Detector {
             let Some(known) = processes::find(&process.name) else {
                 continue;
             };
-            match apps.iter_mut().find(|(app, _)| app.name == known.name) {
+            match apps.iter_mut().find(|(app, _)| app.label == known.label) {
                 Some((_, pids)) => {
                     pids.insert(process.pid);
                 }
@@ -102,10 +106,10 @@ impl Detector {
         }
 
         // Re-arm every session whose pids have all exited.
-        self.handled.retain(|name, handled| {
+        self.handled.retain(|label, handled| {
             let alive = apps
                 .iter()
-                .find(|(app, _)| &app.name == name)
+                .find(|(app, _)| &app.label == label)
                 .map(|(_, pids)| pids);
             handled.retain(|pid| alive.is_some_and(|pids| pids.contains(pid)));
             !handled.is_empty()
@@ -113,20 +117,20 @@ impl Detector {
 
         let mut signals = Vec::new();
         for (app, pids) in apps {
-            if let Some(handled) = self.handled.get_mut(&app.name) {
+            if let Some(handled) = self.handled.get_mut(&app.label) {
                 // The same session, perhaps with a new helper pid: keep them
                 // all, so the session lasts until the last one exits.
                 handled.extend(pids);
                 continue;
             }
             if recording {
-                self.handled.insert(app.name.clone(), pids);
+                self.handled.insert(app.label.clone(), pids);
                 continue;
             }
             if app.needs_call_signal && !self.call_signal_recent(now) {
                 continue;
             }
-            self.handled.insert(app.name.clone(), pids);
+            self.handled.insert(app.label.clone(), pids);
             signals.push(Signal::Process {
                 process: app.name.clone(),
             });
@@ -164,9 +168,10 @@ impl Detector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::processes::name_of;
 
     fn zoom(pid: u32) -> RunningProcess {
-        RunningProcess::new(pid, "zoom.us")
+        RunningProcess::new(pid, name_of("Zoom"))
     }
 
     fn process(name: &str) -> Signal {
@@ -180,7 +185,10 @@ mod tests {
         let mut detector = Detector::new();
         let now = Instant::now();
         let running = [RunningProcess::new(1, "Finder"), zoom(42)];
-        assert_eq!(detector.observe(&running, false, now), [process("zoom.us")]);
+        assert_eq!(
+            detector.observe(&running, false, now),
+            [process(name_of("Zoom"))]
+        );
         assert!(detector.observe(&running, false, now).is_empty());
         assert!(
             detector
@@ -194,7 +202,7 @@ mod tests {
         let mut detector = Detector::new();
         let running = [
             RunningProcess::new(1, "Finder"),
-            RunningProcess::new(2, "zoom"),
+            RunningProcess::new(2, "zoom helper"),
             RunningProcess::new(3, "Slack Helper"),
         ];
         assert!(detector.observe(&running, false, Instant::now()).is_empty());
@@ -203,10 +211,10 @@ mod tests {
     #[test]
     fn matching_ignores_case() {
         let mut detector = Detector::new();
-        let running = [RunningProcess::new(7, "ZOOM.US")];
+        let running = [RunningProcess::new(7, name_of("Zoom").to_uppercase())];
         assert_eq!(
             detector.observe(&running, false, Instant::now()),
-            [process("zoom.us")]
+            [process(name_of("Zoom"))]
         );
     }
 
@@ -222,7 +230,7 @@ mod tests {
         // …and reopened: a new session.
         assert_eq!(
             detector.observe(&[zoom(43)], false, now),
-            [process("zoom.us")]
+            [process(name_of("Zoom"))]
         );
     }
 
@@ -252,16 +260,20 @@ mod tests {
     fn two_apps_are_two_sessions() {
         let mut detector = Detector::new();
         let now = Instant::now();
-        let running = [zoom(1), RunningProcess::new(2, "Webex")];
+        let running = [zoom(1), RunningProcess::new(2, name_of("Webex"))];
         assert_eq!(
             detector.observe(&running, false, now),
-            [process("zoom.us"), process("Webex")]
+            [process(name_of("Zoom")), process(name_of("Webex"))]
         );
         // Quitting Webex re-arms only Webex.
         assert!(detector.observe(&[zoom(1)], false, now).is_empty());
         assert_eq!(
-            detector.observe(&[zoom(1), RunningProcess::new(3, "Webex")], false, now),
-            [process("Webex")]
+            detector.observe(
+                &[zoom(1), RunningProcess::new(3, name_of("Webex"))],
+                false,
+                now
+            ),
+            [process(name_of("Webex"))]
         );
     }
 
@@ -288,8 +300,8 @@ mod tests {
         let mut detector = Detector::new();
         let now = Instant::now();
         let running = [
-            RunningProcess::new(5, "Slack"),
-            RunningProcess::new(6, "Discord"),
+            RunningProcess::new(5, name_of("Slack")),
+            RunningProcess::new(6, name_of("Discord")),
         ];
         for minute in 0..60 {
             let at = now + Duration::from_secs(minute * 60);
@@ -301,13 +313,16 @@ mod tests {
     fn slack_prompts_with_a_recent_call_signal_then_not_again() {
         let mut detector = Detector::new();
         let start = Instant::now();
-        let slack = [RunningProcess::new(5, "Slack")];
+        let slack = [RunningProcess::new(5, name_of("Slack"))];
         assert!(detector.observe(&slack, false, start).is_empty());
 
         let signal_at = start + Duration::from_secs(600);
         detector.call_signal(signal_at);
         let at = signal_at + Duration::from_secs(5);
-        assert_eq!(detector.observe(&slack, false, at), [process("Slack")]);
+        assert_eq!(
+            detector.observe(&slack, false, at),
+            [process(name_of("Slack"))]
+        );
         assert!(detector.observe(&slack, false, at).is_empty());
 
         // A later signal in the same Slack session still does not nag.
@@ -324,13 +339,13 @@ mod tests {
         let mut detector = Detector::new();
         let signal_at = Instant::now();
         detector.call_signal(signal_at);
-        let slack = [RunningProcess::new(5, "Slack")];
+        let slack = [RunningProcess::new(5, name_of("Slack"))];
         let late = signal_at + CALL_SIGNAL_WINDOW + Duration::from_secs(1);
         assert!(detector.observe(&slack, false, late).is_empty());
-        let edge = [RunningProcess::new(6, "Discord")];
+        let edge = [RunningProcess::new(6, name_of("Discord"))];
         assert_eq!(
             detector.observe(&edge, false, signal_at + CALL_SIGNAL_WINDOW),
-            [process("Discord")]
+            [process(name_of("Discord"))]
         );
     }
 
@@ -339,7 +354,7 @@ mod tests {
         let mut detector = Detector::new();
         let now = Instant::now();
         detector.call_signal(now);
-        let slack = [RunningProcess::new(5, "Slack")];
+        let slack = [RunningProcess::new(5, name_of("Slack"))];
         assert!(detector.observe(&slack, true, now).is_empty());
         assert!(detector.observe(&slack, false, now).is_empty());
     }
@@ -359,11 +374,11 @@ mod tests {
     fn audio_activity_names_slack_instead() {
         let mut detector = Detector::new();
         let now = Instant::now();
-        let slack = [RunningProcess::new(5, "Slack")];
+        let slack = [RunningProcess::new(5, name_of("Slack"))];
         assert!(detector.observe(&slack, false, now).is_empty());
         assert_eq!(
             detector.audio_activity(&slack, false, now + Duration::from_secs(5)),
-            [process("Slack")]
+            [process(name_of("Slack"))]
         );
     }
 
@@ -391,7 +406,7 @@ mod tests {
         let now = Instant::now();
         assert_eq!(
             detector.audio_activity(&[zoom(42)], false, now),
-            [process("zoom.us")]
+            [process(name_of("Zoom"))]
         );
         assert!(
             detector
@@ -420,5 +435,45 @@ mod tests {
                 .audio_activity(&[], false, now + Duration::from_secs(90))
                 .is_empty()
         );
+    }
+
+    /// Every process name this OS has for Teams (`ms-teams.exe` and
+    /// `ms-teams_modulehost.exe` on Windows, say), all running at once.
+    fn every_teams_process() -> Vec<RunningProcess> {
+        crate::processes::meeting_processes()
+            .iter()
+            .filter(|known| known.label == "Microsoft Teams")
+            .zip(100..)
+            .map(|(known, pid)| RunningProcess::new(pid, known.name.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn every_teams_process_together_asks_once() {
+        let mut detector = Detector::new();
+        let now = Instant::now();
+        let teams = every_teams_process();
+        assert!(!teams.is_empty());
+        assert_eq!(
+            detector.observe(&teams, false, now),
+            [process(&teams[0].name)]
+        );
+        // The calling helper starting later is the same session.
+        assert!(detector.observe(&teams, false, now).is_empty());
+        let mut reversed = teams.clone();
+        reversed.reverse();
+        assert!(detector.observe(&reversed, false, now).is_empty());
+    }
+
+    #[test]
+    fn the_teams_session_lasts_until_its_last_process_exits() {
+        let mut detector = Detector::new();
+        let now = Instant::now();
+        let teams = every_teams_process();
+        assert_eq!(detector.observe(&teams, false, now).len(), 1);
+        let last = &teams[teams.len() - 1..];
+        assert!(detector.observe(last, false, now).is_empty());
+        assert!(detector.observe(&[], false, now).is_empty());
+        assert_eq!(detector.observe(last, false, now).len(), 1);
     }
 }

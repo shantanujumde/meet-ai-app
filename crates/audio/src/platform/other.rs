@@ -16,7 +16,13 @@ pub(crate) type DeviceId = u32;
 
 /// [`device_activity`] has no reading to give here.
 #[cfg(test)]
+#[allow(dead_code)] // Windows and Linux have their own reader (TUR-60).
 pub(crate) const DEVICE_ACTIVITY: bool = false;
+
+/// No reader at all here.
+#[cfg(test)]
+#[allow(dead_code)] // Windows and Linux have their own reader (TUR-60).
+pub(crate) const DEVICE_ACTIVITY_NEEDS_SERVER: bool = false;
 
 /// The resampler's f32 golden hashes (`resample.rs` tests) were taken on
 /// macOS. Another libm rounds `sin` differently, so the synthetic input and
@@ -62,6 +68,7 @@ pub(crate) fn mic_source() -> Box<dyn AudioSource> {
 }
 
 /// No device-activity read yet.
+#[allow(dead_code)] // Windows and Linux have their own reader (TUR-60).
 pub(crate) fn device_activity() -> Result<DeviceActivity, Error> {
     Err(Error::Unsupported)
 }

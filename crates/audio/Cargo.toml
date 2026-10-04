@@ -55,6 +55,13 @@ objc2-foundation.workspace = true
 # The microphone consent registry keys (TUR-51, src/platform/windows_permission.rs).
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg.workspace = true
+# "Mic in use by another app" (TUR-60): WASAPI sessions, with `sysinfo` for the
+# names in the debug log, and the PulseAudio/PipeWire stream lists.
+sysinfo.workspace = true
+wasapi.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libpulse-binding.workspace = true
 
 [dev-dependencies]
 # Test-only: temp folders and the shared tone generator.

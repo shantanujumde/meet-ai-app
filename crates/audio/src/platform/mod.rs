@@ -78,6 +78,8 @@ use other as os;
 #[cfg(test)]
 pub(crate) use os::DEVICE_ACTIVITY;
 #[cfg(test)]
+pub(crate) use os::DEVICE_ACTIVITY_NEEDS_SERVER;
+#[cfg(test)]
 pub(crate) use os::F32_GOLDEN_HASHES;
 pub(crate) use os::input_devices;
 pub(crate) use os::{

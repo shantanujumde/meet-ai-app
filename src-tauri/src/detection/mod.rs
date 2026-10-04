@@ -378,7 +378,10 @@ mod tests {
         fn running(&mut self) -> Result<Vec<RunningProcess>, detect::Error> {
             self.polls.fetch_add(1, Ordering::SeqCst);
             let _ = self.polled.send(());
-            Ok(vec![RunningProcess::new(42, "zoom.us")])
+            Ok(vec![RunningProcess::new(
+                42,
+                detect::processes::name_of("Zoom"),
+            )])
         }
     }
 
@@ -463,7 +466,7 @@ mod tests {
         assert_eq!(
             signal,
             Signal::Process {
-                process: "zoom.us".to_string()
+                process: detect::processes::name_of("Zoom").to_string()
             }
         );
         running.stop();

@@ -121,6 +121,9 @@ Pin these exactly in `Cargo.toml` and commit `Cargo.lock`. 🆕 = new major with
 | `ringbuf` | **0.5.1** 🆕 | lock-free audio→worker handoff |
 | `hound` | **3.5.1** | WAV I/O. Stable since 2023, zero risk |
 | `earshot` | **1.2.2** | VAD (§1.1). Only dep is `libm` |
+| `wasapi` | **0.25.0** | 🆕 TUR-60, Windows only. MIT. Safe wrappers over WASAPI's `IAudioSessionManager2` session list, for "mic and speakers in use by another app". Pure Rust over the `windows` crate. Moved out of §2.7: SPEC A13 makes Windows a target now |
+| `libpulse-binding` | **2.30.1** | 🆕 TUR-60, Linux only. MIT OR Apache-2.0 (we take MIT). The PulseAudio client API: source-output and sink-input lists. Links `libpulse.so` (`libpulse-dev` at build time); PipeWire desktops answer it through pipewire-pulse |
+| `winreg` | see `Cargo.toml` | Windows only (TUR-51): the microphone consent registry keys |
 
 ### 2.3 Speech-to-text
 
@@ -248,7 +251,6 @@ Real-account checks are in `docs/manual-checks/worktree-tur48.md`.
 |---|---|---|
 | `rmcp` | 3.2.0 | MCP server (L12, v1.1) |
 | `sqlite-vec` | 0.1.9 | semantic search (L8) |
-| `wasapi` | 0.24.0 | Windows loopback (§8.2) |
 | `ort` | 2.0.0-rc.13 | Silero VAD upgrade, or Parakeet |
 | `sherpa-rs` | 0.6.8 | N-speaker diarization |
 | `parakeet-rs` | 0.3.7 | low-latency streaming STT |

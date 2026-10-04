@@ -37,6 +37,12 @@ objc2-core-foundation = "=0.3.2"
 objc2-foundation = "=0.3.2"
 ringbuf = "=0.5.1"
 rubato = "=5.0.0"
+# "Mic in use by another app" off macOS (TUR-60). wasapi: safe wrappers over
+# WASAPI's session list, pure Rust over the `windows` crate (MIT). libpulse:
+# the PulseAudio client API, which PipeWire answers too through
+# pipewire-pulse; links libpulse.so (libpulse-dev, already in CI's apt list).
+wasapi = "=0.25.0"
+libpulse-binding = "=2.30.1"
 
 # --- calendar (SETUP.md §2.5) ---
 # Tier 1, zero-auth (TUR-26). Same 0.3.2 line as the other objc2-* framework

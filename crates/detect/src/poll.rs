@@ -144,6 +144,7 @@ mod tests {
     use std::sync::{Arc, Mutex, mpsc};
 
     use super::*;
+    use crate::processes::name_of;
 
     /// Hands out one scripted process list per poll (the last one repeats),
     /// and reports each poll on a channel so a test can wait for it.
@@ -175,7 +176,7 @@ mod tests {
     #[test]
     fn the_loop_emits_one_process_signal_per_session() {
         let (polled_tx, polled) = mpsc::channel();
-        let zoom = || vec![RunningProcess::new(42, "zoom.us")];
+        let zoom = || vec![RunningProcess::new(42, name_of("Zoom"))];
         let source = Scripted {
             polls: vec![vec![], zoom(), zoom(), vec![], zoom()],
             polled: polled_tx,
@@ -195,7 +196,7 @@ mod tests {
         running.stop();
 
         let zoom_signal = Signal::Process {
-            process: "zoom.us".to_string(),
+            process: name_of("Zoom").to_string(),
         };
         assert_eq!(
             *seen.lock().expect("not poisoned"),
@@ -207,7 +208,7 @@ mod tests {
     fn the_loop_reads_the_recording_state_on_every_poll() {
         let (polled_tx, polled) = mpsc::channel();
         let source = Scripted {
-            polls: vec![vec![RunningProcess::new(42, "zoom.us")]],
+            polls: vec![vec![RunningProcess::new(42, name_of("Zoom"))]],
             polled: polled_tx,
         };
         let recording = Arc::new(AtomicBool::new(true));
@@ -232,7 +233,7 @@ mod tests {
     fn a_call_signal_lets_slack_prompt() {
         let (polled_tx, polled) = mpsc::channel();
         let source = Scripted {
-            polls: vec![vec![RunningProcess::new(5, "Slack")]],
+            polls: vec![vec![RunningProcess::new(5, name_of("Slack"))]],
             polled: polled_tx,
         };
         let (signal_tx, signals) = mpsc::channel();
@@ -256,7 +257,7 @@ mod tests {
         assert_eq!(
             signal,
             Signal::Process {
-                process: "Slack".to_string()
+                process: name_of("Slack").to_string()
             }
         );
         drop(running);

@@ -275,7 +275,7 @@ mod tests {
 
     fn zoom() -> Signal {
         Signal::Process {
-            process: "zoom.us".to_string(),
+            process: detect::processes::name_of("Zoom").to_string(),
         }
     }
 
@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&prompt).expect("serialises"),
             serde_json::json!({
-                "signal": { "kind": "process", "process": "zoom.us" },
+                "signal": { "kind": "process", "process": detect::processes::name_of("Zoom") },
                 "reason": "Zoom is open.",
                 "updateOnly": false,
                 "eventId": null,
