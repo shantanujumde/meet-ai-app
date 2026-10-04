@@ -164,10 +164,8 @@ pub(super) fn store<'a>(
     bytes.push(b'\n');
     // Only `.app` itself: a root that is gone (an unplugged drive, a folder
     // moved away) must fail here, not be made again empty.
-    match fs::create_dir(meeting_format::layout::app_dir(root)) {
-        Err(error) if error.kind() != ErrorKind::AlreadyExists => return Err(error),
-        _ => {}
-    }
+    fs::metadata(root)?;
+    store::create_app_dir(&meeting_format::layout::app_dir(root))?;
     meeting_format::write_atomic(&path, &bytes)
 }
 
@@ -191,6 +189,23 @@ mod tests {
     fn write(root: &Path, text: &str) {
         fs::create_dir_all(root.join(".app")).unwrap();
         fs::write(path(root), text).unwrap();
+    }
+
+    #[test]
+    fn a_missing_root_is_an_error_not_made_again() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("gone");
+        let (key, created) = (key("TUR-1", None), created("TUR-1"));
+        assert!(store(&root, [(&key, &created)]).is_err());
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn storing_makes_the_app_folder_once_the_root_exists() {
+        let temp = tempfile::tempdir().unwrap();
+        let (key, created) = (key("TUR-1", None), created("TUR-1"));
+        store(temp.path(), [(&key, &created)]).unwrap();
+        assert!(path(temp.path()).is_file());
     }
 
     #[test]

@@ -118,7 +118,7 @@ function deniedBannerText(denied: PrivacyPane[]): string {
     return `System audio is off: System Audio Recording is turned off for meet-ai in ${osText("settings")}, so recordings capture only your microphone.`;
   }
   if (names.length === 0) {
-    return "meet-ai cannot record this Mac's audio yet, so recording is off.";
+    return `meet-ai cannot record ${osText("thisComputer")}'s audio yet, so recording is off.`;
   }
   const verb = names.length === 1 ? "is" : "are";
   return `${names.join(" and ")} ${verb} turned off for meet-ai in ${osText("settings")}, so recording is off.`;

@@ -48,7 +48,7 @@ pub fn read_in(dir: &Path) -> AppState {
 
 /// Write `state` into `dir`, atomically.
 pub fn write_in(dir: &Path, state: &AppState) -> Result<(), UiError> {
-    std::fs::create_dir_all(dir)?;
+    store::create_app_dir(dir)?;
     let body = serde_json::to_string_pretty(state)
         .map_err(|error| UiError::app("serialize", error.to_string()))?;
     meeting_format::write_atomic(&dir.join(FILE), body.as_bytes())?;

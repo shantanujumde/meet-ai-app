@@ -183,7 +183,8 @@ export function PathField({
       {cli?.state === "missing" ? (
         <p className={rowDetailVariants({ mono: false })}>
           If {name} works in {osText("terminal")} but meet-ai cannot find it, choose its file here.
-          Apps opened from the Dock do not see the same folders {osText("terminal")} does.
+          Apps opened from {osText("appLauncher")} do not see the same folders {osText("terminal")}{" "}
+          does.
         </p>
       ) : null}
       {error ? <ErrorState error={error} /> : null}
