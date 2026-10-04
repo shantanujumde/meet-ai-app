@@ -34,8 +34,7 @@ use stt::{Speaker, SttEngine};
 fn vad_finds_no_speech_in_either_silence_fixture() {
     for name in ["silence-30s.wav", "room-tone-30s.wav"] {
         let path = fixtures::path(name);
-        let pcm = stt::read_wav_16k_mono(&path)
-            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let pcm = stt::read_wav_16k_mono(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
 
         let mut vad = EarshotVad::new();
         let spans = detect_speech(&pcm, &mut vad, &SegmentConfig::default());

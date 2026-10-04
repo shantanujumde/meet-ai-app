@@ -327,7 +327,11 @@ fn a_refused_codex_sync_exits_0_and_is_not_synced() {
         .set("reply_file", r#"{"external_id":null,"external_url":null}"#);
     let mut settings = settings();
     settings.tickets.tracker_mcp = "linear".into();
-    let harness = harness_for(&agent_config(HarnessChoice::Codex, cli.path().to_path_buf())).unwrap();
+    let harness = harness_for(&agent_config(
+        HarnessChoice::Codex,
+        cli.path().to_path_buf(),
+    ))
+    .unwrap();
     assert_eq!(harness.id(), "codex");
 
     let err = run(

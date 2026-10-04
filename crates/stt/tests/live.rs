@@ -29,8 +29,8 @@ use stt::{SeqCounter, SessionOptions, Speaker, SttEngine};
 #[test]
 fn thirty_seconds_of_quiet_streams_no_lines_and_no_tail() {
     for name in ["silence-30s.wav", "room-tone-30s.wav"] {
-        let pcm = stt::read_wav_16k_mono(&fixtures::path(name))
-            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let pcm =
+            stt::read_wav_16k_mono(&fixtures::path(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
 
         let sink = SharedCollector::new();
         let seen = CollectingListener::new();
@@ -248,8 +248,8 @@ fn apple_streams_nothing_settled_over_thirty_quiet_seconds() {
     };
 
     for name in ["silence-30s.wav", "room-tone-30s.wav"] {
-        let pcm = stt::read_wav_16k_mono(&fixtures::path(name))
-            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let pcm =
+            stt::read_wav_16k_mono(&fixtures::path(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
 
         let sink = SharedCollector::new();
         let seen = CollectingListener::new();
