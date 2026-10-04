@@ -22,10 +22,11 @@ mod render_in_use;
 #[cfg(test)]
 pub(crate) use super::other::F32_GOLDEN_HASHES;
 pub(crate) use super::other::input_devices;
-pub(crate) use super::other::{mic_source, start_sound};
-// TUR-37: system audio, the host clock and the device watch.
+// TUR-37: system audio, the host clock and the device watch. The `cpal`
+// microphone and start sound are `other.rs`'s, with COM kept loaded (TUR-95).
 pub(crate) use super::windows_devices::{
     DeviceId, default_input_device, default_output_device, host_now_ns, input_callback_ns,
+    mic_source, start_sound,
 };
 pub(crate) use super::windows_loopback::system_source;
 // TUR-51: this OS's own permission checks.

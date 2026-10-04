@@ -20,7 +20,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Data, InputCallbackInfo, SampleFormat, Stream, StreamConfig, SupportedStreamConfig};
 
 use super::windows_devices::{
-    current_default_output_endpoint, followed_output_endpoint, input_callback_ns,
+    current_default_output_endpoint, followed_output_endpoint, host, input_callback_ns,
 };
 use super::windows_render_choice::endpoint_to_open;
 use crate::loopback::buffer::safe_buffer_size;
@@ -49,7 +49,7 @@ pub(crate) fn system_source() -> Option<Box<dyn AudioSource>> {
 /// Windows reroutes by itself when the default changes. An endpoint that has
 /// gone away since the watch last read falls back to the default.
 fn followed_device() -> Result<cpal::Device, Error> {
-    let host = cpal::default_host();
+    let host = host();
     let followed = followed_output_endpoint();
     let default = current_default_output_endpoint();
     if let Some(id) = endpoint_to_open(followed.as_deref(), default.as_deref()) {

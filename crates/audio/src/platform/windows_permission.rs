@@ -44,7 +44,7 @@ pub(crate) fn stored_mic_denial() -> Option<ChannelResult> {
 
 /// Open the `cpal` microphone briefly; `E_ACCESSDENIED` on setup is a denial.
 pub(crate) fn check_mic() -> ChannelResult {
-    let result = permission_check::check_mic_with(super::other::mic_source());
+    let result = permission_check::check_mic_with(super::windows_devices::mic_source());
     if result.state == ChannelState::Unmeasurable && is_access_denied(&result.detail) {
         return ChannelResult {
             state: ChannelState::Denied,
