@@ -19,12 +19,9 @@ use crate::{Error, SttEngine};
 mod options;
 pub use options::{Availability, EngineOptions, WHISPER_NEEDS_A_MODEL, options};
 
-// whisper-rs compiles whisper.cpp for the target, so the engine itself is
-// macOS-only for now (SPEC §8.2 turns on `vulkan`/`cuda` at Windows port
-// time). Selection *logic* is not platform-specific and must keep compiling
-// everywhere, so only the construction below goes through `crate::platform`
-// — that is what keeps `just check-windows` meaningful instead of excluding
-// this crate from it.
+// Selection *logic* is not platform-specific and compiles everywhere. What
+// differs per OS (whether Apple's engine can exist at all, and how whisper is
+// built) lives in `crate::platform`, the only module that names an OS.
 
 /// Which engine the user asked for, from `config.jsonc`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -53,8 +50,7 @@ pub struct Selection {
 /// The canonical engine names.
 ///
 /// Defined here rather than on the engine types because [`Kind`] has to name
-/// every engine on every platform, while `WhisperEngine` only exists on macOS
-/// today. The engines reference these back, so there is still one source of
+/// every engine on every platform, while `AppleEngine` only works on macOS. The engines reference these back, so there is still one source of
 /// truth — see `AppleEngine::NAME` and `WhisperEngine::NAME`.
 pub const APPLE_SPEECH: &str = "apple-speech";
 pub const WHISPER: &str = "whisper";
@@ -242,6 +238,14 @@ fn decide(
 
     match preference {
         Preference::AppleSpeech => {
+            // A4's rule: a value that cannot work here is an error that says
+            // why, not a silent switch. Off macOS there is no Apple engine to
+            // look for, so say that instead of "the sidecar was not found".
+            if let Some(why) = crate::platform::APPLE_SPEECH_UNSUPPORTED {
+                return Err(Error::EngineUnavailable(format!(
+                    "Apple's speech engine cannot be used: {why}"
+                )));
+            }
             if apple_usable {
                 return Ok(Selection {
                     engine: Kind::AppleSpeech,
@@ -321,8 +325,6 @@ pub fn select(
                 .clone()
                 .ok_or_else(|| Error::EngineUnavailable("no whisper model is downloaded".into()))?;
 
-            // `Error::EngineUnavailable` on a platform whisper is not built
-            // for yet (SPEC §8.2).
             crate::platform::load_whisper(&model)?
         }
     };
@@ -402,7 +404,27 @@ mod tests {
     fn forcing_apple_without_a_sidecar_names_the_sidecar() {
         let error = resolve(Preference::AppleSpeech, &environment()).unwrap_err();
         let message = error.to_string();
-        assert!(message.contains("meet-stt"), "unhelpful message: {message}");
+        // Off macOS the honest answer is "only on macOS", not a sidecar hunt.
+        match crate::platform::APPLE_SPEECH_UNSUPPORTED {
+            Some(why) => assert!(message.contains(why), "unhelpful message: {message}"),
+            None => assert!(message.contains("meet-stt"), "unhelpful message: {message}"),
+        }
+    }
+
+    #[test]
+    fn forcing_apple_where_it_cannot_exist_ignores_a_sidecar_on_disk() {
+        // Even with a stray `meet-stt` path, an OS without Apple's engine
+        // must not try to run it.
+        let Some(why) = crate::platform::APPLE_SPEECH_UNSUPPORTED else {
+            return;
+        };
+        let mut env = environment();
+        env.sidecar = Some(PathBuf::from("/nowhere/meet-stt"));
+        let error = resolve(Preference::AppleSpeech, &env).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("Apple's speech engine cannot be used: {why}")
+        );
     }
 
     #[test]

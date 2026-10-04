@@ -48,8 +48,8 @@ check: check-windows sidecar
 # for Windows from day one, so a mac assumption cannot quietly leak out of
 # crates/audio or crates/calendar.
 #
-# SETUP.md §6 lists four crates here. Two crates are deliberately left out, and
-# both for the same reason: a dependency whose build script compiles C for the
+# SETUP.md §6 lists four crates here. Three crates are deliberately left out, and
+# all for the same reason: a dependency whose build script compiles C for the
 # *target*, which needs an MSVC toolchain no Mac has. Including either would
 # make this check permanently red for a reason that has nothing to do with our
 # code, and a permanently-red guard is a guard nobody reads.
@@ -62,11 +62,13 @@ check: check-windows sidecar
 #     `std::path`, with no `#[cfg(target_os)]` anywhere, so it is the cheapest
 #     possible thing to exempt. Put it back if rustls ever ships a usable
 #     pure-Rust provider.
+#   * `stt` — whisper-rs-sys compiles whisper.cpp with cmake for the target,
+#     on every OS since TUR-52. The native `rust (windows)` CI job builds and
+#     tests it instead.
 #
-# `stt` IS covered, and staying that way is why `modelfetch` is a separate crate
-# at all — the downloader was inside `stt` and took the whole speech-to-text
-# crate out of this guard with it (TUR-13). whisper-rs is gated to macOS in
-# stt's Cargo.toml, so nothing else in there compiles C for the target.
+# `stt` was covered until TUR-52 made whisper-rs a dependency on every OS
+# (`modelfetch` was split out of it in TUR-13 to keep it covered). Its seam is
+# now checked natively by `rust (windows)` and `rust (linux)` in CI.
 #
 # `audio` is the crate this guard mainly exists for — it is the only one with an
 # `#[cfg(target_os = "macos")]` module — and it was missing from the list, so the
@@ -96,7 +98,7 @@ check-windows:
 [unix]
 check-windows:
     rustup target list --installed | grep -qx x86_64-pc-windows-msvc || rustup target add x86_64-pc-windows-msvc
-    cargo check --target x86_64-pc-windows-msvc -p audio -p calendar -p stt -p prompts -p detect -p meeting-format -p agent
+    cargo check --target x86_64-pc-windows-msvc -p audio -p calendar -p prompts -p detect -p meeting-format -p agent
     cargo check --target x86_64-pc-windows-msvc -p audio --features audio/stub-audio
 
 # The TUR-97 gate: does a recording survive the app dying mid-meeting? Drives the
