@@ -4,6 +4,9 @@
 use std::f32::consts::PI as PI_F32;
 use std::f64::consts::PI as PI_F64;
 
+mod fake_cli;
+pub use fake_cli::{FakeCli, fake_cli_path};
+
 /// A mono sine wave as `f32` samples in `[-amplitude, amplitude]`.
 pub fn sine_f32(frames: usize, sample_rate: u32, freq_hz: f32, amplitude: f32) -> Vec<f32> {
     (0..frames)

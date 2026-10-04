@@ -8,3 +8,10 @@ version.workspace = true
 publish = false
 
 [dependencies]
+
+# The pretend agent CLI the agent tests run on every OS (TUR-54). `build.rs`
+# also compiles it into OUT_DIR, which is the copy the tests use; see there.
+[[bin]]
+name = "fake-cli"
+path = "src/bin/fake_cli.rs"
+test = false
