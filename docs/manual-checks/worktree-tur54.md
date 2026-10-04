@@ -21,7 +21,12 @@ jobs on the PR.
    server left from the run. No console window flashes up at any point.
    Why skipped: needs a real Windows machine, a signed-in CLI and the running
    app. CI only runs `fake-cli` grandchildren, not a `.cmd` shim.
-2. Same on Linux (and NixOS, where `/bin/kill` is missing: the app no longer
+2. On Windows, start a notes run, then end `meet-ai.exe` in Task Manager
+   (End task) while it runs.
+   Expect: the run's `cmd.exe`, `node.exe` and MCP servers are gone within a
+   second or two.
+   Why skipped: needs a real Windows machine and a signed-in CLI.
+3. Same on Linux (and NixOS, where `/bin/kill` is missing: the app no longer
    runs it), `ps -ef | grep -E "claude|node"` after Cancel.
    Expect: nothing left from the run.
    Why skipped: needs a real Linux machine and a signed-in CLI.
@@ -29,11 +34,11 @@ jobs on the PR.
 ## Known limits
 
 - process-wrap 10's std `JobObject` does not set
-  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so if the app itself crashes on
-  Windows the tree outlives it. That matches unix, where a process group also
-  outlives a crashed parent. Inside the app, a `ProcessTree` dropped before its
-  child exited (early return, panic) kills the tree itself. The hand-rolled
-  minutes `bounded_child.rs` variant was not copied for this alone.
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so the child is also put in a
+  kill-on-close job of our own (`platform/windows_job.rs`). CI's Windows job
+  runs `closing_the_job_kills_the_tree_without_a_kill_call`, which closes that
+  job without any kill call. On unix a crashed app still leaves its process
+  group running (no kill-on-close there).
 - `crates/agent/src/detect.rs` keeps its `#[cfg(unix)]` test module and its one
   `R10_DEBT` entry (manager's answer A1: TUR-53 edits that file now). Follow-up:
   move those tests onto `test_support::FakeCli`.

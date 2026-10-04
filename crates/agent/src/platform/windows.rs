@@ -3,19 +3,24 @@
 //! The child starts in a Job Object of its own, so ending the job reaches
 //! everything it starts: a `.cmd` shim runs under `cmd.exe`, and killing that
 //! one process would leave its `node` (and the MCP servers `node` started)
-//! running. process-wrap starts the child suspended, puts it in the job, then
-//! resumes it, so nothing escapes before it is in. `CREATE_NO_WINDOW` keeps a
+//! running. The child starts suspended and is resumed only once it is in
+//! process-wrap's job (which Cancel ends) and in a kill-on-close job of our
+//! own (`windows_job.rs`, so a crashed app takes the tree with it). `CREATE_NO_WINDOW` keeps a
 //! console window from flashing up for a console program started from the
 //! app.
 
 use std::path::{Path, PathBuf};
 
 use process_wrap::std::{CommandWrap, CreationFlags, JobObject};
-use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+use windows::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
 
-/// Starts the child in a new Job Object with no console window.
+pub(crate) use super::windows_job::{TreeGuard, guard_tree};
+
+/// Starts the child suspended, in a new Job Object, with no console window.
+/// With `CREATE_SUSPENDED` set here, process-wrap leaves resuming it to
+/// [`guard_tree`].
 pub(crate) fn wrap_tree(command: &mut CommandWrap) {
-    command.wrap(CreationFlags(CREATE_NO_WINDOW));
+    command.wrap(CreationFlags(CREATE_NO_WINDOW | CREATE_SUSPENDED));
     command.wrap(JobObject);
 }
 

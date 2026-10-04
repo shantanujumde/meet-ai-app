@@ -17,7 +17,9 @@
 //! A transcript is untrusted text. The app never runs anything a reply asks
 //! for; it only reads the fields the schema allows.
 
-#![forbid(unsafe_code)]
+// `deny`, not `forbid`: the one exception is the Windows kill-on-close job
+// (`platform/windows_job.rs`), Win32 calls with no safe std or crate API.
+#![deny(unsafe_code)]
 
 pub mod claude;
 pub mod codex;

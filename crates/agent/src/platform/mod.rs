@@ -19,6 +19,11 @@ mod linux;
 #[cfg(not(unix))]
 mod windows;
 
+// Win32 job and thread calls; the crate's only `unsafe` (see lib.rs).
+#[cfg(not(unix))]
+#[allow(unsafe_code)]
+mod windows_job;
+
 #[cfg(target_os = "macos")]
 use macos as os;
 
@@ -32,7 +37,7 @@ use unix as os;
 #[cfg(not(unix))]
 use windows as os;
 
-pub(crate) use os::{is_executable, wrap_tree};
+pub(crate) use os::{TreeGuard, guard_tree, is_executable, wrap_tree};
 
 // Where the CLIs install, per OS (TUR-53).
 pub(crate) use os::{EXE_SUFFIXES, login_shell, search_dirs};

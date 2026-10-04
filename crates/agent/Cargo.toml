@@ -38,6 +38,12 @@ sysinfo.workspace = true
 # `FakeHarness`, for tests in this crate and in the app. Never on in a build.
 test-support = ["dep:test-support"]
 
-# No console window flashes up for a CLI started on Windows (TUR-54).
+# No console window flashes up for a CLI started on Windows, and its
+# kill-on-close Job Object (TUR-54, platform/windows_job.rs).
 [target.'cfg(windows)'.dependencies]
-windows = { workspace = true, features = ["Win32_System_Threading"] }
+windows = { workspace = true, features = [
+  "Win32_Security",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }

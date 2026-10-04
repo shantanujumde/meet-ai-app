@@ -1,6 +1,6 @@
 //! Agent CLIs on macOS: the shared unix process-group and executable code.
 
-pub(crate) use super::unix::{is_executable, wrap_tree};
+pub(crate) use super::unix::{TreeGuard, guard_tree, is_executable, wrap_tree};
 
 // Finding the CLIs (TUR-53). The lists are unchanged from before the port.
 

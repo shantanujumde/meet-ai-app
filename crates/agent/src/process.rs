@@ -494,6 +494,10 @@ fn receive_into(slot: &mut Option<Drained>, from: &Receiver<Drained>) {
 pub struct ProcessTree {
     child: Box<dyn ChildWrapper>,
     exited: bool,
+    /// Windows: the kill-on-close job, so the tree dies with the app even
+    /// without `Drop`. Dropped after this type's own `Drop` stop. `None` only
+    /// in tests.
+    _guard: Option<crate::platform::TreeGuard>,
 }
 
 impl ProcessTree {
@@ -501,10 +505,18 @@ impl ProcessTree {
     pub fn spawn(command: Command) -> io::Result<Self> {
         let mut command = CommandWrap::from(command);
         crate::platform::wrap_tree(&mut command);
-        let child = command.spawn()?;
+        let mut child = command.spawn()?;
+        let guard = match crate::platform::guard_tree(child.as_ref()) {
+            Ok(guard) => guard,
+            Err(e) => {
+                let _ = child.kill();
+                return Err(e);
+            }
+        };
         Ok(Self {
             child,
             exited: false,
+            _guard: Some(guard),
         })
     }
 
@@ -548,6 +560,20 @@ impl ProcessTree {
         if self.child.wait().is_ok() {
             self.exited = true;
         }
+    }
+}
+
+#[cfg(test)]
+impl ProcessTree {
+    /// Acts as if the app died here: no kill and no reap, only the OS
+    /// closing our handles. Returns the guard, whose drop is that close.
+    #[allow(
+        dead_code,
+        reason = "only the Windows test in platform/windows_job.rs uses it"
+    )]
+    pub(crate) fn crash(mut self) -> Option<crate::platform::TreeGuard> {
+        self.exited = true;
+        self._guard.take()
     }
 }
 

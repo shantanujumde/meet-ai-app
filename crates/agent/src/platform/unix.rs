@@ -2,12 +2,22 @@
 
 use std::path::Path;
 
-use process_wrap::std::{CommandWrap, ProcessGroup};
+use process_wrap::std::{ChildWrapper, CommandWrap, ProcessGroup};
 
 /// Puts the child at the head of a new process group of its own, so one
 /// `killpg` reaches everything it starts (`process::ProcessTree`).
 pub(crate) fn wrap_tree(command: &mut CommandWrap) {
     command.wrap(ProcessGroup::leader());
+}
+
+/// Nothing to hold on unix: a process group has no handle to close. (A
+/// crashed app leaves its group running; there is no kill-on-close here.)
+#[derive(Debug)]
+pub(crate) struct TreeGuard;
+
+/// Nothing to do on unix; the child already runs.
+pub(crate) fn guard_tree(_child: &dyn ChildWrapper) -> std::io::Result<TreeGuard> {
+    Ok(TreeGuard)
 }
 
 /// A regular file with any execute bit set.
