@@ -50,7 +50,7 @@ check: check-windows sidecar
 #
 # SETUP.md §6 lists four crates here. Three crates are deliberately left out, and
 # all for the same reason: a dependency whose build script compiles C for the
-# *target*, which needs an MSVC toolchain no Mac has. Including either would
+# *target*, which needs an MSVC toolchain no Mac has. Including any of them would
 # make this check permanently red for a reason that has nothing to do with our
 # code, and a permanently-red guard is a guard nobody reads.
 #

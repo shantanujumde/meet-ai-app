@@ -6,7 +6,7 @@
 //!
 //! * whether Apple's engine can exist at all ([`APPLE_SPEECH_UNSUPPORTED`]);
 //! * how whisper is built: Metal on macOS (`macos.rs`), CPU everywhere else
-//!   (`linux.rs`, shared by Windows and Linux). GPU off macOS is TUR-61. The
+//!   (`other.rs`, shared by Windows, Linux and any other OS). GPU off macOS is TUR-61. The
 //!   cargo features behind that are in Cargo.toml; loading is the same code.
 
 // `whisper.rs` stays where it was; only its declaration lives here, so
@@ -18,13 +18,13 @@ pub mod whisper;
 mod macos;
 
 #[cfg(not(target_os = "macos"))]
-mod linux;
+mod other;
 
 #[cfg(target_os = "macos")]
 use macos as os;
 
 #[cfg(not(target_os = "macos"))]
-use linux as os;
+use other as os;
 
 pub(crate) use os::APPLE_SPEECH_UNSUPPORTED;
 
