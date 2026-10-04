@@ -345,7 +345,7 @@ impl RecordingSession {
     }
 
     /// Run one iteration of the poll loop: check for a default-device change
-    /// (macOS and Windows — SPEC §5's AirPods-swap gate) and, if
+    /// (macOS and Windows: SPEC §5's AirPods-swap gate) and, if
     /// [`crate::segments::CHECKPOINT_INTERVAL_S`] has elapsed since the last
     /// one, run an ordinary checkpoint. The caller decides how often to call
     /// this; nothing here sleeps or blocks on a timer of its own.

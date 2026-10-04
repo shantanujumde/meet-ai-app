@@ -17,6 +17,7 @@
 use std::io::Write as _;
 use std::time::{Duration, Instant};
 
+use audio::segments::SAMPLE_RATE_HZ;
 use audio::session::default_system_source;
 use audio::{AudioSource, Channel, Error};
 
@@ -87,7 +88,7 @@ fn loopback_records_the_default_output_or_skips_without_one() {
         "capture times did not move: {first_ns} then {last_ns}"
     );
     let wall_ms = (last_ns - first_ns) as f64 / 1e6;
-    let track_ms = (last_frames - first_frames) as f64 / 16.0;
+    let track_ms = (last_frames - first_frames) as f64 / (f64::from(SAMPLE_RATE_HZ) / 1000.0);
     log(&format!(
         "{track_ms:.0} ms of track for {wall_ms:.0} ms of capture time"
     ));
@@ -103,7 +104,7 @@ fn loopback_records_the_default_output_or_skips_without_one() {
         "header agrees with position after stop"
     );
     assert!(
-        header_frames >= 16_000 * 2,
+        header_frames >= u64::from(SAMPLE_RATE_HZ) * 2,
         "{header_frames} frames for 3 s"
     );
 }
