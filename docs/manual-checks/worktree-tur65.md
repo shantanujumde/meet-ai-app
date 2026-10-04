@@ -86,3 +86,11 @@ Signed build of this branch (`just bundle-signed`). After each step, read
 4. HDMI output or a sink with no port. Expect: no banner.
 5. No sound server running. Expect: no banner, recording unaffected
    (`could not read the default output` at debug).
+
+## Not from this ticket
+
+The first CI run of PR #128 failed `rust (windows)` with
+`STATUS_ACCESS_VIOLATION` in `cargo test -p audio --features
+audio/stub-audio` (the `audio --lib` binary), after this ticket's tests had
+passed. main hit the same crash in the same step at `ecc2182` (TUR-61, run
+37217399420), before this branch existed. A rerun passed. Left as it is.
