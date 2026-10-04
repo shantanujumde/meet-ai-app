@@ -817,6 +817,11 @@ export type meet_ai_lib_engine_ModelView = {
 	/**  One line on when to pick it. */
 	goodFor: string,
 	tags: stt_model_ModelTag[],
+	/**
+	 *  The English names of the languages it understands, in OpenAI's order,
+	 *  for the (i) button (TUR-94). `["English"]` for an English-only model.
+	 */
+	languages: string[],
 	/**  Why this is the model to pick on this Mac, set on that one row only. */
 	recommended: string | null,
 };

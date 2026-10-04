@@ -13,7 +13,9 @@ import { formatBytes } from "@/lib/format";
 import { Button, Pill, Row, rowDetailVariants } from "@/ui/primitives";
 import { Radio } from "@/ui/Radio";
 import { ErrorState } from "@/ui/states";
+import { useCallback, useId, useRef, useState } from "react";
 import { DownloadProgress } from "./DownloadProgress";
+import { LanguagesButton, LanguagesPanel } from "./ModelLanguages";
 import { TAG_LABELS } from "./tags";
 
 /** One in-flight state per model, keyed by id. */
@@ -45,10 +47,15 @@ export function ModelRow({
 }) {
   const { progress, error, busy } = state;
   const downloading = Boolean(busy) && !model.installed;
+  const [languagesOpen, setLanguagesOpen] = useState(false);
+  const closeLanguages = useCallback(() => setLanguagesOpen(false), []);
+  const languagesId = useId();
+  const languagesButton = useRef<HTMLButtonElement>(null);
+  const languagesPanel = useRef<HTMLElement>(null);
 
   return (
     <Row stacked>
-      <div className="flex justify-between gap-5">
+      <div className="flex items-start justify-between gap-5">
         {/* Only a model on this Mac can be picked: a pick that is not here
             would leave the next whisper recording with nothing to load. One
             that is not here gets no radio rather than a dimmed one, because
@@ -68,6 +75,15 @@ export function ModelRow({
             <ModelFacts model={model} />
           </span>
         )}
+        {/* Outside the radio's label, so opening the list never picks the
+            model and the button's name stays out of the radio's. */}
+        <LanguagesButton
+          modelName={model.displayName}
+          open={languagesOpen}
+          panelId={languagesId}
+          buttonRef={languagesButton}
+          onToggle={() => setLanguagesOpen((open) => !open)}
+        />
         <div className="flex shrink-0 flex-col items-end gap-2">
           {inUse ? <Pill tone="ok">In use</Pill> : null}
           {model.installed ? (
@@ -79,6 +95,17 @@ export function ModelRow({
           )}
         </div>
       </div>
+
+      {languagesOpen ? (
+        <LanguagesPanel
+          id={languagesId}
+          languages={model.languages}
+          modelName={model.displayName}
+          buttonRef={languagesButton}
+          panelRef={languagesPanel}
+          onClose={closeLanguages}
+        />
+      ) : null}
 
       {model.recommended ? (
         <p className="pl-8 text-footnote text-fg-secondary contrast-more:text-fg-primary">

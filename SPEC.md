@@ -546,6 +546,12 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 A13 is held by TUR-36 ([#83](https://github.com/shantanujumde/meet-ai-app/pull/83), Windows and Linux as targets), which is not merged yet; until it is, the numbers skip from A14 to A12.
 
+### A16 — 2026-10-04 · Medium and Large whisper models; the language comes from the model (amends §2.4; TUR-94)
+
+§2.4's whisper list grows to four, in this order: `small.en-q5_1` (190 MB, English only), `medium-q5_0` (539 MB, 99 languages), `large-v3-turbo-q5_0` (574 MB, 100 languages) and `large-v3-q5_0` (1.08 GB, 100 languages), all from HF `ggerganov/whisper.cpp`; sizes and SHA-256 are pinned in `crates/stt/src/model.rs`. "Most accurate" now belongs to Large, not turbo. The recommendation is unchanged (turbo on Apple silicon with 16 GB or more, Small otherwise), and existing `transcription.model` ids keep working.
+
+Whisper was told every recording was English (`WhisperConfig::default()`'s `en`), so the multilingual models wrote Hindi as made-up English. The language is now a property of the model, `ModelSpec::whisper_language()`: `en` for `.en` models, auto-detect for every other one. Translation stays off, so speech comes out in the language it was spoken. Each model's language list (`crates/stt/src/languages.rs`, from OpenAI's `tokenizer.py`) is shown behind an (i) button in Settings. A picker to force one language is a possible follow-up.
+
 ### A15 — 2026-10-03 · The log file comes from tauri-plugin-log, not tracing-appender (amends §2's Logging row; TUR-46)
 
 §2 lists `tracing`, `tracing-subscriber`, `tracing-appender` for logging, with a rolling file at `.app/logs/`. The rolling file is now written by `tauri-plugin-log` (already in §2.2, so frontend and Rust lines share one file): `<meetings root>/.app/logs/meet-ai.log`, capped at 1 MB with one rotated copy. `tracing` events reach it through its `log` feature. `tracing-appender` was never used and is removed. Before onboarding, with no meetings root yet, the log stays in the OS log folder until the next launch. Crash files (`crash-<ts>.log`, `crash-<ts>-native.log`, at most 5) sit next to it; nothing is sent anywhere (§8.1).
