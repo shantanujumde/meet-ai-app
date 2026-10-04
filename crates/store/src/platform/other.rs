@@ -6,6 +6,16 @@ pub(crate) fn is_lock_violation(_code: i32) -> bool {
     false
 }
 
+/// `ENOSPC` on Linux: inotify's `max_user_watches` is used up. macOS's
+/// FSEvents watches a tree with one stream and never reports it.
+pub(crate) fn is_out_of_watches(code: i32) -> bool {
+    const ENOSPC: i32 = 28;
+    code == ENOSPC
+}
+
+/// Nothing to do: the dot name already hides `.app`.
+pub(crate) fn hide_app_dir(_dir: &std::path::Path) {}
+
 #[cfg(test)]
 pub(crate) mod test_lock {
     //! On Unix an open file can still be deleted, so the test makes the

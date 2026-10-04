@@ -27,6 +27,18 @@ pub(crate) fn is_lock_violation(code: i32) -> bool {
     os::is_lock_violation(code)
 }
 
+/// Whether the raw OS error `code` from the file watcher means the OS has no
+/// watches left (inotify's `max_user_watches`, reported as `ENOSPC`).
+pub(crate) fn is_out_of_watches(code: i32) -> bool {
+    os::is_out_of_watches(code)
+}
+
+/// Hide `<root>/.app` where a dot name does not (Windows). Best effort: a
+/// failure is logged, never fatal; a missing folder is left alone.
+pub(crate) fn hide_app_dir(dir: &std::path::Path) {
+    os::hide_app_dir(dir)
+}
+
 /// Test-only: make a meeting's WAVs undeletable the way this OS does it.
 #[cfg(test)]
 pub(crate) use os::test_lock;

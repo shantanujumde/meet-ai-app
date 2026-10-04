@@ -16,6 +16,8 @@ dirs.workspace = true
 # shared with `stt` (the transcript's writer) without depending on it.
 meeting-format.workspace = true
 notify.workspace = true
+# `SelfWrites` canonicalizes without the Windows `\\?\` prefix (TUR-55).
+dunce.workspace = true
 # The checked notes JSON (SPEC A11) that `agent_notes` writes out.
 prompts.workspace = true
 # `agent_notes` fingerprints each ticket it writes, to tell later whether the

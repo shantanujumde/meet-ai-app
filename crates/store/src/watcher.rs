@@ -74,7 +74,9 @@ impl SelfWrites {
 
 /// Canonical form of `path`, or `path` itself when it does not exist (yet).
 fn stored_form(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    // dunce: on Windows std's canonical form is `\\?\C:\…`, which never
+    // equals the `C:\…` paths notify reports (TUR-55).
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Lock the map, carrying on if another thread panicked while holding it. The
@@ -104,7 +106,8 @@ impl Watcher {
         self_writes: SelfWrites,
         on_change: impl Fn(Vec<PathBuf>) + Send + 'static,
     ) -> Result<Watcher, crate::Error> {
-        let root = std::fs::canonicalize(root)?;
+        let root = dunce::canonicalize(root)?;
+        crate::platform::hide_app_dir(&meeting_format::layout::app_dir(&root));
         let filter_root = root.clone();
 
         let mut debouncer = new_debouncer(
@@ -131,6 +134,10 @@ impl Watcher {
                 }
                 Err(errors) => {
                     for error in errors {
+                        if is_watch_limit(&error) {
+                            warn_watch_limit_once();
+                            continue;
+                        }
                         tracing::warn!(%error, "file watcher error");
                     }
                 }
@@ -149,7 +156,35 @@ impl Watcher {
 }
 
 fn to_io(error: notify::Error) -> crate::Error {
+    if is_watch_limit(&error) {
+        warn_watch_limit_once();
+        return crate::Error::Io(std::io::Error::other(WATCH_LIMIT_MESSAGE));
+    }
     crate::Error::Io(std::io::Error::other(error))
+}
+
+/// The one message shown when the OS runs out of watches (Linux inotify's
+/// `max_user_watches`), with the fix, instead of silently missing changes.
+pub const WATCH_LIMIT_MESSAGE: &str = "The meetings folder has more subfolders than the system \
+     lets one app watch, so changes made outside meet-ai may be missed. Raise the limit \
+     with `sudo sysctl fs.inotify.max_user_watches=524288` (add \
+     `fs.inotify.max_user_watches=524288` to /etc/sysctl.conf to keep it), then restart meet-ai.";
+
+/// Did notify give up because the OS has no watches left?
+fn is_watch_limit(error: &notify::Error) -> bool {
+    match &error.kind {
+        notify::ErrorKind::MaxFilesWatch => true,
+        notify::ErrorKind::Io(io) => io
+            .raw_os_error()
+            .is_some_and(crate::platform::is_out_of_watches),
+        _ => false,
+    }
+}
+
+/// Log [`WATCH_LIMIT_MESSAGE`] once per process, however many folders fail.
+fn warn_watch_limit_once() {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| tracing::warn!("{WATCH_LIMIT_MESSAGE}"));
 }
 
 /// Apply every filter to a batch of event paths: noise out, own writes out,
@@ -193,6 +228,18 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[test]
+    fn running_out_of_watches_is_the_watch_limit_message() {
+        let full = notify::Error::new(notify::ErrorKind::MaxFilesWatch);
+        assert!(is_watch_limit(&full));
+        let crate::Error::Io(io) = to_io(full) else {
+            panic!("not an io error")
+        };
+        assert!(io.to_string().contains("fs.inotify.max_user_watches"));
+        let other = notify::Error::new(notify::ErrorKind::PathNotFound);
+        assert!(!is_watch_limit(&other));
+    }
 
     #[test]
     fn self_write_pause_outlasts_debounce() {
@@ -250,7 +297,7 @@ mod tests {
         // tick after the event arrived; a busy runner adds more. Measured from
         // hand-over, that ate the window and our own write was reported.
         let _dir_guard = scratch_dir("selfwrites-seen");
-        let root = std::fs::canonicalize(_dir_guard.path()).unwrap();
+        let root = dunce::canonicalize(_dir_guard.path()).unwrap();
         let file = root.join("notes.md");
         let other = root.join("meeting.md");
         std::fs::write(&file, "x").unwrap();
@@ -293,7 +340,7 @@ mod tests {
 
         let file = folder.join("notes.md");
         std::fs::write(&file, "from an agent").unwrap();
-        let expected = std::fs::canonicalize(&file).unwrap();
+        let expected = dunce::canonicalize(&file).unwrap();
 
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut seen = false;
@@ -328,7 +375,7 @@ mod tests {
         let quiet = WATCH_DEBOUNCE + Duration::from_millis(500);
         while rx.recv_timeout(quiet).is_ok() {}
 
-        let expected = std::fs::canonicalize(&file).unwrap();
+        let expected = dunce::canonicalize(&file).unwrap();
         writes.note(&file);
         std::fs::write(&file, "typed by the user").unwrap();
         // An un-noted write beside it, in the same burst. It must be reported,

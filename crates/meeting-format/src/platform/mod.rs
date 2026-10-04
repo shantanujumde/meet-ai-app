@@ -26,6 +26,16 @@ pub(crate) use linux::sync_dir;
 #[cfg(windows)]
 pub(crate) use windows::sync_dir;
 
+#[cfg(windows)]
+pub(crate) use windows::rename;
+
+/// Every OS but Windows: a plain `rename(2)`. Unix renames over a file
+/// another program holds open, so there is nothing to retry.
+#[cfg(not(windows))]
+pub(crate) fn rename(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::rename(from, to)
+}
+
 // Any other unix gets the shared unix code directly.
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
 pub(crate) use unix::sync_dir;

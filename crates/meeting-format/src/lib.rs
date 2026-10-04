@@ -140,6 +140,10 @@ impl Speaker {
 /// flushes through Rust's `sync_all`. Fine for a checkpoint every five
 /// seconds or a notes save; not for a hot loop.
 ///
+/// On Windows the rename is retried for about 300 ms while another program
+/// (antivirus, the search indexer, an editor) holds the file; see
+/// `platform::rename`.
+///
 /// Does not create `path`'s folder; a caller that may be first to write there
 /// creates it.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -159,7 +163,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        std::fs::rename(&tmp, path)
+        platform::rename(&tmp, path)
     })();
     if written.is_err() {
         std::fs::remove_file(&tmp).ok();
