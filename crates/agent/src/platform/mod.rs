@@ -34,6 +34,12 @@ use windows as os;
 
 pub(crate) use os::{is_executable, kill_group, own_process_group};
 
+// Where the CLIs install, per OS (TUR-53).
+pub(crate) use os::{EXE_SUFFIXES, login_shell, search_dirs};
+
+#[cfg(test)]
+pub(crate) use os::{make_executable, search_dirs_under};
+
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use os::POSIX_SHELL;
 

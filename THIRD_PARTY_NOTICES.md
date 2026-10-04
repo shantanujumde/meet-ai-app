@@ -50,6 +50,10 @@ carries the full Apache-2.0 text, and any upstream `NOTICE` text goes into our
 - Files:
   - `crates/store/src/retention.rs` (`apply`, and the preview-then-apply
     split) from `crates/core/src/retention.rs` (`apply_audio_retention`)
+  - `crates/agent/src/detect.rs` (`find`: absolute path, then `which`, then
+    known folders with `cmd`/`exe`/`bat`) and the folder lists in
+    `crates/agent/src/platform/{macos,linux,windows}.rs`, from
+    `crates/core/src/summarize.rs` (`resolve_agent_path`)
 
 ```
 MIT License

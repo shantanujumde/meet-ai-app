@@ -7,6 +7,8 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
+# Home folder and Windows AppData folders for finding the CLIs (TUR-53).
+dirs.workspace = true
 # Output check against the run's JSON schema (SPEC A11). Same validator as
 # crates/prompts, from the one shared pin in the workspace Cargo.toml (no
 # default features, so no network client), so the two cannot drift apart.
@@ -17,6 +19,8 @@ serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+# PATH lookup that respects PATHEXT, so `claude` finds `claude.cmd` (TUR-53).
+which.workspace = true
 
 [dev-dependencies]
 # The crate's own tests use the fake harness.
