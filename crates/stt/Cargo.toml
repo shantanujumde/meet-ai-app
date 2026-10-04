@@ -25,6 +25,8 @@ hound.workspace = true
 meeting-format.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+# Total memory, for the hardware tier that picks the default model (TUR-61).
+sysinfo.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
@@ -40,15 +42,29 @@ tracing.workspace = true
 # `just check-windows` can no longer cross-check this crate from a Mac; the
 # native `rust (windows)` CI job builds and tests it instead.
 #
-# Off macOS the build is CPU only (GPU is TUR-61) and must be portable:
-# GGML_NATIVE=OFF, through cmake/force-portable-ggml.cmake (see check.yml).
+# Off macOS the build must be portable: GGML_NATIVE=OFF, through
+# cmake/force-portable-ggml.cmake (see check.yml).
+# `raw-api` re-exports whisper-rs-sys, for ggml's device list (src/hardware.rs).
 [dependencies.whisper-rs]
 workspace = true
-features = ["tracing_backend"]
+features = ["tracing_backend", "raw-api"]
 
 # `metal` is an Apple-only feature; cargo merges it into the line above.
 [target.'cfg(target_os = "macos")'.dependencies]
-whisper-rs = { workspace = true, features = ["metal", "tracing_backend"] }
+whisper-rs = { workspace = true, features = ["metal", "tracing_backend", "raw-api"] }
+
+# Vulkan on Windows x64 and Linux (TUR-61); Windows on ARM stays CPU only, as
+# in Handy (its Adreno Vulkan drivers are immature). Building it needs the
+# Vulkan SDK (headers, glslc; check.yml installs it). whisper-rs-sys 0.15 has
+# no dynamic-backends switch, so the backend is compiled in and the binary
+# links the Vulkan loader at load time: the Windows installer ships
+# vulkan-1.dll beside meet-ai.exe (tauri.windows.conf.json), and the .deb
+# depends on libvulkan1 (tauri.linux.conf.json). A machine without a Vulkan
+# driver gets no GPU device from ggml, and whisper runs on the CPU.
+# `platform/other.rs` asks ggml for its devices at run time, so no list of
+# targets is repeated in code.
+[target.'cfg(any(target_os = "linux", all(target_os = "windows", target_arch = "x86_64")))'.dependencies]
+whisper-rs = { workspace = true, features = ["vulkan", "tracing_backend", "raw-api"] }
 
 # Parakeet (TUR-62): the fast CPU engine, on ONNX Runtime. Same on every OS
 # except how ONNX Runtime itself is found:

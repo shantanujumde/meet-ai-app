@@ -36,13 +36,28 @@ pub use parakeet::{ModelCredit, ParakeetModelView, credits};
 
 /// SPEC §3.5's defaults.
 ///
-/// `DEFAULT_MODEL` is only the fallback: `crate::config::transcription` reads
+/// [`default_model`] is only the fallback: `crate::config::transcription` reads
 /// `transcription.model` (and `transcription.engine`) from `config.jsonc` and
 /// wins when it is set. `DEFAULT_LOCALE` has no config key yet —
 /// `transcription.language` is Phase 6, same as every other key in §3.5 beside
 /// `engine` and `model`.
 pub const DEFAULT_LOCALE: &str = "en-US";
-pub const DEFAULT_MODEL: &str = "large-v3-turbo-q5_0";
+/// The model `config.schema.json` documents as the default: the GPU tier's.
+/// What a machine actually defaults to is [`default_model`]; this stays for the
+/// tests that pin the schema and the discovery calls.
+#[cfg(test)]
+pub const DEFAULT_MODEL: &str = stt::model::LARGE_MODEL;
+
+/// `transcription.model` when config does not set it (TUR-61): the hardware
+/// tier's pick ([`choices::recommendation`]), or a model already downloaded
+/// when only others are. A model set in config always wins over this.
+pub fn default_model() -> String {
+    let dirs = ModelDirs::discover();
+    stt::model::default_model(choices::recommendation().model_id, |spec| {
+        dirs.installed(spec).is_some()
+    })
+    .to_string()
+}
 
 /// What the filesystem says, with no subprocess involved.
 #[derive(Debug, Clone, Serialize, specta::Type)]

@@ -16,6 +16,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::Error;
+use crate::hardware::{Gpu, Hardware};
 use crate::languages::LanguageSet;
 
 /// The Parakeet engine's model, a folder of three files (TUR-62).
@@ -201,51 +202,85 @@ pub fn find(id: &str) -> Option<&'static ModelSpec> {
     MODELS.iter().find(|model| model.id == id)
 }
 
-/// The id of the small model, picked when this Mac is short of memory.
+/// The id of the small model, picked when this machine has no GPU whisper can
+/// use, or is short of memory.
 pub const SMALL_MODEL: &str = "small.en-q5_1";
-/// The id of the large model, picked on Apple silicon with enough memory.
+/// The id of the large model, picked with a GPU whisper can use and enough
+/// memory.
 pub const LARGE_MODEL: &str = "large-v3-turbo-q5_0";
 
 /// The memory the large model is recommended from: 16 GB.
+///
+/// Initial thresholds, tune with measured numbers (TUR-61): this is the line
+/// TUR-79 drew for Apple silicon, reused for Vulkan GPUs until someone times
+/// both models on real Windows and Linux machines.
 pub const LARGE_MODEL_MIN_MEMORY: u64 = 16 * 1024 * 1024 * 1024;
 
-/// Which model to suggest for this Mac, and why, in one line.
+/// Which model to suggest for this machine, and why, in one line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recommendation {
     pub model_id: &'static str,
     pub reason: String,
 }
 
-/// The model to mark "Recommended": large turbo on Apple silicon with at least
-/// 16 GB of memory, small otherwise.
+/// The hardware tier's model (TUR-61): large turbo with a GPU whisper can use
+/// and at least [`LARGE_MODEL_MIN_MEMORY`], small otherwise. It is the model
+/// Settings marks "Recommended" and the default when `transcription.model` is
+/// not set; a model set in config always wins.
 ///
-/// Pure, with the machine passed in, so it is tested without a machine to
-/// match. The app reads `apple_silicon` from the build target and the memory
-/// from `sysinfo`.
-pub fn recommended(apple_silicon: bool, total_memory_bytes: u64) -> Recommendation {
-    let gb = gigabytes(total_memory_bytes);
-    if apple_silicon && total_memory_bytes >= LARGE_MODEL_MIN_MEMORY {
-        Recommendation {
+/// Pure, with the machine passed in, so every tier is tested on every OS. The
+/// app reads the machine once with [`crate::hardware::Hardware::detect`].
+pub fn recommended(hardware: &Hardware) -> Recommendation {
+    let machine = crate::platform::MACHINE;
+    let gb = gigabytes(hardware.total_memory_bytes);
+    match hardware.gpu {
+        Gpu::Usable if hardware.total_memory_bytes >= LARGE_MODEL_MIN_MEMORY => Recommendation {
             model_id: LARGE_MODEL,
             reason: format!(
-                "This Mac has Apple silicon and {gb} GB of memory, enough for Large turbo, close \
-                 to the most accurate model and much faster."
+                "{machine} has {} and {gb} GB of memory, enough for Large turbo, close to the \
+                 most accurate model and much faster.",
+                crate::platform::GPU_YES
             ),
-        }
-    } else if !apple_silicon {
-        Recommendation {
-            model_id: SMALL_MODEL,
-            reason: "This Mac has no Apple silicon, so the lighter model keeps up better."
-                .to_string(),
-        }
-    } else {
-        Recommendation {
+        },
+        Gpu::Usable => Recommendation {
             model_id: SMALL_MODEL,
             reason: format!(
-                "This Mac has {gb} GB of memory; the lighter model leaves room for the call."
+                "{machine} has {gb} GB of memory; the lighter model leaves room for the call."
             ),
-        }
+        },
+        Gpu::None => Recommendation {
+            model_id: SMALL_MODEL,
+            reason: format!(
+                "{machine} has {}, so the lighter model keeps up better.",
+                crate::platform::GPU_NONE
+            ),
+        },
+        Gpu::CrashedBefore => Recommendation {
+            model_id: SMALL_MODEL,
+            reason: format!(
+                "{machine}'s graphics chip crashed during transcription before, so transcription \
+                 runs on the processor, where the lighter model keeps up better."
+            ),
+        },
     }
+}
+
+/// The model to use when `transcription.model` is not set: the
+/// [`recommended`] one, unless only other models are downloaded, in which case
+/// the first of those in catalogue order. A user who downloaded a model before
+/// the tiers existed keeps using it instead of being told to download another.
+pub fn default_model(
+    recommended: &'static str,
+    is_installed: impl Fn(&ModelSpec) -> bool,
+) -> &'static str {
+    let installed = |id: &str| find(id).is_some_and(&is_installed);
+    if installed(recommended) {
+        return recommended;
+    }
+    MODELS
+        .iter()
+        .find(|spec| is_installed(spec))
+        .map_or(recommended, |spec| spec.id)
 }
 
 /// Whole gigabytes, rounded down, so a reason never claims more than the line.
@@ -518,28 +553,91 @@ mod tests {
         );
     }
 
-    #[test]
-    fn large_turbo_is_recommended_on_apple_silicon_with_16_gb_or_more() {
-        const GB: u64 = 1024 * 1024 * 1024;
-        let pick = recommended(true, 16 * GB);
-        assert_eq!(pick.model_id, LARGE_MODEL);
-        assert!(pick.reason.contains("16 GB"), "{}", pick.reason);
-        assert_eq!(recommended(true, 64 * GB).model_id, LARGE_MODEL);
+    const GB: u64 = 1024 * 1024 * 1024;
+
+    fn machine(gpu: Gpu, gb: u64) -> Hardware {
+        Hardware {
+            gpu,
+            total_memory_bytes: gb * GB,
+        }
     }
 
     #[test]
-    fn small_is_recommended_below_16_gb_or_without_apple_silicon() {
-        const GB: u64 = 1024 * 1024 * 1024;
-        let pick = recommended(true, 8 * GB);
+    fn large_turbo_is_recommended_with_a_gpu_and_16_gb_or_more() {
+        let pick = recommended(&machine(Gpu::Usable, 16));
+        assert_eq!(pick.model_id, LARGE_MODEL);
+        assert!(pick.reason.contains("16 GB"), "{}", pick.reason);
+        assert!(
+            pick.reason.contains(crate::platform::GPU_YES),
+            "{}",
+            pick.reason
+        );
+        assert_eq!(recommended(&machine(Gpu::Usable, 64)).model_id, LARGE_MODEL);
+    }
+
+    #[test]
+    fn small_is_recommended_below_16_gb_or_without_a_gpu() {
+        let pick = recommended(&machine(Gpu::Usable, 8));
         assert_eq!(pick.model_id, SMALL_MODEL);
         assert!(pick.reason.contains("8 GB"), "{}", pick.reason);
         // One byte short of the line is still under it.
-        assert_eq!(recommended(true, 16 * GB - 1).model_id, SMALL_MODEL);
-        let intel = recommended(false, 64 * GB);
-        assert_eq!(intel.model_id, SMALL_MODEL);
-        assert!(intel.reason.contains("Apple silicon"), "{}", intel.reason);
+        let short = Hardware {
+            gpu: Gpu::Usable,
+            total_memory_bytes: 16 * GB - 1,
+        };
+        assert_eq!(recommended(&short).model_id, SMALL_MODEL);
+        let no_gpu = recommended(&machine(Gpu::None, 64));
+        assert_eq!(no_gpu.model_id, SMALL_MODEL);
+        assert!(
+            no_gpu.reason.contains(crate::platform::GPU_NONE),
+            "{}",
+            no_gpu.reason
+        );
         // Unknown memory (0) is not a reason to suggest the big one.
-        assert_eq!(recommended(true, 0).model_id, SMALL_MODEL);
+        assert_eq!(recommended(&machine(Gpu::Usable, 0)).model_id, SMALL_MODEL);
+    }
+
+    #[test]
+    fn a_gpu_that_crashed_before_gets_the_small_model_and_says_why() {
+        let pick = recommended(&machine(Gpu::CrashedBefore, 64));
+        assert_eq!(pick.model_id, SMALL_MODEL);
+        assert!(pick.reason.contains("crashed"), "{}", pick.reason);
+        assert!(pick.reason.contains("processor"), "{}", pick.reason);
+    }
+
+    #[test]
+    fn every_reason_names_the_machine_the_way_this_os_does() {
+        for gpu in [Gpu::Usable, Gpu::None, Gpu::CrashedBefore] {
+            for gb in [8, 32] {
+                let reason = recommended(&machine(gpu, gb)).reason.to_lowercase();
+                assert!(
+                    reason.contains(&crate::platform::MACHINE.to_lowercase()),
+                    "{reason}"
+                );
+                assert!(!reason.contains('\u{2014}'), "em dash in {reason}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_default_model_is_the_recommended_one_unless_only_others_are_here() {
+        let none = |_: &ModelSpec| false;
+        assert_eq!(default_model(LARGE_MODEL, none), LARGE_MODEL);
+        assert_eq!(default_model(SMALL_MODEL, none), SMALL_MODEL);
+
+        // Installed before the tiers: keep it rather than ask for a download.
+        let turbo_only = |spec: &ModelSpec| spec.id == LARGE_MODEL;
+        assert_eq!(default_model(SMALL_MODEL, turbo_only), LARGE_MODEL);
+
+        // The recommended one is here: it wins over others that are too.
+        let both = |spec: &ModelSpec| spec.id == LARGE_MODEL || spec.id == SMALL_MODEL;
+        assert_eq!(default_model(LARGE_MODEL, both), LARGE_MODEL);
+        assert_eq!(default_model(SMALL_MODEL, both), SMALL_MODEL);
+
+        // Several others: the first in catalogue order.
+        let medium_and_large =
+            |spec: &ModelSpec| spec.id.starts_with("medium") || spec.id == "large-v3-q5_0";
+        assert_eq!(default_model(SMALL_MODEL, medium_and_large), "medium-q5_0");
     }
 
     #[test]

@@ -191,15 +191,18 @@ fn check(
     }
 }
 
-/// Which whisper model to mark "Recommended" on this Mac. Memory does not
-/// change while the app runs, so it is read once.
+/// Which whisper model to mark "Recommended" on this machine, and the default
+/// when config names none: the hardware tier (TUR-61). The GPU and the memory
+/// do not change while the app runs, so they are read once. Off macOS that
+/// asks ggml for its Vulkan devices, so the first call can take a moment.
 pub(super) fn recommendation() -> Recommendation {
     static PICK: OnceLock<Recommendation> = OnceLock::new();
     PICK.get_or_init(|| {
-        let apple_silicon = crate::platform::is_apple_silicon();
-        let mut system = sysinfo::System::new();
-        system.refresh_memory();
-        stt::model::recommended(apple_silicon, system.total_memory())
+        let app_dir = crate::meetings::root()
+            .ok()
+            .map(|root| meeting_format::layout::app_dir(&root));
+        let hardware = stt::hardware::Hardware::detect(app_dir.as_deref());
+        stt::model::recommended(&hardware)
     })
     .clone()
 }

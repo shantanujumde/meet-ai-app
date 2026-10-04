@@ -443,6 +443,68 @@ jobs:
         if: runner.os == 'Windows'
         run: echo 'LIBCLANG_PATH=C:/Program Files/LLVM/bin' >> "$GITHUB_ENV"
 
+      # ggml-vulkan (TUR-61), as in check.yml's rust-native job: the SDK to
+      # build it, and the Khronos loader vulkan-1.dll in src-tauri/vulkan/,
+      # which tauri.windows.conf.json bundles beside meet-ai.exe.
+      # Adapted from github.com/cjpais/Handy/.github/workflows/build.yml @ 73ab851c2b6242283759a4c101b60f0ece132f08 (MIT)
+      - name: Install the Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+
+      # The x64 loader from LunarG's Vulkan Runtime components, pinned by
+      # SHA-256, into src-tauri/vulkan/ for tauri.windows.conf.json to bundle
+      # beside meet-ai.exe (as in check.yml).
+      - name: Vulkan loader for the installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VULKAN_RT_URL: https://sdk.lunarg.com/sdk/download/1.4.309.0/windows/VulkanRT-1.4.309.0-Components.zip
+          VULKAN_RT_SHA256: 7d969f4d7b44e387667d3148f61559497c22d50cbe3d50adc9e5409afbce2df1
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'vulkan-rt.zip'
+          Invoke-WebRequest -Uri $env:VULKAN_RT_URL -OutFile $zip -MaximumRetryCount 5 -RetryIntervalSec 5
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:VULKAN_RT_SHA256) {
+            Write-Error "Vulkan Runtime zip has SHA-256 $hash, expected $env:VULKAN_RT_SHA256"
+            exit 1
+          }
+          $out = Join-Path $env:RUNNER_TEMP 'vulkan-rt'
+          Expand-Archive $zip -DestinationPath $out -Force
+          New-Item -ItemType Directory -Force src-tauri/vulkan | Out-Null
+          Copy-Item (Join-Path $out 'VulkanRT-1.4.309.0-Components/x64/vulkan-1.dll') src-tauri/vulkan/
+          Get-Item src-tauri/vulkan/vulkan-1.dll | Format-List FullName, Length
+
+      # ggml-vulkan's nested cmake build passes MAX_PATH under the workspace's
+      # target/ (MSBuild's file tracker ignores long paths), so cargo builds
+      # into D:\t, as in check.yml. A junction keeps `target/` the path the
+      # steps below read (TUR-61).
+      - name: Short target folder (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          dir="$(cygpath -u "$GITHUB_WORKSPACE")/../../../t"
+          mkdir -p "$dir"
+          dir="$(realpath "$dir")"
+          echo "Target folder: $(cygpath -m "$dir")"
+          echo "CARGO_TARGET_DIR=$(cygpath -m "$dir")" >> "$GITHUB_ENV"
+          MSYS_NO_PATHCONV=1 cmd /c mklink /J target "$(cygpath -w "$dir")"
+
+      # LunarG's list for this runner's Ubuntu release (jammy for the deb,
+      # noble for the AppImage).
+      # Adapted from github.com/cjpais/Handy/.github/workflows/build.yml @ 73ab851c2b6242283759a4c101b60f0ece132f08 (MIT)
+      - name: Install the Vulkan SDK (Linux)
+        if: runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          . /etc/os-release
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc >/dev/null
+          sudo wget -qO "/etc/apt/sources.list.d/lunarg-vulkan-1.3.290-$VERSION_CODENAME.list" "https://packages.lunarg.com/vulkan/1.3.290/lunarg-vulkan-1.3.290-$VERSION_CODENAME.list"
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y vulkan-sdk
+
       # Forces GGML_NATIVE OFF inside whisper.cpp's cmake project, as in
       # check.yml: no -march=native, so no illegal-instruction crash on a
       # user's older CPU.
@@ -454,6 +516,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-${{ matrix.name }}
+          workspaces: . -> ${{ runner.os == 'Windows' && '../../../t' || 'target' }}
           cache-on-failure: true
 
       - uses: pnpm/action-setup@v4
