@@ -33,8 +33,8 @@ PC, no running app).
    artifact. Expect: same log lines, GPU faster than CPU. `apt` installs
    `libvulkan1` with the package (new `depends`).
    Why skipped: needs a Linux machine with a GPU.
-3. **No Vulkan driver.** A Windows VM with no GPU driver (Microsoft Basic
-   Display Adapter), or a Linux machine with `mesa-vulkan-drivers` removed.
+3. **No Vulkan driver on Linux.** A Linux machine with `mesa-vulkan-drivers`
+   (and any vendor Vulkan driver) removed.
    Expect: the app starts, the log shows `devices=[]`, Settings marks Small
    "Recommended" with "has no graphics chip meet-ai can use", and a recording
    transcribes on the CPU.
