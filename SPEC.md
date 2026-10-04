@@ -546,6 +546,14 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 A13 is held by TUR-36 ([#83](https://github.com/shantanujumde/meet-ai-app/pull/83), Windows and Linux as targets), which is not merged yet; until it is, the numbers skip from A14 to A12.
 
+### A17 — 2026-10-04 · Background surfaces may carry a brand tint; accent unchanged; Lucide icons (amends §2's Icons row and the brand-tokens rule; TUR-102)
+
+The window canvas, the sidebar and the cards are no longer plain grey or black: each is a neutral nudged a few percent toward the brand (`design-system/meet-ai/tokens.css`, `--tint-*`): near-white with a faint coral-violet in light, Ink nudged toward Dusk violet in dark. The tint is on background surfaces only. `--accent` stays macOS system blue (buttons, switches, the selected sidebar row, the chosen appearance tile); white words on a filled accent control use a deeper shade of the same blue (`--accent-fill`) so they hold WCAG AA. `brand-tokens.css`'s "do not repoint --accent at a brand colour" still holds.
+
+Icons are Lucide (`lucide-react` 1.39.0, ISC), as §2 already listed: one family, 16 px, one stroke width (1.75), drawn only through `src/ui/icons.tsx`; every icon-only control has an `aria-label`.
+
+`config.jsonc` gains `appearance.theme` (`"system"` | `"light"` | `"dark"`, default `"system"`) and `appearance.glass` (default `true`). Off, the see-through sidebar and record prompt are solid; Reduce Transparency and Increase Contrast make them solid too. `design-system/meet-ai/contrast.mjs` checks every text colour on every surface in light, dark, Increase Contrast, Reduce Transparency and glass off, and `src/test/contrast.test.ts` runs it in CI.
+
 ### A16 — 2026-10-04 · Medium and Large whisper models; the language comes from the model (amends §2.4; TUR-94)
 
 §2.4's whisper list grows to four, in this order: `small.en-q5_1` (190 MB, English only), `medium-q5_0` (539 MB, 99 languages), `large-v3-turbo-q5_0` (574 MB, 100 languages) and `large-v3-q5_0` (1.08 GB, 100 languages), all from HF `ggerganov/whisper.cpp`; sizes and SHA-256 are pinned in `crates/stt/src/model.rs`. "Most accurate" now belongs to Large, not turbo. The recommendation is unchanged (turbo on Apple silicon with 16 GB or more, Small otherwise), and existing `transcription.model` ids keep working.

@@ -229,6 +229,16 @@ const S = {
     "var(--surface-canvas)",
     "color-mix(in srgb, var(--status-warning) 8%, transparent)",
   ],
+  "danger icon square on card": [
+    "var(--surface-canvas)",
+    "var(--surface-card)",
+    "color-mix(in srgb, var(--status-danger-text) 12%, transparent)",
+  ],
+  "warning icon square on card": [
+    "var(--surface-canvas)",
+    "var(--surface-card)",
+    "color-mix(in srgb, var(--status-warning-text) 14%, transparent)",
+  ],
   "accent fill": ["var(--accent-fill)"],
   "accent hover": ["var(--accent-hover)"],
   "danger fill": ["var(--status-danger-fill)"],
@@ -244,7 +254,12 @@ const STATUS_TEXT = ["danger", "warning", "success", "recording"].map(
 /** [text, surface, minimum, why]. 4.5 is AA for body text; 3 for graphics. */
 const PAIRS = [
   ...Object.keys(S)
-    .filter((s) => !/fill|hover$|speaker/.test(s) || s === "sidebar row hover" || s === "button hover on card")
+    .filter(
+      (s) =>
+        !/fill|hover$|speaker|icon square/.test(s) ||
+        s === "sidebar row hover" ||
+        s === "button hover on card",
+    )
     .flatMap((s) => TEXT.map((t) => [t, s, 4.5, "text"])),
   ...["canvas", "content", "card", "chosen tile on card", "sidebar"].map((s) => [
     "var(--accent-text)",
@@ -269,6 +284,8 @@ const PAIRS = [
     3,
     "row and sidebar icons",
   ]),
+  ["var(--status-danger-text)", "danger icon square on card", 3, "error icon"],
+  ["var(--status-warning-text)", "warning icon square on card", 3, "warning icon"],
   ...["speaker 1", "speaker 2"].map((s) => [
     "var(--text-on-accent)",
     s,

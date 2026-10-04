@@ -13,7 +13,16 @@ Files:
 |---|---|
 | `tokens.css` | Three token layers: primitive, semantic, component |
 | `glass.css` | Glass recipes, scroll edges, accessibility fallbacks |
+| `contrast.mjs` | WCAG check of every text colour on every surface, all modes |
+| `specimen.html` | The tokens and components, live, with theme and glass toggles |
 | `MASTER.md` | Rules, component specs, and what not to do |
+
+**Look (TUR-102).** Calm and roomy, after a Mac settings window: a glass
+sidebar, a big bold page title with lots of space, rounded cards a step off
+a brand-tinted canvas, one row pattern, one accent, rounded corners
+everywhere. Light or dark is `<html data-theme>`, always set at runtime by
+`src/lib/appearance.ts` from the saved choice (System follows the OS);
+`data-glass="off"` makes every see-through surface solid.
 
 ---
 
@@ -87,6 +96,21 @@ window frame.
 **Base size is 13px, not 16px.** macOS is a pointer platform with a shorter
 viewing distance than the web assumes. Web habits will make the app look inflated.
 
+**Brand tint on backgrounds only (TUR-102).** The canvas, sidebar and card
+surfaces are neutrals nudged a few percent toward the brand: near-white with
+a faint coral-violet in light, Ink nudged toward Dusk violet in dark
+(`--tint-*` in tokens.css, each with its mix written beside it). The accent
+stays macOS system blue. Never tint text, and never repoint `--accent`.
+
+**Every text colour holds AA on every surface.** `node
+design-system/meet-ai/contrast.mjs` composes each surface over its backdrop
+and checks every text token on it in light, dark, Increase Contrast, Reduce
+Transparency and glass off; `src/test/contrast.test.ts` fails CI if one pair
+drops under 4.5:1 (3:1 for icons and the switch). White text never sits on the
+raw system blue (4.0:1): filled controls with words use `--accent-fill`, words
+in the accent use `--accent-text`, and the status words use the
+`--status-*-text` shades.
+
 ---
 
 ## 3. Window setup
@@ -153,17 +177,67 @@ ticks: `font-variant-numeric: tabular-nums`.
 
 ## 5. Component specs
 
-### 5.1 Sidebar — meeting list
+### 5.1 Sidebar
 
-Native vibrancy carries this surface. It gets **no** `backdrop-filter` of its
-own, because the window material is already behind it.
+See-through glass on macOS: `--surface-sidebar` (the sidebar tint at 84%)
+over the native window material, a tone off the content. It gets **no**
+`backdrop-filter` of its own, because the window material is already the blur.
+Solid (`--surface-sidebar-solid`) with glass off, Reduce Transparency, Increase
+Contrast, and on Windows and Linux, where no material sits behind it.
 
-- Width `--sidebar-w` (228px), resizable between 180 and 320px
-- Row height `--sidebar-row-h` (28px), radius `--radius-chip`
-- Hover `--sidebar-row-hover`, selected `--sidebar-row-active`
-- Selection is marked by fill **and** a leading accent bar, never by color alone
-- Row content: meeting title (13px, truncates), relative time (11px, tertiary)
-- Recording meetings show the pulsing dot, not a red title
+- Width `--sidebar-w` (240px), padding `--sidebar-pad`
+- A rounded find box at the top (capsule, `--surface-control`, search icon)
+- Pages grouped under small grey headings (11px semibold, tertiary) that fold
+  shut: a button with a chevron and `aria-expanded`
+- Every row is a 16px accent line icon (`--accent-text`) and a name. Height
+  `--sidebar-row-h` (30px), radius `--sidebar-row-radius`, hover
+  `--sidebar-row-hover`
+- The current page is a solid `--accent-fill` pill with white words and icon,
+  and `aria-current`, never colour alone
+- Meeting rows: title (13px medium, truncates), date and state (11px)
+- Recording meetings show the dot and the word, not a red title
+
+### 5.1a Title bar
+
+Slim, opaque (`--titlebar-fill` is the canvas), `--titlebar-h`: traffic-light
+inset, back and forward arrows (icon buttons named "Back" and "Forward",
+disabled when there is nowhere to go), the window title, the record control.
+
+### 5.1b Pages, cards and the row pattern
+
+- Page: big bold title (`--text-title1`, 700), `--page-pad-top` /
+  `--page-pad-x` around it, `--page-gap` between sections, max `--page-max`
+- Section: a 15px semibold heading over one card, `--section-gap` between
+  them (`SettingsSection`, a named region)
+- Card: `--surface-card`, radius `--card-radius` (16px), no outline (Increase
+  Contrast adds one). Rows sit inside `--card-pad-x`
+- **One row pattern everywhere:** icon in a `--icon-box` (28px) rounded square
+  (`--accent-glass` fill, `--accent-text` icon) → bold name (13px semibold)
+  → one grey line (11px, `--text-secondary`) → the control on the right.
+  `--row-min-h` (52px), `--row-pad-y` top and bottom, a 0.5px `--separator`
+  hairline between rows of the same card (`SettingsRow`, or `Row` +
+  `RowLabel icon`)
+- Secondary buttons are plain grey (`--surface-control`, hover
+  `--surface-control-hover`); the one primary is `--accent-fill`
+
+### 5.1c Icons
+
+Lucide (`lucide-react`), one family, **16px, stroke 1.75**, always through
+`Icon` / `IconSquare` in `src/ui/icons.tsx` (Lucide's own defaults are 24 at
+2). Icons sit beside words and are hidden from VoiceOver; a control that is
+only an icon is an `IconButton` with a required `label`. Use them on every
+sidebar row, every settings row, and buttons whose action is clear.
+
+### 5.1d Switch and the appearance picker
+
+- Switch: `--switch-w` × `--switch-h` (44 × 24), knob `--switch-knob` (20),
+  on = `--accent`, off = `--surface-control-hover`, the knob's side says the
+  state as well as the fill
+- Appearance: three picture tiles (System split corner to corner, Light,
+  Dark), each a drawing of a window in that look from the fixed
+  `--preview-*` tokens. A native radio group; the chosen tile gets an accent
+  outline, an `--accent-glass` fill and its name in `--accent-text`. A grey
+  note under it, then the "See-through glass" switch row
 
 ### 5.2 Floating toolbar
 
@@ -251,7 +325,12 @@ These are settings real users have switched on, not hypotheticals. Glass is
 decoration and the interface has to survive losing all of it.
 
 - **Reduce Transparency** replaces every blur with an opaque surface. Handled in
-  `glass.css`. Test it. On macOS: System Settings, Accessibility, Display.
+  `glass.css` and the token blocks in `tokens.css`. Test it. On macOS: System
+  Settings, Accessibility, Display. WebKit may not report the media query; the
+  native material turns solid there by itself, and the in-app glass switch
+  does the same for the app's own surfaces.
+- **Glass off** (Settings → Appearance, `appearance.glass: false`) sets
+  `data-glass="off"`: the sidebar and the record prompt turn solid.
 - **Increase Contrast** turns rims into solid borders and collapses secondary
   text into primary.
 - **Reduce Motion** removes travel and the recording pulse, keeps every state.
@@ -309,6 +388,9 @@ competes with transcription for GPU time.
 - [ ] Tested with Reduce Motion on
 - [ ] Tested in light and dark, against both a bright and a dark backdrop window
 - [ ] Body text measures 4.5:1 against the composed backdrop
+      (`node design-system/meet-ai/contrast.mjs` passes)
+- [ ] Icons through `Icon` / `IconSquare`, 16px, stroke 1.75
+- [ ] Rows follow the one row pattern; groups are cards
 - [ ] Every icon-only control has an accessible name
 - [ ] Full keyboard path, including record and stop
 - [ ] Focus rings visible everywhere and never clipped by a glass rim
