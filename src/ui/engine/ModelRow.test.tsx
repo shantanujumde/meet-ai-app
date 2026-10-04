@@ -2,8 +2,8 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import type { ModelView } from "@/ipc/types";
-import { ModelRow } from "./ModelRow";
 import { ACCURACY_NOTE } from "./ModelLanguages";
+import { ModelRow } from "./ModelRow";
 
 /** The (i) button on a whisper model row (TUR-94). */
 
@@ -67,7 +67,9 @@ describe("ModelRow: supported languages", () => {
   test("an English-only model says so", async () => {
     const user = userEvent.setup();
     renderRow(model({ displayName: "Small (English only)", languages: ["English"] }));
-    await user.click(screen.getByRole("button", { name: "Supported languages for Small (English only)" }));
+    await user.click(
+      screen.getByRole("button", { name: "Supported languages for Small (English only)" }),
+    );
     expect(screen.getByText("English only")).toBeInTheDocument();
   });
 

@@ -8,12 +8,12 @@
  * `config.jsonc`.
  */
 
+import { useCallback, useId, useRef, useState } from "react";
 import type { ModelProgress, ModelView, UiError } from "@/ipc/types";
 import { formatBytes } from "@/lib/format";
 import { Button, Pill, Row, rowDetailVariants } from "@/ui/primitives";
 import { Radio } from "@/ui/Radio";
 import { ErrorState } from "@/ui/states";
-import { useCallback, useId, useRef, useState } from "react";
 import { DownloadProgress } from "./DownloadProgress";
 import { LanguagesButton, LanguagesPanel } from "./ModelLanguages";
 import { TAG_LABELS } from "./tags";

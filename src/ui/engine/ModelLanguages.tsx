@@ -15,7 +15,8 @@ import { type MouseEvent as ReactMouseEvent, type RefObject, useEffect } from "r
 
 export const ACCURACY_NOTE =
   "Accuracy varies a lot by language. It is best for English and widely spoken languages, weaker for less common ones.";
-export const LANGUAGES_SOURCE_URL = "https://github.com/openai/whisper#available-models-and-languages";
+export const LANGUAGES_SOURCE_URL =
+  "https://github.com/openai/whisper#available-models-and-languages";
 
 /**
  * Open the source in the user's browser. The webview does not follow a
