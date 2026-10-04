@@ -14,6 +14,7 @@ import { COPIED_RESET_MS } from "@/lib/constants";
 import { Button, Pill, Row, RowValue, rowDetailVariants } from "@/ui/primitives";
 import { Radio } from "@/ui/Radio";
 import { Checking } from "@/ui/states";
+import { terminalName } from "./terminalName";
 
 export function AgentOption({
   group,
@@ -87,7 +88,9 @@ export function SignInCommand({ command }: { command: string }) {
 
   return (
     <div className="flex flex-col gap-2 pl-8">
-      <p className="text-footnote text-fg-secondary">Run this in Terminal, then check again:</p>
+      <p className="text-footnote text-fg-secondary">
+        Run this in {terminalName()}, then check again:
+      </p>
       <div className="flex items-center gap-4">
         <code className="min-w-0 flex-1 select-all wrap-anywhere rounded-control border-[0.5px] border-separator bg-glass-sunken px-4 py-2 font-mono text-caption1 text-fg-primary">
           {command}
