@@ -383,5 +383,41 @@ git rm -q THIRD_PARTY_NOTICES.md
 expect fail "R9: no THIRD_PARTY_NOTICES.md fails" src/a.rs \
   "// Adapted from github.com/acme/library/a.rs @ $sha (MIT)"
 
+
+# R11: no em dash in user-facing text (TUR-92).
+expect11() {
+  local want=$1 name=$2 file=$3 content=$4 out code
+  ran=$((ran + 1))
+  mkdir -p "$(dirname "$file")"
+  printf '%s\n' "$content" >"$file"
+  out=$(scripts/quality-rules.sh "$file" 2>&1)
+  code=$?
+  rm -f "$file"
+  if [ "$want" = pass ] && [ "$code" -eq 0 ] && ! printf '%s' "$out" | grep -q ' R11 '; then
+    echo "ok   $name"
+  elif [ "$want" = fail ] && [ "$code" -eq 2 ] && printf '%s' "$out" | grep -q ' R11 ERROR: '; then
+    echo "ok   $name"
+  else
+    echo "FAIL $name: wanted $want, got exit $code"
+    [ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/     /'
+    failed=$((failed + 1))
+  fi
+}
+expect11 fail "R11: em dash in JSX text" src/ui/A.tsx '<p>Saved — all good</p>'
+expect11 fail "R11: em dash in a TS string" src/lib/a.ts 'const s = "a — b";'
+expect11 fail "R11: em dash in a src-tauri string" src-tauri/src/a.rs 'const S: &str = "a — b";'
+expect11 pass "R11: em dash in a // comment" src/lib/a.ts 'const s = 1; // a — b'
+expect11 pass "R11: em dash in a /* */ block" src/lib/a.ts '/*
+ * a — b
+ */
+const s = 1;'
+expect11 pass "R11: em dash in a JSX comment" src/ui/A.tsx '{/* a — b */}'
+expect11 fail "R11: // in a URL is not a comment" src/lib/a.ts 'const s = "https://x.example a — b";'
+expect11 pass "R11: test files are skipped" src/ui/A.test.tsx 'it("a — b", () => {});'
+expect11 pass "R11: crates are not checked" crates/x/src/a.rs 'const S: &str = "a — b";'
+expect11 pass "R11: Rust test module is skipped" src-tauri/src/a.rs '#[cfg(test)]
+mod tests {
+    const S: &str = "a — b";
+}'
 echo "$((ran - failed))/$ran passed"
 [ "$failed" -eq 0 ]
