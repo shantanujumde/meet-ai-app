@@ -1,6 +1,6 @@
 /**
  * Settings: which speech engine this Mac will use, the models it can
- * download, which agent writes the notes, and where meetings are written.
+ * download, the audio settings, which agent writes the notes, and where meetings are written.
  *
  * The agent card is {@link AgentSetup}, shared with onboarding's last step.
  *
