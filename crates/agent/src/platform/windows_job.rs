@@ -127,24 +127,13 @@ fn resume_threads(process: HANDLE) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+
+    use test_support::{process_is_gone, wait_for_pid_file};
 
     use crate::process::ProcessTree;
 
-    fn is_gone(pid: u32) -> bool {
-        use sysinfo::{Pid, ProcessesToUpdate, System};
-        let pid = Pid::from_u32(pid);
-        let mut system = System::new();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
-            if system.process(pid).is_none() {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        false
-    }
+    const WITHIN: Duration = Duration::from_secs(5);
 
     /// The app dying without running any `Drop` still kills the child and
     /// its grandchild: closing the kill-on-close job is all it takes.
@@ -161,24 +150,20 @@ mod tests {
             .stderr(Stdio::null());
         let tree = ProcessTree::spawn(command).unwrap();
         let child = tree.id();
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while std::fs::read_to_string(&pid_file).map_or(true, |s| s.is_empty())
-            && Instant::now() < deadline
-        {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        let grandchild: u32 = std::fs::read_to_string(&pid_file)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
+        let grandchild = wait_for_pid_file(&pid_file);
 
         let guard = tree.crash().unwrap();
-        assert!(!is_gone(child), "nothing has killed the child yet");
-        drop(guard);
-        assert!(is_gone(child), "child {child} is still running");
         assert!(
-            is_gone(grandchild),
+            !process_is_gone(child, Duration::ZERO),
+            "nothing has killed the child yet"
+        );
+        drop(guard);
+        assert!(
+            process_is_gone(child, WITHIN),
+            "child {child} is still running"
+        );
+        assert!(
+            process_is_gone(grandchild, WITHIN),
             "grandchild {grandchild} is still running"
         );
     }

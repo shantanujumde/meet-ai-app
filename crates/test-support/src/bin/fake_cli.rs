@@ -10,12 +10,19 @@
 //! copy of this program at a path a test hands to the code under test can be
 //! configured without touching the test process's environment.
 //!
+//! `profiles` picks a set of settings by the arguments, one per line:
+//! `<word sequence>\t<profile>`. The first line whose words appear, in order
+//! and next to each other, in the arguments wins, and from then on setting
+//! `x` is read as `<profile>.x` first, then as `x`. For a CLI with
+//! subcommands that behave differently (`codex mcp list` vs `codex exec`).
+//!
 //! In order, each step only when its setting is there:
 //!
 //! - `touch`: creates this file.
 //! - `log_dir`: writes `args.log` (the arguments joined by spaces, then a
-//!   newline), `cwd.log` (the working folder, then how many entries it holds)
-//!   and `stdin.log` (all of stdin) into this folder. Without it, stdin is
+//!   newline), `argv.log` (one argument per line), `cwd.log` (the working
+//!   folder, then how many entries it holds) and `stdin.log` (all of stdin)
+//!   into this folder. Without it, stdin is
 //!   read to its end and dropped, or echoed to stdout when `echo_stdin` is
 //!   `1`.
 //! - `log_append`: appends the arguments joined by spaces, then a newline, to
@@ -25,7 +32,9 @@
 //!   `<prefix>\t<code>\t<stdout>\t<stderr>`, where `\n` in the two texts is
 //!   a newline. The first line whose prefix starts the arguments joined by
 //!   spaces wins (`*` matches anything) and replaces `stdout`, `stderr` and
-//!   `code`; no match exits 7.
+//!   `code`; no match exits 7. A code that is not a number is an error.
+//! - `save_file_after`: copies the file named by the argument after this flag
+//!   to `<log_dir>/saved_file.log`.
 //! - `print_cwd`: `1` prints the working folder and its entry count.
 //! - `grandchild_pid_file`: starts a copy of itself that sleeps 30 s and
 //!   writes that copy's pid to this file. With `grandchild_keeps_stdout` set
@@ -34,6 +43,9 @@
 //! - `sleep`: sleeps this many seconds (fractions allowed).
 //! - `stdout_pad`: prints this many `0` bytes before `stdout`.
 //! - `stdout`: printed as-is.
+//! - `reply_file` with `reply_file_after`: writes `reply_file` to the path
+//!   given after the `reply_file_after` flag.
+//! - `echo_stdin_stderr`: `1` prints stdin, then a newline, on stderr.
 //! - `stderr_pad`: prints this many `a` before `stderr`.
 //! - `stderr`: printed as-is on stderr.
 //! - `code`: the exit code (default 0).
@@ -61,9 +73,10 @@ fn main() -> ExitCode {
 }
 
 fn run() -> io::Result<u8> {
-    let settings = Settings::new()?;
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let args = args.join(" ");
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let mut settings = Settings::new()?;
+    settings.pick_profile(&argv);
+    let args = argv.join(" ");
 
     if let Some(path) = settings.get("touch") {
         std::fs::write(path, "")?;
@@ -74,6 +87,8 @@ fn run() -> io::Result<u8> {
     if let Some(dir) = settings.get("log_dir") {
         let dir = PathBuf::from(dir);
         std::fs::write(dir.join("args.log"), format!("{args}\n"))?;
+        let lines: String = argv.iter().map(|a| format!("{a}\n")).collect();
+        std::fs::write(dir.join("argv.log"), lines)?;
         std::fs::write(dir.join("cwd.log"), cwd_report()?)?;
         std::fs::write(dir.join("stdin.log"), &stdin)?;
     }
@@ -87,7 +102,7 @@ fn run() -> io::Result<u8> {
     }
 
     let case = match settings.get("cases") {
-        Some(cases) => match pick_case(&cases, &args) {
+        Some(cases) => match pick_case(&cases, &args)? {
             Some(case) => Some(case),
             None => return Ok(7),
         },
@@ -98,6 +113,15 @@ fn run() -> io::Result<u8> {
         && expected != args
     {
         return Ok(7);
+    }
+
+    if let Some(flag) = settings.get("save_file_after") {
+        let dir = settings
+            .get("log_dir")
+            .ok_or_else(|| io::Error::other("save_file_after needs log_dir"))?;
+        if let Some(from) = value_after(&argv, &flag) {
+            std::fs::copy(from, Path::new(&dir).join("saved_file.log"))?;
+        }
     }
 
     let mut out = io::stdout().lock();
@@ -142,7 +166,17 @@ fn run() -> io::Result<u8> {
     }
     out.flush()?;
 
+    if let (Some(flag), Some(text)) = (settings.get("reply_file_after"), settings.get("reply_file"))
+        && let Some(to) = value_after(&argv, &flag)
+    {
+        std::fs::write(to, text)?;
+    }
+
     let mut err = io::stderr().lock();
+    if settings.get("echo_stdin_stderr").as_deref() == Some("1") {
+        err.write_all(&stdin)?;
+        err.write_all(b"\n")?;
+    }
     if let Some(n) = settings.number("stderr_pad")? {
         write_repeated(&mut err, b'a', n)?;
     }
@@ -172,22 +206,36 @@ struct Case {
     stderr: String,
 }
 
-/// The first case whose prefix starts `args`.
-fn pick_case(cases: &str, args: &str) -> Option<Case> {
-    cases.lines().find_map(|line| {
+/// The first case whose prefix starts `args`. A case line with an exit code
+/// that is not a number is an error naming that line, so a typo in a test
+/// does not pass for a CLI failure.
+fn pick_case(cases: &str, args: &str) -> io::Result<Option<Case>> {
+    for line in cases.lines() {
         let mut parts = line.split('\t');
-        let prefix = parts.next()?;
+        let Some(prefix) = parts.next() else { continue };
         if prefix != "*" && !args.starts_with(prefix) {
-            return None;
+            continue;
         }
-        let code = parts.next().unwrap_or("0").trim().parse().unwrap_or(101);
+        let code = parts.next().unwrap_or("0").trim();
+        let code = code.parse().map_err(|e| {
+            io::Error::other(format!(
+                "bad exit code {code:?} in cases line {line:?}: {e}"
+            ))
+        })?;
         let unescape = |s: Option<&str>| s.unwrap_or("").replace("\\n", "\n");
-        Some(Case {
+        return Ok(Some(Case {
             code,
             stdout: unescape(parts.next()),
             stderr: unescape(parts.next()),
-        })
-    })
+        }));
+    }
+    Ok(None)
+}
+
+/// The argument right after `flag`, if `flag` is there.
+fn value_after<'a>(argv: &'a [String], flag: &str) -> Option<&'a str> {
+    let at = argv.iter().position(|a| a == flag)?;
+    argv.get(at + 1).map(String::as_str)
 }
 
 /// The working folder, canonical, then how many entries it holds.
@@ -212,6 +260,8 @@ fn write_repeated(to: &mut impl Write, byte: u8, n: usize) -> io::Result<()> {
 /// folder next to this program.
 struct Settings {
     dir: Option<PathBuf>,
+    /// The profile `profiles` picked, if any.
+    profile: Option<String>,
 }
 
 impl Settings {
@@ -220,10 +270,34 @@ impl Settings {
         let dir = config_dir(&exe);
         Ok(Self {
             dir: dir.filter(|d| d.is_dir()),
+            profile: None,
         })
     }
 
+    /// Picks the profile whose words appear together in `argv`.
+    fn pick_profile(&mut self, argv: &[String]) {
+        let Some(profiles) = self.raw("profiles") else {
+            return;
+        };
+        self.profile = profiles.lines().find_map(|line| {
+            let (words, name) = line.split_once('\t')?;
+            let words: Vec<&str> = words.split(' ').collect();
+            argv.windows(words.len())
+                .any(|w| w.iter().zip(&words).all(|(a, b)| a == b))
+                .then(|| name.trim().to_owned())
+        });
+    }
+
     fn get(&self, name: &str) -> Option<String> {
+        if let Some(profile) = &self.profile
+            && let Some(value) = self.raw(&format!("{profile}.{name}"))
+        {
+            return Some(value);
+        }
+        self.raw(name)
+    }
+
+    fn raw(&self, name: &str) -> Option<String> {
         if let Ok(value) = std::env::var(format!("FAKE_{}", name.to_uppercase())) {
             return Some(value);
         }

@@ -525,14 +525,17 @@ impl ProcessTree {
         self.child.id()
     }
 
+    /// The child's stdin, if it was piped and not taken yet.
     pub fn take_stdin(&mut self) -> Option<ChildStdin> {
         self.child.stdin().take()
     }
 
+    /// The child's stdout, if it was piped and not taken yet.
     pub fn take_stdout(&mut self) -> Option<ChildStdout> {
         self.child.stdout().take()
     }
 
+    /// The child's stderr, if it was piped and not taken yet.
     pub fn take_stderr(&mut self) -> Option<ChildStderr> {
         self.child.stderr().take()
     }
@@ -637,31 +640,9 @@ mod tests {
             run_cli(NAME, fake(settings), job, dir.path())
         }
 
-        /// The pid `fake-cli` wrote for the grandchild it started.
-        fn grandchild_pid(pid_file: &Path) -> u32 {
-            std::fs::read_to_string(pid_file)
-                .unwrap()
-                .trim()
-                .parse()
-                .unwrap()
-        }
-
-        /// Waits up to two seconds for the process with `pid` to be gone. A
-        /// zombie waiting for its new parent to reap it counts as gone.
+        /// Whether `pid` is gone within two seconds (`test_support`).
         fn is_gone(pid: u32) -> bool {
-            use sysinfo::{Pid, ProcessStatus, ProcessesToUpdate, System};
-            let pid = Pid::from_u32(pid);
-            let mut system = System::new();
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while Instant::now() < deadline {
-                system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
-                match system.process(pid) {
-                    None => return true,
-                    Some(p) if p.status() == ProcessStatus::Zombie => return true,
-                    Some(_) => thread::sleep(Duration::from_millis(20)),
-                }
-            }
-            false
+            test_support::process_is_gone(pid, Duration::from_secs(2))
         }
 
         #[test]
@@ -790,7 +771,7 @@ mod tests {
                 started.elapsed()
             );
 
-            let pid = grandchild_pid(&pid_file);
+            let pid = test_support::wait_for_pid_file(&pid_file);
             assert!(is_gone(pid), "grandchild {pid} is still running");
         }
 
@@ -805,11 +786,7 @@ mod tests {
             let watched = pid_file.clone();
             let canceller = thread::spawn(move || {
                 // Cancel only once the grandchild is really there.
-                let deadline = Instant::now() + Duration::from_secs(5);
-                while !watched.exists() && Instant::now() < deadline {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                thread::sleep(Duration::from_millis(50));
+                test_support::wait_for_pid_file(&watched);
                 handle.cancel();
             });
             let pid_path = pid_file.display().to_string();
@@ -818,7 +795,7 @@ mod tests {
             canceller.join().unwrap();
             assert!(matches!(err, AgentError::Cancelled), "{err:?}");
 
-            let pid = grandchild_pid(&pid_file);
+            let pid = test_support::wait_for_pid_file(&pid_file);
             assert!(is_gone(pid), "grandchild {pid} is still running");
         }
 
@@ -872,7 +849,7 @@ mod tests {
                 "{:?}",
                 started.elapsed()
             );
-            let pid = grandchild_pid(&pid_file);
+            let pid = test_support::wait_for_pid_file(&pid_file);
             assert!(is_gone(pid), "grandchild {pid} is still running");
         }
 
@@ -921,7 +898,7 @@ mod tests {
             canceller.join().unwrap();
             assert!(matches!(err, AgentError::Cancelled), "{err:?}");
             assert!(started.elapsed() < OUTPUT_GRACE, "{:?}", started.elapsed());
-            let pid = grandchild_pid(&pid_file);
+            let pid = test_support::wait_for_pid_file(&pid_file);
             assert!(is_gone(pid), "grandchild {pid} is still running");
         }
 
@@ -950,14 +927,9 @@ mod tests {
                 .stderr(Stdio::null());
             let tree = ProcessTree::spawn(command).unwrap();
             let child = tree.id();
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while !pid_file.exists() && Instant::now() < deadline {
-                thread::sleep(Duration::from_millis(10));
-            }
-            thread::sleep(Duration::from_millis(50));
+            let pid = test_support::wait_for_pid_file(&pid_file);
             drop(tree);
             assert!(is_gone(child), "child {child} is still running");
-            let pid = grandchild_pid(&pid_file);
             assert!(is_gone(pid), "grandchild {pid} is still running");
         }
 

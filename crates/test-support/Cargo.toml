@@ -8,6 +8,8 @@ version.workspace = true
 publish = false
 
 [dependencies]
+# `process_is_gone`: one way to check a pid on every OS (TUR-54).
+sysinfo.workspace = true
 
 # The pretend agent CLI the agent tests run on every OS (TUR-54). `build.rs`
 # also compiles it into OUT_DIR, which is the copy the tests use; see there.

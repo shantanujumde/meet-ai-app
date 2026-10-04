@@ -4,6 +4,7 @@
 //! "CLI" run on Windows too. See the program's own header for its settings.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// The `fake-cli` program `build.rs` compiled for this test run.
 ///
@@ -54,6 +55,48 @@ impl FakeCli {
         // quality: allow-unwrap test helper: a failure here should fail the test
         std::fs::write(self.config.join(name), value).expect("could not write a fake CLI setting");
         self
+    }
+}
+
+/// Waits up to 10 s for `fake-cli` to write its grandchild's pid to
+/// `pid_file` (setting `grandchild_pid_file`), and returns it.
+///
+/// # Panics
+///
+/// When no pid shows up in time.
+pub fn wait_for_pid_file(pid_file: &Path) -> u32 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        // An empty file is one `fake-cli` has not finished writing.
+        if let Ok(text) = std::fs::read_to_string(pid_file)
+            && let Ok(pid) = text.trim().parse()
+        {
+            return pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no pid in {} after 10 s",
+            pid_file.display()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Whether the process `pid` is gone, waiting up to `within` for it to go. A
+/// zombie (unix: dead, waiting for its new parent to reap it) counts as gone.
+pub fn process_is_gone(pid: u32, within: Duration) -> bool {
+    use sysinfo::{Pid, ProcessStatus, ProcessesToUpdate, System};
+    let pid = Pid::from_u32(pid);
+    let mut system = System::new();
+    let deadline = Instant::now() + within;
+    loop {
+        system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+        match system.process(pid) {
+            None => return true,
+            Some(p) if p.status() == ProcessStatus::Zombie => return true,
+            Some(_) if Instant::now() >= deadline => return false,
+            Some(_) => std::thread::sleep(Duration::from_millis(20)),
+        }
     }
 }
 

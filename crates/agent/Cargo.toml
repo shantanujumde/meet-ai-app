@@ -31,8 +31,6 @@ test-support = { workspace = true, optional = true }
 [dev-dependencies]
 # The crate's own tests use the fake harness.
 agent = { path = ".", features = ["test-support"] }
-# Checks a killed grandchild is really gone, the same way on every OS.
-sysinfo.workspace = true
 
 [features]
 # `FakeHarness`, for tests in this crate and in the app. Never on in a build.
