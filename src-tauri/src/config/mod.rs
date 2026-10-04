@@ -61,11 +61,14 @@ mod file;
 mod hooks_section;
 // TUR-76: `app.show_in_dock_when_closed`.
 mod app_section;
+// TUR-102: `appearance.theme` and `appearance.glass`.
+mod appearance_section;
 #[cfg(test)]
 mod transcription_tests;
 
 pub use agent_section::ConfigError;
 pub use app_section::{AppConfig, app, set_app};
+pub use appearance_section::{AppearanceConfig, Theme, appearance, set_appearance};
 pub use audio_mic::{set_use_builtin_mic_with_bluetooth, use_builtin_mic_with_bluetooth};
 pub use audio_section::Policy as RetentionPolicy;
 pub use audio_section::audio;

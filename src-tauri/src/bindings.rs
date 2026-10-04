@@ -103,6 +103,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::detection::popup::answer_prompt_popup,
             crate::autostart::start_at_login,
             crate::autostart::set_start_at_login,
+            crate::appearance::appearance_settings,
+            crate::appearance::set_appearance,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)
