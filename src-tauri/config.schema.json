@@ -80,7 +80,7 @@
         },
         "warn_no_headphones": {
           "type": "boolean",
-          "description": "Warn when recording without headphones, since speakers can echo into the mic. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
+          "description": "Warn when recording without headphones, since speakers can echo into the mic and the transcript may repeat lines. While recording, a quiet banner shows when the default output is speakers; headphones, a headset or an output that cannot be told apart never warn. false = no banner.",
           "default": true
         },
         "use_builtin_mic_with_bluetooth": {

@@ -28,6 +28,7 @@ import { openPermissionScreen } from "@/lib/permissionRoute";
 import { isOnboardingPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
+import { HeadphoneBanner } from "./HeadphoneBanner";
 import { Button, IconButton } from "./primitives";
 import { RecordControl } from "./RecordControl";
 import { Sidebar } from "./Sidebar";
@@ -122,6 +123,9 @@ export function Shell() {
             </Button>
           </div>
         ) : null}
+
+        {/* TUR-65: quiet, below the two above, and only while recording. */}
+        <HeadphoneBanner status={status} />
 
         <Outlet />
       </main>
