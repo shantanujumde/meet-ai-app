@@ -11,7 +11,7 @@
 //! there is no permission prompt and no mic indicator.
 
 use crate::Error;
-use crate::activity::{AppStream, DeviceActivity, activity_from_streams, other_apps};
+use crate::activity::{AppStream, DeviceActivity, reading_without_our_own};
 
 /// [`device_activity`] gives a real reading here.
 #[cfg(test)]
@@ -54,16 +54,11 @@ pub(crate) fn device_activity() -> Result<DeviceActivity, Error> {
     let enumerator = wasapi::DeviceEnumerator::new().map_err(read_error)?;
     let mut capture = sessions(&enumerator, &wasapi::Direction::Capture)?;
     let mut render = sessions(&enumerator, &wasapi::Direction::Render)?;
-    let own_pid = std::process::id();
     if tracing::enabled!(tracing::Level::DEBUG) {
         name_processes(&mut capture);
         name_processes(&mut render);
-        let mic: Vec<&str> = other_apps(&capture, own_pid)
-            .map(|s| s.name.as_str())
-            .collect();
-        tracing::debug!(?mic, "apps using a mic");
     }
-    Ok(activity_from_streams(&capture, &render, own_pid))
+    Ok(reading_without_our_own(&capture, &render))
 }
 
 fn read_error(error: wasapi::WasapiError) -> Error {

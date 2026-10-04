@@ -67,6 +67,23 @@ pub fn activity_from_streams(
     }
 }
 
+/// [`activity_from_streams`] without meet-ai's own pid, logging the apps
+/// that use a mic at debug level. What every stream-list platform ends with.
+#[allow(dead_code)] // only the Windows and Linux readers call it
+pub(crate) fn reading_without_our_own(
+    capture: &[AppStream],
+    render: &[AppStream],
+) -> DeviceActivity {
+    let own_pid = std::process::id();
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        let mic: Vec<&str> = other_apps(capture, own_pid)
+            .map(|s| s.name.as_str())
+            .collect();
+        tracing::debug!(?mic, "apps using a mic");
+    }
+    activity_from_streams(capture, render, own_pid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

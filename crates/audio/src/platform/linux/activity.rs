@@ -25,7 +25,7 @@ use libpulse_binding::operation::Operation;
 use libpulse_binding::proplist::Proplist;
 
 use crate::Error;
-use crate::activity::{AppStream, DeviceActivity, activity_from_streams, other_apps};
+use crate::activity::{AppStream, DeviceActivity, reading_without_our_own};
 
 /// [`device_activity`] gives a real reading here.
 #[cfg(test)]
@@ -40,7 +40,7 @@ pub(crate) const DEVICE_ACTIVITY_NEEDS_SERVER: bool = true;
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How long to sleep when the main loop had nothing to do.
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
+const IDLE_SLEEP: Duration = Duration::from_millis(10);
 
 /// Whether another app has a running stream from a source (a mic) and to a
 /// sink (speakers, headphones).
@@ -55,12 +55,7 @@ pub(crate) fn device_activity() -> Result<DeviceActivity, Error> {
     let result = read_streams(&mut mainloop, &context);
     context.disconnect();
     let (capture, render) = result?;
-    let own_pid = std::process::id();
-    let mic: Vec<&str> = other_apps(&capture, own_pid)
-        .map(|s| s.name.as_str())
-        .collect();
-    tracing::debug!(?mic, "apps using a mic");
-    Ok(activity_from_streams(&capture, &render, own_pid))
+    Ok(reading_without_our_own(&capture, &render))
 }
 
 fn read_error(message: impl Into<String>) -> Error {
@@ -77,19 +72,17 @@ fn read_streams(
 
     let capture = Rc::new(RefCell::new(Listing::default()));
     let into = Rc::clone(&capture);
-    let operation = introspect.get_source_output_info_list(move |result| match result {
-        ListResult::Item(info) => into.borrow_mut().push(info.corked, &info.proplist),
-        ListResult::End => into.borrow_mut().end(false),
-        ListResult::Error => into.borrow_mut().end(true),
+    let operation = introspect.get_source_output_info_list(move |result| {
+        into.borrow_mut()
+            .take(result.map(|info| (info.corked, &info.proplist)))
     });
     wait_for_listing(mainloop, &capture, operation, "source outputs")?;
 
     let render = Rc::new(RefCell::new(Listing::default()));
     let into = Rc::clone(&render);
-    let operation = introspect.get_sink_input_info_list(move |result| match result {
-        ListResult::Item(info) => into.borrow_mut().push(info.corked, &info.proplist),
-        ListResult::End => into.borrow_mut().end(false),
-        ListResult::Error => into.borrow_mut().end(true),
+    let operation = introspect.get_sink_input_info_list(move |result| {
+        into.borrow_mut()
+            .take(result.map(|info| (info.corked, &info.proplist)))
     });
     wait_for_listing(mainloop, &render, operation, "sink inputs")?;
 
@@ -106,14 +99,42 @@ struct Listing {
     failed: bool,
 }
 
-impl Listing {
-    fn push(&mut self, corked: bool, proplist: &Proplist) {
-        self.streams.push(stream_from(corked, proplist));
-    }
+/// One callback result of a stream list, down to what [`Listing`] keeps.
+enum Item<'a> {
+    Stream(bool, &'a Proplist),
+    End,
+    Error,
+}
 
-    fn end(&mut self, failed: bool) {
-        self.completed = true;
-        self.failed = failed;
+/// `ListResult` has no `map`; this is it, for both stream-info types.
+trait MapItem<'a, T> {
+    fn map(self, f: impl FnOnce(&'a T) -> (bool, &'a Proplist)) -> Item<'a>;
+}
+
+impl<'a, T> MapItem<'a, T> for ListResult<&'a T> {
+    fn map(self, f: impl FnOnce(&'a T) -> (bool, &'a Proplist)) -> Item<'a> {
+        match self {
+            ListResult::Item(info) => {
+                let (corked, proplist) = f(info);
+                Item::Stream(corked, proplist)
+            }
+            ListResult::End => Item::End,
+            ListResult::Error => Item::Error,
+        }
+    }
+}
+
+impl Listing {
+    /// One callback result: a stream, or the end of the list.
+    fn take(&mut self, item: Item<'_>) {
+        match item {
+            Item::Stream(corked, proplist) => self.streams.push(stream_from(corked, proplist)),
+            Item::End => self.completed = true,
+            Item::Error => {
+                self.completed = true;
+                self.failed = true;
+            }
+        }
     }
 }
 
@@ -195,7 +216,7 @@ fn wait_for_listing<T: ?Sized>(
 
 fn iterate(mainloop: &mut Mainloop, what: &str) -> Result<(), Error> {
     match mainloop.iterate(false) {
-        IterateResult::Success(0) => std::thread::sleep(POLL_INTERVAL),
+        IterateResult::Success(0) => std::thread::sleep(IDLE_SLEEP),
         IterateResult::Success(_) => {}
         IterateResult::Quit(code) => {
             return Err(read_error(format!(

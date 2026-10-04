@@ -1,6 +1,8 @@
-//! The audio seam on Windows: an explicit stub until the Windows parity ticket.
+//! The audio seam on Windows: the device-activity read is real, the rest is
+//! still the shared non-mac stub until the Windows parity ticket.
 //!
-//! The device-activity read is real (TUR-60): WASAPI audio sessions on every active capture and render device, in `windows/activity.rs`.
+//! The device-activity read (TUR-60) lists WASAPI audio sessions on every
+//! active capture and render device, in `windows/activity.rs`.
 //!
 //! Every other item is the shared non-mac answer from `other.rs`: a real `cpal`
 //! microphone, no system-audio source, no default-device watch and a

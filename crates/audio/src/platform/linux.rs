@@ -1,6 +1,8 @@
-//! The audio seam on Linux: an explicit stub until the Linux parity ticket.
+//! The audio seam on Linux: the device-activity read is real, the rest is
+//! still the shared non-mac stub until the Linux parity ticket.
 //!
-//! The device-activity read is real (TUR-60): the sound server's stream lists (PulseAudio, or PipeWire through pipewire-pulse), in `linux/activity.rs`.
+//! The device-activity read (TUR-60) lists the sound server's streams
+//! (PulseAudio, or PipeWire through pipewire-pulse), in `linux/activity.rs`.
 //!
 //! Every other item is the shared non-mac answer from `other.rs`: a real `cpal`
 //! microphone, no system-audio source, no default-device watch and a
