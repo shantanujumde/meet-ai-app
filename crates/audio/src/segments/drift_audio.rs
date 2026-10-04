@@ -199,7 +199,12 @@ pub struct LagTrendTracker {
 }
 
 impl LagTrendTracker {
-    pub fn update(&mut self, time_s: f64, lag_samples: f64, sample_rate: u32) -> DriftTrendSnapshot {
+    pub fn update(
+        &mut self,
+        time_s: f64,
+        lag_samples: f64,
+        sample_rate: u32,
+    ) -> DriftTrendSnapshot {
         let mut snapshot = DriftTrendSnapshot::default();
         if let (Some(last_time), Some(last_lag)) = (self.last_time_s, self.last_lag_samples) {
             let dt = time_s - last_time;
@@ -465,7 +470,10 @@ impl<'a> Probe<'a> {
 
     fn meets_thresholds(&self, estimate: LagEstimate) -> bool {
         let (peak, distinct) = if self.state == ProbeState::Locked {
-            (self.config.hold_peak_ratio, self.config.hold_distinctiveness)
+            (
+                self.config.hold_peak_ratio,
+                self.config.hold_distinctiveness,
+            )
         } else {
             (
                 self.config.acquire_peak_ratio,
@@ -550,7 +558,7 @@ fn median(values: &VecDeque<isize>) -> Option<isize> {
     let mut sorted: Vec<isize> = values.iter().copied().collect();
     sorted.sort_unstable();
     let mid = sorted.len() / 2;
-    Some(if sorted.len() % 2 == 0 {
+    Some(if sorted.len().is_multiple_of(2) {
         (sorted[mid - 1] + sorted[mid]) / 2
     } else {
         sorted[mid]

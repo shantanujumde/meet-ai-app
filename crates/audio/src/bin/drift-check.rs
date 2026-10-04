@@ -15,12 +15,20 @@
 //!   compute a number at all (see [`segments::DriftError`] for the six
 //!   reasons), printed on stderr as `not measurable: <reason>` rather than
 //!   guessing a number that would flatter a broken recording.
+//!
+//! `drift-check --audio <DIR>` is a second opinion that ignores
+//! `segments.json`: it estimates the lag of `mic.wav` against `system.wav`
+//! from the audio itself (GCC-PHAT, see [`audio::segments::analyze_audio_drift`])
+//! and reports the drift in ppm and ms/min. It needs both tracks to hear the
+//! same sound (speakers, no headphones). Same exit codes.
 
 use std::path::Path;
 use std::process::ExitCode;
 
 use audio::Channel;
-use audio::segments::{DRIFT_GATE_MS, Segments, SegmentsDrift as _};
+use audio::segments::{
+    AudioDriftConfig, DRIFT_GATE_MS, Segments, SegmentsDrift as _, analyze_audio_drift,
+};
 use audio::wav_writer::read_header_frames;
 
 const USAGE: &str = "\
@@ -28,8 +36,11 @@ drift-check — measure drift between mic.wav and system.wav (SPEC §5 gate).
 
 USAGE:
     drift-check <DIR>
+    drift-check --audio <DIR>
 
 Reads <DIR>/segments.json (and <DIR>/mic.wav, <DIR>/system.wav, if present).
+With --audio, ignores segments.json and measures the lag between mic.wav and
+system.wav from the audio itself (needs speakers, not headphones).
 
 EXIT CODES:
     0   measured, under the 200ms gate
@@ -44,6 +55,13 @@ fn main() -> ExitCode {
             print!("{USAGE}");
             ExitCode::SUCCESS
         }
+        Some("--audio") => match args.get(1) {
+            Some(dir) => run_audio(Path::new(dir)),
+            None => {
+                eprintln!("drift-check: --audio needs a directory argument");
+                ExitCode::from(2)
+            }
+        },
         Some(dir) => run(Path::new(dir)),
         None => {
             eprintln!("drift-check: a directory argument is required");
@@ -159,6 +177,90 @@ fn run(dir: &Path) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         println!("drift-check: FAIL — worst {worst:.1}ms, over the {DRIFT_GATE_MS:.0}ms gate");
+        ExitCode::FAILURE
+    }
+}
+
+/// A WAV as mono f32 (first channel) and its sample rate.
+fn read_mono(path: &Path) -> Result<(Vec<f32>, u32), String> {
+    let mut reader = hound::WavReader::open(path).map_err(|e| e.to_string())?;
+    let spec = reader.spec();
+    let channels = usize::from(spec.channels.max(1));
+    let samples: Result<Vec<f32>, hound::Error> = match spec.sample_format {
+        hound::SampleFormat::Float => reader.samples::<f32>().step_by(channels).collect(),
+        hound::SampleFormat::Int => {
+            let scale = 1.0 / (1u64 << (spec.bits_per_sample.clamp(1, 32) - 1)) as f32;
+            reader
+                .samples::<i32>()
+                .step_by(channels)
+                .map(|s| s.map(|v| v as f32 * scale))
+                .collect()
+        }
+    };
+    samples
+        .map(|s| (s, spec.sample_rate))
+        .map_err(|e| e.to_string())
+}
+
+fn run_audio(dir: &Path) -> ExitCode {
+    let mut tracks = Vec::with_capacity(2);
+    for channel in [Channel::System, Channel::Mic] {
+        let path = dir.join(channel.wav_filename());
+        match read_mono(&path) {
+            Ok(track) => tracks.push(track),
+            Err(e) => {
+                eprintln!("not measurable: could not read {}: {e}", path.display());
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let (mic, mic_rate) = tracks.pop().unwrap_or_default();
+    let (system, sys_rate) = tracks.pop().unwrap_or_default();
+    if mic_rate != sys_rate {
+        eprintln!("not measurable: mic.wav is {mic_rate} Hz but system.wav is {sys_rate} Hz");
+        return ExitCode::from(2);
+    }
+    let config = AudioDriftConfig::for_sample_rate(mic_rate);
+    let report = match analyze_audio_drift(&system, &mic, mic_rate, &config) {
+        Ok(report) => report,
+        Err(e) => {
+            eprintln!("not measurable: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let fmt = |v: Option<f64>| v.map_or_else(|| "n/a".to_owned(), |v| format!("{v:.2}"));
+    println!(
+        "drift-check --audio: {} windows ({} quiet, {} weak, {} outliers), {} locks, {} losses, {} trusted points over {:.0}s",
+        report.windows,
+        report.low_energy,
+        report.weak_correlation,
+        report.outliers,
+        report.locks,
+        report.losses,
+        report.points.len(),
+        report.span_s()
+    );
+    println!(
+        "drift-check --audio: offset {:.1}ms (latency plus air, not drift)",
+        report.offset_ms()
+    );
+    println!(
+        "drift-check --audio: drift fit {} ppm, {} ms/min; EMA {} ppm, {} ms/min",
+        fmt(report.fit.ppm),
+        fmt(report.fit.ms_per_min),
+        fmt(report.ema.ppm),
+        fmt(report.ema.ms_per_min)
+    );
+    let worst = report.max_drift_ms();
+    if worst < DRIFT_GATE_MS {
+        println!(
+            "drift-check --audio: PASS, worst {worst:.1}ms, under the {DRIFT_GATE_MS:.0}ms gate"
+        );
+        ExitCode::SUCCESS
+    } else {
+        println!(
+            "drift-check --audio: FAIL, worst {worst:.1}ms, over the {DRIFT_GATE_MS:.0}ms gate"
+        );
         ExitCode::FAILURE
     }
 }
