@@ -84,6 +84,9 @@ pub struct ModelView {
     /// One line on when to pick it.
     pub good_for: &'static str,
     pub tags: Vec<stt::model::ModelTag>,
+    /// The English names of the languages it understands, in OpenAI's order,
+    /// for the (i) button (TUR-94). `["English"]` for an English-only model.
+    pub languages: Vec<&'static str>,
     /// Why this is the model to pick on this Mac, set on that one row only.
     pub recommended: Option<String>,
 }
@@ -294,6 +297,13 @@ pub fn catalogue() -> Vec<ModelView> {
             display_name: spec.facts.display_name,
             good_for: spec.facts.good_for,
             tags: spec.facts.tags.to_vec(),
+            languages: spec
+                .facts
+                .languages
+                .languages()
+                .iter()
+                .map(|(_, name)| *name)
+                .collect(),
             recommended: (spec.id == recommendation.model_id)
                 .then(|| recommendation.reason.clone()),
         })

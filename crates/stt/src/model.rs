@@ -16,6 +16,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::Error;
+use crate::languages::LanguageSet;
 
 /// A model we are willing to download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +62,9 @@ pub struct ModelFacts {
     /// One line on when to pick it.
     pub good_for: &'static str,
     pub tags: &'static [ModelTag],
+    /// The languages it understands, for the Settings (i) button (TUR-94),
+    /// and what [`ModelSpec::whisper_language`] is read from.
+    pub languages: LanguageSet,
 }
 
 impl ModelFacts {
@@ -70,20 +74,59 @@ impl ModelFacts {
         display_name: "",
         good_for: "",
         tags: &[],
+        languages: LanguageSet::EnglishOnly,
     };
 }
 
-/// The models SPEC §2.4 names.
+impl ModelSpec {
+    /// The language to tell whisper the audio is in (TUR-94): `en` for an
+    /// English-only model, `None` (auto-detect) for every multilingual one.
+    ///
+    /// Telling a multilingual model "this is English" makes it write Hindi
+    /// speech as made-up English, so no recording path may fall back to
+    /// `WhisperConfig::default()`'s `en` for one of these.
+    pub fn whisper_language(&self) -> Option<&'static str> {
+        match self.facts.languages {
+            LanguageSet::EnglishOnly => Some("en"),
+            LanguageSet::Multilingual99 | LanguageSet::Multilingual100 => None,
+        }
+    }
+}
+
+/// [`ModelSpec::whisper_language`] for a model file on disk.
+///
+/// A file from [`MODELS`] uses its entry. Any other file (one pointed at with
+/// `MEET_WHISPER_MODEL`) follows whisper.cpp's naming: `.en` in the name means
+/// English only, anything else is treated as multilingual and auto-detects.
+pub fn whisper_language_for_file(path: &Path) -> Option<&'static str> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    match MODELS.iter().find(|spec| spec.filename == name) {
+        Some(spec) => spec.whisper_language(),
+        None if name.contains(".en") => Some("en"),
+        None => None,
+    }
+}
+
+/// The models SPEC §2.4 names, plus Medium and Large (TUR-94).
 ///
 /// URLs point at `resolve/main` on Hugging Face, which is the canonical
 /// distribution point for `whisper.cpp` GGML weights. The digests are the LFS
 /// object ids Hugging Face publishes for these exact files, read from its API
-/// on 2026-09-27 — not computed from a local download, which would only prove
-/// the bytes matched themselves.
+/// on 2026-09-27 (small, large turbo) and 2026-10-04 (medium, large), not
+/// computed from a local download, which would only prove the bytes matched
+/// themselves.
 ///
-/// Reading an id: `.en` means English only, no `.en` means multilingual (about
-/// 100 languages); `q5_0` / `q5_1` mean compressed to 5 bits, at near-full
-/// quality. None of that reaches a row's main line — see [`ModelFacts`].
+/// Reading an id: `.en` means English only, no `.en` means multilingual (99
+/// languages, 100 for large-v3 and its turbo; see [`crate::languages`]);
+/// `q5_0` / `q5_1` mean compressed to 5 bits, at near-full quality. None of
+/// that reaches a row's main line; see [`ModelFacts`].
+///
+/// Accuracy words follow OpenAI's README: turbo is "an optimized version of
+/// large-v3 that offers faster transcription speed with a minimal degradation
+/// in accuracy", and medium is listed at ~2x the speed of large, turbo at ~8x.
 pub const MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: "small.en-q5_1",
@@ -96,6 +139,21 @@ pub const MODELS: &[ModelSpec] = &[
             good_for: "Lightweight and fast. Good for clear English calls; less accurate with \
                        accents, cross-talk or jargon.",
             tags: &[ModelTag::Fast, ModelTag::Light, ModelTag::EnglishOnly],
+            languages: LanguageSet::EnglishOnly,
+        },
+    },
+    ModelSpec {
+        id: "medium-q5_0",
+        filename: "ggml-medium-q5_0.bin",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin",
+        sha256: "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
+        bytes: 539_212_467,
+        facts: ModelFacts {
+            display_name: "Medium (multilingual)",
+            good_for: "Mid-size. Understands 99 languages. Faster and lighter on memory than \
+                       Large, less accurate on hard audio. Large turbo is faster still.",
+            tags: &[ModelTag::Multilingual],
+            languages: LanguageSet::Multilingual99,
         },
     },
     ModelSpec {
@@ -108,13 +166,29 @@ pub const MODELS: &[ModelSpec] = &[
         bytes: 574_041_195,
         facts: ModelFacts {
             display_name: "Large turbo (multilingual)",
-            good_for: "Most accurate. Understands ~100 languages and mixed-language calls. \
-                       Slower and uses more memory.",
+            good_for: "Close to Large in accuracy and much faster. Understands 100 languages. \
+                       Slightly less accurate than Large for some languages other than English.",
+            tags: &[ModelTag::Multilingual, ModelTag::Slower],
+            languages: LanguageSet::Multilingual100,
+        },
+    },
+    ModelSpec {
+        id: "large-v3-q5_0",
+        filename: "ggml-large-v3-q5_0.bin",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin",
+        sha256: "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1",
+        bytes: 1_081_140_203,
+        facts: ModelFacts {
+            display_name: "Large (multilingual)",
+            good_for: "Most accurate. Understands 100 languages; the best choice for languages \
+                       other than English and mixed-language calls, such as Hindi and English. \
+                       Biggest download, slowest, and uses the most memory.",
             tags: &[
                 ModelTag::MostAccurate,
                 ModelTag::Multilingual,
                 ModelTag::Slower,
             ],
+            languages: LanguageSet::Multilingual100,
         },
     },
 ];
@@ -151,8 +225,8 @@ pub fn recommended(apple_silicon: bool, total_memory_bytes: u64) -> Recommendati
         Recommendation {
             model_id: LARGE_MODEL,
             reason: format!(
-                "This Mac has Apple silicon and {gb} GB of memory, enough for the most accurate \
-                 model."
+                "This Mac has Apple silicon and {gb} GB of memory, enough for Large turbo, close \
+                 to the most accurate model and much faster."
             ),
         }
     } else if !apple_silicon {
@@ -316,8 +390,14 @@ mod tests {
             small.tags,
             &[ModelTag::Fast, ModelTag::Light, ModelTag::EnglishOnly]
         );
-        let large = find("large-v3-turbo-q5_0").unwrap().facts;
-        assert_eq!(large.display_name, "Large turbo (multilingual)");
+        let turbo = find("large-v3-turbo-q5_0").unwrap().facts;
+        assert_eq!(turbo.display_name, "Large turbo (multilingual)");
+        assert_eq!(turbo.tags, &[ModelTag::Multilingual, ModelTag::Slower]);
+        let medium = find("medium-q5_0").unwrap().facts;
+        assert_eq!(medium.display_name, "Medium (multilingual)");
+        assert_eq!(medium.tags, &[ModelTag::Multilingual]);
+        let large = find("large-v3-q5_0").unwrap().facts;
+        assert_eq!(large.display_name, "Large (multilingual)");
         assert_eq!(
             large.tags,
             &[
@@ -325,6 +405,92 @@ mod tests {
                 ModelTag::Multilingual,
                 ModelTag::Slower
             ]
+        );
+        // Only Large claims to be the most accurate.
+        for spec in MODELS {
+            assert_eq!(
+                spec.facts.tags.contains(&ModelTag::MostAccurate),
+                spec.id == "large-v3-q5_0",
+                "{}",
+                spec.id
+            );
+        }
+    }
+
+    #[test]
+    fn the_models_are_listed_in_order_with_their_pinned_files() {
+        let ids: Vec<_> = MODELS.iter().map(|spec| spec.id).collect();
+        assert_eq!(
+            ids,
+            [
+                "small.en-q5_1",
+                "medium-q5_0",
+                "large-v3-turbo-q5_0",
+                "large-v3-q5_0"
+            ]
+        );
+        for spec in MODELS {
+            assert_eq!(spec.filename, format!("ggml-{}.bin", spec.id));
+            assert!(spec.url.ends_with(spec.filename), "{}", spec.id);
+        }
+        assert_eq!(find("medium-q5_0").unwrap().bytes, 539_212_467);
+        assert_eq!(find("large-v3-q5_0").unwrap().bytes, 1_081_140_203);
+    }
+
+    #[test]
+    fn english_only_models_get_en_and_multilingual_ones_auto_detect() {
+        for spec in MODELS {
+            let expected = spec.id.contains(".en").then_some("en");
+            assert_eq!(spec.whisper_language(), expected, "{}", spec.id);
+            let on_disk = Path::new("/models").join(spec.filename);
+            assert_eq!(whisper_language_for_file(&on_disk), expected, "{}", spec.id);
+        }
+        assert_eq!(
+            find("small.en-q5_1").unwrap().whisper_language(),
+            Some("en")
+        );
+        assert_eq!(
+            find("large-v3-turbo-q5_0").unwrap().whisper_language(),
+            None
+        );
+        // Files outside the catalogue go by whisper.cpp's naming.
+        assert_eq!(
+            whisper_language_for_file(Path::new("/x/ggml-base.en.bin")),
+            Some("en")
+        );
+        assert_eq!(
+            whisper_language_for_file(Path::new("/x/ggml-base.bin")),
+            None
+        );
+    }
+
+    #[test]
+    fn every_model_has_the_language_list_its_id_implies() {
+        for spec in MODELS {
+            let languages = spec.facts.languages.languages();
+            assert!(!languages.is_empty(), "{}", spec.id);
+            let expected = if spec.id.contains(".en") {
+                1
+            } else if spec.id.starts_with("large-v3") {
+                100
+            } else {
+                99
+            };
+            assert_eq!(languages.len(), expected, "{}", spec.id);
+            // The good-for line states the same count the (i) list shows.
+            if expected > 1 {
+                assert!(
+                    spec.facts
+                        .good_for
+                        .contains(&format!("{expected} languages")),
+                    "{}",
+                    spec.id
+                );
+            }
+        }
+        assert_eq!(
+            find("small.en-q5_1").unwrap().facts.languages.languages(),
+            &[("en", "English")]
         );
     }
 

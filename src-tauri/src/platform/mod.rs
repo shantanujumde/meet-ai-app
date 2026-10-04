@@ -61,8 +61,11 @@ pub const RECORD_SHORTCUT: &str = if cfg!(target_os = "macos") {
 /// compile on every OS; whisper itself is only built for macOS so far.
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) fn load_whisper(model: &Path) -> Result<Box<dyn SttEngine>, String> {
-    let engine =
-        stt::whisper::WhisperEngine::load(model, Default::default()).map_err(|e| e.to_string())?;
+    let config = stt::whisper::WhisperConfig {
+        language: stt::model::whisper_language_for_file(model).map(str::to_owned),
+        ..Default::default()
+    };
+    let engine = stt::whisper::WhisperEngine::load(model, config).map_err(|e| e.to_string())?;
     Ok(Box::new(engine))
 }
 

@@ -28,15 +28,44 @@ use other as os;
 
 pub(crate) use os::APPLE_SPEECH_UNSUPPORTED;
 
-/// Load the whisper model at `model` with the default config — what
-/// [`crate::registry::select`] builds for the whisper choice.
+/// Load the whisper model at `model` — what [`crate::registry::select`] builds
+/// for the whisper choice. The language comes from the model (TUR-94): `en`
+/// for an English-only one, auto-detect for a multilingual one.
 pub(crate) fn load_whisper(
     model: &std::path::Path,
 ) -> Result<Box<dyn crate::SttEngine>, crate::Error> {
     Ok(Box::new(whisper::WhisperEngine::load(
         model,
-        whisper::WhisperConfig::default(),
+        recording_config(model),
     )?))
+}
+
+/// The config a real recording runs `model` with.
+pub(crate) fn recording_config(model: &std::path::Path) -> whisper::WhisperConfig {
+    whisper::WhisperConfig {
+        language: crate::model::whisper_language_for_file(model).map(str::to_owned),
+        ..whisper::WhisperConfig::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    #[test]
+    fn a_recording_tells_whisper_the_language_its_model_was_built_for() {
+        for spec in crate::model::MODELS {
+            let config = super::recording_config(&Path::new("/m").join(spec.filename));
+            assert_eq!(
+                config.language.as_deref(),
+                spec.whisper_language(),
+                "{}",
+                spec.id
+            );
+        }
+        let turbo = super::recording_config(Path::new("/m/ggml-large-v3-turbo-q5_0.bin"));
+        assert_eq!(turbo.language, None);
+    }
 }
 
 /// What `lib.rs` re-exports to other crates: `stt::whisper`.
