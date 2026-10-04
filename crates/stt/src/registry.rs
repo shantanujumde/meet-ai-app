@@ -238,19 +238,19 @@ fn decide(
 
     match preference {
         Preference::AppleSpeech => {
-            // A4's rule: a value that cannot work here is an error that says
-            // why, not a silent switch. Off macOS there is no Apple engine to
-            // look for, so say that instead of "the sidecar was not found".
-            if let Some(why) = crate::platform::APPLE_SPEECH_UNSUPPORTED {
-                return Err(Error::EngineUnavailable(format!(
-                    "Apple's speech engine cannot be used: {why}"
-                )));
-            }
             if apple_usable {
                 return Ok(Selection {
                     engine: Kind::AppleSpeech,
                     reason: "config asked for Apple's on-device speech engine".into(),
                 });
+            }
+            // A4's rule: a value that cannot work here is an error that says
+            // why, not a silent switch. Off macOS there is no Apple engine at
+            // all, so say that instead of "the sidecar was not found".
+            if let Some(why) = crate::platform::APPLE_SPEECH_UNSUPPORTED {
+                return Err(Error::EngineUnavailable(format!(
+                    "Apple's speech engine cannot be used: {why}"
+                )));
             }
             let detail = apple_unavailable_detail(apple, &environment.locale);
             Err(Error::EngineUnavailable(format!(
@@ -413,8 +413,8 @@ mod tests {
 
     #[test]
     fn forcing_apple_where_it_cannot_exist_ignores_a_sidecar_on_disk() {
-        // Even with a stray `meet-stt` path, an OS without Apple's engine
-        // must not try to run it.
+        // Even with a `meet-stt` path that does not run, an OS without
+        // Apple's engine names the OS, not the sidecar.
         let Some(why) = crate::platform::APPLE_SPEECH_UNSUPPORTED else {
             return;
         };
