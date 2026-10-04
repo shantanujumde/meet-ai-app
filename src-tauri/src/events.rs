@@ -48,3 +48,8 @@ pub const PROMPT_POPUP_EVENT: &str = "prompt-popup://show";
 /// A user hook failed (TUR-63): `hooks::app::HookFailed`. The meeting view
 /// shows a small "Hook failed" note.
 pub const HOOK_FAILED_EVENT: &str = "hook://failed";
+
+/// Whether the recording window shows "No headphones" (TUR-65):
+/// `headphone_warning::HeadphoneWarning`. Sent when a recording starts, when
+/// the output changes between speakers and headphones, and when it stops.
+pub const HEADPHONE_WARNING_EVENT: &str = "headphones://warning";

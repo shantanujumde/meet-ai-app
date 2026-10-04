@@ -125,6 +125,18 @@ SOFTWARE.
     `crates/audio/src/loopback/sound_server.rs` (`system_capture_device`: the
     PulseAudio `<sink>.monitor` source, from `resolve_monitor_device`) from
     `crates/audio-actual/src/speaker/linux.rs` (TUR-38)
+  - `crates/audio/src/headphones.rs` (`name_suggests_speaker`, the
+    Bluetooth speaker name list) from `crates/audio-device/src/device.rs`,
+    `crates/audio/src/platform/headphones/parse.rs` (`adapter_enumerator`
+    and the bus enumerator and name to transport rules, from
+    `crates/audio-device/src/windows.rs`; the headphone port test and the
+    `device.bus` transport, from `crates/audio-device/src/linux.rs`),
+    `crates/audio/src/platform/windows/headphones.rs` (the endpoint's
+    topology connector to its adapter's device id, from
+    `get_adapter_device_id` in `crates/audio-device/src/windows.rs`) and
+    `crates/audio/src/platform/linux/headphones.rs` (the default sink's
+    active port read, from `is_headphone_from_default_output_device` in
+    `crates/audio-device/src/linux.rs`) (TUR-65)
 
 ```
 MIT License
