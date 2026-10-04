@@ -77,31 +77,31 @@ const COPY: Record<string, ErrorCopy> = {
   // --- stt::Error ---------------------------------------------------------
   "stt/engine-unavailable": {
     headline: "This Mac will use the downloadable speech model",
-    body: "Apple's built-in speech engine is not available here, so meet-ai needs the whisper model instead. It is a one-time download and everything stays on this Mac.",
+    body: "Apple's built-in speech engine is not available here, so meet-ai needs the Whisper model instead. You download it once, and everything stays on this Mac.",
     actionLabel: "Download",
     remedy: { action: "download-model" },
   },
   "stt/sidecar": {
     headline: "Transcription stopped. Your recording is still safe.",
-    body: "The speech helper stopped working. The audio and everything already transcribed are on disk and untouched; only new text has stopped arriving.",
+    body: "The speech helper stopped working. The audio and the text so far are saved and untouched. Only new text has stopped.",
     actionLabel: "Copy details",
     remedy: { action: "copy-details" },
   },
   "stt/engine": {
     headline: "Transcription stopped. Your recording is still safe.",
-    body: "The speech engine failed partway through. The audio and everything already transcribed are on disk and untouched; only new text has stopped arriving.",
+    body: "The speech engine failed partway through. The audio and the text so far are saved and untouched. Only new text has stopped.",
     actionLabel: "Copy details",
     remedy: { action: "copy-details" },
   },
   "stt/model-missing": {
     headline: "The speech model is not on this Mac",
-    body: "meet-ai looked for the whisper model file and it was not there. Downloading it again puts it back.",
+    body: "meet-ai looked for the Whisper model file and could not find it. Download it again to put it back.",
     actionLabel: "Download",
     remedy: { action: "download-model" },
   },
   "stt/streaming-unsupported": {
     headline: "This engine cannot caption a meeting as it happens",
-    body: "It can still transcribe the recording once you stop. Nothing is lost — the text just arrives at the end instead of live.",
+    body: "It can still transcribe the recording after you stop. Nothing is lost. The text just arrives at the end instead of live.",
     actionLabel: null,
     remedy: { action: "none" },
   },
@@ -109,13 +109,13 @@ const COPY: Record<string, ErrorCopy> = {
   // --- modelfetch::Error --------------------------------------------------
   "model/download": {
     headline: "The download did not finish",
-    body: "Usually this is the network rather than anything wrong on this Mac. meet-ai keeps what it already downloaded, so trying again picks up where it stopped.",
+    body: "This is usually the network, not this Mac. meet-ai keeps what it already has, so trying again picks up where it stopped.",
     actionLabel: "Try again",
     remedy: { action: "retry" },
   },
   "model/checksum": {
     headline: "The downloaded file is not the one meet-ai expected",
-    body: "Every byte arrived, but the file's fingerprint does not match the one meet-ai has pinned for this model. That can mean a corrupted download — or a file that was tampered with in transit. meet-ai has deleted it rather than load it, so nothing unverified ever runs.",
+    body: "The whole file arrived, but its checksum (a code that proves the file is the right one) does not match the one meet-ai expects for this model. The download may be damaged, or someone may have changed the file on the way. meet-ai deleted it without opening it, so nothing unchecked ever runs.",
     actionLabel: "Download again from scratch",
     remedy: { action: "redownload" },
     security: true,
@@ -124,13 +124,13 @@ const COPY: Record<string, ErrorCopy> = {
   // --- the app shell itself ------------------------------------------------
   "app/permission-denied": {
     headline: "meet-ai is not allowed to record this Mac's audio",
-    body: "Recording now would capture nothing but silence. You can change this in System Settings, under Privacy & Security.",
+    body: "A recording now would be silent. You can allow it in System Settings, under Privacy & Security.",
     actionLabel: "Open System Settings",
     remedy: { action: "open-settings" },
   },
   "app/meeting-not-found": {
     headline: "That meeting is not on disk any more",
-    body: "Its folder has been moved, renamed or deleted outside meet-ai. The list refreshes when you go back to it.",
+    body: "Its folder was moved, renamed or deleted outside meet-ai. The list updates when you go back to it.",
     actionLabel: null,
     remedy: { action: "none" },
   },
@@ -142,7 +142,7 @@ const COPY: Record<string, ErrorCopy> = {
   },
   "app/download-already-running": {
     headline: "That model is already downloading",
-    body: "Only one download per model runs at a time, so the two cannot overwrite each other's progress.",
+    body: "Only one download per model runs at a time, so two downloads never overwrite each other.",
     actionLabel: null,
     remedy: { action: "none" },
   },
@@ -154,13 +154,13 @@ const COPY: Record<string, ErrorCopy> = {
   },
   "app/folder-move-in-progress": {
     headline: "Your meetings folder is moving",
-    body: "meet-ai is moving your meetings folder. Try again when it finishes.",
+    body: "Try again when the move finishes.",
     actionLabel: null,
     remedy: { action: "none" },
   },
   "app/folder-busy": {
     headline: "Your meetings folder is in use",
-    body: "meet-ai is still writing to it, for example a recording starting or stopping, notes being saved, or a model downloading. Change the folder once that finishes.",
+    body: "meet-ai is still writing to it: a recording starting or stopping, notes being saved, or a model downloading. Change the folder when that finishes.",
     actionLabel: null,
     remedy: { action: "none" },
   },
@@ -178,13 +178,13 @@ const COPY: Record<string, ErrorCopy> = {
   },
   "app/folder-conflict": {
     headline: "Some meetings already exist there",
-    body: "The folder you picked already has something with the same name as one of your existing meetings, so meet-ai stopped before it could overwrite anything.",
+    body: "The folder you picked already has something with the same name as one of your meetings. meet-ai stopped so it would not overwrite anything.",
     actionLabel: "Copy details",
     remedy: { action: "copy-details" },
   },
   "app/no-config-dir": {
     headline: "meet-ai could not remember that choice",
-    body: "It could not find a place on this Mac to save your chosen folder, so it kept using the old one. Nothing moved.",
+    body: "It could not find a place on this Mac to save the folder you chose, so it kept the old one. Nothing moved.",
     actionLabel: "Copy details",
     remedy: { action: "copy-details" },
   },

@@ -38,7 +38,7 @@ export function useChangeFolder() {
     if (!picked || Array.isArray(picked)) return; // the user cancelled
 
     const confirmed = await ask(
-      `Every existing meeting moves from ${root} to ${picked}. Nothing is deleted — new recordings save there too.`,
+      `All your meetings move from ${root} to ${picked}. Nothing is deleted. New recordings save there too.`,
       {
         title: "Move your meetings folder?",
         kind: "warning",

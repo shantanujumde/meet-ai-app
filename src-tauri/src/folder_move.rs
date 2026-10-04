@@ -120,8 +120,8 @@ impl FolderGate {
         if state.writers > 0 {
             return Err(UiError::app(
                 "folder-busy",
-                "meet-ai is still writing to your meetings folder — a recording starting or \
-                 stopping, notes being saved, or a model downloading. Change the folder once \
+                "meet-ai is still writing to your meetings folder: a recording starting or \
+                 stopping, notes being saved, or a model downloading. Change the folder when \
                  that finishes.",
             ));
         }
