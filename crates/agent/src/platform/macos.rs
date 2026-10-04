@@ -1,10 +1,6 @@
-//! Agent CLIs on macOS: the shared unix process-group, executable and shell code.
+//! Agent CLIs on macOS: the shared unix process-group and executable code.
 
-#[cfg(test)]
-pub(crate) use super::unix::KILL;
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) use super::unix::POSIX_SHELL;
-pub(crate) use super::unix::{is_executable, kill_group, own_process_group};
+pub(crate) use super::unix::{is_executable, wrap_tree};
 
 // Finding the CLIs (TUR-53). The lists are unchanged from before the port.
 

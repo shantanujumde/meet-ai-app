@@ -117,6 +117,18 @@ tracing-subscriber = "=0.3.23"
 crash-handler = "=0.7.0"
 # The Windows microphone consent keys (TUR-51). Already in the tree via other crates.
 winreg = "=0.55.0"
+# Agent CLIs (TUR-54): the child and everything it starts in one process
+# group (unix) or a Job Object (Windows), so Cancel stops the whole
+# tree. Apache-2.0 OR MIT. Only the std wrappers; no tokio.
+process-wrap = { version = "=10.0.1", default-features = false, features = [
+  "creation-flags",
+  "job-object",
+  "process-group",
+  "std",
+] }
+# The `CREATE_NO_WINDOW` flag type process-wrap takes on Windows (TUR-54).
+# Same version process-wrap itself pulls, so no second copy.
+windows = { version = "=0.62.2", default-features = false }
 
 # --- tauri (SETUP.md §2.1) ---
 tauri = "=2.11.5"

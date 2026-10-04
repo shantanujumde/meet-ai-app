@@ -1,11 +1,11 @@
 //! The OS seam for running agent CLIs (SPEC §8.2).
 //!
 //! The only file in the crate that names an operating system. What differs
-//! per OS is small: how a child gets a process group of its own and how that
-//! whole group is killed, what makes a file executable, and whether there is a
-//! POSIX shell for the fake harness. Every unix shares `unix.rs`; macOS and
-//! Linux re-export it, and Windows (with any other non-unix OS) has its own
-//! stand-ins in `windows.rs`.
+//! per OS is small: how a child and everything it starts are kept together so
+//! one kill stops them all (a process group on unix, a Job Object on Windows,
+//! both through process-wrap), and what makes a file executable. Every unix
+//! shares `unix.rs`; macOS and Linux re-export it, and Windows (with any
+//! other non-unix OS) has its own in `windows.rs`.
 
 #[cfg(unix)]
 mod unix;
@@ -32,17 +32,10 @@ use unix as os;
 #[cfg(not(unix))]
 use windows as os;
 
-pub(crate) use os::{is_executable, kill_group, own_process_group};
+pub(crate) use os::{is_executable, wrap_tree};
 
 // Where the CLIs install, per OS (TUR-53).
 pub(crate) use os::{EXE_SUFFIXES, login_shell, search_dirs};
 
 #[cfg(test)]
 pub(crate) use os::{make_executable, search_dirs_under};
-
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) use os::POSIX_SHELL;
-
-// For the unix-only process tests, which check a pid with the same `kill`.
-#[cfg(all(test, unix))]
-pub(crate) use os::KILL;

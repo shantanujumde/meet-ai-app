@@ -1,24 +1,24 @@
-//! Agent CLIs on Windows (and any other non-unix OS): stand-ins until the
-//! Windows parity ticket.
+//! Agent CLIs on Windows (and any other non-unix OS).
 //!
-//! There are no process groups here yet, so a run's time limit or Cancel kills
-//! the child itself (`process::stop`) and not what it started; the port can
-//! put the child in a Job Object instead. Execute permission is not a file
-//! bit on Windows, so any regular file counts.
+//! The child starts in a Job Object of its own, so ending the job reaches
+//! everything it starts: a `.cmd` shim runs under `cmd.exe`, and killing that
+//! one process would leave its `node` (and the MCP servers `node` started)
+//! running. process-wrap starts the child suspended, puts it in the job, then
+//! resumes it, so nothing escapes before it is in. `CREATE_NO_WINDOW` keeps a
+//! console window from flashing up for a console program started from the
+//! app. Execute permission is not a file bit here, so any regular file counts.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// No POSIX shell to run the fake harness's script with.
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) const POSIX_SHELL: Option<&str> = None;
+use process_wrap::std::{CommandWrap, CreationFlags, JobObject};
+use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
-/// No process groups to join outside unix.
-pub(crate) fn own_process_group(_command: &mut Command) {}
-
-/// There are no process groups to kill outside unix; `process::stop` kills
-/// the child itself.
-pub(crate) fn kill_group(_pid: u32) {}
+/// Starts the child in a new Job Object with no console window.
+pub(crate) fn wrap_tree(command: &mut CommandWrap) {
+    command.wrap(CreationFlags(CREATE_NO_WINDOW));
+    command.wrap(JobObject);
+}
 
 /// A regular file whose name ends in a program extension Windows runs
 /// (`.exe`, `.cmd`, `.bat`, `.com`): execute permission is not a file bit

@@ -5,18 +5,25 @@
 //! stdin. It is never logged, never put in an error, and never passed as an
 //! argument (arguments show up in `ps`).
 //!
-//! On unix the child gets its own process group. A real CLI is a node process
-//! that may start MCP servers of its own, and stopping a run has to stop all of
-//! them, not just the one we started.
+//! The child starts as a [`ProcessTree`]: in a process group of its own on
+//! unix, in a Job Object of its own on Windows. A real CLI is a node process
+//! (on Windows often behind a `.cmd` shim run by `cmd.exe`) that may start MCP
+//! servers of its own, and stopping a run has to stop all of them, not just
+//! the one we started.
+//!
+//! The prompt staying on stdin matters on Windows too: since Rust 1.77.2
+//! (CVE-2024-24576) a `.bat`/`.cmd` argument that cannot be escaped safely
+//! makes the spawn fail, and a transcript is exactly that kind of text.
 
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
+use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::platform::{kill_group, own_process_group};
+use process_wrap::std::{ChildWrapper, CommandWrap};
+
 use crate::{AgentError, Job};
 
 /// How often the child is checked for exit, Cancel and the time limit.
@@ -200,14 +207,13 @@ pub fn run_cli_exit(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    own_process_group(&mut command);
 
     let started = Instant::now();
-    let mut child = command.spawn().map_err(|e| spawn_error(display_name, &e))?;
+    let mut child = ProcessTree::spawn(command).map_err(|e| spawn_error(display_name, &e))?;
     let (stdout, stderr) = match start_pipes(&mut child, &job.prompt) {
         Ok(pipes) => pipes,
         Err(e) => {
-            stop(&mut child);
+            child.stop();
             return Err(could_not_start(format!(
                 "could not start a helper thread: {e}"
             )));
@@ -223,7 +229,7 @@ pub fn run_cli_exit(
     };
     let status = wait_for_exit(&mut child, job, started).inspect_err(log_stop)?;
     let (stdout, stderr) =
-        collect_output(child.id(), job, started, &stdout, &stderr).inspect_err(log_stop)?;
+        collect_output(&mut child, job, started, &stdout, &stderr).inspect_err(log_stop)?;
     tracing::debug!(display_name, %status, elapsed_ms = started.elapsed().as_millis(), "agent CLI exited");
 
     let stderr = tail(
@@ -317,22 +323,22 @@ impl Drained {
 /// child that fills its stdout pipe stops reading stdin until someone drains
 /// it.
 fn start_pipes(
-    child: &mut Child,
+    child: &mut ProcessTree,
     prompt: &str,
 ) -> io::Result<(Receiver<Drained>, Receiver<Drained>)> {
-    let stdin = child.stdin.take();
+    let stdin = child.take_stdin();
     let prompt = prompt.to_owned();
     thread::Builder::new()
         .name("agent-stdin".to_owned())
         .spawn(move || write_prompt(stdin, &prompt))?;
     let stdout = read_in_background(
         "agent-stdout",
-        child.stdout.take(),
+        child.take_stdout(),
         Keep::Head(MAX_STDOUT_BYTES),
     )?;
     let stderr = read_in_background(
         "agent-stderr",
-        child.stderr.take(),
+        child.take_stderr(),
         Keep::Tail(MAX_STDERR_BYTES),
     )?;
     Ok((stdout, stderr))
@@ -396,17 +402,21 @@ fn stop_reason(job: &Job, started: Instant) -> Option<AgentError> {
 ///
 /// Cancel and the time limit are checked before `try_wait`, so the child is
 /// always killed before it is reaped and its id cannot belong to anyone else.
-fn wait_for_exit(child: &mut Child, job: &Job, started: Instant) -> Result<ExitStatus, AgentError> {
+fn wait_for_exit(
+    child: &mut ProcessTree,
+    job: &Job,
+    started: Instant,
+) -> Result<ExitStatus, AgentError> {
     loop {
         if let Some(reason) = stop_reason(job, started) {
-            stop(child);
+            child.stop();
             return Err(reason);
         }
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
             Ok(None) => thread::sleep(POLL_EVERY),
             Err(e) => {
-                stop(child);
+                child.stop();
                 return Err(could_not_start(format!("lost track of the agent CLI: {e}")));
             }
         }
@@ -416,11 +426,11 @@ fn wait_for_exit(child: &mut Child, job: &Job, started: Instant) -> Result<ExitS
 /// Collects the child's output after it exited.
 ///
 /// Something the child started may still hold the pipes open. After
-/// [`OUTPUT_GRACE`] its process group is killed, and whatever arrives in the
+/// [`OUTPUT_GRACE`] its process tree is killed, and whatever arrives in the
 /// next [`AFTER_KILL_GRACE`] is used. Cancel and the time limit still apply
 /// while waiting. A reader that is still stuck is left behind, not joined.
 fn collect_output(
-    pid: u32,
+    child: &mut ProcessTree,
     job: &Job,
     started: Instant,
     stdout: &Receiver<Drained>,
@@ -432,7 +442,7 @@ fn collect_output(
     let mut killed = false;
     loop {
         if let Some(reason) = stop_reason(job, started) {
-            kill_group(pid);
+            child.kill_tree();
             return Err(reason);
         }
         receive_into(&mut out, stdout);
@@ -444,11 +454,12 @@ fn collect_output(
             if killed {
                 break;
             }
-            // The child is reaped, but a live process is holding the pipe. If
-            // it is still in the child's group, the group's id cannot have
-            // been reused. If it left the group (`setsid`), this kill misses
-            // it and its output is cut off.
-            kill_group(pid);
+            // The child is reaped, but a live process is holding the pipe. On
+            // unix, if it is still in the child's group, the group's id
+            // cannot have been reused; if it left the group (`setsid`), this
+            // kill misses it and its output is cut off. On Windows the job
+            // handle is still ours, and a process cannot leave its job.
+            child.kill_tree();
             killed = true;
             deadline = Instant::now() + AFTER_KILL_GRACE;
         }
@@ -469,12 +480,83 @@ fn receive_into(slot: &mut Option<Drained>, from: &Receiver<Drained>) {
     }
 }
 
-/// Kills the child and everything it started, then reaps it.
-fn stop(child: &mut Child) {
-    kill_group(child.id());
-    // In case the group kill did not work.
-    let _ = child.kill();
-    let _ = child.wait();
+/// A child started with everything it starts kept together, so one kill
+/// stops the lot: a process group it leads on unix, a Job Object on Windows
+/// (`crate::platform::wrap_tree`). Built on process-wrap.
+///
+/// Dropped before its child was seen to exit (an early return, a panic), it
+/// kills the tree. After a normal exit, drop leaves anything still running
+/// alone, as a plain `Child` does; call [`ProcessTree::kill_tree`] for that.
+///
+/// For any child the app starts that may start children of its own: agent
+/// CLIs here, and user hooks (TUR-63).
+#[derive(Debug)]
+pub struct ProcessTree {
+    child: Box<dyn ChildWrapper>,
+    exited: bool,
+}
+
+impl ProcessTree {
+    /// Spawns `command` (its stdio as the caller set it) as a new tree.
+    pub fn spawn(command: Command) -> io::Result<Self> {
+        let mut command = CommandWrap::from(command);
+        crate::platform::wrap_tree(&mut command);
+        let child = command.spawn()?;
+        Ok(Self {
+            child,
+            exited: false,
+        })
+    }
+
+    /// The child's process id.
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.child.stdin().take()
+    }
+
+    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
+        self.child.stdout().take()
+    }
+
+    pub fn take_stderr(&mut self) -> Option<ChildStderr> {
+        self.child.stderr().take()
+    }
+
+    /// The child's exit status if it has exited, without blocking. Reaps it.
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        let status = self.child.try_wait()?;
+        self.exited |= status.is_some();
+        Ok(status)
+    }
+
+    /// Kills every process still in the tree, without waiting. Safe after
+    /// the child itself was reaped: the group (unix) or job (Windows) keeps
+    /// the rest reachable, and an empty one is a no-op.
+    pub fn kill_tree(&mut self) {
+        if let Err(e) = self.child.start_kill() {
+            // An empty group or a job with nothing left: nothing to kill.
+            tracing::trace!("process tree kill: {e}");
+        }
+    }
+
+    /// Kills the tree, then reaps the child.
+    pub fn stop(&mut self) {
+        self.kill_tree();
+        if self.child.wait().is_ok() {
+            self.exited = true;
+        }
+    }
+}
+
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        if !self.exited {
+            self.stop();
+        }
+    }
 }
 
 /// The last `max` bytes of `text` at most, cut where a character starts.
@@ -501,16 +583,19 @@ mod tests {
         assert_eq!(tail("ééé", 3), "é");
     }
 
-    #[cfg(unix)]
-    mod unix {
+    /// Runs `fake-cli` (test-support), the same on every OS.
+    mod cli {
         use super::super::*;
         use std::path::PathBuf;
 
         const NAME: &str = "Test CLI";
 
-        fn sh(script: &str) -> Command {
-            let mut command = Command::new("sh");
-            command.arg("-c").arg(script);
+        /// `fake-cli` with these settings (see its header).
+        fn fake(settings: &[(&str, &str)]) -> Command {
+            let mut command = Command::new(test_support::fake_cli_path());
+            for (name, value) in settings {
+                command.env(format!("FAKE_{}", name.to_uppercase()), value);
+            }
             command
         }
 
@@ -521,25 +606,34 @@ mod tests {
             job
         }
 
-        fn run(script: &str, job: &Job) -> Result<CliOutput, AgentError> {
+        fn run(settings: &[(&str, &str)], job: &Job) -> Result<CliOutput, AgentError> {
             let dir = fresh_work_dir(job).unwrap();
-            run_cli(NAME, sh(script), job, dir.path())
+            run_cli(NAME, fake(settings), job, dir.path())
         }
 
-        /// Waits up to two seconds for the process with `pid` to be gone.
-        fn is_gone(pid: &str) -> bool {
+        /// The pid `fake-cli` wrote for the grandchild it started.
+        fn grandchild_pid(pid_file: &Path) -> u32 {
+            std::fs::read_to_string(pid_file)
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap()
+        }
+
+        /// Waits up to two seconds for the process with `pid` to be gone. A
+        /// zombie waiting for its new parent to reap it counts as gone.
+        fn is_gone(pid: u32) -> bool {
+            use sysinfo::{Pid, ProcessStatus, ProcessesToUpdate, System};
+            let pid = Pid::from_u32(pid);
+            let mut system = System::new();
             let deadline = Instant::now() + Duration::from_secs(2);
             while Instant::now() < deadline {
-                let alive = Command::new(crate::platform::KILL)
-                    .args(["-0", pid])
-                    .stderr(Stdio::null())
-                    .status()
-                    .unwrap()
-                    .success();
-                if !alive {
-                    return true;
+                system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+                match system.process(pid) {
+                    None => return true,
+                    Some(p) if p.status() == ProcessStatus::Zombie => return true,
+                    Some(_) => thread::sleep(Duration::from_millis(20)),
                 }
-                thread::sleep(Duration::from_millis(20));
             }
             false
         }
@@ -547,7 +641,8 @@ mod tests {
         #[test]
         fn success_returns_stdout_and_stderr() {
             let root = tempfile::tempdir().unwrap();
-            let out = run("echo out; echo err >&2", &job_in(root.path(), "")).unwrap();
+            let settings = [("stdout", "out\n"), ("stderr", "err\n")];
+            let out = run(&settings, &job_in(root.path(), "")).unwrap();
             assert_eq!(out.stdout, "out\n");
             assert_eq!(out.stderr, "err");
         }
@@ -555,7 +650,7 @@ mod tests {
         #[test]
         fn the_prompt_arrives_on_stdin() {
             let root = tempfile::tempdir().unwrap();
-            let out = run("cat", &job_in(root.path(), "hello agent")).unwrap();
+            let out = run(&[("echo_stdin", "1")], &job_in(root.path(), "hello agent")).unwrap();
             assert_eq!(out.stdout, "hello agent");
         }
 
@@ -564,7 +659,7 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let prompt = "transcript line\n".repeat(2 * 1024 * 1024 / 16);
             assert_eq!(prompt.len(), 2 * 1024 * 1024);
-            let out = run("cat", &job_in(root.path(), &prompt)).unwrap();
+            let out = run(&[("echo_stdin", "1")], &job_in(root.path(), &prompt)).unwrap();
             assert_eq!(out.stdout.len(), prompt.len());
             assert!(out.stdout == prompt);
         }
@@ -574,7 +669,7 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let job = job_in(root.path(), "");
             let dir = fresh_work_dir(&job).unwrap();
-            let out = run_cli(NAME, sh("pwd -P; ls -A | wc -l"), &job, dir.path()).unwrap();
+            let out = run_cli(NAME, fake(&[("print_cwd", "1")]), &job, dir.path()).unwrap();
             let mut lines = out.stdout.lines();
             let cwd = PathBuf::from(lines.next().unwrap()).canonicalize().unwrap();
             assert_eq!(cwd, dir.path().canonicalize().unwrap());
@@ -610,7 +705,8 @@ mod tests {
         #[test]
         fn a_non_zero_exit_is_a_cli_failure_with_its_code_and_stderr() {
             let root = tempfile::tempdir().unwrap();
-            let err = run("echo 'bad flag' >&2; exit 3", &job_in(root.path(), "")).unwrap_err();
+            let settings = [("stderr", "bad flag\n"), ("code", "3")];
+            let err = run(&settings, &job_in(root.path(), "")).unwrap_err();
             match err {
                 AgentError::CliFailed { status, stderr } => {
                     assert_eq!(status, Some(3));
@@ -625,13 +721,8 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let job = job_in(root.path(), "");
             let dir = fresh_work_dir(&job).unwrap();
-            let err = run_cli(
-                "Claude Code",
-                Command::new("/nonexistent/claude-xyz"),
-                &job,
-                dir.path(),
-            )
-            .unwrap_err();
+            let missing = root.path().join("nonexistent").join("claude-xyz");
+            let err = run_cli("Claude Code", Command::new(missing), &job, dir.path()).unwrap_err();
             match err {
                 AgentError::NotInstalled { harness } => assert_eq!(harness, "Claude Code"),
                 other => panic!("expected NotInstalled, got {other:?}"),
@@ -644,7 +735,7 @@ mod tests {
             let mut job = job_in(root.path(), "");
             job.timeout = Duration::from_millis(300);
             let started = Instant::now();
-            let err = run("sleep 30", &job).unwrap_err();
+            let err = run(&[("sleep", "30")], &job).unwrap_err();
             assert!(
                 matches!(err, AgentError::TimedOut { after } if after == Duration::from_millis(300)),
                 "{err:?}"
@@ -661,10 +752,11 @@ mod tests {
             let root = tempfile::tempdir().unwrap();
             let pid_file = root.path().join("grandchild.pid");
             let mut job = job_in(root.path(), "");
-            job.timeout = Duration::from_millis(300);
-            let script = format!("sleep 30 & echo $! > '{}'; wait", pid_file.display());
+            job.timeout = Duration::from_millis(500);
+            let pid_path = pid_file.display().to_string();
+            let settings = [("grandchild_pid_file", pid_path.as_str()), ("sleep", "30")];
             let started = Instant::now();
-            let err = run(&script, &job).unwrap_err();
+            let err = run(&settings, &job).unwrap_err();
             assert!(matches!(err, AgentError::TimedOut { .. }), "{err:?}");
             assert!(
                 started.elapsed() < Duration::from_secs(3),
@@ -672,8 +764,36 @@ mod tests {
                 started.elapsed()
             );
 
-            let pid = std::fs::read_to_string(&pid_file).unwrap();
-            assert!(is_gone(pid.trim()), "grandchild {pid} is still running");
+            let pid = grandchild_pid(&pid_file);
+            assert!(is_gone(pid), "grandchild {pid} is still running");
+        }
+
+        /// TUR-54's "done when": a child that started a grandchild, then
+        /// Cancel; nothing is left running.
+        #[test]
+        fn cancel_also_kills_what_the_child_started() {
+            let root = tempfile::tempdir().unwrap();
+            let pid_file = root.path().join("grandchild.pid");
+            let job = job_in(root.path(), "");
+            let handle = job.cancel.clone();
+            let watched = pid_file.clone();
+            let canceller = thread::spawn(move || {
+                // Cancel only once the grandchild is really there.
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !watched.exists() && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                thread::sleep(Duration::from_millis(50));
+                handle.cancel();
+            });
+            let pid_path = pid_file.display().to_string();
+            let settings = [("grandchild_pid_file", pid_path.as_str()), ("sleep", "30")];
+            let err = run(&settings, &job).unwrap_err();
+            canceller.join().unwrap();
+            assert!(matches!(err, AgentError::Cancelled), "{err:?}");
+
+            let pid = grandchild_pid(&pid_file);
+            assert!(is_gone(pid), "grandchild {pid} is still running");
         }
 
         #[test]
@@ -686,7 +806,7 @@ mod tests {
                 handle.cancel();
             });
             let started = Instant::now();
-            let err = run("sleep 30", &job).unwrap_err();
+            let err = run(&[("sleep", "30")], &job).unwrap_err();
             canceller.join().unwrap();
             assert!(matches!(err, AgentError::Cancelled), "{err:?}");
             assert!(
@@ -702,7 +822,8 @@ mod tests {
             let marker = root.path().join("started");
             let job = job_in(root.path(), "");
             job.cancel.cancel();
-            let err = run(&format!("touch '{}'", marker.display()), &job).unwrap_err();
+            let marker_path = marker.display().to_string();
+            let err = run(&[("touch", marker_path.as_str())], &job).unwrap_err();
             assert!(matches!(err, AgentError::Cancelled), "{err:?}");
             assert!(!marker.exists());
         }
@@ -710,21 +831,34 @@ mod tests {
         #[test]
         fn a_grandchild_holding_stdout_open_does_not_hang_the_run() {
             let root = tempfile::tempdir().unwrap();
+            let pid_file = root.path().join("grandchild.pid");
+            let pid_path = pid_file.display().to_string();
+            let settings = [
+                ("stdout", "hi\n"),
+                ("grandchild_pid_file", pid_path.as_str()),
+                ("grandchild_keeps_stdout", "1"),
+            ];
             let started = Instant::now();
-            let out = run("echo hi; sleep 30 &", &job_in(root.path(), "")).unwrap();
+            let out = run(&settings, &job_in(root.path(), "")).unwrap();
             assert_eq!(out.stdout, "hi\n");
             assert!(
                 started.elapsed() < OUTPUT_GRACE + AFTER_KILL_GRACE + Duration::from_secs(1),
                 "{:?}",
                 started.elapsed()
             );
+            let pid = grandchild_pid(&pid_file);
+            assert!(is_gone(pid), "grandchild {pid} is still running");
         }
 
         #[test]
         fn stderr_is_cut_to_its_last_4_kib() {
             let root = tempfile::tempdir().unwrap();
-            let script = "head -c 10000 /dev/zero | tr '\\0' a >&2; echo ' the end' >&2; exit 1";
-            let err = run(script, &job_in(root.path(), "")).unwrap_err();
+            let settings = [
+                ("stderr_pad", "10000"),
+                ("stderr", " the end"),
+                ("code", "1"),
+            ];
+            let err = run(&settings, &job_in(root.path(), "")).unwrap_err();
             match err {
                 AgentError::CliFailed { stderr, .. } => {
                     assert_eq!(stderr.len(), MAX_STDERR_BYTES);
@@ -742,29 +876,63 @@ mod tests {
         #[test]
         fn cancel_still_works_while_waiting_for_output() {
             let root = tempfile::tempdir().unwrap();
+            let pid_file = root.path().join("grandchild.pid");
             let job = job_in(root.path(), "");
             let handle = job.cancel.clone();
             let canceller = thread::spawn(move || {
                 thread::sleep(Duration::from_millis(300));
                 handle.cancel();
             });
+            // The CLI exits at once; its grandchild keeps stdout open for 30 s.
+            let pid_path = pid_file.display().to_string();
+            let settings = [
+                ("stdout", "hi\n"),
+                ("grandchild_pid_file", pid_path.as_str()),
+                ("grandchild_keeps_stdout", "1"),
+            ];
             let started = Instant::now();
-            // The shell exits at once; `sleep` keeps stdout open for 30 s.
-            let err = run("echo hi; sleep 30 &", &job).unwrap_err();
+            let err = run(&settings, &job).unwrap_err();
             canceller.join().unwrap();
             assert!(matches!(err, AgentError::Cancelled), "{err:?}");
             assert!(started.elapsed() < OUTPUT_GRACE, "{:?}", started.elapsed());
+            let pid = grandchild_pid(&pid_file);
+            assert!(is_gone(pid), "grandchild {pid} is still running");
         }
 
         #[test]
         fn a_reply_over_the_stdout_limit_is_rejected() {
             let root = tempfile::tempdir().unwrap();
-            let script = format!("head -c {} /dev/zero", MAX_STDOUT_BYTES + 1);
-            let err = run(&script, &job_in(root.path(), "")).unwrap_err();
+            let pad = (MAX_STDOUT_BYTES + 1).to_string();
+            let err = run(&[("stdout_pad", pad.as_str())], &job_in(root.path(), "")).unwrap_err();
             match err {
                 AgentError::InvalidJson { reason } => assert!(reason.contains("8 MiB"), "{reason}"),
                 other => panic!("expected InvalidJson, got {other:?}"),
             }
+        }
+
+        #[test]
+        fn a_tree_dropped_before_its_child_exits_is_killed() {
+            let root = tempfile::tempdir().unwrap();
+            let pid_file = root.path().join("grandchild.pid");
+            let mut command = fake(&[
+                ("grandchild_pid_file", &pid_file.display().to_string()),
+                ("sleep", "30"),
+            ]);
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let tree = ProcessTree::spawn(command).unwrap();
+            let child = tree.id();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !pid_file.exists() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            thread::sleep(Duration::from_millis(50));
+            drop(tree);
+            assert!(is_gone(child), "child {child} is still running");
+            let pid = grandchild_pid(&pid_file);
+            assert!(is_gone(pid), "grandchild {pid} is still running");
         }
 
         #[test]
