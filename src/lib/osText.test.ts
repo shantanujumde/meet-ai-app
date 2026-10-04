@@ -18,6 +18,11 @@ test("names each OS's own apps", () => {
   expect(osText("terminal", "linux")).toBe("Terminal");
   expect(osText("settings", "linux")).toBe("Settings");
   expect(osText("fileManager", "macos")).toBe("Finder");
+  expect(osText("thisComputer", "macos")).toBe("this Mac");
+  expect(osText("thisComputer", "windows")).toBe("this PC");
+  expect(osText("appLauncher", "macos")).toBe("the Dock");
+  expect(osText("appLauncher", "windows")).toBe("the Start menu");
+  expect(osText("appLauncher", "linux")).toBe("the app menu");
 });
 
 test("reads the OS from the plugin", () => {

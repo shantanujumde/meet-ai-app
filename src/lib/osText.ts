@@ -27,6 +27,8 @@ const WORDS = {
   settings: { macos: "System Settings", windows: "Settings", linux: "Settings" },
   fileManager: { macos: "Finder", windows: "File Explorer", linux: "file manager" },
   terminal: { macos: "Terminal", windows: "PowerShell", linux: "Terminal" },
+  thisComputer: { macos: "this Mac", windows: "this PC", linux: "this computer" },
+  appLauncher: { macos: "the Dock", windows: "the Start menu", linux: "the app menu" },
 } as const satisfies Record<string, Record<Os, string>>;
 
 export type OsWord = keyof typeof WORDS;

@@ -1,7 +1,7 @@
 //! Windows half of the `store` seam (see `mod.rs`).
 
-/// `ERROR_SHARING_VIOLATION` (32) and `ERROR_LOCK_VIOLATION` (33): a player
-/// or a backup tool holding the WAV open without delete sharing.
+/// Whether `code` is a Windows lock violation (a file open elsewhere without
+/// delete sharing). The codes themselves live in `meeting-format`.
 pub(crate) fn is_lock_violation(code: i32) -> bool {
     meeting_format::is_lock_violation(code)
 }
