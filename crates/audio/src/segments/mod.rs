@@ -39,11 +39,16 @@
 //!    duration, exactly — see [`BoundaryGap::asleep_ms`].
 
 mod drift;
+mod drift_audio;
 pub mod rate_guard;
 mod writer;
 
 pub use drift::{
     BoundaryGap, Breach, ChannelDrift, DriftError, DriftReport, InvariantViolation, SegmentsDrift,
+};
+pub use drift_audio::{
+    AudioDrift, AudioDriftConfig, AudioDriftError, DriftTrendSnapshot, GccPhatLagEstimator,
+    LagEstimate, LagPoint, LagTrendTracker, ProbeState, analyze_audio_drift,
 };
 pub use writer::{SegmentOpen, SegmentsWriter};
 

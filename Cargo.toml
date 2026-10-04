@@ -37,6 +37,9 @@ objc2-core-foundation = "=0.3.2"
 objc2-foundation = "=0.3.2"
 ringbuf = "=0.5.1"
 rubato = "=5.0.0"
+# Real FFTs for drift-check --audio (GCC-PHAT, TUR-64). Already in the tree
+# through rubato, so this pins the same version.
+realfft = "=3.5.0"
 # "Mic in use by another app" off macOS (TUR-60). wasapi: safe wrappers over
 # WASAPI's session list, pure Rust over the `windows` crate (MIT). libpulse:
 # the PulseAudio client API, which PipeWire answers too through
