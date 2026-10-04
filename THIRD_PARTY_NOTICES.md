@@ -106,11 +106,11 @@ SOFTWARE.
     `crates/detect/src/app/linux.rs`
   - `crates/audio/src/loopback/follower.rs` (`EndpointFollower`: switch
     only after two agreeing reads, and its four tests) from
+    `crates/audio-actual/src/speaker/windows.rs` (TUR-37)
   - `crates/audio/src/segments/drift_audio.rs` (`GccPhatLagEstimator`,
     `LagTrendTracker` and the lock / lost probe, for `drift-check --audio`)
     from `crates/audio-sync/src/estimator.rs`, `crates/audio-sync/src/drift.rs`
     and `crates/audio-sync/src/probe.rs` (TUR-64)
-    `crates/audio-actual/src/speaker/windows.rs` (TUR-37)
 
 ```
 MIT License
