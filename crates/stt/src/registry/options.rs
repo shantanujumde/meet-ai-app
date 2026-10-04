@@ -85,6 +85,10 @@ fn options_with(environment: &Environment, apple: &Option<Result<Probe, Error>>)
 /// rather than for a log ([`super::apple_unavailable_detail`]).
 fn apple_reason(apple: &Option<Result<Probe, Error>>, locale: &str) -> String {
     match AppleUnavailable::of(apple) {
+        // Off macOS there is no helper to be missing (TUR-52).
+        AppleUnavailable::NoSidecar if crate::platform::APPLE_SPEECH_UNSUPPORTED.is_some() => {
+            "Only available on macOS.".into()
+        }
         AppleUnavailable::NoSidecar => {
             "This copy of meet-ai has no speech helper, so Apple's engine can't run.".into()
         }
@@ -172,12 +176,13 @@ mod tests {
         assert_eq!(found.auto, Some(Kind::Whisper));
         assert!(!found.apple.available);
         assert!(
-            found
-                .apple
-                .reason
-                .as_deref()
-                .unwrap()
-                .contains("speech helper"),
+            found.apple.reason.as_deref().unwrap().contains(
+                if crate::platform::APPLE_SPEECH_UNSUPPORTED.is_some() {
+                    "Only available on macOS"
+                } else {
+                    "speech helper"
+                }
+            ),
             "{:?}",
             found.apple.reason
         );

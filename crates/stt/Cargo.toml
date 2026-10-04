@@ -28,14 +28,25 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
-# whisper-rs is the FALLBACK engine (SETUP.md §1.5) — macOS 26 uses the Swift
-# sidecar instead. It is gated per-target for two reasons:
-#   1. `metal` is an Apple-only feature.
-#   2. whisper-rs-sys compiles whisper.cpp with cmake for the *target*, which a
-#      Windows cross-check from a Mac has no toolchain for. Gating keeps
-#      `just check-windows` meaningful instead of failing for an unrelated reason.
-# The Windows seam (SPEC §8.2) turns on `vulkan`/`cuda` in the block below when
-# crates/audio/src/windows.rs lands.
+# whisper-rs: the FALLBACK engine on macOS (SETUP.md §1.5; macOS 26 uses the
+# Swift sidecar instead) and the ONLY engine on Windows and Linux (TUR-52).
+# crates.io 0.16.0 is the release cut from the Codeberg repo
+# (https://codeberg.org/tazz4843/whisper-rs, Unlicense; the GitHub one was
+# archived 2025-07-30): its Cargo.toml names that repository, so the crates.io
+# pin is kept.
+#
+# whisper-rs-sys compiles whisper.cpp with cmake for the *target*. That needs
+# cmake and a C++ compiler on every OS (MSVC + LLVM on Windows), and means
+# `just check-windows` can no longer cross-check this crate from a Mac; the
+# native `rust (windows)` CI job builds and tests it instead.
+#
+# Off macOS the build is CPU only (GPU is TUR-61) and must be portable:
+# GGML_NATIVE=OFF, through cmake/force-portable-ggml.cmake (see check.yml).
+[dependencies.whisper-rs]
+workspace = true
+features = ["tracing_backend"]
+
+# `metal` is an Apple-only feature; cargo merges it into the line above.
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { workspace = true, features = ["metal", "tracing_backend"] }
 

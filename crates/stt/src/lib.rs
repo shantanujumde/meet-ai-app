@@ -44,10 +44,8 @@ pub mod vad;
 /// The OS seam (SPEC §8.2): the only module that names an operating system.
 mod platform;
 
-/// `stt::whisper` on macOS, the whisper-rs fallback engine. Declared in
-/// `platform`, since whisper-rs is only built for macOS so far.
-// Empty, so unused, on every other OS.
-#[allow(unused_imports)]
+/// `stt::whisper`, the whisper-rs engine: the fallback on macOS, the only
+/// engine on Windows and Linux. Declared in `platform`.
 pub use platform::public::*;
 
 pub use session::{

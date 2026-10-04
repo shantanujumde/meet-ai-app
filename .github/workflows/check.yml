@@ -300,8 +300,10 @@ jobs:
   # - Audio is the TUR-42 platform stubs: cpal microphone, no system track.
   #   Tests that need a device are #[ignore]d the same as on macOS; macOS-only
   #   test files gate themselves with `#![cfg(target_os = "macos")]`.
-  # - No whisper: whisper-rs is gated to macOS in crates/stt/Cargo.toml, so no
-  #   cmake build yet.
+  # - Whisper is built for the CPU (TUR-52): cmake and a C++ compiler build
+  #   whisper.cpp, and bindgen needs libclang. GGML_NATIVE is forced OFF so
+  #   the binary (and the installer artifact) runs on CPUs older than the
+  #   runner's; the step "whisper.cpp was built portably" proves it was.
   #
   # Windows runs `just check-windows`, which on Windows is exactly the native
   # build, test and clippy below (see the justfile), so the recipe and this job
@@ -373,6 +375,30 @@ jobs:
           clang --version
           cmake --version
 
+      # whisper-rs-sys runs bindgen, which loads libclang; on Windows that is
+      # the LLVM the image ships, which bindgen does not find on its own. cmake
+      # and MSVC are already on the image (step above).
+      - name: Point bindgen at libclang (Windows)
+        if: runner.os == 'Windows'
+        run: echo 'LIBCLANG_PATH=C:/Program Files/LLVM/bin' >> "$GITHUB_ENV"
+
+      # cmake and a C++ compiler build whisper.cpp; libclang is for bindgen.
+      # build-essential (g++) comes with the Tauri packages above.
+      - name: Install whisper.cpp build tools (Linux)
+        if: runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: sudo apt-get -o Acquire::Retries=5 install -y cmake clang libclang-dev
+
+      # whisper-rs-sys passes every CMAKE_* variable to cmake, so this include
+      # runs inside whisper.cpp's project() and forces GGML_NATIVE OFF: no
+      # -march=native, so no illegal-instruction crash on a user's older CPU.
+      # Forward slashes (`pwd -W` in Git Bash) so cmake reads the Windows path.
+      - name: Build whisper.cpp portably (GGML_NATIVE=OFF)
+        run: |
+          root="$(pwd -W 2>/dev/null || pwd)"
+          echo "CMAKE_PROJECT_INCLUDE=$root/crates/stt/cmake/force-portable-ggml.cmake" >> "$GITHUB_ENV"
+
       # Dependencies only; per-OS key so the three OSes never share entries.
       - uses: Swatinem/rust-cache@v2
         with:
@@ -404,6 +430,24 @@ jobs:
       - name: clippy
         if: runner.os == 'Linux'
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Fails if any whisper.cpp build in target/ has GGML_NATIVE on, or if
+      # none was found (the include above was never applied, or moved).
+      - name: whisper.cpp was built portably
+        run: |
+          shopt -s nullglob
+          caches=(target/debug/build/whisper-rs-sys-*/out/build/CMakeCache.txt)
+          if [ "${#caches[@]}" -eq 0 ]; then
+            echo "::error::no whisper.cpp CMakeCache.txt under target/debug/build"
+            exit 1
+          fi
+          for cache in "${caches[@]}"; do
+            grep -H '^GGML_NATIVE:' "$cache"
+            grep -q '^GGML_NATIVE:BOOL=OFF$' "$cache" || {
+              echo "::error file=$cache::GGML_NATIVE is not OFF"
+              exit 1
+            }
+          done
 
       - uses: pnpm/action-setup@v4
 

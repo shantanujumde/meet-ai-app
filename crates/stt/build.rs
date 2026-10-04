@@ -21,7 +21,8 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=CC");
 
-    // whisper-rs is a macOS-only dependency (Cargo.toml), so is its runtime.
+    // Only the Metal backend (macOS) needs this runtime. whisper is built on
+    // Windows and Linux too (TUR-52), CPU only, and links nothing extra.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos") {
         return;
     }

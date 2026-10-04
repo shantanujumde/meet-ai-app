@@ -2,44 +2,44 @@
 //!
 //! The only file in the crate that names an operating system. SPEC §2.5 keeps
 //! engine *selection* in [`crate::registry`] and platform-free; what differs per
-//! OS is only whether the whisper fallback is built at all, because
-//! `whisper-rs` compiles whisper.cpp for the target and is a macOS-only
-//! dependency for now (Cargo.toml). So:
+//! OS is:
 //!
-//! * macOS: `macos.rs` builds the real [`crate::whisper::WhisperEngine`].
-//! * Windows: `windows.rs`, Linux (and any other OS): `linux.rs`. Explicit
-//!   stubs that report the engine as unavailable until the port turns
-//!   `whisper-rs` on there with `vulkan`/`cuda`.
+//! * whether Apple's engine can exist at all ([`APPLE_SPEECH_UNSUPPORTED`]);
+//! * how whisper is built: Metal on macOS (`macos.rs`), CPU everywhere else
+//!   (`other.rs`, shared by Windows, Linux and any other OS). GPU off macOS is TUR-61. The
+//!   cargo features behind that are in Cargo.toml; loading is the same code.
 
-// `whisper.rs` stays where it was; only its declaration moved here, so
-// `lib.rs` has no `cfg` and `stt::whisper` keeps its public path on macOS.
-#[cfg(target_os = "macos")]
+// `whisper.rs` stays where it was; only its declaration lives here, so
+// `lib.rs` has no `cfg` and `stt::whisper` keeps its public path.
 #[path = "../whisper.rs"]
 pub mod whisper;
 
 #[cfg(target_os = "macos")]
 mod macos;
 
-#[cfg(target_os = "windows")]
-mod windows;
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-mod linux;
+#[cfg(not(target_os = "macos"))]
+mod other;
 
 #[cfg(target_os = "macos")]
 use macos as os;
 
-#[cfg(target_os = "windows")]
-use windows as os;
+#[cfg(not(target_os = "macos"))]
+use other as os;
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-use linux as os;
+pub(crate) use os::APPLE_SPEECH_UNSUPPORTED;
 
-pub(crate) use os::load_whisper;
+/// Load the whisper model at `model` with the default config — what
+/// [`crate::registry::select`] builds for the whisper choice.
+pub(crate) fn load_whisper(
+    model: &std::path::Path,
+) -> Result<Box<dyn crate::SttEngine>, crate::Error> {
+    Ok(Box::new(whisper::WhisperEngine::load(
+        model,
+        whisper::WhisperConfig::default(),
+    )?))
+}
 
-/// What `lib.rs` re-exports to other crates: `stt::whisper` on macOS, nothing
-/// elsewhere.
+/// What `lib.rs` re-exports to other crates: `stt::whisper`.
 pub mod public {
-    #[cfg(target_os = "macos")]
     pub use super::whisper;
 }

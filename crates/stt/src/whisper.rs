@@ -602,4 +602,22 @@ mod tests {
             Ok(_) => panic!("loading a nonexistent model should not succeed"),
         }
     }
+
+    #[test]
+    fn a_file_that_is_not_a_model_is_a_typed_error_from_whisper_cpp() {
+        // Unlike the test above, this gets past the `is_file` check and into
+        // whisper.cpp itself, so it proves the C library links and runs on
+        // every OS CI builds (Windows and Linux since TUR-52) without needing
+        // a real model download.
+        let dir = tempfile::tempdir().unwrap();
+        let bogus = dir.path().join("ggml-not-a-model.bin");
+        std::fs::write(&bogus, b"this is not a ggml model file").unwrap();
+        match WhisperEngine::load(&bogus, WhisperConfig::default()) {
+            Err(Error::Engine(message)) => {
+                assert!(message.contains("could not load"), "got {message}");
+            }
+            Err(other) => panic!("expected Engine error, got {other:?}"),
+            Ok(_) => panic!("a garbage file should not load as a model"),
+        }
+    }
 }
