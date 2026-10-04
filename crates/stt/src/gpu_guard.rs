@@ -12,7 +12,10 @@
 //!    that code, which is the point.
 //! 3. A marker still there at the next start means the GPU took the app down:
 //!    [`arm`] answers "CPU" and logs it. The marker stays, so every later run
-//!    uses the CPU too, until the user deletes the file the log line names.
+//!    uses the CPU too, until the user deletes the file the log line names, or
+//!    until the app is updated: the marker holds the app version that wrote
+//!    it, and one from another version is deleted and the GPU tried again,
+//!    since an update may have fixed the crash.
 //!
 //! No child process: a crash costs the recording that hit it, never the next
 //! one. Only the first decode is covered; a crash later in a long meeting
@@ -32,9 +35,26 @@ pub fn marker_path(dir: &Path) -> PathBuf {
     dir.join(GPU_CHECK_FILE)
 }
 
-/// Did whisper crash on the GPU before, as far as the marker in `dir` says?
+/// The app version a marker is written with. Every crate shares the
+/// workspace version, so this is the app's.
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// What a marker says: the version that wrote it, on its first line.
+fn marker_text(version: &str) -> String {
+    format!("{version}\nwhisper was starting on the GPU; delete this file to try the GPU again\n")
+}
+
+/// The marker in `dir`, if there is one: `Some(true)` when this app version
+/// wrote it, `Some(false)` when another one did.
+fn marker_state(dir: &Path, version: &str) -> Option<bool> {
+    let text = std::fs::read_to_string(marker_path(dir)).ok()?;
+    Some(text.lines().next().map(str::trim) == Some(version))
+}
+
+/// Did whisper crash on the GPU before, in this app version, as far as the
+/// marker in `dir` says? A marker from another version does not count.
 pub fn crashed_before(dir: &Path) -> bool {
-    marker_path(dir).is_file()
+    marker_state(dir, APP_VERSION) == Some(true)
 }
 
 /// Where the marker for `model` goes: the `.app/` folder its `models/` folder
@@ -65,19 +85,32 @@ pub struct GpuDecision {
 
 /// Decide GPU or CPU for this start, writing the marker when it is GPU.
 pub fn arm(dir: &Path) -> GpuDecision {
+    arm_as(dir, APP_VERSION)
+}
+
+/// [`arm`] for a given app version, so the update rule is tested without
+/// building another version.
+fn arm_as(dir: &Path, version: &str) -> GpuDecision {
     let marker = marker_path(dir);
-    if marker.is_file() {
-        tracing::warn!(
+    match marker_state(dir, version) {
+        Some(true) => {
+            tracing::warn!(
+                marker = %marker.display(),
+                "whisper crashed on the GPU in an earlier run, so it runs on the CPU; \
+                 delete this file to try the GPU again"
+            );
+            return GpuDecision {
+                use_gpu: false,
+                guard: None,
+            };
+        }
+        Some(false) => tracing::info!(
             marker = %marker.display(),
-            "whisper crashed on the GPU in an earlier run, so it runs on the CPU; \
-             delete this file to try the GPU again"
-        );
-        return GpuDecision {
-            use_gpu: false,
-            guard: None,
-        };
+            "a GPU crash marker from another app version; trying the GPU again"
+        ),
+        None => {}
     }
-    match std::fs::write(&marker, b"whisper is starting on the GPU\n") {
+    match std::fs::write(&marker, marker_text(version)) {
         Ok(()) => GpuDecision {
             use_gpu: true,
             guard: Some(Arc::new(GpuGuard {
@@ -161,6 +194,34 @@ mod tests {
         assert!(!decision.use_gpu);
         assert!(decision.guard.is_none());
         assert!(crashed_before(dir.path()), "the next run must still see it");
+    }
+
+    #[test]
+    fn a_marker_from_another_app_version_is_replaced_and_the_gpu_tried_again() {
+        let dir = tempfile::tempdir().unwrap();
+        std::mem::forget(arm_as(dir.path(), "0.3.0").guard);
+        assert_eq!(marker_state(dir.path(), "0.3.0"), Some(true));
+
+        // The same version still sees its crash.
+        assert!(!arm_as(dir.path(), "0.3.0").use_gpu);
+
+        // An update tries the GPU again, and the marker is now its own.
+        let updated = arm_as(dir.path(), "0.4.0");
+        assert!(updated.use_gpu);
+        assert_eq!(marker_state(dir.path(), "0.4.0"), Some(true));
+        assert_eq!(marker_state(dir.path(), "0.3.0"), Some(false));
+        drop(updated);
+        assert_eq!(marker_state(dir.path(), "0.4.0"), None);
+    }
+
+    #[test]
+    fn only_a_marker_from_this_version_counts_as_a_crash() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!crashed_before(dir.path()));
+        std::fs::write(marker_path(dir.path()), marker_text("0.0.1-old")).unwrap();
+        assert!(!crashed_before(dir.path()));
+        std::fs::write(marker_path(dir.path()), marker_text(APP_VERSION)).unwrap();
+        assert!(crashed_before(dir.path()));
     }
 
     #[test]

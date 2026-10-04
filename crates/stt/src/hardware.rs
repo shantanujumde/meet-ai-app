@@ -113,7 +113,8 @@ mod tests {
         assert!(clean.total_memory_bytes > 0);
         assert_ne!(clean.gpu, Gpu::CrashedBefore);
 
-        std::fs::write(crate::gpu_guard::marker_path(dir.path()), b"").unwrap();
+        // A crash in this version: arm, then never pass or drop.
+        std::mem::forget(crate::gpu_guard::arm(dir.path()).guard);
         let after = Hardware::detect(Some(dir.path()));
         let expected = match clean.gpu {
             Gpu::Usable => Gpu::CrashedBefore,
