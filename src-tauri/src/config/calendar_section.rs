@@ -4,11 +4,14 @@
 //!
 //! An unknown provider name is an error, never silently dropped: the same rule
 //! A4 set for `transcription.engine`. If you wrote `"googel"`, you want to be
-//! told, not to find the app quietly reading only EventKit. Like
-//! `transcription`, though, the app-facing reader [`calendar`] logs the error
-//! and runs with the defaults, so a typo never stops the app from starting.
+//! told, not to find the app quietly reading only EventKit.
 //! [`parse_calendar`] returns the error for a caller (say a settings screen)
-//! that wants to show it.
+//! that wants to show it. The app-facing reader [`calendar`] logs it instead,
+//! so a typo never stops the app from starting. Since TUR-90 it skips only the
+//! bad value — an unknown provider, `"eventkit"` off macOS, a
+//! `refresh_minutes` of 0 — and keeps the rest of the section, so one typo no
+//! longer drops the sources and OAuth client ids beside it. A section that
+//! does not decode at all (a wrong type) is still the defaults.
 //!
 //! The app's `CalendarState` (TUR-28) calls [`calendar`] and
 //! [`CalendarConfig::available_providers`] on every read.
@@ -211,33 +214,66 @@ pub fn parse_calendar(raw: &str) -> Result<CalendarConfig, ConfigError> {
 /// [`parse_calendar`] on an OS that has (`calendar_app`) or lacks a Calendar
 /// app, so both are tested on any machine.
 fn parse_calendar_on(raw: &str, calendar_app: bool) -> Result<CalendarConfig, ConfigError> {
+    read_calendar(raw, calendar_app, OnBadValue::Refuse)
+}
+
+/// What [`read_calendar`] does with a value that decodes but is not allowed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OnBadValue {
+    /// Return it as the error: [`parse_calendar`], and the Settings write.
+    Refuse,
+    /// Log it and leave that one value out: the app's reader.
+    Skip,
+}
+
+impl OnBadValue {
+    /// `Err(error)` when refusing; logged and `Ok` when skipping.
+    fn handle(self, error: ConfigError) -> Result<(), ConfigError> {
+        match self {
+            Self::Refuse => Err(error),
+            Self::Skip => {
+                tracing::warn!(%error, "config.jsonc's calendar section has a bad value; skipping it");
+                Ok(())
+            }
+        }
+    }
+}
+
+fn read_calendar(
+    raw: &str,
+    calendar_app: bool,
+    on_bad: OnBadValue,
+) -> Result<CalendarConfig, ConfigError> {
     let calendar: RawCalendar = read_section(raw, "calendar")
         .map_err(ConfigError::Invalid)?
         .unwrap_or_default();
     let defaults = CalendarConfig::defaults_for(calendar_app);
-    let providers = match calendar.providers {
+    let mut providers = match calendar.providers {
         None => defaults.providers,
         Some(names) => {
             let mut providers = Vec::with_capacity(names.len());
             for name in &names {
-                let provider = Provider::from_config(name)?;
-                if !providers.contains(&provider) {
-                    providers.push(provider);
+                match Provider::from_config(name) {
+                    Ok(provider) if !providers.contains(&provider) => providers.push(provider),
+                    Ok(_) => {}
+                    Err(error) => on_bad.handle(error)?,
                 }
             }
             providers
         }
     };
     if !calendar_app && providers.contains(&Provider::EventKit) {
-        return Err(ConfigError::Invalid(
+        on_bad.handle(ConfigError::Invalid(
             "calendar.providers \"eventkit\" is the macOS Calendar app, which this system does not have; use \"google\" or \"microsoft\" and sign in from Settings".into(),
-        ));
+        ))?;
+        providers.retain(|provider| *provider != Provider::EventKit);
     }
-    let refresh_minutes = calendar.refresh_minutes.unwrap_or(defaults.refresh_minutes);
+    let mut refresh_minutes = calendar.refresh_minutes.unwrap_or(defaults.refresh_minutes);
     if refresh_minutes == 0 {
-        return Err(ConfigError::Invalid(
+        on_bad.handle(ConfigError::Invalid(
             "calendar.refresh_minutes must be at least 1".into(),
-        ));
+        ))?;
+        refresh_minutes = defaults.refresh_minutes;
     }
     Ok(CalendarConfig {
         providers,
@@ -260,13 +296,15 @@ fn parse_calendar_on(raw: &str, calendar_app: bool) -> Result<CalendarConfig, Co
     })
 }
 
-/// [`parse_calendar`], with a bad section logged and replaced by the
-/// defaults, the way `transcription` behaves: startup never fails on it.
+/// The section with each bad value logged and left out (TUR-90), or the
+/// defaults when it does not decode at all: startup never fails on it.
 fn calendar_or_defaults(raw: &str) -> CalendarConfig {
-    parse_calendar(raw).unwrap_or_else(|error| {
-        tracing::warn!(%error, "config.jsonc's calendar section is not valid; using defaults");
-        CalendarConfig::default()
-    })
+    read_calendar(raw, crate::platform::HAS_CALENDAR_APP, OnBadValue::Skip).unwrap_or_else(
+        |error| {
+            tracing::warn!(%error, "config.jsonc's calendar section is not valid; using defaults");
+            CalendarConfig::default()
+        },
+    )
 }
 
 /// `calendar` from `~/Meetings/.app/config.jsonc`, or the SPEC §3.5 defaults
@@ -480,10 +518,53 @@ mod tests {
     }
 
     #[test]
-    fn the_app_reader_logs_a_bad_section_and_runs_with_defaults() {
+    fn the_app_reader_skips_an_unknown_provider_and_keeps_the_rest() {
+        let raw = r#"{ "calendar": {
+            "providers": ["googel", "microsoft", "outlook"],
+            "refresh_minutes": 5,
+            "google": { "client_id": "g-id" },
+            "microsoft": { "client_id": "ms-id" }
+        } }"#;
+        assert!(
+            parse_calendar(raw).is_err(),
+            "the strict reader still refuses it"
+        );
+        let calendar = calendar_or_defaults(raw);
+        assert_eq!(calendar.providers, vec![Provider::Microsoft]);
+        assert_eq!(calendar.refresh_minutes, 5);
+        assert_eq!(calendar.google.client_id.as_deref(), Some("g-id"));
+        assert_eq!(calendar.microsoft.client_id.as_deref(), Some("ms-id"));
+
+        // Nothing known left is no source at all, not the default one.
+        let calendar = calendar_or_defaults(r#"{ "calendar": { "providers": ["outlook"] } }"#);
+        assert!(calendar.providers.is_empty());
+    }
+
+    #[test]
+    fn the_app_reader_reads_a_zero_refresh_as_the_default_and_keeps_the_rest() {
+        let raw = r#"{ "calendar": {
+            "providers": ["google"],
+            "refresh_minutes": 0,
+            "google": { "client_id": "g-id" }
+        } }"#;
+        assert!(parse_calendar(raw).is_err());
+        let calendar = calendar_or_defaults(raw);
+        assert_eq!(calendar.refresh_minutes, 15);
+        assert_eq!(calendar.providers, vec![Provider::Google]);
+        assert_eq!(calendar.google.client_id.as_deref(), Some("g-id"));
+    }
+
+    #[test]
+    fn off_macos_the_lenient_reader_drops_eventkit_and_keeps_the_rest() {
+        let raw = r#"{ "calendar": { "providers": ["eventkit", "google"] } }"#;
+        let calendar = read_calendar(raw, false, OnBadValue::Skip).unwrap();
+        assert_eq!(calendar.providers, vec![Provider::Google]);
+        assert!(read_calendar(raw, false, OnBadValue::Refuse).is_err());
+    }
+
+    #[test]
+    fn the_app_reader_logs_a_section_that_does_not_decode_and_runs_with_defaults() {
         for raw in [
-            r#"{ "calendar": { "providers": ["outlook"] } }"#,
-            r#"{ "calendar": { "refresh_minutes": 0 } }"#,
             r#"{ "calendar": { "refresh_minutes": -5 } }"#,
             r#"{ "calendar": { "providers": "eventkit" } }"#,
             r#"{ "calendar": null }"#,

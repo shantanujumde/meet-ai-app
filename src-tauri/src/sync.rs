@@ -42,7 +42,7 @@ use tauri::{AppHandle, Manager as _, State};
 use tauri_plugin_opener::OpenerExt as _;
 
 use crate::config::{self, AgentConfig, Harness as HarnessChoice, TicketsConfig};
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::folder_move::FolderGate;
 use crate::meetings;
 use crate::sync::save::{Created, Fingerprint, Unsaved};
@@ -151,7 +151,7 @@ pub async fn sync_task(
     ticket_id: String,
     meeting_id: Option<String>,
 ) -> Result<TicketSummary, UiError> {
-    blocking(move || {
+    on_blocking_pool(move || {
         let gate = app.try_state::<FolderGate>();
         sync_in(
             &app.state::<SyncRuns>(),
@@ -179,7 +179,7 @@ pub async fn dismiss_unsaved_sync(
     ticket_id: String,
     meeting_id: Option<String>,
 ) -> Result<(), UiError> {
-    blocking(move || {
+    on_blocking_pool(move || {
         let gate = app.try_state::<FolderGate>();
         let unsaved = &app.state::<SyncRuns>().unsaved;
         unsaved.dismiss(
@@ -204,7 +204,7 @@ pub fn cancel_sync(runs: State<'_, SyncRuns>, ticket_id: String) {
 #[tauri::command]
 #[specta::specta]
 pub async fn meeting_tasks(meeting_id: String) -> Result<Vec<TicketSummary>, UiError> {
-    blocking(move || meeting_tasks_in(&meetings::root()?, &meeting_id)).await?
+    on_blocking_pool(move || meeting_tasks_in(&meetings::root()?, &meeting_id)).await?
 }
 
 /// Open a synced task's issue in the browser. The address comes from the
@@ -216,22 +216,13 @@ pub async fn open_synced_issue(
     ticket_id: String,
     meeting_id: Option<String>,
 ) -> Result<(), UiError> {
-    blocking(move || {
+    on_blocking_pool(move || {
         let url = synced_url(&meetings::root()?, &ticket_id, meeting_id.as_deref())?;
         app.opener()
             .open_url(url, None::<&str>)
             .map_err(|error| UiError::app("open-failed", error.to_string()))
     })
     .await?
-}
-
-/// Run `work` on Tauri's blocking pool (see `commands::on_blocking_pool`).
-pub(crate) async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, UiError> {
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|error| UiError::app("task-failed", error.to_string()))
 }
 
 // --- the run ----------------------------------------------------------------

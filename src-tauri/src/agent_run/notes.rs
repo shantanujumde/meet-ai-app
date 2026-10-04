@@ -61,11 +61,12 @@ pub fn run_notes(
     job.timeout = agent.timeout;
     job.work_root = agent.work_root;
     job.cancel = cancel.clone();
-    let reply = agent.harness.run(&job).map_err(|error| match error {
+    let reply = agent.harness.run_reply(&job).map_err(|error| match error {
         AgentError::Cancelled => stopped(root, meeting_id, harness_id),
         other => failure::from_agent(&other, harness_id),
     })?;
-    let notes = prompts::Notes::from_value(reply).map_err(|_| failure::bad_reply())?;
+    let ran_model = reply.model;
+    let notes = prompts::Notes::from_value(reply.value).map_err(|_| failure::bad_reply())?;
     // Cancel pressed while the answer was on its way: write nothing.
     if cancel.is_cancelled() {
         return Err(stopped(root, meeting_id, harness_id));
@@ -73,7 +74,7 @@ pub fn run_notes(
 
     let analysis = Analysis {
         by: analyzed_by(harness_id),
-        model: agent.model.unwrap_or_default(),
+        model: analyzed_model(agent.model, ran_model),
         at: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
     };
     save(&|root| {
@@ -154,6 +155,12 @@ pub fn detected<H: Harness>(harness: H, run_with: impl FnOnce(Install) -> H) -> 
         )),
         Some(install) => Ok(run_with(install)),
     }
+}
+
+/// `analyzed_model`: the model the user picked, or with Default (no model
+/// passed), the one the CLI's reply says it ran. Empty when neither says.
+fn analyzed_model(picked: Option<String>, ran: Option<String>) -> String {
+    picked.or(ran).unwrap_or_default()
 }
 
 /// `analyzed_by` for a harness id. Anything but Codex is Claude Code, which
@@ -244,4 +251,17 @@ fn date(meeting: Option<&Meeting>, meeting_id: &str) -> String {
         .unwrap_or_default()
         .trim()
         .to_owned()
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::analyzed_model;
+
+    #[test]
+    fn the_picked_model_wins_and_default_records_what_the_cli_ran() {
+        let ran = Some("claude-sonnet-4-5-20250929".to_owned());
+        assert_eq!(analyzed_model(Some("opus".into()), ran.clone()), "opus");
+        assert_eq!(analyzed_model(None, ran), "claude-sonnet-4-5-20250929");
+        assert_eq!(analyzed_model(None, None), "");
+    }
 }

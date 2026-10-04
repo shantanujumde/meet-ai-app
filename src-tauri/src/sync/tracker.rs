@@ -11,9 +11,9 @@ use agent::mcp::{self, McpServer, McpStatus};
 use serde::Serialize;
 use tauri::{AppHandle, Manager as _};
 
-use super::{agent_error, blocking, find_binary};
+use super::{agent_error, find_binary};
 use crate::config::{self, Harness as HarnessChoice, TicketsConfig};
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::folder_move::FolderGate;
 
 /// Trackers the Sync prompt knows how to name.
@@ -83,7 +83,7 @@ impl From<McpServer> for TrackerServer {
 #[tauri::command]
 #[specta::specta]
 pub async fn tracker_settings() -> Result<TrackerSettings, UiError> {
-    blocking(current).await?
+    on_blocking_pool(current).await?
 }
 
 /// Save the tracker and its MCP server. Through the [`FolderGate`]: the
@@ -95,7 +95,7 @@ pub async fn set_tracker(
     tracker: String,
     tracker_mcp: String,
 ) -> Result<TrackerSettings, UiError> {
-    blocking(move || {
+    on_blocking_pool(move || {
         let tickets = checked(&tracker, &tracker_mcp)?;
         app.state::<FolderGate>()
             .writing(|| Ok(config::set_tickets(&tickets)?))?;
@@ -110,7 +110,7 @@ pub async fn set_tracker(
 #[tauri::command]
 #[specta::specta]
 pub async fn tracker_servers() -> Result<Vec<TrackerServer>, UiError> {
-    blocking(|| {
+    on_blocking_pool(|| {
         let agent = config::agent()?;
         if agent.harness == HarnessChoice::None {
             return Ok(Vec::new());

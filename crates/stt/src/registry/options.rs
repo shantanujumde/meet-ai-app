@@ -5,7 +5,7 @@
 //! Lives in the registry because the registry is what decides `auto`. The
 //! window never re-derives any of this: it draws what [`options`] says.
 
-use super::{Environment, Kind, Preference, decide, probe_apple};
+use super::{AppleUnavailable, Environment, Kind, Preference, decide, probe_apple};
 use crate::Error;
 use crate::apple::Probe;
 
@@ -81,21 +81,21 @@ fn options_with(environment: &Environment, apple: &Option<Result<Probe, Error>>)
     }
 }
 
-/// [`super::apple_unavailable_detail`]'s four cases, in words for the
-/// picker's disabled row rather than for a log.
+/// [`AppleUnavailable`]'s cases, in words for the picker's disabled row
+/// rather than for a log ([`super::apple_unavailable_detail`]).
 fn apple_reason(apple: &Option<Result<Probe, Error>>, locale: &str) -> String {
-    match apple {
-        None => "This copy of meet-ai has no speech helper, so Apple's engine can't run.".into(),
-        Some(Err(error)) => format!("Apple's engine did not answer when checked ({error})."),
-        // The sidecar only sends a reason from its macOS 26 guard; see
-        // `apple_unavailable_detail`.
-        Some(Ok(probe)) if !probe.available => match probe.reason {
-            Some(_) => "Needs macOS 26 or later.".into(),
-            None => "Apple's engine says it can't run on this Mac (usually the hardware or the \
-                     language)."
-                .into(),
-        },
-        Some(Ok(_)) => {
+    match AppleUnavailable::of(apple) {
+        AppleUnavailable::NoSidecar => {
+            "This copy of meet-ai has no speech helper, so Apple's engine can't run.".into()
+        }
+        AppleUnavailable::ProbeFailed(error) => {
+            format!("Apple's engine did not answer when checked ({error}).")
+        }
+        AppleUnavailable::TooOld(_) => "Needs macOS 26 or later.".into(),
+        AppleUnavailable::CannotRun => "Apple's engine says it can't run on this Mac (usually \
+                                        the hardware or the language)."
+            .into(),
+        AppleUnavailable::ModelMissing => {
             format!("The on-device speech model for {locale} isn't installed on this Mac yet.")
         }
     }

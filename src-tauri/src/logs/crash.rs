@@ -107,8 +107,11 @@ pub struct PanicReport<'a> {
 /// Write one panic's crash file into `dir` and prune old ones. Returns the
 /// file's path. Two panics in the same second share a file, one after the
 /// other, rather than overwriting each other.
+///
+/// Never creates `dir`: it was made at startup, and if it is gone now the
+/// meetings folder has moved, and making it again would bring back an empty
+/// copy of the old meetings root (TUR-90). [`panic_dir`] picks the folder.
 pub fn write_panic_file(dir: &Path, at: Utc, report: &PanicReport<'_>) -> std::io::Result<PathBuf> {
-    std::fs::create_dir_all(dir)?;
     let path = crash_path(dir, at, "");
     let mut body = header("panic");
     let _ = body.write_str("time: ");
@@ -194,13 +197,29 @@ pub fn prune(dir: &Path, keep: usize) {
     }
 }
 
+/// The folder a panic's file goes in: `dir` while it is still there, else
+/// `fallback` (the OS log folder) if that is. `None` when neither is: the
+/// panic then goes to stderr only.
+pub fn panic_dir<'a>(dir: &'a Path, fallback: Option<&'a Path>) -> Option<&'a Path> {
+    if dir.is_dir() {
+        Some(dir)
+    } else {
+        fallback.filter(|fallback| fallback.is_dir())
+    }
+}
+
 /// Write a crash file into `dir` for every panic, then run the hook that was
 /// there before (the default one prints to stderr), so nothing else changes.
+/// When `dir` is gone (the meetings folder moved), the file goes to the
+/// folder `fallback` names instead; see [`panic_dir`].
 ///
 /// A panic that the app catches and recovers from is still written: it is a
 /// bug either way, and [`MAX_CRASH_FILES`](super::MAX_CRASH_FILES) caps how
 /// many pile up.
-pub fn install_panic_hook(dir: PathBuf) {
+pub fn install_panic_hook(
+    dir: PathBuf,
+    fallback: impl Fn() -> Option<PathBuf> + Send + Sync + 'static,
+) {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let thread = std::thread::current();
@@ -214,7 +233,14 @@ pub fn install_panic_hook(dir: PathBuf) {
             backtrace: &backtrace,
         };
         // No tracing call here: a panic inside the logger would recurse.
-        if let Err(error) = write_panic_file(&dir, Utc::from_unix(unix_now()), &report) {
+        let fallback = fallback();
+        let written = match panic_dir(&dir, fallback.as_deref()) {
+            Some(dir) => write_panic_file(dir, Utc::from_unix(unix_now()), &report).map(drop),
+            None => Err(std::io::Error::other(
+                "neither the logs folder nor the OS log folder is there",
+            )),
+        };
+        if let Err(error) = written {
             eprintln!("meet-ai: could not write the crash file: {error}");
         }
         previous(info);

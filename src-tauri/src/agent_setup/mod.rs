@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager as _};
 
 use crate::config::{self, AgentConfig, ConfigError, Harness};
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::folder_move::FolderGate;
 
 mod test_run;
@@ -182,16 +182,6 @@ pub async fn test_agent(choice: AgentChoice) -> Result<AgentTestResult, UiError>
     on_blocking_pool(move || test_run::run(&choice)).await?
 }
 
-/// Run blocking work on Tauri's blocking pool, as `commands.rs` does: every
-/// command here reads the disk or starts a process.
-async fn on_blocking_pool<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, UiError> {
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|error| UiError::app("task-failed", error.to_string()))
-}
-
 // --- between the screen and the config -------------------------------------
 
 impl From<Harness> for AgentHarness {
@@ -255,11 +245,11 @@ impl AgentChoice {
 fn merged(
     choice: &AgentChoice,
     current: Result<AgentConfig, ConfigError>,
-) -> Result<AgentConfig, UiError> {
+) -> Result<AgentConfig, ConfigError> {
     let current = match current {
         Ok(current) => current,
         Err(ConfigError::UnknownHarness(_)) => AgentConfig::default(),
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(error),
     };
     Ok(AgentConfig {
         harness: choice.harness.into(),
@@ -271,9 +261,9 @@ fn merged(
 }
 
 /// Write the pick and read it back, so the screen shows what is on disk.
+/// The merge runs under the config write lock, from the file as it is then.
 fn save(choice: AgentChoice) -> Result<AgentChoice, UiError> {
-    let agent = merged(&choice, config::agent())?;
-    config::set_agent(&agent)?;
+    config::update_agent(|current| merged(&choice, current))?;
     Ok(AgentChoice::from_config(&config::agent()?))
 }
 

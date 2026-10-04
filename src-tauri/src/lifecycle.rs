@@ -26,7 +26,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter as _, Manager as _, RunEvent, Window, WindowEvent};
 
 use crate::config::{self, AppConfig};
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::events::NAVIGATE_EVENT;
 use crate::events::QUIT_CONFIRM_EVENT;
 use crate::folder_move::FolderGate;
@@ -315,11 +315,8 @@ pub async fn set_show_in_dock_when_closed(
 ) -> Result<AppSettings, UiError> {
     on_blocking_pool(move || {
         app.state::<FolderGate>().writing(|| {
-            let saved = config::set_app(&AppConfig {
-                show_in_dock_when_closed: show,
-                // TUR-77: the other `app` keys stay as they are.
-                ..config::app()
-            })?;
+            // TUR-77: the other `app` keys stay as they are on disk.
+            let saved = config::set_app(|app| app.show_in_dock_when_closed = show)?;
             Ok(AppSettings::from(saved))
         })
     })
@@ -342,10 +339,7 @@ pub async fn set_menu_bar_countdown(app: AppHandle, show: bool) -> Result<bool, 
     let handle = app.clone();
     let saved = on_blocking_pool(move || {
         handle.state::<FolderGate>().writing(|| {
-            let saved = config::set_app(&AppConfig {
-                menu_bar_countdown: show,
-                ..config::app()
-            })?;
+            let saved = config::set_app(|app| app.menu_bar_countdown = show)?;
             Ok(saved.menu_bar_countdown)
         })
     })
@@ -353,14 +347,6 @@ pub async fn set_menu_bar_countdown(app: AppHandle, show: bool) -> Result<bool, 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     crate::tray::redraw_soon(&app);
     Ok(saved)
-}
-
-async fn on_blocking_pool<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, UiError> {
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|error| UiError::app("task-failed", error.to_string()))
 }
 
 #[cfg(test)]

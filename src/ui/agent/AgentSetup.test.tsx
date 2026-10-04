@@ -342,4 +342,50 @@ describe("AgentSetup", () => {
     expect(await screen.findByText("No config folder.")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Claude Code/ })).toBeChecked();
   });
+
+  test("a slow, older model save cannot overwrite a newer one", async () => {
+    await renderSetup();
+    let finishFirst: (value: { harness: "claude-code"; model: string; binaryPath: null }) => void =
+      () => {};
+    saveAgentChoice.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFirst = resolve;
+        }),
+    );
+    const field = screen.getByRole("textbox", { name: /Model/ }) as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "opus" } });
+    fireEvent.blur(field);
+    fireEvent.click(screen.getByRole("button", { name: "Sonnet" }));
+    await waitFor(() => expect(saveAgentChoice).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(field.value).toBe("sonnet"));
+
+    await act(async () => finishFirst({ harness: "claude-code", model: "opus", binaryPath: null }));
+    expect(field.value).toBe("sonnet");
+    expect(screen.getByRole("button", { name: "Sonnet" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("None and back to Claude Code finds its model again", async () => {
+    await renderSetup();
+    fireEvent.click(screen.getByRole("button", { name: "Sonnet" }));
+    await waitFor(() =>
+      expect(saveAgentChoice).toHaveBeenLastCalledWith(
+        expect.objectContaining({ model: "sonnet" }),
+      ),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /None, I'll copy the prompt/ }));
+    await waitFor(() =>
+      expect(saveAgentChoice).toHaveBeenLastCalledWith(
+        expect.objectContaining({ harness: "none" }),
+      ),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /Claude Code/ }));
+    await waitFor(() =>
+      expect(saveAgentChoice).toHaveBeenLastCalledWith({
+        harness: "claude-code",
+        model: "sonnet",
+        binaryPath: null,
+      }),
+    );
+  });
 });

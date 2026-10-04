@@ -331,16 +331,35 @@ mod tests {
         let expected = std::fs::canonicalize(&file).unwrap();
         writes.note(&file);
         std::fs::write(&file, "typed by the user").unwrap();
+        // An un-noted write beside it, in the same burst. It must be reported,
+        // which proves the watcher was delivering at all: with nothing
+        // delivered, "the self-write never arrived" would pass on its own.
+        let sibling = folder.join("meeting.md");
+        std::fs::write(&sibling, "edited by an agent").unwrap();
+        let sibling = std::fs::canonicalize(&sibling).unwrap();
 
-        let deadline = Instant::now() + WATCH_DEBOUNCE + Duration::from_secs(1);
+        let mut sibling_seen = false;
+        let deadline = Instant::now() + WATCH_DEBOUNCE + Duration::from_secs(5);
         while let Some(left) = deadline.checked_duration_since(Instant::now()) {
-            if let Ok(paths) = rx.recv_timeout(left) {
-                assert!(
-                    !paths.contains(&expected),
-                    "a self-write must not reach on_change: {paths:?}"
-                );
+            // Once the sibling is in, wait one more quiet debounce for a late
+            // copy of the self-write, then stop.
+            let wait = if sibling_seen { left.min(quiet) } else { left };
+            match rx.recv_timeout(wait) {
+                Ok(paths) => {
+                    assert!(
+                        !paths.contains(&expected),
+                        "a self-write must not reach on_change: {paths:?}"
+                    );
+                    sibling_seen |= paths.contains(&sibling);
+                }
+                Err(_) if sibling_seen => break,
+                Err(_) => {}
             }
         }
+        assert!(
+            sibling_seen,
+            "the un-noted write beside it was never reported"
+        );
     }
 
     fn scratch_dir(name: &str) -> tempfile::TempDir {

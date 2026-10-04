@@ -59,6 +59,17 @@ fn every_engine_round_trips() {
         let written = with_transcription("", engine, "small.en-q5_1").unwrap();
         assert_eq!(parse(&written).engine, engine, "{written}");
     }
+    // The names written are the registry's own (TUR-90: no second list here).
+    let apple = with_transcription("", Preference::AppleSpeech, "small.en-q5_1").unwrap();
+    assert!(
+        apple.contains(&format!("\"{}\"", stt::registry::APPLE_SPEECH)),
+        "{apple}"
+    );
+    let whisper = with_transcription("", Preference::Whisper, "small.en-q5_1").unwrap();
+    assert!(
+        whisper.contains(&format!("\"{}\"", stt::registry::WHISPER)),
+        "{whisper}"
+    );
 }
 
 #[test]

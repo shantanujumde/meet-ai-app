@@ -16,7 +16,7 @@ use tauri_plugin_opener::OpenerExt as _;
 use crate::config;
 use crate::copy_prompt;
 use crate::engine::{self, EnvironmentView, ModelView, SelectionView};
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::folder_move::{self, FolderGate};
 use crate::live_transcript::{LiveTranscript, Snapshot};
 use crate::meetings::{self, Live, MeetingDetail, MeetingList};
@@ -26,31 +26,6 @@ use crate::recording::{Phase, Recorder, Status};
 use crate::search;
 use crate::tickets::{self, TicketSummary};
 use crate::watch;
-
-// --- off the main thread -------------------------------------------------
-
-/// Run a command's blocking work — disk, a subprocess, the recorder — on
-/// Tauri's blocking pool.
-///
-/// A plain `#[tauri::command]` runs on the main thread — the one AppKit draws
-/// the window on — so every disk-touching command used to freeze the app while
-/// it worked. `list_meetings` reads the WAV header of every meeting, and
-/// `change_meetings_folder` can fall back to copying a whole folder tree across
-/// volumes, which takes minutes. `#[tauri::command(async)]` alone would only
-/// move that onto a tokio worker, and parking a worker for minutes starves the
-/// other async commands, so the work goes to the pool built for blocking.
-///
-/// The closure must be `'static`, which is why these commands take an
-/// `AppHandle` and look managed state up inside rather than borrowing a
-/// `State<'_, T>` across the hop. A closure that returns a `Result` comes back
-/// as `Result<Result<_>>`; callers flatten it with `?`.
-async fn on_blocking_pool<T: Send + 'static>(
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, UiError> {
-    tauri::async_runtime::spawn_blocking(work)
-        .await
-        .map_err(|error| UiError::app("task-failed", error.to_string()))
-}
 
 // --- meetings ------------------------------------------------------------
 

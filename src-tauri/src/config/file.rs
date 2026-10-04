@@ -6,11 +6,17 @@
 //! app does not know survive a save; the file is never re-serialized from a
 //! struct.
 //!
+//! Every write goes through [`write_in`], which holds [`CONFIG_WRITE`] from
+//! the read to the rename. A caller that changes some keys and keeps others
+//! merges inside its edit closure, from the text `write_in` hands it, so two
+//! quick saves cannot each start from the same old file and lose one.
+//!
 //! Each write also puts `config.schema.json` next to the file, so the
 //! `"$schema": "./config.schema.json"` line gives editors autocomplete.
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use jsonc_parser::cst::{CstInputValue, CstRootNode};
 use stt::registry::Preference;
@@ -48,6 +54,18 @@ pub fn set_agent(agent: &AgentConfig) -> Result<(), ConfigError> {
     write_in(&app_dir()?, |raw| with_agent(raw, agent))
 }
 
+/// Save the `agent` section `merge` makes from the one on disk (or the error
+/// reading it), keeping everything else. `merge` runs under the write lock,
+/// so the keys it keeps are the ones on disk at that moment.
+pub fn update_agent<E: From<ConfigError>>(
+    merge: impl FnOnce(Result<AgentConfig, ConfigError>) -> Result<AgentConfig, E>,
+) -> Result<(), E> {
+    write_in(&app_dir()?, |raw| {
+        let agent = merge(parse_agent(raw))?;
+        Ok(with_agent(raw, &agent)?)
+    })
+}
+
 /// Save `tickets` into `~/Meetings/.app/config.jsonc`, keeping everything else.
 #[allow(dead_code)] // TUR-9 (Setup screens) adds the IPC command that calls this.
 pub fn set_tickets(tickets: &TicketsConfig) -> Result<(), ConfigError> {
@@ -68,10 +86,15 @@ pub fn with_transcription(
     engine: Preference,
     model: &str,
 ) -> Result<String, ConfigError> {
-    let engine = match engine {
-        Preference::Auto => "auto",
-        Preference::AppleSpeech => "apple-speech",
-        Preference::Whisper => "whisper",
+    // Preference's own serde name, the spelling the reader expects, so the
+    // two cannot drift apart.
+    let engine = match serde_json::to_value(engine) {
+        Ok(serde_json::Value::String(name)) => name,
+        _ => {
+            return Err(ConfigError::Invalid(format!(
+                "transcription.engine {engine:?} has no name to write"
+            )));
+        }
     };
     with_section(
         raw,
@@ -93,13 +116,27 @@ pub(super) fn read_in(dir: &Path) -> Result<String, ConfigError> {
     }
 }
 
-pub(super) fn write_in(
+/// Held across every read-edit-write of `config.jsonc`, so one save never
+/// starts from a file another save is about to replace. One app process
+/// writes the file; an edit by hand in between is still the user's to lose.
+static CONFIG_WRITE: Mutex<()> = Mutex::new(());
+
+/// Read `config.jsonc` in `dir`, hand its text to `edit`, and write back what
+/// `edit` returns, all under [`CONFIG_WRITE`].
+pub(super) fn write_in<E: From<ConfigError>>(
     dir: &Path,
-    edit: impl FnOnce(&str) -> Result<String, ConfigError>,
-) -> Result<(), ConfigError> {
+    edit: impl FnOnce(&str) -> Result<String, E>,
+) -> Result<(), E> {
+    // A panic in another save leaves nothing half-done here: the file is
+    // only ever replaced by a rename.
+    let _write = CONFIG_WRITE.lock().unwrap_or_else(PoisonError::into_inner);
     let updated = edit(&read_in(dir)?)?;
+    Ok(write_file_and_schema(dir, &updated)?)
+}
+
+fn write_file_and_schema(dir: &Path, updated: &str) -> Result<(), ConfigError> {
     std::fs::create_dir_all(dir)?;
-    write_atomic(&dir.join(FILE), &updated)?;
+    write_atomic(&dir.join(FILE), updated)?;
     let schema = dir.join(SCHEMA_FILE);
     if std::fs::read_to_string(&schema).ok().as_deref() != Some(SCHEMA) {
         write_atomic(&schema, SCHEMA)?;
