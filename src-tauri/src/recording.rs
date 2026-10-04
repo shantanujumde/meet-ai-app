@@ -245,7 +245,7 @@ impl Recorder {
         // the controls disabled while permission is absent; this measurement
         // is the backstop for the one path that has no button to disable, the
         // global shortcut firing with the window unfocused or hidden.
-        let permission = permission::measure();
+        let permission = permission::measure_before_recording();
         tracing::info!(
             state = ?permission.state,
             detail = %permission.detail,
@@ -263,9 +263,6 @@ impl Recorder {
                 UiError::app("permission-denied", permission.refusal_message()),
             ));
         }
-        // TUR-51: off macOS no check played the chime, so play it now as a
-        // plain start sound (a no-op on macOS, where the check just did).
-        audio::permission_check::start_sound();
 
         let started = chrono::Local::now();
         // TUR-97: each candidate id is published before its folder exists, so

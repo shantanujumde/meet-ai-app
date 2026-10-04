@@ -151,6 +151,18 @@ pub fn measure() -> Status {
     )
 }
 
+/// [`measure`], then the start sound when it allows a recording (TUR-51).
+///
+/// On macOS the check's chime is the start sound, so nothing more plays.
+/// Elsewhere no check made a sound, so the same chime plays once now.
+pub fn measure_before_recording() -> Status {
+    let status = measure();
+    if !status.blocks_recording() {
+        permission_check::start_sound();
+    }
+    status
+}
+
 /// What can be known without making a sound: the microphone's stored decision.
 ///
 /// The app runs this every time it starts, where [`measure`]'s chime would
