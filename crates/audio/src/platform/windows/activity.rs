@@ -31,6 +31,9 @@ pub(super) struct ComGuard {
 
 impl ComGuard {
     pub(super) fn initialize() -> Self {
+        // Before COM is first touched, so the uninitialize in `drop` can
+        // never be the one that shuts COM down under `cpal` (TUR-95).
+        super::super::windows_devices::keep_com_loaded();
         // S_OK and S_FALSE both need a matching CoUninitialize;
         // RPC_E_CHANGED_MODE (an STA thread) does not, and COM still works.
         Self {
