@@ -7,7 +7,7 @@ use audio::wav_writer::read_header_frames;
 
 use super::list::{Live, list_in, recover_in};
 use super::root::{RootPointer, move_contents};
-use super::view::{MeetingSummary, meeting_dir, summarize, unparsed_lines};
+use super::view::{MeetingSummary, meeting_dir, rename_in, summarize, unparsed_lines};
 use crate::error::UiError;
 use crate::recording::{Phase, Status};
 use crate::recording_state::RecordingState;
@@ -133,6 +133,24 @@ fn an_empty_folder_is_a_meeting_with_nothing_in_it_yet() {
     assert_eq!(summary.last_timestamp, None);
     assert!(!summary.has_notes);
     assert!(folder.transcript.is_none(), "missing, not empty");
+}
+
+#[test]
+fn a_rename_reaches_the_list_row_and_a_blank_one_is_refused() {
+    let root = meetings_root("rename");
+    let id = "2026-09-01-1430-meeting";
+    meeting(&root, id);
+
+    let blank = rename_in(&root, id, "  ").unwrap_err();
+    assert_eq!((blank.domain, blank.kind), ("app", "blank-title"));
+    assert_eq!(summary_of(&root, id, Live::Nothing).title, "Meeting");
+
+    assert_eq!(
+        rename_in(&root, id, " Budget review ").unwrap(),
+        "Budget review"
+    );
+    assert_eq!(summary_of(&root, id, Live::Nothing).title, "Budget review");
+    fs::remove_dir_all(&root).ok();
 }
 
 #[test]

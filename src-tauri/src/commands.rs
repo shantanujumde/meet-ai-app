@@ -70,6 +70,23 @@ pub async fn save_notes(app: AppHandle, id: String, body: String) -> Result<(), 
     .await?
 }
 
+/// Rename a meeting from its page (TUR-103), and answer with the title as
+/// written: one line, trimmed, at most `store::meeting_title::MAX_TITLE_CHARS`
+/// characters. A blank title is refused.
+///
+/// Through the [`FolderGate`], like [`save_notes`]. Not noted as our own
+/// write: the watcher is meant to see it, so the search index learns the new
+/// name, as it does for a title from the calendar.
+#[tauri::command]
+#[specta::specta]
+pub async fn rename_meeting(app: AppHandle, id: String, title: String) -> Result<String, UiError> {
+    on_blocking_pool(move || {
+        app.state::<FolderGate>()
+            .writing(|| meetings::rename(&id, &title))
+    })
+    .await?
+}
+
 /// Move the meetings folder somewhere else, taking every existing meeting
 /// with it.
 ///

@@ -41,6 +41,7 @@ fn temp_root(name: &str) -> PathBuf {
 
 fn good_notes() -> serde_json::Value {
     json!({
+        "title": "Beta release",
         "summary": "The beta ships Friday.",
         "decisions": ["Ship the beta Friday"],
         "open_questions": ["Do we need legal sign-off?"],

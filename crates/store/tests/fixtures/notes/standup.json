@@ -1,4 +1,5 @@
 {
+  "title": "Redis session store plan",
   "summary": "Sessions still live in memory, which blocks the second API instance. The team agreed to move them to Redis and load test the login path first.",
   "decisions": ["Move sessions to Redis.", "Keep the old login path until the load test passes."],
   "open_questions": [

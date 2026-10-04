@@ -258,6 +258,7 @@ One silent fix-up runs at launch, before the record shortcut exists: a WAV whose
 ---
 id: 2026-09-01-1430-standup
 title: Platform Standup
+title_source: calendar                   # optional; who wrote the title: calendar | agent | user (A20)
 date: 2026-09-01T14:30:00+05:30
 duration_sec: 2714
 attendees: [Shantanu, Priya, Dev]        # from EventKit when available
@@ -545,6 +546,16 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 ## Amendments
 
 A13 is held by TUR-36 ([#83](https://github.com/shantanujumde/meet-ai-app/pull/83), Windows and Linux as targets), which is not merged yet; until it is, the numbers skip from A14 to A12.
+
+### A20 — 2026-10-04 · Meeting titles: calendar, then the agent's suggestion, and the user can rename; meeting.md gains title_source (amends §3.2 and A11's notes schema; TUR-103)
+
+Every meeting in the list was called "Meeting": the folder is `{stamp}-meeting`, and without a calendar event nothing ever gave it a better name. Three writers now name a meeting, and `meeting.md` records which one did in a new frontmatter key, `title_source` (`calendar` | `agent` | `user`):
+
+1. **The calendar** names it while it records (TUR-29), only while it still has the folder-name title. It writes `title_source: calendar`.
+2. **The agent** suggests a title with its notes. The notes schema gains a required `"title"` string ("A short name for the meeting, 3 to 6 words, like a calendar event title."), first in the object. The app writes it when the meeting is untitled or its title came from the calendar or an earlier notes run, so it replaces even a vague calendar title like "Sync". It writes `title_source: agent`. A blank suggestion is ignored.
+3. **The user** clicks the title on the meeting page to rename it (`rename_meeting`). It writes `title_source: user`, and neither the calendar nor the agent replaces it after that.
+
+A title with no `title_source` that is not the folder-name default was typed into `meeting.md` by hand, and is kept like a user's rename; so is a `title_source` the app does not know. Every title is written as one line, trimmed, at most 80 characters. The folder is never renamed, so nothing that points at it breaks. The copy-prompt path (no agent set up) is unchanged: its prompt does not ask for a title.
 
 ### A19 — 2026-10-04 · transcript.md is sorted by time once when recording stops (amends §3.4's Append-only row; TUR-103)
 

@@ -16,6 +16,8 @@
 //! * [`notes_switch`] — the per-meeting `agent_notes: off` switch (SPEC A11).
 //! * [`meeting_event`] — `meeting.md`'s title, attendees and event id, from
 //!   the calendar event the meeting was recorded during (TUR-29).
+//! * [`meeting_title`] — whose title wins: the calendar's, the agent's or the
+//!   user's (TUR-103).
 //! * [`folder`] — one meeting folder, or every folder under the root, loaded
 //!   together.
 //! * [`retention`] — deleting meeting audio after `retention_days` (L16).
@@ -58,6 +60,7 @@ pub mod frontmatter;
 pub mod index;
 pub mod meeting;
 pub mod meeting_event;
+pub mod meeting_title;
 pub mod notes;
 pub mod notes_switch;
 mod platform;

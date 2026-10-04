@@ -49,6 +49,9 @@ Each transcript line reads `[HH:MM:SS] Speaker: text`. "You" is the user; "Other
 
 ## What to write
 
+{% if not clipboard %}
+- **title**: a short name for the meeting, 3 to 6 words, like a calendar event title, e.g. "Search release planning". It names the meeting in the app, unless the user has named it already.
+{% endif %}
 - **summary**: a few sentences on what the meeting was about and where it landed.
 - **decisions**: each choice the group settled on, one per item.
 - **open_questions**: each question that was raised and not answered.

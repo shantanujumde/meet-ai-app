@@ -123,6 +123,10 @@ fn ids(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| (*s).to_owned()).collect()
 }
 
+fn title_source(meeting: &Meeting) -> Option<String> {
+    meeting.frontmatter.get_str("title_source")
+}
+
 /// A section's body without the blank lines around it.
 fn section(meeting: &Meeting, heading: &str) -> String {
     meeting
@@ -148,7 +152,9 @@ fn a_fresh_write_creates_meeting_md_with_the_four_sections_filled() {
     let meeting = root.read_meeting(STANDUP);
     assert!(meeting.problems.is_empty(), "{:?}", meeting.problems);
     assert_eq!(meeting.id().as_deref(), Some(STANDUP));
-    assert_eq!(meeting.title().as_deref(), Some("Standup"));
+    // The folder-name title gives way to the agent's (TUR-103).
+    assert_eq!(meeting.title().as_deref(), Some("Redis session store plan"));
+    assert_eq!(title_source(&meeting).as_deref(), Some("agent"));
     assert_eq!(
         section(&meeting, "Summary"),
         "Sessions still live in memory, which blocks the second API instance. \
@@ -336,8 +342,10 @@ fn an_existing_meeting_md_keeps_its_unknown_keys_and_extra_sections() {
     let meeting = root.read_meeting(STANDUP);
     assert!(meeting.problems.is_empty(), "{:?}", meeting.problems);
     let fm = &meeting.frontmatter;
-    // The user's title is not replaced by one made from the folder name.
+    // A title typed into the file is not replaced, by the folder name or by
+    // the agent's suggestion.
     assert_eq!(meeting.title().as_deref(), Some("Platform Standup"));
+    assert_eq!(title_source(&meeting), None);
     assert_eq!(fm.get_str("calendar_event_id").as_deref(), Some("123"));
     assert_eq!(meeting.attendees(), ["Shantanu", "Priya", "Dev"]);
     match fm.get("agent_run") {
@@ -1325,4 +1333,78 @@ fn a_hand_written_ticket_in_the_meeting_holds_its_number_and_is_left_alone() {
          - TICK-0005: Ship the Redis session store (Dev, due Thursday)\n\
          - TICK-0006: Load test with two instances"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Titles (TUR-103): the calendar's, then the agent's; the user's is kept
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_agents_title_replaces_the_calendars() {
+    let root = Root::new("title-calendar");
+    root.meeting(STANDUP);
+    let event = store::meeting_event::FromCalendar {
+        event_id: "EVT-1",
+        title: "Sync",
+        attendees: &[],
+    };
+    store::meeting_event::apply(&root.path, STANDUP, &event).unwrap();
+    assert_eq!(
+        title_source(&root.read_meeting(STANDUP)).as_deref(),
+        Some("calendar")
+    );
+
+    root.write(STANDUP, &notes("standup"), &first());
+
+    let meeting = root.read_meeting(STANDUP);
+    assert_eq!(meeting.title().as_deref(), Some("Redis session store plan"));
+    assert_eq!(title_source(&meeting).as_deref(), Some("agent"));
+}
+
+#[test]
+fn a_rerun_replaces_the_agents_own_earlier_title() {
+    let root = Root::new("title-rerun");
+    root.meeting(STANDUP);
+    root.write(STANDUP, &notes("standup"), &first());
+    root.write(STANDUP, &notes("standup-rerun"), &second());
+
+    let meeting = root.read_meeting(STANDUP);
+    assert_eq!(
+        meeting.title().as_deref(),
+        Some("Redis cutover and load test")
+    );
+    assert_eq!(title_source(&meeting).as_deref(), Some("agent"));
+}
+
+#[test]
+fn a_user_rename_survives_a_rerun_and_the_calendar() {
+    let root = Root::new("title-user");
+    root.meeting(STANDUP);
+    root.write(STANDUP, &notes("standup"), &first());
+    store::meeting_title::set_by_user(&root.path, STANDUP, "Budget review").unwrap();
+
+    root.write(STANDUP, &notes("standup-rerun"), &second());
+    let event = store::meeting_event::FromCalendar {
+        event_id: "EVT-1",
+        title: "Sync",
+        attendees: &[],
+    };
+    store::meeting_event::apply(&root.path, STANDUP, &event).unwrap();
+
+    let meeting = root.read_meeting(STANDUP);
+    assert_eq!(meeting.title().as_deref(), Some("Budget review"));
+    assert_eq!(title_source(&meeting).as_deref(), Some("user"));
+}
+
+#[test]
+fn a_blank_agent_title_leaves_the_title_as_it_was() {
+    let root = Root::new("title-blank");
+    root.meeting(STANDUP);
+    let mut blank = notes("standup");
+    blank.title = "   ".to_owned();
+    root.write(STANDUP, &blank, &first());
+
+    let meeting = root.read_meeting(STANDUP);
+    assert_eq!(meeting.title().as_deref(), Some("Standup"));
+    assert_eq!(title_source(&meeting), None);
 }

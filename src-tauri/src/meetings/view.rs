@@ -1,8 +1,8 @@
-//! The review view: one meeting opened as a list row or in full, and saving
-//! its notes. Turns a loaded [`store::folder::MeetingFolder`] into the shapes
+//! The review view: one meeting opened as a list row or in full, saving its
+//! notes, and renaming it. Turns a loaded [`store::folder::MeetingFolder`] into the shapes
 //! the webview renders.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use audio::segments::duration_ms;
 use audio::wav_repair::classify_audio;
@@ -132,6 +132,25 @@ pub fn write_notes(id: &str, body: &str) -> Result<(), UiError> {
     Ok(())
 }
 
+/// Rename one meeting, as the user asked from its page (TUR-103). Answers with
+/// the title as written. A user's name is never replaced by the calendar's or
+/// the agent's; see [`store::meeting_title`].
+pub fn rename(id: &str, title: &str) -> Result<String, UiError> {
+    existing_meeting_dir(id)?;
+    rename_in(&root()?, id, title)
+}
+
+/// [`rename`] under a given root.
+pub(super) fn rename_in(root: &Path, id: &str, title: &str) -> Result<String, UiError> {
+    if store::meeting_title::clean(title).is_none() {
+        return Err(UiError::app(
+            "blank-title",
+            "A meeting needs a name. Type one, or press Escape to keep the old one.",
+        ));
+    }
+    Ok(store::meeting_title::set_by_user(root, id, title)?)
+}
+
 /// Resolve a meeting id to its folder, refusing anything that is not a plain
 /// folder name.
 ///
@@ -166,9 +185,9 @@ pub(super) fn summarize(folder: &store::folder::MeetingFolder, is_live: bool) ->
         None => (0, None),
     };
 
-    // The agent-written title wins. A meeting.md with broken frontmatter has
-    // none and falls back to the folder slug, which is never wrong, only less
-    // specific.
+    // meeting.md's title wins: the calendar's, the agent's or the user's
+    // (TUR-103). A meeting.md with broken frontmatter has none and falls back
+    // to the folder slug, which is never wrong, only less specific.
     let title = folder
         .meeting
         .as_ref()

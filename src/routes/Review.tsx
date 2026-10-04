@@ -11,6 +11,9 @@
  * shows next is the finished `transcript.md`.
  *
  * The header is the title, one meta line and the folder actions (TUR-81).
+ * Renaming the meeting (TUR-103) updates the header and the list at once. A
+ * notes run that names it re-reads only the header's summary, never the
+ * notes, so nothing the user is typing is replaced.
  * The "Make notes for this meeting" switch (TUR-12, SPEC A11) heads the
  * meeting-notes section, recording or not, so a private call can be switched
  * off before it ends. One {@link useNotesRun} serves the switch and the run.
@@ -19,7 +22,13 @@
 import { memo, useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useNotesRun } from "@/hooks/useNotesRun";
-import { copyPromptFallback, readMeeting, revealMeeting, wrapUpPrompt } from "@/ipc/client";
+import {
+  copyPromptFallback,
+  readMeeting,
+  renameMeeting,
+  revealMeeting,
+  wrapUpPrompt,
+} from "@/ipc/client";
 import type { MeetingDetail, TranscriptLine, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { showsCopyPrompt } from "@/lib/copyPrompt";
@@ -114,13 +123,42 @@ function MeetingReview({ id }: { id: string }) {
     void load(id);
   }, [id, load]);
 
+  // Only the summary: replacing the whole detail would hand the notes pane
+  // what is on disk while the user may still be typing.
+  const refreshSummary = useCallback(async (meetingId: string) => {
+    let summary: MeetingDetail["summary"];
+    try {
+      summary = (await readMeeting(meetingId)).summary;
+    } catch {
+      return; // The header keeps what it had.
+    }
+    setDetail((current) => (current?.summary.id === meetingId ? { ...current, summary } : current));
+  }, []);
+
+  const rename = useCallback(
+    async (title: string) => {
+      const saved = await renameMeeting(id, title);
+      setDetail((current) =>
+        current?.summary.id === id
+          ? { ...current, summary: { ...current.summary, title: saved } }
+          : current,
+      );
+      void reloadMeetings();
+    },
+    [id, reloadMeetings],
+  );
+
   const recording = useRecordingStore((state) => state.status);
   const live = useTranscriptStore((state) => state.live);
   const isLive = recording.meetingId === id && recording.phase !== "idle";
 
   // A run writing notes and the switch moving both change how this meeting
-  // reads in the list (its "Notes off" marker, say).
-  const notesRun = useNotesRun(id, () => void reloadMeetings());
+  // reads in the list (its "Notes off" marker, say), and a run may give it
+  // the agent's title (TUR-103).
+  const notesRun = useNotesRun(id, () => {
+    void reloadMeetings();
+    void refreshSummary(id);
+  });
 
   // When this meeting's recording ends, the file on disk is now the finished
   // record — re-read it, or the screen shows whatever was there at the start.
@@ -169,6 +207,7 @@ function MeetingReview({ id }: { id: string }) {
         path={path}
         live={isLive ? recording : null}
         onReveal={() => void reveal(summary.id)}
+        onRename={rename}
         revealError={revealError}
       />
       {/* TUR-63: a user hook that failed for this meeting. */}

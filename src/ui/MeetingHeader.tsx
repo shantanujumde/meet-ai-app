@@ -3,6 +3,8 @@
  * it, and the folder actions on the right of the title row. Nothing else —
  * the notes switch lives with the meeting's notes, not here.
  *
+ * TUR-103: the title renames in place ({@link MeetingTitle}).
+ *
  * TUR-102: the title is big and bold with room around it; each meta fact
  * (date, time, attendees, audio length) is quiet, led by a small icon that
  * is decoration beside the word. The folder actions are the shared
@@ -33,6 +35,7 @@ import {
 } from "@/lib/format";
 import { osText } from "@/lib/osText";
 import { Icon, type LucideIcon } from "./icons";
+import { MeetingTitle } from "./MeetingTitle";
 import { IconButton, rowDetailVariants } from "./primitives";
 import { useElapsed } from "./RecordControl";
 import { ErrorState } from "./states";
@@ -52,6 +55,7 @@ export function MeetingHeader({
   path,
   live,
   onReveal,
+  onRename,
   revealError,
 }: {
   summary: MeetingSummary;
@@ -60,6 +64,8 @@ export function MeetingHeader({
   /** This meeting's recording status while it is the one recording, else `null`. */
   live: RecordingStatus | null;
   onReveal: () => void;
+  /** Saves a new title for the meeting; rejects with the reason it could not. */
+  onRename: (title: string) => Promise<void>;
   /** Finder could not open the folder: shown under the header, not instead of it. */
   revealError: UiError | null;
 }) {
@@ -71,7 +77,7 @@ export function MeetingHeader({
     <header className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-5">
         <div className="flex min-w-0 flex-col gap-3">
-          <h1 className="page__title wrap-anywhere">{summary.title}</h1>
+          <MeetingTitle title={summary.title} onRename={onRename} />
           <MetaLine summary={summary} live={live} interrupted={interrupted} />
         </div>
         <div className="flex shrink-0 items-center gap-2">

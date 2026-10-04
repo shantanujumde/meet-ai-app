@@ -17,6 +17,16 @@ export const commands = {
 	 */
 	saveNotes: (id: string, body: string) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("save_notes", { id, body })),
 	/**
+	 *  Rename a meeting from its page (TUR-103), and answer with the title as
+	 *  written: one line, trimmed, at most `store::meeting_title::MAX_TITLE_CHARS`
+	 *  characters. A blank title is refused.
+	 * 
+	 *  Through the [`FolderGate`], like [`save_notes`]. Not noted as our own
+	 *  write: the watcher is meant to see it, so the search index learns the new
+	 *  name, as it does for a title from the calendar.
+	 */
+	renameMeeting: (id: string, title: string) => typedError<string, meet_ai_lib_error_UiError>(__TAURI_INVOKE("rename_meeting", { id, title })),
+	/**
 	 *  Move the meetings folder somewhere else, taking every existing meeting
 	 *  with it.
 	 * 

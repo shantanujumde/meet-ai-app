@@ -1,4 +1,5 @@
 {
+  "title": "Release slip retro",
   "summary": "The release slipped two days because the staging database was out of date.",
   "decisions": ["Refresh staging from production every Monday."],
   "open_questions": ["Should the refresh be automated?"],

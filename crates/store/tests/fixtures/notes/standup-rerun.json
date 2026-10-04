@@ -1,4 +1,5 @@
 {
+  "title": "Redis cutover and load test",
   "summary": "Second pass: sessions move to Redis this week, and the load test gates the switch.",
   "decisions": ["Redis goes in this week."],
   "open_questions": [],

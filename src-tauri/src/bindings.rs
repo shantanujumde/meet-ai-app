@@ -29,6 +29,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             commands::list_meetings,
             commands::read_meeting,
             commands::save_notes,
+            commands::rename_meeting,
             commands::change_meetings_folder,
             commands::reveal_meeting,
             commands::measure_permission,
