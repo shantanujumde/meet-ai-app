@@ -1,10 +1,13 @@
-//! `transcript.md` — strict, parseable, append-only (SPEC §3.4).
+//! `transcript.md` — strict, parseable, append-only while recording (SPEC
+//! §3.4, A19).
 //!
 //! `^\[(\d{2}:\d{2}:\d{2})\] (You|Others): (.*)$`, one utterance per line.
 //! This module is the reader. Writing is `crates/stt`'s job: its
 //! `TranscriptSink` is the only thing allowed to append to the file, so nothing
 //! here opens it for anything but reading. A second writer would break "a line,
-//! once written, is never rewritten" the first time the two disagreed.
+//! once written, is never rewritten" the first time the two disagreed. The one
+//! exception is [`crate::transcript_order`], which puts the lines in time order
+//! once the recording has stopped and the sink is gone.
 //!
 //! [`format_line`] is re-exported here anyway, as the pure pair of
 //! [`parse_line`]. It and stt's writer both render through

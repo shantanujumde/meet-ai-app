@@ -234,6 +234,13 @@ impl SharedSink {
     pub fn new<S: TranscriptSink + Send + 'static>(sink: S) -> Self {
         Self(Arc::new(std::sync::Mutex::new(sink)))
     }
+
+    /// Whether this is the only handle left, so nothing else can still write
+    /// through it. A session that finished cleanly has dropped its clone; one
+    /// that panicked may have left a thread holding one.
+    pub fn is_last(&self) -> bool {
+        Arc::strong_count(&self.0) == 1
+    }
 }
 
 impl TranscriptSink for SharedSink {

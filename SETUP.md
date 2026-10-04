@@ -641,7 +641,8 @@ Spec: SPEC.md (locked). Versions: SETUP.md. Evidence: docs/findings.md.
   local child process, when notes are on for that meeting (SPEC A11).
 - markdown is the source of truth; index.db is derived and must be safe to delete.
 - transcript.md: ONE utterance = ONE line. Collapse \n\r\t and whitespace runs to a
-  single space. Never write empty text. Append-only, never rewrite a line.
+  single space. Never write empty text. Append-only, never rewrite a line. The one
+  exception: at stop, the finished file is sorted by time once (SPEC A19).
 - Only FINALIZED text is persisted. Volatile/partial results go to the UI event
   channel only and never touch disk. All engines write via one TranscriptSink.
 - The watcher must suppress self-writes (path -> Instant, 750ms) or it will reload

@@ -30,11 +30,14 @@ pub trait TranscriptSink {
 /// Appends `[HH:MM:SS] Speaker: text` lines to a `transcript.md`.
 ///
 /// Append-only, per SPEC §3.4: a line, once written, is never rewritten or
-/// reordered. The file is opened in append mode so a crash mid-meeting leaves a
-/// valid prefix rather than a truncated file.
+/// reordered by this sink. The file is opened in append mode so a crash
+/// mid-meeting leaves a valid prefix rather than a truncated file. Live, the
+/// two tracks share one sink and lines land in the order they settle, not the
+/// order they were said; the app sorts the file by time once the recording
+/// stops (SPEC A19, `store::transcript_order`).
 pub struct MarkdownSink {
     writer: BufWriter<File>,
-    /// Last timestamp written, to enforce the ordering invariant.
+    /// Last timestamp written, to notice a line that goes back in time.
     last_start_sec: Option<u64>,
     written: usize,
 }
@@ -68,17 +71,18 @@ impl TranscriptSink for MarkdownSink {
             return Ok(());
         }
 
-        // Append-only means monotonic. An engine handing back an out-of-order
-        // utterance is a bug in the engine, not something to silently reorder
-        // here — but refusing to write it would lose speech, so it is clamped
-        // and logged instead.
+        // An append cannot move a line, so one that starts before the last
+        // one is written as it arrived, timestamp untouched; refusing it would
+        // lose speech. From one engine that is an engine bug. Live, with two
+        // tracks on one sink, it is normal (each settles at its own pace), and
+        // the file is sorted by time when the recording stops (SPEC A19).
         if let Some(last) = self.last_start_sec
             && utterance.start_sec < last
         {
             tracing::warn!(
                 previous = last,
                 received = utterance.start_sec,
-                "utterance arrived out of order; transcript.md is append-only so it is kept in arrival order"
+                "utterance arrived out of order; written in arrival order, sorted when the recording stops"
             );
         }
         self.last_start_sec = Some(utterance.start_sec);

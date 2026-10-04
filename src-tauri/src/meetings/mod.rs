@@ -11,7 +11,8 @@
 //!
 //! * **`transcript.md` is read-only to the app shell.** L7 makes markdown the
 //!   source of truth and §3.4 makes it append-only. Nothing in this file opens
-//!   it for writing.
+//!   it for writing. (The one rewrite, sorting it by time when a recording
+//!   stops, is `live_transcript`'s, SPEC A19.)
 //! * **A malformed file is a badge, not an error (SPEC §7).** `store` loads
 //!   every file it can and reports the rest as problems; the unparsed-line
 //!   count below is one of them.

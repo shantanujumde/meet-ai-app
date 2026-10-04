@@ -11,7 +11,7 @@ use audio::tee::TeeFeed;
 use stt::{LiveUpdate, MarkdownSink, SeqCounter, SessionOptions, SharedSink, Speaker, SttSession};
 
 use super::board::Scope;
-use super::sink::Durable;
+use super::sink::{Durable, sort_by_time};
 use super::{OpenEngine, STILL_RECORDING};
 
 /// How often a feeding thread looks up from an empty queue to see whether the
@@ -131,6 +131,18 @@ pub(super) fn supervise(
         }
     }
     drop(engine);
+    // Sorted before the status settles and before the caller hears this
+    // thread end, so Stop and the notes run (`TranscriptFinal`) both get the
+    // file in time order. Only when every session has let go of the sink: a
+    // line appended to the old file after the rename would be lost.
+    if sink.is_last() {
+        drop(sink);
+        sort_by_time(&transcript);
+    } else {
+        tracing::warn!(
+            "a speech engine still holds transcript.md, so it was left in the order written"
+        );
+    }
     scope.settle();
 }
 

@@ -947,6 +947,30 @@ fn an_engine_slower_than_stop_makes_transcript_md_final_only_once_it_ends() {
 }
 
 #[test]
+fn transcript_md_is_in_time_order_by_the_time_it_is_final() {
+    // A line from the other track that started later but settled first, as
+    // happens when one engine runs ahead of the other (SPEC A19).
+    let path = temp_transcript("sorted-at-stop");
+    std::fs::write(&path, "[00:00:09] Others: Said later, settled first.\n").unwrap();
+    let live = LiveTranscript::default();
+    let (mic_tee, mic_feed) = audio::tee::tee();
+    let transcription = live.start(
+        Arc::new(CollectingNotify::default()),
+        path.clone(),
+        vec![(Speaker::You, mic_feed)],
+        Box::new(|| Ok(Box::new(LateLineEngine(Hold::For(Duration::ZERO))) as Box<dyn SttEngine>)),
+    );
+    drop(mic_tee);
+    let (status, mut transcript_final) = transcription.finish_final(STOP_TIMEOUT);
+    assert_eq!(status.state, State::Stopped);
+    assert!(transcript_final.wait(Duration::ZERO));
+    assert_eq!(
+        read(&path),
+        format!("{LAST_LINE}\n[00:00:09] Others: Said later, settled first.\n")
+    );
+}
+
+#[test]
 fn an_engine_that_never_finishes_never_makes_transcript_md_final() {
     let gate = Gate::default();
     let (path, status, mut transcript_final) = stop_a_late_line_meeting(
