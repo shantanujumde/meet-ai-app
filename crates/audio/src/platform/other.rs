@@ -61,19 +61,32 @@ pub(crate) fn device_activity() -> Result<DeviceActivity, Error> {
 }
 
 /// No OS-level microphone decision to read without opening a stream.
+// Windows and Linux bring their own permission checks (TUR-51).
+#[cfg_attr(any(target_os = "windows", target_os = "linux"), allow(dead_code))]
 pub(crate) fn stored_mic_denial() -> Option<ChannelResult> {
     None
 }
 
 /// Open the `cpal` microphone briefly.
+// Windows and Linux bring their own permission checks (TUR-51).
+#[cfg_attr(any(target_os = "windows", target_os = "linux"), allow(dead_code))]
 pub(crate) fn check_mic() -> ChannelResult {
     permission_check::check_mic_with(mic_source())
 }
 
 /// No system-audio capture to check yet.
+// Windows and Linux bring their own permission checks (TUR-51).
+#[cfg_attr(any(target_os = "windows", target_os = "linux"), allow(dead_code))]
 pub(crate) fn check_system() -> ChannelResult {
     ChannelResult {
         state: ChannelState::Unmeasurable,
         detail: "system-audio capture is not implemented on this platform yet".into(),
+    }
+}
+
+/// No positive-control chime ran, so play it as a plain start sound.
+pub(crate) fn start_sound() {
+    if let Err(error) = permission_check::start_sound::play() {
+        tracing::warn!(%error, "could not play the start sound");
     }
 }

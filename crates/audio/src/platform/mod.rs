@@ -38,6 +38,19 @@ mod linux;
 #[cfg_attr(feature = "stub-audio", allow(dead_code))]
 mod other;
 
+// TUR-51: the Windows consent rules are pure, so they build (and are tested)
+// on every OS; only `windows_permission` reads the registry.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+mod windows_consent;
+
+#[cfg(target_os = "windows")]
+#[cfg_attr(feature = "stub-audio", allow(dead_code, unused_imports))]
+mod windows_permission;
+
+#[cfg(target_os = "linux")]
+#[cfg_attr(feature = "stub-audio", allow(dead_code, unused_imports))]
+mod linux_permission;
+
 #[cfg(feature = "stub-audio")]
 mod stub;
 
@@ -72,7 +85,11 @@ pub(crate) use os::{
 
 // Capture and permission checks: the real OS, or no-ops under `stub-audio`.
 #[cfg(not(feature = "stub-audio"))]
+pub(crate) use os::start_sound;
+#[cfg(not(feature = "stub-audio"))]
 pub(crate) use os::{check_mic, check_system, mic_source, stored_mic_denial, system_source};
 
+#[cfg(feature = "stub-audio")]
+pub(crate) use stub::start_sound;
 #[cfg(feature = "stub-audio")]
 pub(crate) use stub::{check_mic, check_system, mic_source, stored_mic_denial, system_source};

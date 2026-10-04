@@ -9,10 +9,15 @@
  *
  * Renders the buttons bare, so they sit in whatever button row the caller
  * already has.
+ *
+ * TUR-51: that is macOS. Windows has one switch, the microphone (loopback
+ * needs no permission), and Linux none, so each gets one button: the
+ * microphone privacy page on Windows, the desktop's sound settings on Linux.
  */
 
 import { openPrivacySettings } from "@/ipc/client";
 import type { PrivacyPane } from "@/ipc/types";
+import { currentOs, type Os } from "@/lib/osText";
 import { Button } from "./primitives";
 
 const LABEL: Record<PrivacyPane, string> = {
@@ -21,7 +26,24 @@ const LABEL: Record<PrivacyPane, string> = {
   calendars: "Open Calendars",
 };
 
+/** The one button off macOS, by OS. */
+const OTHER_LABEL: Record<Exclude<Os, "macos">, string> = {
+  windows: "Open Microphone settings",
+  linux: "Open Sound settings",
+};
+
 export function PrivacyButtons({ primary }: { primary?: PrivacyPane }) {
+  const os = currentOs();
+  if (os !== "macos") {
+    return (
+      <Button
+        tone={primary ? "primary" : "neutral"}
+        onClick={() => void openSettings("microphone")}
+      >
+        {OTHER_LABEL[os]}
+      </Button>
+    );
+  }
   // The pane named `primary` leads and is the tinted one. Without one, the
   // microphone comes first, matching the order the grants are explained in.
   const panes: PrivacyPane[] =

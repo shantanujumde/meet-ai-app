@@ -52,6 +52,10 @@ objc2-core-audio-types.workspace = true
 objc2-core-foundation.workspace = true
 objc2-foundation.workspace = true
 
+# The microphone consent registry keys (TUR-51, src/platform/windows_permission.rs).
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg.workspace = true
+
 [dev-dependencies]
 # Test-only: temp folders and the shared tone generator.
 tempfile.workspace = true

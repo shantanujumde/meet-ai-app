@@ -9,6 +9,7 @@
  */
 
 import type { PermissionStatus } from "@/ipc/types";
+import type { Os } from "./osText";
 
 /** Whether this answer only has System Audio Recording switched off. */
 export function systemAudioOnlyOff(permission: PermissionStatus | null): boolean {
@@ -22,4 +23,17 @@ export function systemAudioOnlyOff(permission: PermissionStatus | null): boolean
 /** Whether Record must stay disabled: a denial that includes the microphone. */
 export function recordingBlocked(permission: PermissionStatus | null): boolean {
   return permission?.state === "denied" && !systemAudioOnlyOff(permission);
+}
+
+/**
+ * Whether onboarding shows the permission step on `os` (TUR-51). macOS
+ * always does: it guards two grants that must be asked for. Windows only when
+ * the microphone is blocked, since loopback needs no permission and an
+ * allowed microphone needs no setup. Linux never: it has no audio
+ * permissions, and a capture failure there is a device error.
+ */
+export function permissionStepShown(os: Os, permission: PermissionStatus | null): boolean {
+  if (os === "macos") return true;
+  if (os === "windows") return recordingBlocked(permission);
+  return false;
 }

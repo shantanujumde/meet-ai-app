@@ -132,6 +132,14 @@ SOFTWARE.
     rotation and targets) from `src-tauri/src/lib.rs`
   - `.github/workflows/check.yml` (the "Enable long paths (Windows)" step of
     the `rust-native` job) from `.github/workflows/build.yml`
+  - `crates/audio/src/platform/windows_consent.rs` (`mic_consent`: the
+    HKLM + HKCU + `NonPackaged` microphone consent decision) from
+    `src-tauri/src/commands/audio.rs`, at commit
+    73ab851c2b6242283759a4c101b60f0ece132f08 (TUR-51)
+  - `src-tauri/src/settings_links.rs` (the
+    `cmd /C start "" ms-settings:privacy-microphone` fallback) from
+    `src-tauri/src/commands/audio.rs`, at commit
+    73ab851c2b6242283759a4c101b60f0ece132f08 (TUR-51)
 
 MIT License
 

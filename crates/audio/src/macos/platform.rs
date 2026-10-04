@@ -109,3 +109,6 @@ pub(crate) fn check_mic() -> ChannelResult {
 pub(crate) fn check_system() -> ChannelResult {
     permission_check::check_system_with(Box::new(super::tap::SystemSource::new()))
 }
+
+/// The chime already sounded as [`check_system`]'s positive control.
+pub(crate) fn start_sound() {}

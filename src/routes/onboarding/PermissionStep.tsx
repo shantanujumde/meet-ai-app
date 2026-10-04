@@ -5,10 +5,15 @@
  * Both grants are named, and "Not checked" is shown as its own answer rather
  * than folded into allowed or denied; see the wizard's comment in
  * `routes/Onboarding.tsx` for why.
+ *
+ * TUR-51: the words follow the OS. macOS has two grants; Windows guards only
+ * the microphone (loopback needs no permission); Linux has none, so the
+ * wizard skips this step there and the copy below is only a fallback.
  */
 
 import type { ReactNode } from "react";
 import type { PermissionStatus } from "@/ipc/types";
+import { currentOs, type Os } from "@/lib/osText";
 import { PrivacyButtons } from "@/ui/PrivacyButtons";
 import { Button, ButtonRow, Card, Pill, Prose, Row, RowLabel } from "@/ui/primitives";
 import { Checking } from "@/ui/states";
@@ -32,7 +37,29 @@ export function PermissionStep({
 }) {
   const state = status?.state ?? "unknown";
   const badge = BADGE[state];
+  const os = currentOs();
 
+  return (
+    <>
+      {os === "macos" ? <MacIntro /> : <OtherIntro os={os} />}
+
+      <Card>
+        <Row bare>
+          <RowLabel name="Audio permission" detail={status?.detail ?? ""} mono={false} />
+          {loading ? <Checking label="Checking…" /> : <Pill tone={badge.tone}>{badge.label}</Pill>}
+        </Row>
+      </Card>
+
+      {os === "macos" ? (
+        <MacNext state={state} onRecheck={onRecheck} onNext={onNext} />
+      ) : (
+        <OtherNext os={os} state={state} onRecheck={onRecheck} onNext={onNext} />
+      )}
+    </>
+  );
+}
+
+function MacIntro() {
   return (
     <>
       <header className="page__header">
@@ -45,14 +72,19 @@ export function PermissionStep({
         speakers. meet-ai needs both — with only one, half of every conversation goes missing and
         nothing on screen would tell you which half.
       </Prose>
+    </>
+  );
+}
 
-      <Card>
-        <Row bare>
-          <RowLabel name="Audio permission" detail={status?.detail ?? ""} mono={false} />
-          {loading ? <Checking label="Checking…" /> : <Pill tone={badge.tone}>{badge.label}</Pill>}
-        </Row>
-      </Card>
+type NextProps = {
+  state: PermissionStatus["state"];
+  onRecheck: () => void;
+  onNext: () => void;
+};
 
+function MacNext({ state, onRecheck, onNext }: NextProps) {
+  return (
+    <>
       {state === "denied" ? <DeniedPath onRecheck={onRecheck} /> : null}
 
       {state !== "denied" ? (
@@ -67,12 +99,74 @@ export function PermissionStep({
               Continue
             </Button>
             {/* Both panes, as on the denied path: the two grants live in
-                different places, and one button can only land on one. */}
+                  different places, and one button can only land on one. */}
             <PrivacyButtons />
           </ButtonRow>
         </>
       ) : null}
     </>
+  );
+}
+
+/** Windows and Linux: one switch at most, the microphone. */
+function OtherIntro({ os }: { os: Exclude<Os, "macos"> }) {
+  return (
+    <>
+      <header className="page__header">
+        <h1 className="page__title">Let meet-ai use your microphone</h1>
+      </header>
+      {os === "windows" ? (
+        <Prose>
+          Windows asks for one thing: the <strong>Microphone</strong>, which is you talking.
+          Everyone else comes out of your speakers, and Windows lets meet-ai record that without a
+          permission.
+        </Prose>
+      ) : (
+        <Prose>
+          Linux has no audio permissions to grant. meet-ai records as soon as it can find a
+          microphone; if it cannot, it says which device failed.
+        </Prose>
+      )}
+    </>
+  );
+}
+
+function OtherNext({ os, state, onRecheck, onNext }: NextProps & { os: Exclude<Os, "macos"> }) {
+  if (state === "denied" && os === "windows") {
+    return (
+      <div className="state state--error" role="alert">
+        <h2 className="state__title">Windows is blocking the microphone</h2>
+        <p className="state__body">
+          Recording is switched off until this is fixed. Nothing you have already recorded is
+          affected.
+        </p>
+        <ol className="flex flex-col gap-5 [counter-reset:step]">
+          <Instruction>
+            Open <strong>Settings</strong> → <strong>Privacy &amp; security</strong> →{" "}
+            <strong>Microphone</strong>. The button below jumps straight there.
+          </Instruction>
+          <Instruction>
+            Turn on <strong>Microphone access</strong> and{" "}
+            <strong>Let desktop apps access your microphone</strong>.
+          </Instruction>
+          <Instruction>
+            Come back here and choose <strong>Check again</strong>.
+          </Instruction>
+        </ol>
+        <ButtonRow>
+          <PrivacyButtons primary="microphone" />
+          <Button onClick={onRecheck}>Check again</Button>
+        </ButtonRow>
+      </div>
+    );
+  }
+  return (
+    <ButtonRow>
+      <Button tone="primary" onClick={onNext}>
+        Continue
+      </Button>
+      <PrivacyButtons />
+    </ButtonRow>
   );
 }
 

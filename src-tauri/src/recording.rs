@@ -245,7 +245,7 @@ impl Recorder {
         // the controls disabled while permission is absent; this measurement
         // is the backstop for the one path that has no button to disable, the
         // global shortcut firing with the window unfocused or hidden.
-        let permission = permission::measure();
+        let permission = permission::measure_before_recording();
         tracing::info!(
             state = ?permission.state,
             detail = %permission.detail,

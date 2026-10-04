@@ -78,6 +78,9 @@ pub(crate) fn check_system() -> ChannelResult {
     unmeasurable()
 }
 
+/// Silent: the stub touches no device.
+pub(crate) fn start_sound() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

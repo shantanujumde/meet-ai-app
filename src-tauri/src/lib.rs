@@ -31,6 +31,7 @@ mod recording;
 mod recording_state;
 mod retention;
 mod search;
+mod settings_links;
 mod sync;
 mod tickets;
 mod watch;
@@ -87,6 +88,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_os::init())
         .manage(recording::Recorder::default())
         .manage(live_transcript::LiveTranscript::default())
         .manage(engine::Downloads::default())

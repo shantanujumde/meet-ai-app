@@ -15,6 +15,7 @@
  *    both.
  */
 
+import { currentOs, type Os, osText } from "@/lib/osText";
 import type { UiError } from "./types";
 
 /**
@@ -189,9 +190,32 @@ const COPY: Record<string, ErrorCopy> = {
   },
 };
 
+/**
+ * "app/permission-denied" in the words of `os` (TUR-51). macOS keeps the
+ * table's copy; Windows names its own Settings page. Linux never refuses on
+ * permission, so it gets the plain wording.
+ */
+export function permissionDeniedCopy(os: Os): ErrorCopy {
+  const mac = COPY["app/permission-denied"] as ErrorCopy;
+  if (os === "macos") return mac;
+  const settings = osText("settings", os);
+  return {
+    ...mac,
+    headline: "meet-ai is not allowed to use the microphone",
+    body:
+      os === "windows"
+        ? `Recording now would capture nothing from you. You can change this in ${settings}, under Privacy & security → Microphone.`
+        : "Recording now would capture nothing from you. Check that a microphone is connected and not in use.",
+    actionLabel: os === "windows" ? `Open ${settings}` : null,
+    remedy: os === "windows" ? { action: "open-settings" } : { action: "none" },
+  };
+}
+
 /** The copy for an error. Never throws, and never returns nothing. */
 export function copyFor(error: UiError): ErrorCopy {
-  return COPY[`${error.domain}/${error.kind}`] ?? GENERIC;
+  const key = `${error.domain}/${error.kind}`;
+  if (key === "app/permission-denied") return permissionDeniedCopy(currentOs());
+  return COPY[key] ?? GENERIC;
 }
 
 /**
