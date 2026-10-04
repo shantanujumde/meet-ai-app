@@ -5,6 +5,7 @@
 
 import { revealMeeting } from "@/ipc/client";
 import { SHORTCUT_LABEL } from "@/lib/constants";
+import { osText } from "@/lib/osText";
 import { useAppStore } from "@/state/app";
 import { FolderRow } from "@/ui/FolderRow";
 import { Button, ButtonRow, Card, Pill, Prose } from "@/ui/primitives";
@@ -28,7 +29,7 @@ export function FolderStep({ onNext }: { onNext: () => void }) {
           status={
             rootExists ? (
               <Button size="small" onClick={() => void revealFirstMeeting()}>
-                Show in Finder
+                Show in {osText("fileManager")}
               </Button>
             ) : (
               <Pill>Created on first recording</Pill>

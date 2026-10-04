@@ -103,8 +103,8 @@
   /* --- Typography -----------------------------------------------------------
      Use the system font. A Mac app that ships a webfont reads as a website.
      -apple-system resolves to SF Pro and picks up optical sizing for free. */
-  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", Cantarell, "Noto Sans", Ubuntu, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
 
   /* macOS type scale in px. Base is 13, not 16. */
   --text-caption2:  10px;

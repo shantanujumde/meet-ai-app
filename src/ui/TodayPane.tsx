@@ -36,6 +36,7 @@ import {
 import { toUiError, type UiError } from "@/ipc/types";
 import { cn } from "@/lib/cn";
 import { NO_MEETINGS_TODAY } from "@/lib/constants";
+import { osText } from "@/lib/osText";
 import { briefPath } from "@/lib/routes";
 import { EMPTY_DAY, SIGN_IN_TO_SEE_TODAY } from "./calendar/copy";
 import { SignInButtons } from "./calendar/SignInButtons";
@@ -130,7 +131,7 @@ function TodayBody({ state, onRetry }: { state: State; onRetry: () => void }) {
           <p className="state__body">{CALENDAR_DENIED_COPY}</p>
           <ButtonRow>
             <Button tone="primary" onClick={() => void openSettings("calendars")}>
-              Open System Settings
+              Open {osText("settings")}
             </Button>
             <Button onClick={onRetry}>Check again</Button>
           </ButtonRow>

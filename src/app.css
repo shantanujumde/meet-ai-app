@@ -659,3 +659,15 @@
     border-color: var(--separator-strong);
   }
 }
+
+/* -----------------------------------------------------------------------------
+   Windows and Linux (TUR-57). The window has native decorations there, so no
+   traffic lights to clear and no vibrancy behind the sidebar. `data-os` is set
+   on <html> at startup (src/lib/osAttribute.ts); macOS keeps the rules above.
+   -------------------------------------------------------------------------- */
+
+:root[data-os="windows"],
+:root[data-os="linux"] {
+  --titlebar-traffic-inset: var(--titlebar-pad-x);
+  --sidebar-fill: var(--surface-canvas);
+}

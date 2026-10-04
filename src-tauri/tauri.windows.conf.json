@@ -8,7 +8,10 @@
         "height": 720,
         "minWidth": 760,
         "minHeight": 520,
-        "resizable": true
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "windowEffects": { "effects": ["mica"] }
       }
     ]
   },

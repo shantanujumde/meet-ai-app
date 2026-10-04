@@ -47,7 +47,7 @@ body,
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   /* macOS convention is 13px. Web habits inflate a Mac app, and every token in
      the type scale is sized against this. */

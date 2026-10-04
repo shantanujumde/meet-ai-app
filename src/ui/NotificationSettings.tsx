@@ -30,6 +30,7 @@ import {
   setNotificationSettings,
 } from "@/ipc/client";
 import { toUiError, type UiError } from "@/ipc/types";
+import { osText } from "@/lib/osText";
 import { Button, Card, Row, RowLabel } from "./primitives";
 import { Switch } from "./SettingSwitch";
 import { ErrorState } from "./states";
@@ -166,7 +167,7 @@ export function NotificationSettings() {
               size="small"
               onClick={() => void openNotificationSettings().catch((e) => setError(toUiError(e)))}
             >
-              Open System Settings
+              Open {osText("settings")}
             </Button>
           </Row>
         ) : null}
