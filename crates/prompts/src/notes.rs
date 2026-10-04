@@ -1,8 +1,8 @@
 //! The notes the agent sends back after a meeting, and the check they must pass.
 //!
 //! SPEC A11, "Data contract changes": the agent no longer writes `meeting.md`
-//! itself. It answers with one JSON object (a summary, the decisions, the open
-//! questions and the tasks) and the app writes the files from it. This module is
+//! itself. It answers with one JSON object (a title, a summary, the decisions,
+//! the open questions and the tasks) and the app writes the files from it. This module is
 //! the one definition of that object:
 //!
 //! * [`NOTES_SCHEMA`] — the JSON schema as text. `crates/agent` hands it to the
@@ -43,6 +43,10 @@ pub const NOTES_SCHEMA: &str = r#"{
   "type": "object",
   "description": "Notes from one meeting, taken from its transcript.",
   "properties": {
+    "title": {
+      "type": "string",
+      "description": "A short name for the meeting, 3 to 6 words, like a calendar event title."
+    },
     "summary": {
       "type": "string",
       "description": "A short summary of what the meeting was about and what came out of it."
@@ -94,7 +98,7 @@ pub const NOTES_SCHEMA: &str = r#"{
       }
     }
   },
-  "required": ["summary", "decisions", "open_questions", "tasks"],
+  "required": ["title", "summary", "decisions", "open_questions", "tasks"],
   "additionalProperties": false
 }"#;
 
@@ -129,6 +133,10 @@ fn validator() -> &'static jsonschema::Validator {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Notes {
+    /// A short name for the meeting, like a calendar event title (TUR-103).
+    /// It replaces a calendar title, never one the user gave
+    /// (`store::meeting_title`).
+    pub title: String,
     /// A short summary of the meeting.
     pub summary: String,
     /// What the people in the meeting agreed on, one per item.
@@ -225,6 +233,7 @@ mod tests {
     /// The A11 example shape, filled in the way a real meeting would.
     fn example() -> Value {
         json!({
+            "title": "Search release planning",
             "summary": "Planned the search release. The box ships first; filters wait for feedback.",
             "decisions": [
                 "Ship search without filters first.",
@@ -325,6 +334,7 @@ mod tests {
         let value = example();
         validate(&value).unwrap();
         let notes = Notes::from_value(value.clone()).unwrap();
+        assert_eq!(notes.title, "Search release planning");
         assert_eq!(notes.decisions.len(), 2);
         assert_eq!(
             notes.open_questions,
@@ -351,6 +361,7 @@ mod tests {
     #[test]
     fn notes_accepts_empty_lists() {
         let value = json!({
+            "title": "Quick check-in",
             "summary": "A quick check-in; nothing was decided.",
             "decisions": [],
             "open_questions": [],
@@ -404,6 +415,11 @@ mod tests {
         let mut value = example();
         value.as_object_mut().unwrap().remove("open_questions");
         assert_rejected_at(&value, "(top level)");
+
+        let mut value = example();
+        value.as_object_mut().unwrap().remove("title");
+        assert_rejected_at(&value, "(top level)");
+        assert!(problems(&value)[0].contains("title"));
     }
 
     #[test]
@@ -415,6 +431,10 @@ mod tests {
         let mut value = example();
         value["decisions"] = json!("Ship it");
         assert_rejected_at(&value, "/decisions");
+
+        let mut value = example();
+        value["title"] = json!(null);
+        assert_rejected_at(&value, "/title");
     }
 
     #[test]

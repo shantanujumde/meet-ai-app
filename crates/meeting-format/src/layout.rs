@@ -44,7 +44,8 @@ pub const GPU_CHECK_FILE: &str = "gpu-check";
 
 /// `meeting.md` — frontmatter plus the four fixed sections (§3.2).
 pub const MEETING_FILE: &str = "meeting.md";
-/// `transcript.md` — strict, append-only, one utterance per line (§3.4).
+/// `transcript.md` — strict, one utterance per line, append-only while
+/// recording and sorted by time once at stop (§3.4, A19).
 pub const TRANSCRIPT_FILE: &str = "transcript.md";
 /// `notes.md` — the user's own notes.
 pub const NOTES_FILE: &str = "notes.md";

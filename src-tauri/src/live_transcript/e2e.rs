@@ -477,21 +477,27 @@ fn assert_consistent(meeting: &Meeting) -> Vec<(u64, Speaker, String)> {
 
     let on_disk = assert_spec_3_4(&meeting.transcript);
 
+    // Stop sorted the file by time (SPEC A19).
+    assert!(
+        on_disk.is_sorted_by_key(|(start, _, _)| *start),
+        "transcript.md is not in time order after Stop"
+    );
+
     // Every final the window was told about is a line on disk, and nothing
-    // is on disk the window was not told about.
+    // is on disk the window was not told about. The window heard them in
+    // settle order; the file is that order, stably sorted by time.
     let told = finals(&meeting.updates);
-    let mut told_lines: Vec<String> = told
+    let mut told_utterances: Vec<_> = told.iter().map(LiveLine::to_utterance).collect();
+    told_utterances.sort_by_key(|utterance| utterance.start_sec);
+    let told_lines: Vec<String> = told_utterances
         .iter()
-        .map(|line| stt::format_transcript_line(&line.to_utterance()))
+        .map(stt::format_transcript_line)
         .collect();
-    let mut disk_lines: Vec<String> = meeting.transcript.lines().map(str::to_string).collect();
+    let disk_lines: Vec<String> = meeting.transcript.lines().map(str::to_string).collect();
     assert_eq!(
         told_lines, disk_lines,
-        "the pane's settled lines and transcript.md differ (or differ in order)"
+        "the pane's settled lines, in time order, and transcript.md differ"
     );
-    told_lines.sort();
-    disk_lines.sort();
-    assert_eq!(told_lines, disk_lines);
 
     // The snapshot a freshly opened window would get says the same.
     let mut snapshot_seqs: Vec<u64> = meeting.snapshot.finals.iter().map(|l| l.seq).collect();
@@ -595,10 +601,14 @@ fn speech_gate(engine: &str, open: OpenEngine) {
             .filter(|u| u.speaker == speaker)
             .flat_map(|u| words(&u.text))
             .collect();
-        // Lines on disk are in settle order; the reference is in speech order.
-        let mut mine: Vec<&(u64, Speaker, String)> =
+        // Stop sorted the file by time (SPEC A19), so this speaker's lines are
+        // already in speech order, like the reference.
+        let mine: Vec<&(u64, Speaker, String)> =
             lines.iter().filter(|(_, s, _)| *s == speaker).collect();
-        mine.sort_by_key(|(start, _, _)| *start);
+        assert!(
+            mine.is_sorted_by_key(|(start, _, _)| *start),
+            "{engine} {speaker:?}: transcript.md is not in time order after Stop"
+        );
         let heard: Vec<String> = mine.iter().flat_map(|(_, _, text)| words(text)).collect();
         let wer = word_error_rate(&expected, &heard);
         eprintln!("{engine} live {speaker:?}: WER {:.1}%", wer * 100.0);

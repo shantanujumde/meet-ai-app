@@ -105,8 +105,13 @@ export function LiveTranscript({ live }: { live: LiveState }) {
               aloud would drown out the meeting itself. */}
           <div role="log" aria-live="polite" aria-relevant="additions" aria-label="Live transcript">
             <ol className="transcript">
-              {live.finals.map((line) => (
-                <LiveRow key={line.seq} line={line} volatile={false} />
+              {live.finals.map((line, i) => (
+                <LiveRow
+                  key={line.seq}
+                  line={line}
+                  volatile={false}
+                  showSpeaker={i === 0 || live.finals[i - 1]?.speaker !== line.speaker}
+                />
               ))}
             </ol>
           </div>
@@ -114,7 +119,7 @@ export function LiveTranscript({ live }: { live: LiveState }) {
           {guesses.length > 0 ? (
             <ol className="transcript live__guesses" aria-live="off">
               {guesses.map((line) => (
-                <LiveRow key={line.speaker} line={line} volatile />
+                <LiveRow key={line.speaker} line={line} volatile showSpeaker />
               ))}
             </ol>
           ) : null}
@@ -138,13 +143,21 @@ export function LiveTranscript({ live }: { live: LiveState }) {
  * settled line keeps its object identity across those, so only the row that
  * changed renders again.
  */
-const LiveRow = memo(function LiveRow({ line, volatile }: { line: LiveLine; volatile: boolean }) {
+const LiveRow = memo(function LiveRow({
+  line,
+  volatile,
+  showSpeaker,
+}: {
+  line: LiveLine;
+  volatile: boolean;
+  showSpeaker: boolean;
+}) {
   const label = line.speaker === "you" ? "You" : "Others";
   return (
     <li className="transcript__line" data-volatile={volatile || undefined}>
       <time className="transcript__time">{formatElapsed(line.start_sec * 1000)}</time>
       {/* Same chip as the review screen, and the full label for VoiceOver. */}
-      <SpeakerLabel speaker={label} />
+      <SpeakerLabel speaker={label} show={showSpeaker} />
       <span className="transcript__text">
         <span className="sr-only">
           {label}

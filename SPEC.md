@@ -222,7 +222,7 @@ All four sit behind one trait — `CalendarProvider { list_events(range) -> Vec<
 ~/Meetings/
   2026-09-01-1430-standup/
     meeting.md            # frontmatter + Summary/Decisions/Actions/Questions  (app writes from agent output, A11)
-    transcript.md         # app writes, append-only during meeting
+    transcript.md         # app writes, append-only during meeting, sorted by time at stop (A19)
     notes.md              # user types, app writes
     audio/
       mic.wav             # deleted after retention_days
@@ -258,6 +258,7 @@ One silent fix-up runs at launch, before the record shortcut exists: a WAV whose
 ---
 id: 2026-09-01-1430-standup
 title: Platform Standup
+title_source: calendar                   # optional; who wrote the title: calendar | agent | user (A20)
 date: 2026-09-01T14:30:00+05:30
 duration_sec: 2714
 attendees: [Shantanu, Priya, Dev]        # from EventKit when available
@@ -315,7 +316,7 @@ Regex: `^\[(\d{2}:\d{2}:\d{2})\] (You|Others): (.*)$`. Deliberately plain — re
 | **No escaping** | The prefix is fixed-width and anchored, so `]` or `:` inside speech is safe. `(.*)$` takes the rest of the line verbatim |
 | **Empty text is never written** | Whitespace-only results are dropped. This is the last line of defence for the whisper-hallucination guard |
 | **Timestamps are utterance *start*** | Derived from `segments.json` (`start_host_ns + frame/rate`), never wall-clock at write time |
-| **Append-only** | A line, once written, is never rewritten or reordered. See §2.5 on what is allowed to reach disk |
+| **Append-only** | A line, once written, is never rewritten or reordered. See §2.5 on what is allowed to reach disk. ⚠️ amended — once the recording stops, the lines are put in time order a single time, see **A19** |
 
 `segments.json` records clock truth:
 
@@ -545,6 +546,28 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 ## Amendments
 
 A13 is held by TUR-36 ([#83](https://github.com/shantanujumde/meet-ai-app/pull/83), Windows and Linux as targets), which is not merged yet; until it is, the numbers skip from A14 to A12.
+
+### A20 — 2026-10-04 · Meeting titles: calendar, then the agent's suggestion, and the user can rename; meeting.md gains title_source (amends §3.2 and A11's notes schema; TUR-103)
+
+Every meeting in the list was called "Meeting": the folder is `{stamp}-meeting`, and without a calendar event nothing ever gave it a better name. Three writers now name a meeting, and `meeting.md` records which one did in a new frontmatter key, `title_source` (`calendar` | `agent` | `user`):
+
+1. **The calendar** names it while it records (TUR-29), only while it still has the folder-name title. It writes `title_source: calendar`.
+2. **The agent** suggests a title with its notes. The notes schema gains a required `"title"` string ("A short name for the meeting, 3 to 6 words, like a calendar event title."), first in the object. The app writes it when the meeting is untitled or its title came from the calendar or an earlier notes run, so it replaces even a vague calendar title like "Sync". It writes `title_source: agent`. A blank suggestion is ignored.
+3. **The user** clicks the title on the meeting page to rename it (`rename_meeting`). It writes `title_source: user`, and neither the calendar nor the agent replaces it after that.
+
+A title with no `title_source` that is not the folder-name default was typed into `meeting.md` by hand, and is kept like a user's rename; so is a `title_source` the app does not know. Every title is written as one line, trimmed, at most 80 characters. The folder is never renamed, so nothing that points at it breaks. The copy-prompt path (no agent set up) is unchanged: its prompt does not ask for a title.
+
+### A19 — 2026-10-04 · transcript.md is sorted by time once when recording stops (amends §3.4's Append-only row; TUR-103)
+
+Live, both tracks write to one `transcript.md`, each line the moment its engine settles it. A line settles a few seconds after it was said, and the mic and system engines do not keep pace with each other, so a `You` line could land below an `Others` line that started later, and the timestamps in the file went backwards. Batch transcription already merged the two tracks by time (`stt::transcribe`); live never could, because a line written early cannot be moved by an append.
+
+**Change:** lines are still appended as they settle, so the file is useful (and crash-safe) during the meeting. When the recording stops and both tracks have finished writing, `store::transcript_order::sort_by_time` puts the file in time order once: a stable sort by start time, so lines that start in the same second keep the order they were written in. It writes through a temp file and a rename, so a reader never sees half a file, and it runs before the transcript counts as final, so the notes run (A11) always reads the sorted file. Every line comes back byte for byte; only the order changes.
+
+It does not touch a file that is already in order, and it leaves the whole file alone (and logs it) when any line is not a §3.4 line, such as a hand edit or a blank line, since there is no time to sort that line by. "A line is never rewritten" still holds; "never reordered" now holds only while the recording is running.
+
+### A18 — 2026-10-04 · Softer brand tint, a more see-through sidebar, brighter grey text (amends A17; TUR-103)
+
+Side by side with the window A17 copied, the dark app read as purple, the sidebar as solid and the same tone as the content, and grey text as dim. The `--tint-*` mixes are halved (1–3% instead of 4–5%); dark cards start from a lighter grey so they stay a step off the canvas. `--surface-sidebar` drops from 84% to 66% in light and 60% in dark, still solid with glass off, Reduce Transparency, Increase Contrast and on Windows and Linux. Secondary and tertiary text move further from the background (dark 0.78 / 0.70, light 0.74 / 0.66), and `--accent-text` and `--status-danger-text` go a shade deeper so they still hold AA on the sidebar over `contrast.mjs`'s mid-grey backdrop. The rule is unchanged: every text colour holds AA on every surface it sits on.
 
 ### A17 — 2026-10-04 · Background surfaces may carry a brand tint; accent unchanged; Lucide icons (amends §2's Icons row and the brand-tokens rule; TUR-102)
 

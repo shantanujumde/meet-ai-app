@@ -7,6 +7,8 @@
 //!   sections.
 //! * [`transcript`] — `transcript.md` (§3.4): read only. The strict line
 //!   format is appended by `stt`'s sink and nothing else.
+//! * [`transcript_order`] — the one rewrite of `transcript.md`: put in time
+//!   order once, when a recording stops (SPEC A19).
 //! * [`notes`] — `notes.md`: the user's own notes.
 //! * [`ticket`] — `tickets/TICK-NNNN.md` (§3.3).
 //! * [`agent_notes`] — `meeting.md` sections and tickets written from the
@@ -14,6 +16,8 @@
 //! * [`notes_switch`] — the per-meeting `agent_notes: off` switch (SPEC A11).
 //! * [`meeting_event`] — `meeting.md`'s title, attendees and event id, from
 //!   the calendar event the meeting was recorded during (TUR-29).
+//! * [`meeting_title`] — whose title wins: the calendar's, the agent's or the
+//!   user's (TUR-103).
 //! * [`folder`] — one meeting folder, or every folder under the root, loaded
 //!   together.
 //! * [`retention`] — deleting meeting audio after `retention_days` (L16).
@@ -56,6 +60,7 @@ pub mod frontmatter;
 pub mod index;
 pub mod meeting;
 pub mod meeting_event;
+pub mod meeting_title;
 pub mod notes;
 pub mod notes_switch;
 mod platform;
@@ -72,6 +77,7 @@ pub fn create_app_dir(app_dir: &std::path::Path) -> std::io::Result<()> {
 pub mod retention;
 pub mod ticket;
 pub mod transcript;
+pub mod transcript_order;
 pub mod watcher;
 
 /// The SPEC §3.1 folder layout, defined once in `meeting-format`.

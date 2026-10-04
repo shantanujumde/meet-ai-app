@@ -234,6 +234,17 @@ impl SharedSink {
     pub fn new<S: TranscriptSink + Send + 'static>(sink: S) -> Self {
         Self(Arc::new(std::sync::Mutex::new(sink)))
     }
+
+    /// Drops this handle and says whether it was the last one, so nothing
+    /// can write through the sink any more. A session that finished cleanly
+    /// has dropped its clone; one that panicked may have left a thread holding
+    /// one. The count cannot go up between the check and the drop: a clone
+    /// needs a handle, there are no `Weak` ones, and at a count of one the
+    /// only handle is this one. (`Arc::into_inner` would say it in one call,
+    /// but needs a sized type, and the sink is `dyn`.)
+    pub fn release(self) -> bool {
+        Arc::strong_count(&self.0) == 1
+    }
 }
 
 impl TranscriptSink for SharedSink {

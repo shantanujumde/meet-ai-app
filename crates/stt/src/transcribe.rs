@@ -58,8 +58,9 @@ pub struct Outcome {
 ///
 /// Both tracks go through the same engine, then merge by timestamp. They are
 /// collected before writing rather than streamed straight to the file because
-/// SPEC §3.4 makes `transcript.md` append-only: once a line is written it is
-/// never reordered, so the ordering has to be right the first time. The live
+/// SPEC §3.4 makes `transcript.md` append-only: the sink cannot move a line
+/// once it is written, so the ordering has to be right the first time. (Live
+/// has no such luxury and is sorted once at stop instead, SPEC A19.) The live
 /// pane (Phase 2, Nia's [`TranscriptSink`] consumer) is what shows text as it
 /// arrives; the file is what has to be correct.
 pub fn transcribe_meeting(

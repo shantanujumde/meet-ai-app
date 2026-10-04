@@ -6,6 +6,8 @@
 //!
 //! * the four fixed `meeting.md` sections (§3.2), plus `analyzed_by`,
 //!   `analyzed_model` and `analyzed_at` in its frontmatter;
+//! * the agent's suggested `title`, unless the user named the meeting
+//!   ([`crate::meeting_title`], TUR-103);
 //! * one `tickets/TICK-NNNN.md` per task (§3.3), `status: open`, `assignee`
 //!   from the task's owner, `transcript_ref` as given. §3.3 has no due date,
 //!   so it goes in the body (`Due: Friday.`).
@@ -63,6 +65,7 @@ use yaml_rust2::yaml::Hash;
 use crate::folder::{self, meeting_dir};
 use crate::folder_name::{prettify_slug, split_folder_name};
 use crate::meeting::Meeting;
+use crate::meeting_title;
 use crate::ticket::{self, Status, Ticket};
 use crate::watcher::SelfWrites;
 use crate::{Error, MEETING_FILE, TICKETS_DIR};
@@ -236,7 +239,8 @@ pub fn write(
         }
     }
 
-    // Step 3: the sections, and the record as it now stands.
+    // Step 3: the title, the sections, and the record as it now stands.
+    meeting_title::suggest(&mut meeting, &notes.title, &default_title(meeting_id));
     for (k, v) in [
         ("analyzed_by", analysis.by.as_str()),
         ("analyzed_model", analysis.model.as_str()),

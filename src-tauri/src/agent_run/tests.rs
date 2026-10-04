@@ -32,6 +32,7 @@ const TRANSCRIPT: &str = "\
 /// A reply in the notes format, as `crates/store/tests/fixtures/notes/standup.json`.
 fn standup_reply() -> serde_json::Value {
     serde_json::json!({
+        "title": "Redis session store plan",
         "summary": "Sessions still live in memory. The team agreed to move them to Redis.",
         "decisions": ["Move sessions to Redis."],
         "open_questions": ["Who owns the Redis cluster after launch?"],

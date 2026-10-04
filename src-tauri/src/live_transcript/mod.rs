@@ -8,7 +8,10 @@
 //! chose, sharing one [`SeqCounter`] and one [`MarkdownSink`]:
 //!
 //! * **Finals** go to `transcript.md` through the sink, which owns the SPEC
-//!   §3.4 line format. They also go to the window.
+//!   §3.4 line format. They also go to the window. They land in the order
+//!   they settle, which is not quite the order they were said: each track
+//!   settles at its own pace. So once both sessions have finished, the file is
+//!   sorted by time once (SPEC A19), before Stop or the notes run read it.
 //! * **Volatiles** go to the window and nowhere else (SPEC §2.5). They are
 //!   never written, so a guess that never settles can never become a line.
 //! * **Every** [`LiveUpdate`] is emitted as-is on [`TRANSCRIPT_UPDATE_EVENT`], and kept in

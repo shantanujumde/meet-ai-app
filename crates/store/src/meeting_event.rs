@@ -9,7 +9,9 @@
 //!
 //! * `title` is set only while the meeting still has its default title, the
 //!   one [`Meeting::new`] gives a fresh file (the folder name). A title the
-//!   user typed is never replaced.
+//!   user typed is never replaced. When it is set, `title_source: calendar`
+//!   goes with it, so the agent's suggestion may replace it later
+//!   ([`crate::meeting_title`]).
 //! * `attendees` is set only when the file names nobody yet.
 //! * `calendar_event_id` is set only when the file has none.
 //!
@@ -23,12 +25,13 @@
 use std::io;
 use std::path::Path;
 
-use meeting_format::meeting_md::{ATTENDEES, CALENDAR_EVENT_ID, TITLE};
+use meeting_format::meeting_md::{ATTENDEES, CALENDAR_EVENT_ID};
 use yaml_rust2::Yaml;
 
 use crate::agent_notes::{default_title, lock_ticket_numbers};
 use crate::folder::meeting_dir;
 use crate::meeting::Meeting;
+use crate::meeting_title::{self, TitleSource, is_untitled};
 use crate::{Error, MEETING_FILE};
 
 /// What the calendar says about the meeting.
@@ -99,9 +102,10 @@ pub fn apply(root: &Path, meeting_id: &str, event: &FromCalendar<'_>) -> Result<
     };
 
     let mut applied = Applied::default();
-    let title = event.title.trim();
-    if !title.is_empty() && is_untitled(&meeting, &default) {
-        meeting.frontmatter.set_str(TITLE, Some(title));
+    if let Some(title) = meeting_title::clean(event.title)
+        && is_untitled(&meeting, &default)
+    {
+        meeting_title::set(&mut meeting, &title, TitleSource::Calendar);
         applied.title = true;
     }
     if !event.attendees.is_empty() && meeting.attendees().is_empty() {
@@ -122,15 +126,10 @@ pub fn apply(root: &Path, meeting_id: &str, event: &FromCalendar<'_>) -> Result<
     Ok(applied)
 }
 
-/// The title is missing, blank, or still the folder-name default.
-fn is_untitled(meeting: &Meeting, default: &str) -> bool {
-    meeting
-        .title()
-        .is_none_or(|title| title.trim().is_empty() || title == default)
-}
-
 #[cfg(test)]
 mod tests {
+    use meeting_format::meeting_md::TITLE_SOURCE;
+
     use super::*;
 
     const ID: &str = "2026-10-05-1000-meeting";
@@ -169,6 +168,10 @@ mod tests {
         let meeting = read(root.path());
         assert_eq!(meeting.id().as_deref(), Some(ID));
         assert_eq!(meeting.title().as_deref(), Some("Platform Standup"));
+        assert_eq!(
+            meeting.frontmatter.get_str(TITLE_SOURCE).as_deref(),
+            Some("calendar")
+        );
         assert_eq!(meeting.attendees(), names);
         assert_eq!(
             meeting.frontmatter.get_str(CALENDAR_EVENT_ID).as_deref(),
@@ -189,7 +192,9 @@ mod tests {
         let applied = apply(root.path(), ID, &standup(&names)).unwrap();
         assert!(!applied.title);
         assert!(applied.attendees && applied.calendar_event_id);
-        assert_eq!(read(root.path()).title().as_deref(), Some("Budget review"));
+        let meeting = read(root.path());
+        assert_eq!(meeting.title().as_deref(), Some("Budget review"));
+        assert_eq!(meeting.frontmatter.get_str(TITLE_SOURCE), None);
     }
 
     #[test]

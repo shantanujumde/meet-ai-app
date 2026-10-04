@@ -175,7 +175,7 @@ function SidebarGroup({
         onClick={() => setOpen((was) => !was)}
         className={cn(
           "flex cursor-default items-center gap-2 border-0 bg-transparent px-2 py-1 text-left",
-          "text-caption1 font-semibold text-fg-tertiary",
+          "text-caption1 font-semibold text-fg-secondary",
         )}
       >
         <Icon
@@ -193,7 +193,11 @@ function SidebarGroup({
           id={listId}
           className={cn(
             "m-0 flex list-none flex-col gap-1 p-0",
-            grow ? "min-h-0 flex-1 overflow-y-auto" : "",
+            // The padding keeps the first and last rows clear of the fade
+            // until the list is scrolled.
+            grow
+              ? "min-h-0 flex-1 overflow-y-auto py-(--sidebar-list-fade) [mask-image:linear-gradient(to_bottom,transparent,black_var(--sidebar-list-fade),black_calc(100%_-_var(--sidebar-list-fade)),transparent)]"
+              : "",
           )}
         >
           {children}
@@ -243,6 +247,23 @@ function MeetingRow({
   // On the accent pill every word is white: the status colours would not
   // read on it, and the words already say the state.
   const tone = (colour: string) => (selected ? "text-on-accent" : colour);
+  // A recording that caught no speech steps back, so the meetings with
+  // something in them stand out. Quieter text tokens, not opacity, so the
+  // contrast check still covers it.
+  const empty = meeting.lineCount === 0 && !isRecording;
+  // One list feeds both the line and its tooltip, so they cannot drift.
+  const meta: { text: string; colour?: string }[] = [{ text: formatRelativeDate(meeting.date) }];
+  if (meeting.time) meta.push({ text: meeting.time });
+  // A recording meeting shows the dot, not a red title — colour alone is not
+  // a state signal.
+  if (isRecording) meta.push({ text: "● Recording", colour: "text-recording" });
+  // Takes the line count's place: the sidebar is too narrow for both, and the
+  // meeting itself says how much was kept. The colour only matches the list
+  // page's warning pill.
+  else if (meeting.recordingState === "interrupted")
+    meta.push({ text: INTERRUPTED_LABEL, colour: "text-warning" });
+  else if (!meeting.notesOff) meta.push({ text: formatLineCount(meeting.lineCount) });
+  if (meeting.notesOff) meta.push({ text: NOTES_OFF_LABEL });
   return (
     <button
       type="button"
@@ -252,33 +273,32 @@ function MeetingRow({
     >
       <Icon
         icon={FileText}
-        className={cn("mt-[2px]", selected ? "text-on-accent" : "text-accent-text")}
+        className={cn(
+          "mt-[2px]",
+          selected ? "text-on-accent" : empty ? "text-fg-tertiary" : "text-accent-text",
+        )}
       />
       <span className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="truncate font-medium">{meeting.title}</span>
-        {/* Wraps rather than clipping when the dot or Interrupted and "Notes
-            off" both show and the sidebar is narrow. */}
+        <span className={cn("truncate font-medium", empty && tone("text-fg-secondary"))}>
+          {meeting.title}
+        </span>
+        {/* One line, so every row is the same height: it ends in an ellipsis
+            when the sidebar is narrow, and the tooltip has all of it. */}
         <span
+          title={meta.map((part) => part.text).join(" · ")}
           className={cn(
-            "flex flex-wrap gap-3 text-caption1 tabular-nums",
-            tone("text-fg-secondary"),
+            "truncate text-footnote tabular-nums",
+            tone(empty ? "text-fg-tertiary" : "text-fg-secondary"),
           )}
         >
-          <span>{formatRelativeDate(meeting.date)}</span>
-          {meeting.time ? <span>{meeting.time}</span> : null}
-          {/* A recording meeting shows the dot, not a red title — colour
-              alone is not a state signal. */}
-          {isRecording ? (
-            <span className={tone("text-recording")}>● Recording</span>
-          ) : meeting.recordingState === "interrupted" ? (
-            // Takes the line count's place: the sidebar is too narrow for
-            // both, and the meeting itself says how much was kept. The
-            // colour only matches the list page's warning pill.
-            <span className={tone("text-warning")}>{INTERRUPTED_LABEL}</span>
-          ) : meeting.notesOff ? null : (
-            <span>{formatLineCount(meeting.lineCount)}</span>
-          )}
-          {meeting.notesOff ? <span>{NOTES_OFF_LABEL}</span> : null}
+          {meta.map((part) => (
+            <span
+              key={part.text}
+              className={cn("mr-3 last:mr-0", part.colour && tone(part.colour))}
+            >
+              {part.text}
+            </span>
+          ))}
         </span>
       </span>
     </button>

@@ -119,8 +119,8 @@ export function NotesRun({
         <h2 className="section__title" id="meeting-notes-heading">
           Meeting notes
         </h2>
-        <p className="section__hint">
-          {by ? `Written by ${AGENT_NAMES[by] ?? by} into meeting.md` : "Written into meeting.md"}
+        <p className="section__hint" title="meeting.md in the meeting folder">
+          {by ? `Written by ${AGENT_NAMES[by] ?? by}` : "Written by your agent"}
         </p>
       </div>
       {toggle}
@@ -201,7 +201,7 @@ function runPanel({
             }
             body="Your agent can write a summary, the decisions and the tasks from this transcript."
           >
-            <Button size="small" icon={Sparkles} disabled={busy} onClick={start}>
+            <Button size="small" tone="primary" icon={Sparkles} disabled={busy} onClick={start}>
               Make notes now
             </Button>
           </RunCard>
@@ -212,7 +212,7 @@ function runPanel({
           status={<span className="text-body font-medium">No notes yet</span>}
           body="Your agent can write a summary, the decisions and the tasks from this transcript."
         >
-          <Button size="small" icon={Sparkles} disabled={busy} onClick={start}>
+          <Button size="small" tone="primary" icon={Sparkles} disabled={busy} onClick={start}>
             Write notes
           </Button>
         </RunCard>

@@ -22,7 +22,8 @@ pub fn meeting_id(stamp: &str) -> String {
 ///
 /// `transcript.md` is created empty and never written to here: §3.4 makes it
 /// append-only and `crates/stt`'s `TranscriptSink` is the only thing allowed to
-/// append. Creating it up front means the review view can open a meeting that
+/// append (the one later rewrite, sorting it by time at stop, is
+/// [`crate::transcript_order`]). Creating it up front means the review view can open a meeting that
 /// is still recording without a missing-file branch. `audio/` is also created
 /// here, ahead of `RecordingSession::start`'s own (idempotent)
 /// `create_dir_all`, so folder creation stays one step even though the audio

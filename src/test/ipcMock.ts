@@ -151,6 +151,7 @@ export const ipc = {
     meetingDetail({ summary: meetingSummary({ id }) }),
   ),
   saveNotes: vi.fn<typeof Client.saveNotes>(async () => {}),
+  renameMeeting: vi.fn<typeof Client.renameMeeting>(async (_id, title) => title.trim()),
   changeMeetingsFolder: vi.fn<typeof Client.changeMeetingsFolder>(async (root) => ({
     ...EMPTY_LIST,
     root,

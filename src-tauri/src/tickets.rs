@@ -270,6 +270,7 @@ mod tests {
 
     fn notes_with(tasks: &[&str]) -> prompts::notes::Notes {
         prompts::notes::Notes {
+            title: "Standup".to_owned(),
             summary: "Standup.".to_owned(),
             decisions: Vec::new(),
             open_questions: Vec::new(),

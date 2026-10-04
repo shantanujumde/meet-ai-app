@@ -167,7 +167,9 @@ Notes that will cost time if missed:
 | `--text-caption1` | 11px | 400 | Timestamps, speaker labels |
 | `--text-caption2` | 10px | 500 | Badges, counts |
 
-Line length in the notes pane is capped at `--notes-measure` (68ch). Transcript
+Line length in the notes pane follows the page column, like the cards above it
+(TUR-103: a 68ch cap left its right edge out of line with them); `--notes-measure`
+(68ch) still caps notices and empty-state text. Transcript
 lines are short by nature and need no cap.
 
 Use tabular figures for timestamps so the transcript does not shift as the clock
@@ -179,22 +181,24 @@ ticks: `font-variant-numeric: tabular-nums`.
 
 ### 5.1 Sidebar
 
-See-through glass on macOS: `--surface-sidebar` (the sidebar tint at 84%)
-over the native window material, a tone off the content. It gets **no**
+See-through glass on macOS: `--surface-sidebar` (the sidebar tint at 66%, 60%
+in dark) over the native window material, a clear tone off the content. It gets **no**
 `backdrop-filter` of its own, because the window material is already the blur.
 Solid (`--surface-sidebar-solid`) with glass off, Reduce Transparency, Increase
 Contrast, and on Windows and Linux, where no material sits behind it.
 
 - Width `--sidebar-w` (240px), padding `--sidebar-pad`
 - A rounded find box at the top (capsule, `--surface-control`, search icon)
-- Pages grouped under small grey headings (11px semibold, tertiary) that fold
+- Pages grouped under small grey headings (11px semibold, secondary) that fold
   shut: a button with a chevron and `aria-expanded`
 - Every row is a 16px accent line icon (`--accent-text`) and a name. Height
   `--sidebar-row-h` (30px), radius `--sidebar-row-radius`, hover
   `--sidebar-row-hover`
 - The current page is a solid `--accent-fill` pill with white words and icon,
   and `aria-current`, never colour alone
-- Meeting rows: title (13px medium, truncates), date and state (11px)
+- Meeting rows: title (13px medium, truncates), date and state on one line
+  (12px, truncates). A recording with no transcript is dimmed: title
+  secondary, icon and meta tertiary
 - Recording meetings show the dot and the word, not a red title
 
 ### 5.1a Title bar
@@ -256,7 +260,7 @@ The content layer. **Opaque**, because this is where sustained reading and
 writing happen, and translucency under body text is fatiguing.
 
 - Fill `--surface-content`, padding `--notes-pad` (24px)
-- Text 14px at 1.6 line height, measure capped at 68ch
+- Text 14px at 1.6 line height, as wide as the page column (the cards' width)
 - Scrolls under the floating toolbar with `.scroll-edge --top-only`
 - Autosaves. Per SPEC, markdown on disk is the source of truth, so the pane owns
   no state the file does not have.
@@ -268,7 +272,8 @@ Glass, collapsible, floating over the notes pane at the right edge.
 - Width `--transcript-w` (320px), radius `--radius-panel`
 - Collapsed it is a 32px capsule showing the speaker count and a waveform
 - Expanded it uses `.glass` with `.scroll-edge`
-- Rows: speaker initial in a colored circle, then text, then timestamp
+- Rows: timestamp, then the speaker (a coloured dot and the word, shown only
+  when the speaker changes), then text
 - **Volatile versus final text is the important distinction.** Text still being
   revised by the recognizer renders at `--transcript-volatile` (tertiary). It
   never persists to disk, per SPEC. Finalized text steps up to
@@ -373,7 +378,7 @@ competes with transcription for GPU time.
 | 16px base text | macOS convention is 13px, and 16 looks inflated |
 | Emoji as icons | Font-dependent, unthemeable, inconsistent across systems |
 | Animating `backdrop-filter` | Full recomposite per frame, drops frames during transcription |
-| Color-only speaker labels | Fails colorblind users; pair color with an initial |
+| Color-only speaker labels | Fails colorblind users; pair color with the speaker's name |
 | A pulsing dot as the only recording signal | Reduce Motion kills the pulse; pair it with a timer |
 | Removing the focus ring | Breaks keyboard operation outright |
 

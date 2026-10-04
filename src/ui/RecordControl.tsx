@@ -104,14 +104,16 @@ export function RecordControl({
         {labelFor(status.phase)}
       </button>
 
-      {/* Reserved whether or not it is running, so starting a recording does
-          not shift the titlebar sideways. */}
-      <span className="record__elapsed" aria-hidden={!live}>
-        {live ? formatElapsed(elapsed) : ""}
-      </span>
-
+      {/* Beside the button it starts, not across the timer's empty room. */}
       <span className="record__shortcut" aria-hidden="true">
         {shortcutLabel()}
+      </span>
+
+      {/* Reserved whether or not it is running, so starting a recording does
+          not shift the titlebar sideways. Last, so the empty room sits at the
+          edge. */}
+      <span className="record__elapsed" aria-hidden={!live}>
+        {live ? formatElapsed(elapsed) : ""}
       </span>
     </div>
   );

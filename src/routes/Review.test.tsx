@@ -1,12 +1,13 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { AGENT_RUN_STATUS_EVENT } from "@/ipc/client";
 import type { MeetingDetail, RecordingStatus } from "@/ipc/types";
 import { copyText } from "@/lib/clipboard";
 import { useRecordingStore } from "@/state/recording";
 import { EMPTY_LIVE, useTranscriptStore } from "@/state/transcript";
 import { meetingDetail, transcriptLine } from "@/test/fixtures";
-import { ipc } from "@/test/ipcMock";
+import { emit, ipc } from "@/test/ipcMock";
 import { Review } from "./Review";
 
 /**
@@ -286,6 +287,91 @@ describe("Review's header", () => {
     const meta = within(header).getByTestId("meeting-meta");
     expect(meta).toHaveTextContent(/·\s*22:36\s*·\s*50 min/);
     expect(within(header).queryByText(PATH)).toBeNull();
+  });
+
+  /** TUR-103: the title renames in place. */
+  async function openRename() {
+    readMeeting.mockResolvedValue(
+      meetingDetail({ summary: { id: ID, title: "Standup" }, lines: [transcriptLine()] }),
+    );
+    renderReview();
+    fireEvent.click(await screen.findByRole("button", { name: /^Rename meeting/ }));
+    return screen.getByRole<HTMLInputElement>("textbox", { name: "Meeting title" });
+  }
+
+  test("Enter saves a new title, which the heading then shows", async () => {
+    const field = await openRename();
+    expect(field.value).toBe("Standup");
+    expect(document.activeElement).toBe(field);
+
+    fireEvent.change(field, { target: { value: "  Budget review " } });
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    await waitFor(() => expect(ipc.renameMeeting).toHaveBeenCalledWith(ID, "Budget review"));
+    const header = screen.getByRole("banner");
+    expect(
+      await within(header).findByRole("heading", { level: 1, name: "Budget review" }),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Rename meeting/ })),
+    );
+  });
+
+  test("clicking away saves too", async () => {
+    const field = await openRename();
+    fireEvent.change(field, { target: { value: "Budget review" } });
+    fireEvent.blur(field);
+    await waitFor(() => expect(ipc.renameMeeting).toHaveBeenCalledWith(ID, "Budget review"));
+    expect(ipc.renameMeeting).toHaveBeenCalledTimes(1);
+  });
+
+  test("Escape, a blank title or the same title saves nothing", async () => {
+    const field = await openRename();
+    fireEvent.change(field, { target: { value: "Budget review" } });
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(screen.getByRole("heading", { level: 1, name: "Standup" })).toBeTruthy();
+
+    for (const value of ["   ", "Standup"]) {
+      fireEvent.click(screen.getByRole("button", { name: /^Rename meeting/ }));
+      const again = screen.getByRole("textbox", { name: "Meeting title" });
+      fireEvent.change(again, { target: { value } });
+      fireEvent.keyDown(again, { key: "Enter" });
+      expect(screen.getByRole("heading", { level: 1, name: "Standup" })).toBeTruthy();
+    }
+    expect(ipc.renameMeeting).not.toHaveBeenCalled();
+  });
+
+  test("a rename that fails keeps the old title and says why", async () => {
+    ipc.renameMeeting.mockRejectedValueOnce({
+      domain: "app",
+      kind: "io",
+      message: "The disk is full.",
+    });
+    const field = await openRename();
+    fireEvent.change(field, { target: { value: "Budget review" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    expect(await screen.findByText(/The disk is full/)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Standup" })).toBeTruthy();
+  });
+
+  test("a finished notes run shows the agent's title in the header", async () => {
+    readMeeting.mockResolvedValueOnce(
+      meetingDetail({ summary: { id: ID, title: "Meeting" }, lines: [transcriptLine()] }),
+    );
+    renderReview();
+    expect(await screen.findByRole("heading", { level: 1, name: "Meeting" })).toBeTruthy();
+
+    readMeeting.mockResolvedValueOnce(
+      meetingDetail({
+        summary: { id: ID, title: "Search release planning" },
+        lines: [transcriptLine()],
+      }),
+    );
+    act(() => emit(AGENT_RUN_STATUS_EVENT, { meetingId: ID, state: { state: "done", tasks: 0 } }));
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Search release planning" }),
+    ).toBeTruthy();
   });
 
   test("Show in Finder is an icon button with the path as its tooltip, and opens the folder", async () => {

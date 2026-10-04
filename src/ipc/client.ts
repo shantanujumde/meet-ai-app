@@ -591,6 +591,8 @@ export * from "./micSetting";
 // Settings' notes Auto / Manual picker (TUR-101).
 export * from "./notesAutoRun";
 export * from "./notifications";
+// Renaming a meeting from its page (TUR-103).
+export * from "./renameMeeting";
 // Settings' audio retention line (TUR-45, TUR-85).
 export * from "./retention";
 // The Settings speech engine picker (TUR-75).
