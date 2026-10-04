@@ -53,6 +53,8 @@ mod agent_section;
 #[cfg(test)]
 mod agent_tests;
 mod audio_section;
+// TUR-91: `audio.use_builtin_mic_with_bluetooth`.
+mod audio_mic;
 mod calendar_section;
 mod detection_section;
 mod file;
@@ -63,6 +65,7 @@ mod transcription_tests;
 
 pub use agent_section::ConfigError;
 pub use app_section::{AppConfig, app, set_app};
+pub use audio_mic::{set_use_builtin_mic_with_bluetooth, use_builtin_mic_with_bluetooth};
 pub use audio_section::Policy as RetentionPolicy;
 pub use audio_section::audio;
 #[cfg(test)]

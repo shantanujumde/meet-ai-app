@@ -23,6 +23,7 @@ mod live_transcript;
 mod lock;
 mod logs;
 mod meetings;
+mod mic_setting;
 mod notify;
 mod onboarding;
 mod permission;

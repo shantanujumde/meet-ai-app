@@ -66,6 +66,11 @@
           "type": "boolean",
           "description": "Warn when recording without headphones, since speakers can echo into the mic. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
           "default": true
+        },
+        "use_builtin_mic_with_bluetooth": {
+          "type": "boolean",
+          "description": "When the Mac's input is Bluetooth headphones, record the Mac's own mic instead, so the headphones keep their full sound. Opening a Bluetooth mic switches the headphones to call mode, which is quieter. false = record the Bluetooth mic. macOS only; needs a Mac with a built-in mic.",
+          "default": true
         }
       }
     },
