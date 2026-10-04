@@ -82,7 +82,7 @@ async fn edit_providers(
     app: AppHandle,
     edit: impl FnOnce(&mut Vec<Provider>) + Send + 'static,
 ) -> Result<CalendarSources, UiError> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::error::on_blocking_pool(move || {
         app.state::<FolderGate>().writing(|| {
             let saved = config::set_calendar_providers(edit)?;
             Ok(CalendarSources::new(
@@ -91,8 +91,7 @@ async fn edit_providers(
             ))
         })
     })
-    .await
-    .map_err(|error| UiError::app("task-failed", error.to_string()))?
+    .await?
 }
 
 /// Which calendar sources this OS offers and which are set up. A config
