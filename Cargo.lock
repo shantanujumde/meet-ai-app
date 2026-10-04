@@ -35,7 +35,6 @@ dependencies = [
  "process-wrap",
  "serde",
  "serde_json",
- "sysinfo",
  "tempfile",
  "test-support",
  "thiserror 2.0.20",
@@ -6525,6 +6524,9 @@ dependencies = [
 [[package]]
 name = "test-support"
 version = "0.3.0"
+dependencies = [
+ "sysinfo",
+]
 
 [[package]]
 name = "thiserror"
