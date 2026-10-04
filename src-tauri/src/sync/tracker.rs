@@ -148,13 +148,13 @@ pub(crate) fn checked(tracker: &str, tracker_mcp: &str) -> Result<TicketsConfig,
     if server.is_empty() {
         return Err(UiError::app(
             "bad-tracker-server",
-            "Type or pick the MCP server name the agent uses for your tracker.",
+            "Type or pick the server (tracker connection, also called an MCP server) the agent uses for your tracker.",
         ));
     }
     if server.chars().count() > MAX_SERVER_NAME || server.chars().any(char::is_control) {
         return Err(UiError::app(
             "bad-tracker-server",
-            "That MCP server name is not one an agent CLI would list.",
+            "That is not a server name Claude Code or Codex would list.",
         ));
     }
     Ok(TicketsConfig {

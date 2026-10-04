@@ -24,7 +24,7 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
       </header>
       <Prose>
         {SIGN_IN_TO_SEE_TODAY}. meet-ai uses your calendar to name recordings, remind you before a
-        meeting starts, and show what happened last time. It only reads; it never changes your
+        meeting starts, and show what happened last time. It only reads, and never changes your
         calendar. This is optional, and Settings → Calendars can do it later.
       </Prose>
 

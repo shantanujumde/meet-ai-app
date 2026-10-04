@@ -151,7 +151,7 @@ pub fn check_mic_with(mut source: Box<dyn AudioSource>) -> ChannelResult {
         }
         Err(Error::PermissionDenied) => ChannelResult {
             state: ChannelState::Denied,
-            detail: "the microphone did not open — permission is off, or nobody answered the \
+            detail: "the microphone did not open: permission is off, or nobody answered the \
                      prompt in time"
                 .into(),
         },

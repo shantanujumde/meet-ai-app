@@ -113,7 +113,7 @@ describe("Review's Copy prompt", () => {
     const button = await screen.findByRole("button", { name: "Copy prompt" });
     expect(
       screen.getByText(
-        "No agent set up — paste this into Claude Code or Codex and it will write the notes.",
+        "No agent is set up. Paste this into Claude Code or Codex and it will write the notes.",
       ),
     ).toBeTruthy();
 

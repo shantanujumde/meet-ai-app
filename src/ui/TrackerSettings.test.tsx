@@ -43,10 +43,10 @@ describe("TrackerSettings", () => {
     render(<TrackerSettings />);
 
     expect(
-      await screen.findByRole("option", { name: "claude.ai Linear — Connected" }),
+      await screen.findByRole("option", { name: "claude.ai Linear (Connected)" }),
     ).toBeTruthy();
-    expect(screen.getByRole("option", { name: "jira — Needs sign-in" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "github — Could not connect" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "jira (Needs sign-in)" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "github (Could not connect)" })).toBeTruthy();
   });
 
   test("says it is checking while the slow server list loads, and the rest still works", async () => {
@@ -125,7 +125,7 @@ describe("TrackerSettings", () => {
     trackerServers.mockResolvedValueOnce(SERVERS);
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
 
-    expect(await screen.findByRole("option", { name: "jira — Needs sign-in" })).toBeTruthy();
+    expect(await screen.findByRole("option", { name: "jira (Needs sign-in)" })).toBeTruthy();
     expect(trackerServers).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("alert")).toBeNull();
   });

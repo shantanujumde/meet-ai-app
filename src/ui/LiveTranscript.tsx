@@ -160,8 +160,8 @@ function FailedNotice({ detail }: { detail: string | null }) {
   return (
     <div className="live__notice" role="alert">
       <p className="live__notice-text">
-        Transcription stopped, but recording is still going — the audio is being saved as normal.
-        The transcript can be made again from it after the meeting.
+        Transcription stopped, but recording is still going. The audio is being saved as normal. You
+        can make the transcript from it after the meeting.
       </p>
       {detail ? <p className="live__notice-detail">{detail}</p> : null}
     </div>
@@ -188,8 +188,8 @@ function hintFor(status: TranscriptStatus): string {
       return "Starting transcription…";
     case "running":
       return engine
-        ? `Transcribing on this Mac with ${engine} — settled lines go to transcript.md`
-        : "Transcribing on this Mac — settled lines go to transcript.md";
+        ? `Transcribing on this Mac with ${engine}. Finished lines are saved to transcript.md`
+        : "Transcribing on this Mac. Finished lines are saved to transcript.md";
     case "stopped":
       return "Transcription finished";
     case "failed":

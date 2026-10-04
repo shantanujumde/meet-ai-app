@@ -32,7 +32,9 @@ describe("AudioRetentionRow", () => {
       reason: "config.jsonc: audio: retention_days is -5",
     });
     render(<AudioRetentionRow />);
-    const line = await screen.findByText(/^Audio cleanup paused: config\.jsonc could not be read/);
+    const line = await screen.findByText(
+      /^Audio cleanup is paused because meet-ai could not read its settings file \(config\.jsonc\)/,
+    );
     expect(line.textContent).toBe(
       `${RETENTION_PAUSED} (config.jsonc: audio: retention_days is -5). ` +
         "No audio is deleted until it is fixed.",

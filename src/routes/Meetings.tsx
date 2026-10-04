@@ -76,8 +76,8 @@ export function Meetings() {
           title="No meetings yet"
           body={
             list?.rootExists
-              ? `Press ${SHORTCUT_LABEL} — from anywhere, even with this window behind Zoom — and meet-ai starts recording. Everything it captures is written as plain markdown into ${list.root}, and nothing leaves this Mac.`
-              : `Press ${SHORTCUT_LABEL} — from anywhere, even with this window behind Zoom — and meet-ai starts recording. It will create ${list?.root ?? DEFAULT_ROOT_LABEL} for the first one. Everything is plain markdown, and nothing leaves this Mac.`
+              ? `Press ${SHORTCUT_LABEL} from anywhere, even with this window behind Zoom, and meet-ai starts recording. Everything is saved as plain text files in ${list.root}, and nothing leaves this Mac.`
+              : `Press ${SHORTCUT_LABEL} from anywhere, even with this window behind Zoom, and meet-ai starts recording. It creates ${list?.root ?? DEFAULT_ROOT_LABEL} for the first one. Everything is saved as plain text files, and nothing leaves this Mac.`
           }
           action={
             <ButtonRow>

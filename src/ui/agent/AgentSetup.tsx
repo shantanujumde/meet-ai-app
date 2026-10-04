@@ -111,7 +111,7 @@ function PickedAgent({
     return (
       <>
         <Prose>
-          Nothing is sent anywhere. meet-ai runs no agent; you paste the prompt into one yourself.
+          Nothing is sent anywhere. meet-ai runs no agent. You paste the prompt into one yourself.
         </Prose>
         <Card flush key="none">
           <AgentTest
@@ -135,8 +135,8 @@ function PickedAgent({
   return (
     <>
       <Prose>
-        When a call ends, meet-ai sends the transcript — never the audio — to {provider} through
-        your own {name} account. You can turn this off for any meeting.
+        When a call ends, meet-ai sends the transcript (never the audio) to {provider} through your
+        own {name} account. You can turn this off for any meeting.
       </Prose>
       {/* Keyed by agent so a test result for one is never shown under another. */}
       <Card flush key={choice.harness}>

@@ -9,8 +9,8 @@
 #
 # Covers R9 (code adapted from another project). Add cases for other rules
 # with the same `expect` helper.
-# R10 (OS-specific cfg outside a platform module) has its own `expect10`
-# below, since `expect` looks for R9 by name.
+# Other rules use `expect_rule RULE ...` (expect10 and expect11 wrap it),
+# since `expect` looks for R9 by name.
 # TUR-89 adds the R9 allow-list and notices-change cases, R10's --r10-tree
 # mode and its known-debt lines, and R7's missing-sidecar WARN.
 #
@@ -131,17 +131,18 @@ expect fail "R9: a line without a repo path fails" src/a.rs \
 
 # R10: OS-specific cfg outside a platform module (TUR-42).
 # expect10 pass|fail NAME FILE CONTENT — like `expect`, for rule R10.
-expect10() {
-  local want=$1 name=$2 file=$3 content=$4 out code
+# expect_rule RULE pass|fail NAME FILE CONTENT: `expect` for any rule id.
+expect_rule() {
+  local rule=$1 want=$2 name=$3 file=$4 content=$5 out code
   ran=$((ran + 1))
   mkdir -p "$(dirname "$file")"
   printf '%s\n' "$content" >"$file"
   out=$(scripts/quality-rules.sh "$file" 2>&1)
   code=$?
   rm -f "$file"
-  if [ "$want" = pass ] && [ "$code" -eq 0 ] && ! printf '%s' "$out" | grep -q ' R10 '; then
+  if [ "$want" = pass ] && [ "$code" -eq 0 ] && ! printf '%s' "$out" | grep -q " $rule "; then
     echo "ok   $name"
-  elif [ "$want" = fail ] && [ "$code" -eq 2 ] && printf '%s' "$out" | grep -q ' R10 ERROR: '; then
+  elif [ "$want" = fail ] && [ "$code" -eq 2 ] && printf '%s' "$out" | grep -q " $rule ERROR: "; then
     echo "ok   $name"
   else
     echo "FAIL $name: wanted $want, got exit $code"
@@ -149,6 +150,8 @@ expect10() {
     failed=$((failed + 1))
   fi
 }
+expect10() { expect_rule R10 "$@"; }
+expect11() { expect_rule R11 "$@"; }
 
 # The two cases the ticket asks for.
 expect10 fail "R10: a stray cfg(target_os) in a crate fails" crates/x/src/a.rs \
@@ -383,5 +386,30 @@ git rm -q THIRD_PARTY_NOTICES.md
 expect fail "R9: no THIRD_PARTY_NOTICES.md fails" src/a.rs \
   "// Adapted from github.com/acme/library/a.rs @ $sha (MIT)"
 
+# R11: no em dash in user-facing text (TUR-92). Uses expect_rule (above).
+expect11 fail "R11: em dash in JSX text" src/ui/A.tsx '<p>Saved — all good</p>'
+expect11 fail "R11: em dash in a TS string" src/lib/a.ts 'const s = "a — b";'
+expect11 fail "R11: em dash in a src-tauri string" src-tauri/src/a.rs 'const S: &str = "a — b";'
+expect11 pass "R11: em dash in a // comment" src/lib/a.ts 'const s = 1; // a — b'
+expect11 pass "R11: em dash in a /* */ block" src/lib/a.ts '/*
+ * a — b
+ */
+const s = 1;'
+expect11 pass "R11: em dash in a JSX comment" src/ui/A.tsx '{/* a — b */}'
+expect11 fail "R11: // in a URL is not a comment" src/lib/a.ts 'const s = "https://x.example a — b";'
+expect11 pass "R11: test files are skipped" src/ui/A.test.tsx 'it("a — b", () => {});'
+expect11 pass "R11: crates are not checked" crates/x/src/a.rs 'const S: &str = "a — b";'
+expect11 pass "R11: Rust test module is skipped" src-tauri/src/a.rs '#[cfg(test)]
+mod tests {
+    const S: &str = "a — b";
+}'
+expect11 fail "R11: Rust code above the test module still counts" src-tauri/src/a.rs 'const S: &str = "a — b";
+#[cfg(test)]
+mod tests {}'
+expect11 pass "R11: generated bindings.ts is skipped" src/ipc/bindings.ts 'const s = "a — b";'
+expect11 pass "R11: .d.ts is skipped" src/a.d.ts 'declare const s: "a — b";'
+expect11 pass "R11: .spec files are skipped" src/a.spec.ts 'const s = "a — b";'
+expect11 pass "R11: src/test is skipped" src/test/a.ts 'const s = "a — b";'
+expect11 pass "R11: an e2e.rs test module is skipped" src-tauri/src/x/e2e.rs 'const S: &str = "a — b";'
 echo "$((ran - failed))/$ran passed"
 [ "$failed" -eq 0 ]

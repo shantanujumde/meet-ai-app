@@ -344,6 +344,35 @@ instead of using `cfg!`.
 `--r10-tree`: an old cfg fails, a known-debt line warns, and a new cfg in a
 known-debt file fails.
 
+### R11: em dash in user-facing text (ERROR)
+
+Fails on an em dash (`—`) anywhere in a changed file's code, outside
+comments. The whole file is checked, not only the added lines, so one that
+slipped in earlier is caught the next time someone edits the file.
+
+Files checked:
+
+- non-test `.ts` / `.tsx` under `src/` (not `src/ipc/bindings.ts`, which is
+  generated, not `*.d.ts`, and not `*.test.*`, `*.spec.*` or `src/test/`)
+- `.rs` under `src-tauri/src/`, up to the test module (`TEST_START_AWK`);
+  Rust test files (`is_rust_test_file`, which includes `*/e2e.rs`) are skipped. Its strings reach the
+  window (errors), the menu bar and notifications.
+
+Comments are skipped: `//` to the end of the line (but not the `//` in
+`https://`), and `/* ... */` across lines, which also covers JSX `{/* */}`.
+The check is a few lines of awk, so it is not a parser: a `/*` inside a string
+starts a "comment" too. Crates under `crates/` are not checked, since most of
+their text is logs and CLI output; the few strings there that reach the window
+were reworded by hand in TUR-92.
+
+**Why:** TUR-92 rewrote the app's text to read like a person talking. Em dashes
+were the most common sign of the stiff, written-up style it replaced.
+
+**Fix:** use a full stop, comma, colon or brackets. Number ranges use "to"
+("2 to 3 minutes"), not an en dash.
+
+**Self-test:** the R11 cases in `scripts/quality-rules-selftest.sh`.
+
 ## Knobs
 
 | Env var | Effect |

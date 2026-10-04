@@ -147,6 +147,6 @@ function describe(state: SaveState): string {
     case "saved":
       return "Saved";
     case "failed":
-      return `Could not save your notes — they are still here in the window. ${state.error.message}`;
+      return `Could not save your notes. They are still here in the window. ${state.error.message}`;
   }
 }

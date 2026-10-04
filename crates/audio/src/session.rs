@@ -138,7 +138,7 @@ fn checkpoint(
 fn microphone_error(e: AudioError) -> String {
     match e {
         AudioError::PermissionDenied => {
-            "meet-ai does not have permission to record the microphone — grant it in \
+            "meet-ai does not have permission to record the microphone. Turn it on in \
              System Settings > Privacy & Security > Microphone"
                 .to_string()
         }

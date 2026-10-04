@@ -326,7 +326,7 @@ pub(crate) fn run(
     if tools.is_empty() {
         return Err(UiError::app(
             "sync-no-tracker",
-            "Pick the tracker's MCP server in Settings before syncing.",
+            "Pick your tracker connection (also called an MCP server) in Settings before syncing.",
         ));
     }
     let input = push_ticket_input(root, ticket_id, meeting_id, &found, tickets_config)?;

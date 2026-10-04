@@ -99,11 +99,11 @@ fn refusal_message(denied: &[Pane], os: &str) -> String {
             format!("meet-ai did not start recording: it is not allowed to record {machine} audio.")
         }
         [one] => format!(
-            "meet-ai did not start recording: {one} is switched off for meet-ai in {settings}, \
+            "meet-ai did not start recording: {one} is turned off for meet-ai in {settings}, \
              so it cannot record you."
         ),
         _ => format!(
-            "meet-ai did not start recording: {} are switched off for meet-ai in {settings}, so \
+            "meet-ai did not start recording: {} are turned off for meet-ai in {settings}, so \
              it cannot record you.",
             names.join(" and ")
         ),
@@ -481,7 +481,7 @@ mod tests {
     fn the_refusal_names_each_os_settings_app() {
         assert_eq!(
             refusal_message(&[Pane::Microphone], "macos"),
-            "meet-ai did not start recording: Microphone is switched off for meet-ai in System \
+            "meet-ai did not start recording: Microphone is turned off for meet-ai in System \
              Settings, so it cannot record you."
         );
         assert!(refusal_message(&[Pane::Microphone], "windows").contains("in Windows Settings"));

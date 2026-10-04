@@ -165,7 +165,7 @@ function TodayRow({ event, minAttendees }: { event: TodayEvent; minAttendees: nu
     <>
       <RowLabel
         name={event.title}
-        detail={`${formatTime(event.startMs)} – ${formatTime(event.endMs)}`}
+        detail={`${formatTime(event.startMs)} to ${formatTime(event.endMs)}`}
         mono={false}
       />
       <RowValue>{formatAttendees(event.attendees)}</RowValue>
@@ -176,7 +176,7 @@ function TodayRow({ event, minAttendees }: { event: TodayEvent; minAttendees: nu
       <li
         className={cn(rowVariants({ divided: false }), "opacity-50")}
         aria-disabled
-        title={`Fewer than ${minAttendees} people, so meet-ai treats it as a solo block`}
+        title={`Fewer than ${minAttendees} people, so meet-ai does not remind you about it`}
       >
         {body}
       </li>

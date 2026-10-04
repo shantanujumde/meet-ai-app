@@ -293,7 +293,7 @@ fn decide(
                 let missing = environment.missing_whisper_model();
                 Err(Error::EngineUnavailable(format!(
                     "no speech engine is ready: Apple's speech engine cannot be used ({detail}), \
-                     and whisper {missing} — download it below to continue"
+                     and Whisper {missing}. Download it below to continue"
                 )))
             }
         }

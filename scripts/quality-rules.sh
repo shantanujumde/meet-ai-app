@@ -56,6 +56,8 @@ RULES="$RULES rule_r9"
 RUN_ONCE="rule_r7"
 # R10 (TUR-42): OS-specific cfg outside a platform module.
 RULES="$RULES rule_r10"
+# R11 (TUR-92): em dash in user-facing text.
+RULES="$RULES rule_r11"
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || {
   echo "quality-rules: not inside a git repository" >&2
@@ -190,7 +192,7 @@ cfg_test_item_lines() {
 is_rust_test_file() {
   case $1 in
     tests/* | */tests/* | */benches/* | benches/*) return 0 ;;
-    *_test.rs | *_tests.rs | */tests.rs | *_e2e.rs) return 0 ;;
+    *_test.rs | *_tests.rs | */tests.rs | *_e2e.rs | */e2e.rs) return 0 ;;
   esac
   return 1
 }
@@ -776,6 +778,46 @@ rule_r10() {
     if awk -v a="$first" -v b="$last" '$1 >= a && $1 <= b { found = 1; exit } END { exit !found }' "$tmp/r10nums"; then
       report error R10 "$f" "$first" "OS-specific cfg outside a platform module; put the OS code in the crate's src/platform/ (macos.rs / windows.rs / linux.rs) and call platform::... from here (SPEC §8.2)"
     fi
+  done
+}
+
+# R11 (TUR-92): no em dash in user-facing text. Whole file, not only added
+# lines, so one that slipped in earlier is caught the next time the file
+# changes. Comments are skipped: // to end of line (not the // in "https://"),
+# and /* ... */ blocks across lines (JSX {/* */} too). Rust: src-tauri/src only,
+# code before the test module; strings there reach the window, the tray and
+# notifications.
+# shellcheck disable=SC2016  # an awk program: $0 is awk's, not the shell's
+R11_AWK='
+  FNR >= stop { exit }
+  {
+    line = $0; code = ""
+    while (length(line) > 0) {
+      if (inblock) {
+        e = index(line, "*/")
+        if (!e) { line = ""; break }
+        line = substr(line, e + 2); inblock = 0; continue
+      }
+      s = index(line, "/*")
+      if (s) { code = code substr(line, 1, s - 1); line = substr(line, s + 2); inblock = 1; continue }
+      code = code line; line = ""
+    }
+    while (match(code, /(^|[^:])\/\//)) code = substr(code, 1, RSTART)
+    if (index(code, "\342\200\224")) print FNR
+  }'
+rule_r11() {
+  local f=$1 stop=999999999
+  case $f in
+    src/ipc/bindings.ts | *.d.ts) return ;;
+    src/*.ts | src/*.tsx) is_ts_test_file "$f" && return ;;
+    src-tauri/src/*.rs)
+      is_rust_test_file "$f" && return
+      stop=$(test_start "$f")
+      ;;
+    *) return ;;
+  esac
+  LC_ALL=C awk -v stop="$stop" "$R11_AWK" "$f" | while read -r n; do
+    report error R11 "$f" "$n" "em dash (—) in user-facing text; use a full stop, comma, colon or brackets instead (docs/quality-rules.md R11)"
   done
 }
 
