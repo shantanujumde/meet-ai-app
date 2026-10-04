@@ -67,9 +67,9 @@ function MacIntro() {
       </header>
 
       <Prose>
-        A meeting has two sides, and macOS guards them separately. <strong>Microphone</strong> is
+        A meeting has two sides, and macOS asks about each one separately. <strong>Microphone</strong> is
         you talking. <strong>System Audio Recording</strong> is everyone else, coming out of your
-        speakers. meet-ai needs both — with only one, half of every conversation goes missing and
+        speakers. meet-ai needs both. With only one, half of every conversation goes missing, and
         nothing on screen would tell you which half.
       </Prose>
     </>
@@ -91,7 +91,7 @@ function MacNext({ state, onRecheck, onNext }: NextProps) {
         <>
           <Prose>
             The first time you start a recording, macOS will ask. If you say No by accident, this
-            screen shows you how to undo it — it is two clicks in System Settings, and nothing is
+            screen shows you how to undo it. It takes two clicks in System Settings, and nothing is
             lost in the meantime.
           </Prose>
           <ButtonRow>
@@ -183,8 +183,8 @@ function DeniedPath({ onRecheck }: { onRecheck: () => void }) {
     <div className="state state--error" role="alert">
       <h2 className="state__title">meet-ai is not allowed to record audio</h2>
       <p className="state__body">
-        Recording is switched off until this is fixed — meet-ai will not start a recording it knows
-        would capture silence. Nothing you have already recorded is affected.
+        Recording is off until this is fixed, because meet-ai will not start a recording it knows
+        would be silent. Nothing you have already recorded is affected.
       </p>
 
       <ol className="flex flex-col gap-5 [counter-reset:step]">
@@ -202,7 +202,7 @@ function DeniedPath({ onRecheck }: { onRecheck: () => void }) {
         </Instruction>
         <Instruction>
           Come back here and choose <strong>Check again</strong>. If macOS asks you to quit and
-          reopen meet-ai first, do that — the change does not always take effect while the app is
+          reopen meet-ai first, do that. The change does not always work while the app is
           running.
         </Instruction>
       </ol>

@@ -16,9 +16,9 @@ export function AgentStep({ onFinish }: { onFinish: () => void }) {
         <h1 className="page__title">Who writes your notes</h1>
       </header>
       <Prose>
-        When a call ends, meet-ai hands the transcript to an agent you already use — Claude Code or
-        Codex — and turns what it writes into notes and tasks. It uses your own account; meet-ai has
-        no AI of its own. Pick one here, or copy the prompt by hand instead.
+        When a call ends, meet-ai gives the transcript to an agent you already use: Claude Code or
+        Codex. It turns what the agent writes into notes and tasks. The agent uses your own account.
+        meet-ai has no AI of its own. Pick one here, or copy the prompt by hand instead.
       </Prose>
 
       <AgentSetup />
