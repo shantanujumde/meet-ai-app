@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { PermissionStatus, PrivacyPane } from "@/ipc/types";
-import { recordingBlocked, systemAudioOnlyOff } from "./recordingPermission";
+import { permissionStepShown, recordingBlocked, systemAudioOnlyOff } from "./recordingPermission";
 
 function status(state: PermissionStatus["state"], denied: PrivacyPane[]): PermissionStatus {
   return { state, measured: true, detail: "test", denied };
@@ -24,4 +24,14 @@ test("a denial naming no switch still blocks, and nothing else does", () => {
   expect(recordingBlocked(status("unknown", []))).toBe(false);
   expect(recordingBlocked(null)).toBe(false);
   expect(systemAudioOnlyOff(null)).toBe(false);
+});
+
+test("the permission step is shown per OS", () => {
+  const micDenied = status("denied", ["microphone"]);
+  expect(permissionStepShown("macos", null)).toBe(true);
+  expect(permissionStepShown("macos", status("granted", []))).toBe(true);
+  expect(permissionStepShown("windows", micDenied)).toBe(true);
+  expect(permissionStepShown("windows", status("granted", []))).toBe(false);
+  expect(permissionStepShown("windows", null)).toBe(false);
+  expect(permissionStepShown("linux", micDenied)).toBe(false);
 });

@@ -203,6 +203,9 @@ importers:
       '@tauri-apps/plugin-log':
         specifier: 2.9.1
         version: 2.9.1
+      '@tauri-apps/plugin-os':
+        specifier: 2.3.2
+        version: 2.3.2
       class-variance-authority:
         specifier: 0.7.1
         version: 0.7.1
@@ -704,6 +707,9 @@ packages:
 
   '@tauri-apps/plugin-log@2.9.1':
     resolution: {integrity: sha512-8dYNEQOgZcIEqeFtHAsOIGLoptm+j94270Jf2MrGS/zbsYNd4C8DKyOdeYggAyE3ugwr12mTefIfC8lVVEhdlg==}
+
+  '@tauri-apps/plugin-os@2.3.2':
+    resolution: {integrity: sha512-n+nXWeuSeF9wcEsSPmRnBEGrRgOy6jjkSU+UVCOV8YUGKb2erhDOxis7IqRXiRVHhY8XMKks00BJ0OAdkpf6+A==}
 
   '@testing-library/dom@10.4.2':
     resolution: {integrity: sha512-yzr2S9HyAIdhz2/6qHgbs665Q7PKVcDF05vsOlHPxG1mo36gKVesdYVeDLnXgfjJ03CrKRk08knc6+E/9m8v2Q==}
@@ -1798,6 +1804,10 @@ snapshots:
       '@tauri-apps/api': 2.11.1
 
   '@tauri-apps/plugin-log@2.9.1':
+    dependencies:
+      '@tauri-apps/api': 2.11.1
+
+  '@tauri-apps/plugin-os@2.3.2':
     dependencies:
       '@tauri-apps/api': 2.11.1
 

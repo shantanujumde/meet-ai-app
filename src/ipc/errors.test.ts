@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { copyFor, detailsFor } from "./errors";
+import { copyFor, detailsFor, permissionDeniedCopy } from "./errors";
 import type { UiError } from "./types";
 
 const error = (
@@ -76,4 +76,15 @@ test("copied details carry the machine-readable tag as well as the sentence", ()
   const details = detailsFor(error("model", "checksum", "expected aaa, got bbb"));
   expect(details).toContain("model/checksum");
   expect(details).toContain("expected aaa, got bbb");
+});
+
+describe("permission-denied per OS (TUR-51)", () => {
+  test("keeps the macOS copy and names Windows Settings on Windows", () => {
+    expect(permissionDeniedCopy("macos").body).toContain("System Settings");
+    const windows = permissionDeniedCopy("windows");
+    expect(windows.body).toContain("Settings, under Privacy & security → Microphone");
+    expect(windows.body).not.toContain("System Settings");
+    expect(windows.remedy).toEqual({ action: "open-settings" });
+    expect(permissionDeniedCopy("linux").remedy).toEqual({ action: "none" });
+  });
 });

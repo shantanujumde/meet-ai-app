@@ -25,6 +25,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { calendarSources } from "@/ipc/client";
+import { currentOs } from "@/lib/osText";
+import { permissionStepShown } from "@/lib/recordingPermission";
 import {
   isOnboardingStep,
   MEETINGS,
@@ -47,10 +49,18 @@ export function Onboarding() {
   const current: OnboardingStep = isOnboardingStep(step) ? step : "welcome";
   // TUR-49: off macOS there is a calendar step. A Mac's list until Rust says.
   const [calendarApp, setCalendarApp] = useState(true);
-  const STEPS = onboardingSteps(calendarApp);
+  const permission = useAppStore((state) => state.permission);
+  // TUR-51: macOS always asks for its two grants; Windows only when the
+  // microphone is blocked; Linux has nothing to grant. Opened directly (the
+  // "Fix this" trip), the step always stays.
+  const STEPS = onboardingSteps(calendarApp).filter(
+    (name) =>
+      name !== "permission" ||
+      current === "permission" ||
+      permissionStepShown(currentOs(), permission),
+  );
   const index = STEPS.indexOf(current);
 
-  const permission = useAppStore((state) => state.permission);
   const permissionLoading = useAppStore((state) => state.permissionLoading);
   const loadPermission = useAppStore((state) => state.loadPermission);
   const finish = useAppStore((state) => state.finishOnboarding);
