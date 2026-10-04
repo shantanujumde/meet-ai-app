@@ -23,14 +23,14 @@ pub(crate) const DEVICE_ACTIVITY_NEEDS_SERVER: bool = true;
 
 /// COM for this thread, for as long as the read runs.
 // Adapted from github.com/fastrepl/anarlog/crates/detect/src/list/windows.rs @ 93deb8642e75a0a2f8ece1bed186da4362213edd (MIT)
-struct ComGuard {
+pub(super) struct ComGuard {
     /// We initialised COM here, so we uninitialise it. `false` when the
     /// thread already had COM in another apartment: still usable, not ours.
     owned: bool,
 }
 
 impl ComGuard {
-    fn initialize() -> Self {
+    pub(super) fn initialize() -> Self {
         // S_OK and S_FALSE both need a matching CoUninitialize;
         // RPC_E_CHANGED_MODE (an STA thread) does not, and COM still works.
         Self {

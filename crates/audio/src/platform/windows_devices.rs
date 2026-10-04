@@ -11,6 +11,13 @@
 //!   default endpoint's id through `cpal` and run it through
 //!   [`DeviceWatch`]: a read every `DEVICE_CHECK_INTERVAL`, a switch once two
 //!   reads agree. The session's tick then reopens the segment as on macOS.
+//! * Followed output (TUR-95): the output read is not only the default. A
+//!   call app may play through another endpoint (a headset that is not the
+//!   default), so [`default_output_device`] reads which render endpoint other
+//!   apps are playing to (`windows/render_in_use.rs`, the choice in
+//!   `windows_render_choice.rs`) and runs *that* id through the same
+//!   [`DeviceWatch`]. The loopback opens whatever the watch follows
+//!   ([`followed_output_endpoint`]).
 
 use std::sync::{Mutex, PoisonError};
 
@@ -18,6 +25,7 @@ use cpal::InputCallbackInfo;
 use cpal::traits::{DeviceTrait, HostTrait};
 use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 
+use super::windows::render_endpoint_to_follow;
 use crate::Error;
 use crate::loopback::clock::qpc_to_ns;
 use crate::loopback::follower::{DeviceWatch, endpoint_key};
@@ -70,11 +78,29 @@ fn watch(
         .ok_or_else(|| Error::NoDevice("no default audio endpoint".into()))
 }
 
-/// The default render endpoint the loopback follows, once a switch is confirmed.
+/// The render endpoint to follow now: the one other apps are playing to
+/// (TUR-95), or the default when the session read fails.
+fn output_endpoint_read() -> Option<String> {
+    render_endpoint_to_follow()
+        .or_else(|| endpoint_id(cpal::default_host().default_output_device()))
+}
+
+/// The id of the render endpoint the loopback follows, once a switch is
+/// confirmed; what [`default_output_device`] reports a key of.
+pub(crate) fn followed_output_endpoint() -> Option<String> {
+    let mut watch = OUTPUT_WATCH.lock().unwrap_or_else(PoisonError::into_inner);
+    watch.poll(host_now_ns(), output_endpoint_read)
+}
+
+/// The id of `cpal`'s default render endpoint right now, unwatched.
+pub(crate) fn current_default_output_endpoint() -> Option<String> {
+    endpoint_id(cpal::default_host().default_output_device())
+}
+
+/// The render endpoint the loopback follows (the default, or the one other
+/// apps play to), once a switch is confirmed.
 pub(crate) fn default_output_device() -> Result<DeviceId, Error> {
-    watch(&OUTPUT_WATCH, || {
-        endpoint_id(cpal::default_host().default_output_device())
-    })
+    watch(&OUTPUT_WATCH, output_endpoint_read)
 }
 
 /// The default capture endpoint the microphone follows, the same way.

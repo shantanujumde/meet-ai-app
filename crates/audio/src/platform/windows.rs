@@ -4,14 +4,18 @@
 //! (`windows_loopback.rs`), the QPC host clock both tracks' positions use and
 //! the default-device watch behind the headset-switch reopen
 //! (`windows_devices.rs`, TUR-37), the device-activity read over WASAPI audio
-//! sessions (`windows/activity.rs`, TUR-60), and the permission checks
-//! (`windows_permission.rs`, TUR-51).
+//! sessions (`windows/activity.rs`, TUR-60), the permission checks
+//! (`windows_permission.rs`, TUR-51), and which render endpoint other apps
+//! play to, so the loopback can follow a call on a non-default headset
+//! (`windows/render_in_use.rs`, TUR-95).
 //!
 //! Still the shared non-mac answer from `other.rs`: the `cpal` microphone
 //! (real, and the same code as on macOS) and the plain start sound. Nothing
 //! outside `platform/` has to change when those are filled in.
 
 mod activity;
+// TUR-95: the render endpoint other apps are playing to.
+mod render_in_use;
 
 #[cfg(test)]
 pub(crate) use super::other::F32_GOLDEN_HASHES;
@@ -27,3 +31,4 @@ pub(crate) use super::windows_permission::{check_mic, check_system, stored_mic_d
 pub(crate) use activity::device_activity;
 #[cfg(test)]
 pub(crate) use activity::{DEVICE_ACTIVITY, DEVICE_ACTIVITY_NEEDS_SERVER};
+pub(crate) use render_in_use::render_endpoint_to_follow;

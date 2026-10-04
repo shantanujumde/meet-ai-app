@@ -4,7 +4,9 @@
 //! capture: `build_input_stream_raw_inner` adds `AUDCLNT_STREAMFLAGS_LOOPBACK`
 //! when the device's data flow is `eRender` (`wasapi/device.rs`). This is
 //! endpoint loopback, everything the default output plays, not per-process
-//! loopback, which returns silence for the Teams desktop app.
+//! loopback, which returns silence for the Teams desktop app. When other apps
+//! play to one non-default endpoint only (a call on a headset that is not the
+//! default), that endpoint is opened instead (TUR-95, [`followed_device`]).
 //!
 //! This file is only the [`Backend`]: which device, which format, the two
 //! streams. Gap filling, the clock, silent buffers and the WAV are the shared
@@ -17,7 +19,10 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Data, InputCallbackInfo, SampleFormat, Stream, StreamConfig, SupportedStreamConfig};
 
-use super::windows_devices::input_callback_ns;
+use super::windows_devices::{
+    current_default_output_endpoint, followed_output_endpoint, input_callback_ns,
+};
+use super::windows_render_choice::endpoint_to_open;
 use crate::loopback::buffer::safe_buffer_size;
 use crate::loopback::capture::Capture;
 use crate::loopback::source::{Backend, Format, LiveStream, LoopbackSource};
@@ -33,9 +38,35 @@ const CAPTURE_FORMATS: [SampleFormat; 3] =
 /// packet is ever larger.
 const CALLBACK_CONVERT_SAMPLES: usize = 16_384;
 
-/// The loopback source on the default output device.
+/// The loopback source on the followed output device.
 pub(crate) fn system_source() -> Option<Box<dyn AudioSource>> {
     Some(Box::new(LoopbackSource::new(WasapiLoopback::default())))
+}
+
+/// The output device to record (TUR-95): the endpoint the device watch
+/// follows when it is not the default (a call playing to a headset that is
+/// not the default), opened by id; otherwise `cpal`'s default device, which
+/// Windows reroutes by itself when the default changes. An endpoint that has
+/// gone away since the watch last read falls back to the default.
+fn followed_device() -> Result<cpal::Device, Error> {
+    let host = cpal::default_host();
+    let followed = followed_output_endpoint();
+    let default = current_default_output_endpoint();
+    if let Some(id) = endpoint_to_open(followed.as_deref(), default.as_deref()) {
+        let by_id = host.output_devices().ok().and_then(|mut devices| {
+            devices.find(|device| device.id().is_ok_and(|device_id| device_id.id() == id))
+        });
+        match by_id {
+            Some(device) => {
+                tracing::info!("system loopback: following {id}, which other apps play to");
+                return Ok(device);
+            }
+            None => tracing::info!("system loopback: {id} is gone; recording the default"),
+        }
+    }
+    host.default_output_device().ok_or_else(|| {
+        Error::NoDevice("no default output device to record system audio from".into())
+    })
 }
 
 /// A running `cpal` stream; dropping it stops it.
@@ -49,7 +80,7 @@ impl LiveStream for CpalStream {
     }
 }
 
-/// The default output device and the format read from it at [`Backend::format`].
+/// The followed output device and the format read from it at [`Backend::format`].
 #[derive(Default)]
 struct WasapiLoopback {
     device: Option<(cpal::Device, SupportedStreamConfig)>,
@@ -65,11 +96,7 @@ impl WasapiLoopback {
 
 impl Backend for WasapiLoopback {
     fn format(&mut self) -> Result<Format, Error> {
-        let device = cpal::default_host()
-            .default_output_device()
-            .ok_or_else(|| {
-                Error::NoDevice("no default output device to record system audio from".into())
-            })?;
+        let device = followed_device()?;
         let supported = device
             .default_output_config()
             .map_err(|e| Error::NoDevice(format!("no usable output config: {e}")))?;

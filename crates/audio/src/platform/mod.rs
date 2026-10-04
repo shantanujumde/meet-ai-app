@@ -60,6 +60,11 @@ mod windows_devices;
 #[cfg_attr(feature = "stub-audio", allow(dead_code, unused_imports))]
 mod windows_loopback;
 
+// TUR-95: which render endpoint the loopback follows. Pure, so it builds (and
+// is tested) on every OS; `windows/render_in_use.rs` reads the sessions.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+mod windows_render_choice;
+
 #[cfg(feature = "stub-audio")]
 mod stub;
 
