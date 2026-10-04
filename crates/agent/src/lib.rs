@@ -32,6 +32,7 @@ mod output;
 /// The OS seam (SPEC §8.2): the only module that names an operating system.
 mod platform;
 pub mod process;
+mod process_tree;
 
 #[cfg(feature = "test-support")]
 pub mod fake;
