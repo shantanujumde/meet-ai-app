@@ -46,6 +46,8 @@ pub use job::{CancelHandle, DEFAULT_TIMEOUT_SECS, Job, JobKind};
 pub use mcp::{McpServer, McpStatus};
 pub use models::{ListCache, Model};
 pub use output::{OutputCheck, parse_json};
+// TUR-63: user hooks run in a tree too, so a timeout kills what they started.
+pub use process_tree::ProcessTree;
 
 /// An installed agent CLI, as found by [`Harness::detect`].
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

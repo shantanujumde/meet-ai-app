@@ -90,6 +90,12 @@ impl Transcribing {
             return;
         }
         let app = self.app.clone();
+        // TUR-63: the user's `on_transcript_ready` hook, on its own thread.
+        crate::hooks::app::fire(
+            &app,
+            crate::hooks::Moment::TranscriptReady,
+            &self.meeting_id,
+        );
         drop(self);
         run_now_if_immediate(&app);
     }

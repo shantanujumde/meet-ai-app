@@ -19,11 +19,13 @@ import {
   AGENT_RUN_STATUS_EVENT,
   commands,
   DETECTION_PROMPT_EVENT,
+  HOOK_FAILED_EVENT,
   MEETINGS_CHANGED_EVENT,
   MODEL_PROGRESS_EVENT,
   type meet_ai_lib_calendar_TodayEvent,
   type meet_ai_lib_calendar_TodaysMeetings,
   type meet_ai_lib_detection_notify_Prompt,
+  type meet_ai_lib_hooks_app_HookFailed,
   PERMISSION_STATUS_EVENT,
   RECORDING_STATE_EVENT,
   TRANSCRIPT_STATUS_EVENT,
@@ -70,6 +72,7 @@ import { toUiError } from "./types";
 export {
   AGENT_RUN_STATUS_EVENT,
   DETECTION_PROMPT_EVENT,
+  HOOK_FAILED_EVENT,
   MEETINGS_CHANGED_EVENT,
   MODEL_PROGRESS_EVENT,
   PERMISSION_STATUS_EVENT,
@@ -520,6 +523,13 @@ export function onTranscriptStatus(handler: (status: TranscriptStatus) => void):
 
 export function onMeetingsChanged(handler: (change: MeetingsChanged) => void): () => void {
   return subscribe<MeetingsChanged>(MEETINGS_CHANGED_EVENT, handler);
+}
+
+/** A user hook failed (TUR-63), for every meeting: filter by `meetingId`. */
+export type HookFailed = meet_ai_lib_hooks_app_HookFailed;
+
+export function onHookFailed(handler: (failed: HookFailed) => void): () => void {
+  return subscribe<HookFailed>(HOOK_FAILED_EVENT, handler);
 }
 
 /** Every notes-run change, for every meeting — filter by `meetingId`. */

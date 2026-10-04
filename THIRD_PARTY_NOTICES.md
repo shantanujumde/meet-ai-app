@@ -111,6 +111,9 @@ SOFTWARE.
     `LagTrendTracker` and the lock / lost probe, for `drift-check --audio`)
     from `crates/audio-sync/src/estimator.rs`, `crates/audio-sync/src/drift.rs`
     and `crates/audio-sync/src/probe.rs` (TUR-64)
+  - `src-tauri/src/hooks/mod.rs` (`run_hook`: the timeout, kill on drop,
+    capped output reads and `~`/`$HOME` expansion) from
+    `crates/hooks/src/runner.rs` (TUR-63)
 
 ```
 MIT License

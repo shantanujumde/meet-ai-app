@@ -131,6 +131,31 @@
         }
       }
     },
+    "hooks": {
+      "type": "object",
+      "description": "Your own commands, run at three moments of a meeting. Each runs in the system shell (sh on macOS and Linux, cmd on Windows, PowerShell for a .ps1 file) with the meeting folder in MEETAI_MEETING_DIR and as the last argument. A failing hook is logged and never stops the meeting.",
+      "properties": {
+        "on_transcript_ready": {
+          "type": "string",
+          "description": "Runs once transcript.md is final.",
+          "examples": ["~/bin/meeting-transcript.sh"]
+        },
+        "on_analysis_complete": {
+          "type": "string",
+          "description": "Runs once the agent has written the meeting notes."
+        },
+        "on_meeting_end": {
+          "type": "string",
+          "description": "Runs when the recording stops."
+        },
+        "timeout_secs": {
+          "type": "integer",
+          "description": "Seconds a hook may run before it and everything it started are stopped.",
+          "minimum": 1,
+          "default": 30
+        }
+      }
+    },
     "detection": {
       "type": "object",
       "description": "Signals used to notice that a meeting has started.",

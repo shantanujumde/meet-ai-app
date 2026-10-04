@@ -58,6 +58,8 @@ mod audio_mic;
 mod calendar_section;
 mod detection_section;
 mod file;
+// TUR-63: `hooks`, the user's own commands.
+mod hooks_section;
 // TUR-76: `app.show_in_dock_when_closed`.
 mod app_section;
 #[cfg(test)]
@@ -74,6 +76,7 @@ pub(crate) use audio_section::policy_at as retention_policy_at;
 #[allow(unused_imports)]
 pub use calendar_section::{CalendarConfig, Provider, calendar, parse_calendar};
 pub use detection_section::detection;
+pub use hooks_section::{HooksConfig, hooks};
 // TUR-49: the Settings card connects and disconnects calendar sources.
 pub use calendar_section::set_providers as set_calendar_providers;
 // TUR-78: Settings → Notifications writes the section; the reminder reads the lead time.

@@ -29,6 +29,7 @@ import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
 import { useTranscriptStore } from "@/state/transcript";
 import { CopyPromptButton } from "@/ui/CopyPromptButton";
+import { HookFailedNote } from "@/ui/HookFailedNote";
 import { LiveTranscript } from "@/ui/LiveTranscript";
 import { MeetingHeader } from "@/ui/MeetingHeader";
 import { MeetingTasks } from "@/ui/MeetingTasks";
@@ -170,6 +171,8 @@ function MeetingReview({ id }: { id: string }) {
         onReveal={() => void reveal(summary.id)}
         revealError={revealError}
       />
+      {/* TUR-63: a user hook that failed for this meeting. */}
+      <HookFailedNote meetingId={summary.id} />
 
       {/* The agent's notes (TUR-10), headed by their switch (TUR-12). While
           recording only the switch shows: the run starts on its own when this

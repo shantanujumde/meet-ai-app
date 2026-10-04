@@ -44,3 +44,7 @@ pub const NAVIGATE_EVENT: &str = "app://navigate";
 /// The prompt popup window (TUR-59, Windows and Linux) has a prompt to show:
 /// `detection::popup::PopupPrompt`. Sent to that window only.
 pub const PROMPT_POPUP_EVENT: &str = "prompt-popup://show";
+
+/// A user hook failed (TUR-63): `hooks::app::HookFailed`. The meeting view
+/// shows a small "Hook failed" note.
+pub const HOOK_FAILED_EVENT: &str = "hook://failed";

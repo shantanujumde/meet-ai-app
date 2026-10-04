@@ -382,6 +382,7 @@ export function mockClient(actual: typeof Client): typeof Client {
     onDetectionPrompt: subscriber(actual.DETECTION_PROMPT_EVENT),
     onQuitConfirm: subscriber(actual.QUIT_CONFIRM_EVENT),
     onNavigate: subscriber(actual.NAVIGATE_EVENT),
+    onHookFailed: subscriber(actual.HOOK_FAILED_EVENT),
   };
 }
 
