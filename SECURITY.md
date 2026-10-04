@@ -41,8 +41,8 @@ what the plan is.
 - The self-signed local signing identity used for personal builds. It is
   documented as self-signed and is not a trust claim; Developer ID signing and
   notarization are v2 items.
-- The placeholder updater endpoint (`https://example.invalid/...`). The updater
-  ships with `active: false` and reaches no network.
+- The updater endpoint (`releases/latest/download/latest.json` on this repo).
+  The updater ships with `active: false` and reaches no network.
 - Anything requiring physical access to an unlocked machine that is already
   running the app.
 - Third-party model weights downloaded by `crates/modelfetch`. Those are
