@@ -42,6 +42,12 @@ pub(crate) fn host_now_ns() -> u64 {
     }
 }
 
+/// The microphone's callbacks keep stamping themselves with [`host_now_ns`],
+/// the tap's clock, rather than `cpal`'s callback time (see above).
+pub(crate) fn input_callback_ns(_info: &cpal::InputCallbackInfo) -> Option<u64> {
+    None
+}
+
 /// The Core Audio process tap.
 pub(crate) fn system_source() -> Option<Box<dyn AudioSource>> {
     Some(Box::new(super::tap::SystemSource::new()))

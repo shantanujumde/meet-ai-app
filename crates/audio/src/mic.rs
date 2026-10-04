@@ -20,6 +20,8 @@ use ringbuf::{HeapCons, HeapRb};
 use crate::mic_choice::{self, MicChoice};
 use crate::pipeline::Pipeline;
 use crate::platform::host_now_ns;
+// TUR-37: on Windows the capture time WASAPI stamps, the loopback's clock too.
+use crate::platform::input_callback_ns;
 use crate::rate_meter::{CallbackMeter, FixedRates, Rates};
 use crate::tee::Tee;
 use crate::wav_writer::WavWriter;
@@ -202,8 +204,8 @@ impl MicSource {
         let stream = match sample_format {
             SampleFormat::F32 => device.build_input_stream(
                 config,
-                move |data: &[f32], _| {
-                    let now = host_now_ns();
+                move |data: &[f32], info: &cpal::InputCallbackInfo| {
+                    let now = input_callback_ns(info).unwrap_or_else(host_now_ns);
                     cb_host_ns_for_stream.store(now, Ordering::Relaxed);
                     let _ = producer.push_slice(data);
                     meter.observe(now, data.len());
@@ -215,8 +217,8 @@ impl MicSource {
                 let mut scratch = vec![0.0f32; 8192];
                 device.build_input_stream(
                     config,
-                    move |data: &[i16], _| {
-                        let now = host_now_ns();
+                    move |data: &[i16], info: &cpal::InputCallbackInfo| {
+                        let now = input_callback_ns(info).unwrap_or_else(host_now_ns);
                         cb_host_ns_for_stream.store(now, Ordering::Relaxed);
                         meter.observe(now, data.len());
                         if scratch.len() < data.len() {
