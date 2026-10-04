@@ -256,3 +256,35 @@ pub(crate) use skip_without_fake_cli;
 pub(crate) fn make_executable(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
+
+/// How the Setup screen writes the sign-in command for this OS's terminal
+/// (TUR-53). Plain data, so every style is tested on every OS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "each OS build uses only its own style")
+)]
+pub(crate) enum SignInShell {
+    /// macOS Terminal: the bare name, unless the CLI is a copy inside an
+    /// `.app` bundle, which is never on the shell's `PATH`.
+    PosixAppBundles,
+    /// A Linux terminal: always the bare name. An installer that puts the
+    /// CLI in `~/.local/bin` or `~/.npm-global/bin` also puts that folder on
+    /// the shell's `PATH`, even when the app's own `PATH` lacks it.
+    Posix,
+    /// PowerShell: the bare name when its folder is on `PATH` (GUI apps get
+    /// the user's full `PATH` on Windows), else `& 'C:\...\claude.exe'`.
+    PowerShell,
+}
+
+/// This OS's sign-in command style.
+#[cfg(target_os = "macos")]
+pub(crate) const SIGN_IN_SHELL: SignInShell = SignInShell::PosixAppBundles;
+
+/// This OS's sign-in command style.
+#[cfg(windows)]
+pub(crate) const SIGN_IN_SHELL: SignInShell = SignInShell::PowerShell;
+
+/// This OS's sign-in command style.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(crate) const SIGN_IN_SHELL: SignInShell = SignInShell::Posix;

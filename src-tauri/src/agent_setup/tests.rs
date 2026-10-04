@@ -7,8 +7,9 @@ use agent::{AgentError, Install};
 use serde_json::json;
 
 use super::test_run::{SAMPLE_TRANSCRIPT, agent_error, found, run_sample, sample_prompt};
-use super::view::{binary_paths, cli_view, sign_in_command};
+use super::view::{binary_paths, cli_view, sign_in_command_for};
 use super::*;
+use crate::platform::SignInShell;
 
 fn choice(harness: AgentHarness, model: &str, binary_path: Option<&str>) -> AgentChoice {
     AgentChoice {
@@ -196,7 +197,7 @@ fn codex_names_openai_and_has_no_default_model() {
 fn a_copy_inside_an_app_bundle_signs_in_by_its_full_path() {
     let bundled = Path::new("/Applications/ChatGPT.app/Contents/Resources/codex");
     assert_eq!(
-        sign_in_command(AgentCliId::Codex, Some(bundled)),
+        mac_sign_in(AgentCliId::Codex, Some(bundled)),
         "/Applications/ChatGPT.app/Contents/Resources/codex login"
     );
 
@@ -204,13 +205,13 @@ fn a_copy_inside_an_app_bundle_signs_in_by_its_full_path() {
         "/Users/a/Library/Application Support/Claude/claude-code/2.1.0/claude.app/Contents/MacOS/claude",
     );
     assert_eq!(
-        sign_in_command(AgentCliId::ClaudeCode, Some(spaced)),
+        mac_sign_in(AgentCliId::ClaudeCode, Some(spaced)),
         "'/Users/a/Library/Application Support/Claude/claude-code/2.1.0/claude.app/Contents/MacOS/claude' auth login"
     );
 
     let quote = Path::new("/Users/o'neil/My Apps/Codex.app/Contents/Resources/codex");
     assert_eq!(
-        sign_in_command(AgentCliId::Codex, Some(quote)),
+        mac_sign_in(AgentCliId::Codex, Some(quote)),
         r"'/Users/o'\''neil/My Apps/Codex.app/Contents/Resources/codex' login"
     );
 }
@@ -219,14 +220,90 @@ fn a_copy_inside_an_app_bundle_signs_in_by_its_full_path() {
 fn a_copy_on_the_path_signs_in_by_its_bare_name() {
     let plain = Path::new("/Users/a b/.local/bin/claude");
     assert_eq!(
-        sign_in_command(AgentCliId::ClaudeCode, Some(plain)),
+        mac_sign_in(AgentCliId::ClaudeCode, Some(plain)),
         "claude auth login"
     );
     // A file called `x.app` is not a bundle around the binary.
     let named = Path::new("/usr/local/bin/codex.app");
+    assert_eq!(mac_sign_in(AgentCliId::Codex, Some(named)), "codex login");
+}
+
+/// The macOS Terminal command, as before the Windows and Linux port.
+fn mac_sign_in(id: AgentCliId, path: Option<&Path>) -> String {
+    sign_in_command_for(SignInShell::PosixAppBundles, id, path, None)
+}
+
+#[test]
+fn linux_always_signs_in_by_the_bare_name() {
+    for path in [
+        "/home/u/.npm-global/bin/claude",
+        "/home/u/.local/bin/claude",
+        "/home/linuxbrew/.linuxbrew/bin/claude",
+    ] {
+        assert_eq!(
+            sign_in_command_for(
+                SignInShell::Posix,
+                AgentCliId::ClaudeCode,
+                Some(Path::new(path)),
+                None
+            ),
+            "claude auth login"
+        );
+    }
+}
+
+#[test]
+fn powershell_uses_the_bare_name_when_its_folder_is_on_path() {
+    let npm = std::env::temp_dir().join("npm");
+    let cmd = npm.join("claude.cmd");
+    // Another case and a trailing separator still match: Windows folder
+    // names are case-insensitive.
+    let listed = format!("{}{}", npm.display(), std::path::MAIN_SEPARATOR).to_uppercase();
+    let path_var =
+        std::env::join_paths([std::env::temp_dir().join("other"), listed.into()]).unwrap();
     assert_eq!(
-        sign_in_command(AgentCliId::Codex, Some(named)),
+        sign_in_command_for(
+            SignInShell::PowerShell,
+            AgentCliId::ClaudeCode,
+            Some(&cmd),
+            Some(&path_var)
+        ),
+        "claude auth login"
+    );
+    assert_eq!(
+        sign_in_command_for(SignInShell::PowerShell, AgentCliId::Codex, None, None),
         "codex login"
+    );
+}
+
+#[test]
+fn powershell_runs_a_copy_off_path_by_its_full_path() {
+    let plain = std::env::temp_dir().join("bin").join("claude.exe");
+    let shown = sign_in_command_for(
+        SignInShell::PowerShell,
+        AgentCliId::ClaudeCode,
+        Some(&plain),
+        None,
+    );
+    assert!(shown.contains(&plain.display().to_string()), "{shown}");
+    assert!(shown.ends_with(" auth login"), "{shown}");
+
+    // Spaces and quotes: single-quoted, `'` doubled, behind `&`.
+    let spaced = std::env::temp_dir()
+        .join("My Tools")
+        .join("o'neil")
+        .join("codex.exe");
+    assert_eq!(
+        sign_in_command_for(
+            SignInShell::PowerShell,
+            AgentCliId::Codex,
+            Some(&spaced),
+            None
+        ),
+        format!(
+            "& '{}' login",
+            spaced.display().to_string().replace('\'', "''")
+        )
     );
 }
 
