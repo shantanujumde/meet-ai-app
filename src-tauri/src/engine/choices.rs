@@ -25,6 +25,7 @@ pub enum EngineChoice {
     Auto,
     AppleSpeech,
     Whisper,
+    Parakeet,
 }
 
 impl From<Preference> for EngineChoice {
@@ -33,6 +34,7 @@ impl From<Preference> for EngineChoice {
             Preference::Auto => Self::Auto,
             Preference::AppleSpeech => Self::AppleSpeech,
             Preference::Whisper => Self::Whisper,
+            Preference::Parakeet => Self::Parakeet,
         }
     }
 }
@@ -43,6 +45,7 @@ impl From<EngineChoice> for Preference {
             EngineChoice::Auto => Self::Auto,
             EngineChoice::AppleSpeech => Self::AppleSpeech,
             EngineChoice::Whisper => Self::Whisper,
+            EngineChoice::Parakeet => Self::Parakeet,
         }
     }
 }
@@ -53,6 +56,7 @@ impl From<EngineChoice> for Preference {
 pub enum ResolvedEngine {
     AppleSpeech,
     Whisper,
+    Parakeet,
 }
 
 impl From<Kind> for ResolvedEngine {
@@ -60,6 +64,7 @@ impl From<Kind> for ResolvedEngine {
         match kind {
             Kind::AppleSpeech => Self::AppleSpeech,
             Kind::Whisper => Self::Whisper,
+            Kind::Parakeet => Self::Parakeet,
         }
     }
 }
@@ -93,6 +98,10 @@ pub struct EngineChoices {
     pub auto: Option<ResolvedEngine>,
     pub apple: EngineAvailability,
     pub whisper: EngineAvailability,
+    /// Parakeet (TUR-62): pickable once its model folder is downloaded.
+    pub parakeet: EngineAvailability,
+    /// The Parakeet row's facts and whether its model is here.
+    pub parakeet_model: super::ParakeetModelView,
     /// The locales Apple's engine has installed, e.g. `en-US`.
     pub languages: Vec<String>,
 }
@@ -105,12 +114,15 @@ pub fn choices() -> EngineChoices {
 }
 
 fn view(transcription: &Transcription, options: registry::EngineOptions) -> EngineChoices {
+    let parakeet_model = super::parakeet::view(&super::ModelDirs::discover());
     EngineChoices {
         engine: transcription.engine.into(),
         model: transcription.model.clone(),
         auto: options.auto.map(Into::into),
         apple: options.apple.into(),
         whisper: options.whisper.into(),
+        parakeet: options.parakeet.into(),
+        parakeet_model,
         languages: options.installed_locales,
     }
 }
@@ -159,6 +171,22 @@ fn check(
                 spec.facts.display_name
             ),
         )),
+        // No ONNX Runtime in this build: a download would not help.
+        EngineChoice::Parakeet
+            if options.parakeet.reason.as_deref() == Some(registry::PARAKEET_NOT_IN_THIS_BUILD) =>
+        {
+            Err(UiError::app(
+                "engine-unavailable",
+                registry::PARAKEET_NOT_IN_THIS_BUILD,
+            ))
+        }
+        EngineChoice::Parakeet if environment.parakeet_model.is_none() => Err(UiError::app(
+            "model-not-downloaded",
+            format!(
+                "{} isn't downloaded yet. Download it first.",
+                stt::model::parakeet::PARAKEET_V3.display_name
+            ),
+        )),
         _ => Ok(()),
     }
 }
@@ -191,6 +219,7 @@ mod tests {
             installed_whisper_models: whisper_model
                 .map(|_| vec!["small.en-q5_1".into()])
                 .unwrap_or_default(),
+            parakeet_model: None,
         }
     }
 
@@ -203,6 +232,7 @@ mod tests {
             auto: Some(Kind::AppleSpeech),
             apple: availability(apple, "Needs macOS 26 or later."),
             whisper: availability(whisper, registry::WHISPER_NEEDS_A_MODEL),
+            parakeet: availability(false, registry::PARAKEET_NEEDS_A_MODEL),
             installed_locales: vec!["en-US".into()],
         }
     }
@@ -213,6 +243,7 @@ mod tests {
             (EngineChoice::Auto, "\"auto\""),
             (EngineChoice::AppleSpeech, "\"apple-speech\""),
             (EngineChoice::Whisper, "\"whisper\""),
+            (EngineChoice::Parakeet, "\"parakeet\""),
         ] {
             assert_eq!(serde_json::to_string(&choice).unwrap(), spelled);
             let preference: Preference = serde_json::from_str(spelled).unwrap();
@@ -301,5 +332,64 @@ mod tests {
         let pick = recommendation();
         assert!(stt::model::find(pick.model_id).is_some());
         assert!(!pick.reason.is_empty());
+    }
+
+    #[test]
+    fn parakeet_is_refused_until_its_model_is_downloaded() {
+        let error = check(
+            EngineChoice::Parakeet,
+            "small.en-q5_1",
+            &environment(None),
+            &options(true, true),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, "model-not-downloaded");
+        assert!(error.message.contains("Parakeet"), "{}", error.message);
+
+        let mut ready = environment(None);
+        ready.parakeet_model = Some(PathBuf::from("/tmp/parakeet-tdt-0.6b-v3-int8"));
+        check(
+            EngineChoice::Parakeet,
+            "small.en-q5_1",
+            &ready,
+            &options(true, true),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn the_view_carries_parakeet_and_its_row() {
+        let transcription = Transcription {
+            engine: Preference::Parakeet,
+            model: "small.en-q5_1".into(),
+        };
+        let view = view(&transcription, options(true, true));
+        assert_eq!(view.engine, EngineChoice::Parakeet);
+        assert_eq!(
+            view.parakeet.reason.as_deref(),
+            Some(registry::PARAKEET_NEEDS_A_MODEL)
+        );
+        assert_eq!(view.parakeet_model.id, "parakeet-tdt-0.6b-v3");
+        assert_eq!(
+            serde_json::to_string(&ResolvedEngine::Parakeet).unwrap(),
+            "\"parakeet\""
+        );
+    }
+
+    #[test]
+    fn parakeet_without_onnx_runtime_is_refused_as_not_ready_here() {
+        let mut no_runtime = options(true, true);
+        no_runtime.parakeet = Availability {
+            available: false,
+            reason: Some(registry::PARAKEET_NOT_IN_THIS_BUILD.into()),
+        };
+        let mut ready = environment(None);
+        ready.parakeet_model = Some(PathBuf::from("/tmp/parakeet-tdt-0.6b-v3-int8"));
+        for env in [environment(None), ready] {
+            let error =
+                check(EngineChoice::Parakeet, "small.en-q5_1", &env, &no_runtime).unwrap_err();
+            assert_eq!(error.kind, "engine-unavailable");
+            assert_eq!(error.message, registry::PARAKEET_NOT_IN_THIS_BUILD);
+        }
     }
 }

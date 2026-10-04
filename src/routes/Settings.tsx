@@ -11,6 +11,7 @@
  */
 
 import { useAppStore } from "@/state/app";
+import { AboutSettings } from "@/ui/AboutSettings";
 import { AudioRetentionRow } from "@/ui/AudioRetentionRow";
 import { AgentSetup } from "@/ui/agent/AgentSetup";
 import { NotesWhenSetting } from "@/ui/agent/NotesWhenSetting";
@@ -100,6 +101,9 @@ export function Settings() {
       <NotificationSettings />
 
       <TrackerSettings />
+
+      {/* TUR-62: the credit Parakeet's CC-BY-4.0 licence asks for. */}
+      <AboutSettings />
     </div>
   );
 }

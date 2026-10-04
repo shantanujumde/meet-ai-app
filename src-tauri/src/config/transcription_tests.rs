@@ -3,6 +3,7 @@
 
 use stt::registry::Preference;
 
+use super::file::SCHEMA;
 use super::file::{read_in, with_agent, with_transcription, write_in};
 use super::parse;
 use super::{AgentConfig, Transcription};
@@ -50,11 +51,35 @@ fn writing_both_keys_keeps_comments_other_keys_and_other_sections() {
 }
 
 #[test]
+fn the_schema_lists_every_engine_the_registry_reads() {
+    // TUR-62: "parakeet" is a valid value, so an editor's schema check must
+    // not flag it.
+    let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+    let listed = &schema["properties"]["transcription"]["properties"]["engine"]["enum"];
+    let known: Vec<_> = [
+        Preference::Auto,
+        Preference::AppleSpeech,
+        Preference::Whisper,
+        Preference::Parakeet,
+    ]
+    .into_iter()
+    .map(|engine| serde_json::to_value(engine).unwrap())
+    .collect();
+    assert_eq!(listed, &serde_json::json!(known));
+    let parakeet = with_transcription("", Preference::Parakeet, "small.en-q5_1").unwrap();
+    assert!(
+        parakeet.contains(&format!("\"{}\"", stt::registry::PARAKEET)),
+        "{parakeet}"
+    );
+}
+
+#[test]
 fn every_engine_round_trips() {
     for engine in [
         Preference::Auto,
         Preference::AppleSpeech,
         Preference::Whisper,
+        Preference::Parakeet,
     ] {
         let written = with_transcription("", engine, "small.en-q5_1").unwrap();
         assert_eq!(parse(&written).engine, engine, "{written}");

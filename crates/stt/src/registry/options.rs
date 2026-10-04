@@ -6,6 +6,7 @@
 //! window never re-derives any of this: it draws what [`options`] says.
 
 use super::{AppleUnavailable, Environment, Kind, Preference, decide, probe_apple};
+use super::{parakeet, parakeet_runtime_missing};
 use crate::Error;
 use crate::apple::Probe;
 
@@ -40,6 +41,8 @@ pub struct EngineOptions {
     pub auto: Option<Kind>,
     pub apple: Availability,
     pub whisper: Availability,
+    /// Parakeet (TUR-62): pickable once its model folder is downloaded.
+    pub parakeet: Availability,
     /// Locales whose on-device model Apple's engine has installed, as BCP 47
     /// ids. Empty when the probe did not run or did not say.
     pub installed_locales: Vec<String>,
@@ -47,6 +50,9 @@ pub struct EngineOptions {
 
 /// Why whisper cannot be picked: no model on disk.
 pub const WHISPER_NEEDS_A_MODEL: &str = "Download a model first.";
+
+/// Why Parakeet cannot be picked: its model is not on disk.
+pub const PARAKEET_NEEDS_A_MODEL: &str = "Download the Parakeet model first.";
 
 /// Probe once, then answer for every choice.
 pub fn options(environment: &Environment) -> EngineOptions {
@@ -69,6 +75,7 @@ fn options_with(environment: &Environment, apple: &Option<Result<Probe, Error>>)
     } else {
         Availability::yes()
     };
+    let parakeet = parakeet::availability(environment, parakeet_runtime_missing().is_some());
     let installed_locales = match apple {
         Some(Ok(probe)) => probe.installed_locales.clone(),
         _ => Vec::new(),
@@ -77,6 +84,7 @@ fn options_with(environment: &Environment, apple: &Option<Result<Probe, Error>>)
         auto,
         apple: apple_availability,
         whisper,
+        parakeet,
         installed_locales,
     }
 }
@@ -118,6 +126,7 @@ mod tests {
             whisper_model: None,
             whisper_model_id: "large-v3-turbo-q5_0".into(),
             installed_whisper_models: Vec::new(),
+            parakeet_model: None,
         }
     }
 

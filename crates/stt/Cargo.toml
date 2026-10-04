@@ -50,6 +50,28 @@ features = ["tracing_backend"]
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { workspace = true, features = ["metal", "tracing_backend"] }
 
+# Parakeet (TUR-62): the fast CPU engine, on ONNX Runtime. Same on every OS
+# except how ONNX Runtime itself is found:
+#
+# * macOS and Linux link pyke's prebuilt ONNX Runtime 1.28 statically, fetched
+#   by ort-sys's build script (`download-binaries`, over rustls so Linux needs
+#   no OpenSSL headers). A build-time fetch of a library, never meeting data.
+# * Windows loads `onnxruntime.dll` at run time (`load-dynamic`), from next
+#   to meet-ai.exe, by full path (crate::platform). Windows 11 ships its own,
+#   older onnxruntime.dll in System32, and loading that by bare name is how
+#   other apps crash. No DirectML: it crashes on old CPUs.
+[dependencies.parakeet-rs]
+workspace = true
+
+[dependencies.ort]
+workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+ort = { workspace = true, features = ["download-binaries", "tls-rustls"] }
+
+[target.'cfg(windows)'.dependencies]
+ort = { workspace = true, features = ["load-dynamic"] }
+
 [dev-dependencies]
 # Test-only. Contract §7 says a frame past the declared total means meet-rec's
 # frame-count invariant broke, so `frame_to_sec` warns rather than quietly

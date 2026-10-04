@@ -36,7 +36,15 @@ export function EngineSummary() {
         <p className="section__hint">Everything here runs on this Mac</p>
       </div>
 
-      <EnginePicker choices={choices} checking={speech.checking} onPick={speech.pickEngine} />
+      <EnginePicker
+        choices={choices}
+        checking={speech.checking}
+        onPick={speech.pickEngine}
+        parakeetDownload={choices ? (speech.downloads[choices.parakeetModel.id] ?? {}) : {}}
+        onDownloadParakeet={() => {
+          if (choices) void speech.download(choices.parakeetModel.id);
+        }}
+      />
       <Prose>{NEXT_RECORDING_NOTE}</Prose>
 
       {speech.saveError ? <ErrorState error={speech.saveError} /> : null}

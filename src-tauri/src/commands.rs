@@ -289,6 +289,14 @@ pub async fn engine_choices() -> Result<engine::EngineChoices, UiError> {
     on_blocking_pool(engine::choices).await
 }
 
+/// The model licences Settings, About must credit (TUR-62: Parakeet's
+/// CC-BY-4.0). Constant data, no disk.
+#[tauri::command]
+#[specta::specta]
+pub fn model_credits() -> Vec<engine::ModelCredit> {
+    engine::credits()
+}
+
 /// Save `transcription.engine` and `transcription.model` into config.jsonc,
 /// keeping the rest of the file. Takes effect on the next recording. Writes
 /// under the meetings root, so through the [`FolderGate`].

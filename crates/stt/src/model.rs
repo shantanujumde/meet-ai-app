@@ -18,6 +18,9 @@ use std::path::{Path, PathBuf};
 use crate::Error;
 use crate::languages::LanguageSet;
 
+/// The Parakeet engine's model, a folder of three files (TUR-62).
+pub mod parakeet;
+
 /// A model we are willing to download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelSpec {

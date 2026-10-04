@@ -33,6 +33,8 @@ use std::path::Path;
 pub mod apple;
 pub mod languages;
 pub mod model;
+/// `stt::parakeet`, the ONNX Runtime engine for computers with no GPU (TUR-62).
+pub mod parakeet;
 pub mod registry;
 pub mod replay;
 pub mod segments;

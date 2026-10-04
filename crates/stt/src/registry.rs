@@ -17,7 +17,13 @@ use crate::{Error, SttEngine};
 
 // The Settings picker's view of every choice at once (TUR-75).
 mod options;
-pub use options::{Availability, EngineOptions, WHISPER_NEEDS_A_MODEL, options};
+pub use options::{
+    Availability, EngineOptions, PARAKEET_NEEDS_A_MODEL, WHISPER_NEEDS_A_MODEL, options,
+};
+
+// The Parakeet choice (TUR-62): its model and, on Windows, ONNX Runtime.
+mod parakeet;
+pub use parakeet::{PARAKEET_NOT_IN_THIS_BUILD, parakeet_runtime_missing};
 
 // Selection *logic* is not platform-specific and compiles everywhere. What
 // differs per OS (whether Apple's engine can exist at all, and how whisper is
@@ -37,6 +43,9 @@ pub enum Preference {
     /// Force `whisper-rs`, even on macOS 26+. Useful for the Phase 1 gate,
     /// which has to read the same recording on both engines.
     Whisper,
+    /// Force NVIDIA's Parakeet on ONNX Runtime (TUR-62): fast on a CPU with no
+    /// GPU. Only when asked for; `Auto` does not pick it.
+    Parakeet,
 }
 
 /// Which engine actually got picked, and why.
@@ -55,12 +64,14 @@ pub struct Selection {
 /// truth — see `AppleEngine::NAME` and `WhisperEngine::NAME`.
 pub const APPLE_SPEECH: &str = "apple-speech";
 pub const WHISPER: &str = "whisper";
+pub const PARAKEET: &str = "parakeet";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Kind {
     AppleSpeech,
     Whisper,
+    Parakeet,
 }
 
 impl Kind {
@@ -68,6 +79,7 @@ impl Kind {
         match self {
             Kind::AppleSpeech => APPLE_SPEECH,
             Kind::Whisper => WHISPER,
+            Kind::Parakeet => PARAKEET,
         }
     }
 }
@@ -88,6 +100,8 @@ pub struct Environment {
     /// Only used to word errors: "model X is not downloaded (installed: Y)"
     /// instead of "no model is downloaded" when Y is right there.
     pub installed_whisper_models: Vec<String>,
+    /// The Parakeet model folder, when every file in it is downloaded.
+    pub parakeet_model: Option<PathBuf>,
 }
 
 impl Environment {
@@ -122,6 +136,10 @@ impl Environment {
                     .collect()
             })
             .unwrap_or_default();
+        let parakeet = &crate::model::parakeet::PARAKEET_V3;
+        let parakeet_model = models_dir
+            .filter(|dir| parakeet.is_installed(dir))
+            .map(|dir| parakeet.dir(dir));
 
         Self {
             sidecar: AppleEngine::discover(),
@@ -129,6 +147,7 @@ impl Environment {
             whisper_model,
             whisper_model_id: model_id.to_string(),
             installed_whisper_models,
+            parakeet_model,
         }
     }
 
@@ -275,6 +294,10 @@ fn decide(
             }
         }
 
+        Preference::Parakeet => {
+            parakeet::decide(environment, parakeet_runtime_missing().as_deref())
+        }
+
         Preference::Auto => {
             if apple_usable {
                 Ok(Selection {
@@ -339,6 +362,15 @@ pub fn select(
 
             crate::platform::load_whisper(&model)?
         }
+        Kind::Parakeet => {
+            let model = environment.parakeet_model.clone().ok_or_else(|| {
+                Error::EngineUnavailable("the Parakeet model is not downloaded".into())
+            })?;
+            Box::new(crate::parakeet::ParakeetEngine::load(
+                &model,
+                crate::parakeet::ParakeetConfig::default(),
+            )?)
+        }
     };
 
     Ok((selection, engine))
@@ -355,6 +387,7 @@ mod tests {
             whisper_model: None,
             whisper_model_id: "large-v3-turbo-q5_0".into(),
             installed_whisper_models: Vec::new(),
+            parakeet_model: None,
         }
     }
 
@@ -550,5 +583,41 @@ mod tests {
 
         let nowhere = Environment::discover_in(None, "en-US", spec.id);
         assert_eq!(nowhere.whisper_model, None);
+    }
+
+    #[test]
+    fn parakeet_is_spelled_parakeet_in_config() {
+        let parsed: Preference = serde_json::from_str("\"parakeet\"").unwrap();
+        assert_eq!(parsed, Preference::Parakeet);
+        assert_eq!(
+            serde_json::to_string(&Kind::Parakeet).unwrap(),
+            "\"parakeet\""
+        );
+    }
+
+    #[test]
+    fn discovery_finds_the_parakeet_folder_only_when_it_is_complete() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = crate::model::model_dir(root.path());
+        let parakeet = &crate::model::parakeet::PARAKEET_V3;
+        let folder = parakeet.dir(&dir);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join(parakeet.files[0].filename), b"stand-in").unwrap();
+
+        let found = Environment::discover_in(Some(&dir), "en-US", "small.en-q5_1");
+        assert_eq!(
+            found.parakeet_model, None,
+            "one file of three is not a model"
+        );
+
+        for file in parakeet.files {
+            std::fs::write(folder.join(file.filename), b"stand-in").unwrap();
+        }
+        let found = Environment::discover_in(Some(&dir), "en-US", "small.en-q5_1");
+        assert_eq!(found.parakeet_model, Some(folder));
+        assert_eq!(
+            Environment::discover_in(None, "en-US", "small.en-q5_1").parakeet_model,
+            None
+        );
     }
 }

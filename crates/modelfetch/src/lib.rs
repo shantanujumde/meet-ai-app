@@ -32,6 +32,10 @@ use tokio::io::AsyncWriteExt;
 
 mod retry;
 
+// A model that is a folder of files, such as Parakeet (TUR-62).
+mod folder;
+pub use folder::ensure_folder;
+
 use retry::RetryPolicy;
 
 /// How long to wait for the server to answer at all.
