@@ -221,6 +221,11 @@ pub fn resolve(preference: Preference, environment: &Environment) -> Result<Sele
 
 /// Run `meet-stt --probe` once, if there is a sidecar to run.
 fn probe_apple(environment: &Environment) -> Option<Result<Probe, Error>> {
+    // Off macOS there is nothing to probe, even if a `meet-stt` path exists
+    // (TUR-52); the "no sidecar" wording then names the OS instead.
+    if crate::platform::APPLE_SPEECH_UNSUPPORTED.is_some() {
+        return None;
+    }
     // Probing runs the sidecar, so do it once and reuse the answer.
     environment.sidecar.as_ref().map(|binary| {
         let probe = AppleEngine::probe(binary, &environment.locale);
