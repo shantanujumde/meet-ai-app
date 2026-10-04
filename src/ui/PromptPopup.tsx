@@ -25,6 +25,9 @@ import {
 import { toUiError } from "@/ipc/types";
 import { Button, ButtonRow } from "./primitives";
 
+/** The neutral buttons' default fill is glass, which vanishes on a solid card: give them a visible fill and edge. */
+const QUIET_EDGE = "border-fg-secondary bg-glass-sunken";
+
 export function PromptPopup() {
   const [shown, setShown] = useState<PopupPrompt | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +83,7 @@ export function PromptPopup() {
     <section
       aria-labelledby="prompt-popup-title"
       aria-live="polite"
-      className="flex h-screen flex-col gap-2 overflow-hidden rounded-card border-[0.5px] border-rim bg-glass-raised px-4 py-3 text-fg-primary"
+      className="flex h-screen flex-col gap-2 overflow-hidden rounded-card border-[0.5px] border-rim bg-popup px-4 py-3 text-fg-primary"
     >
       <h2 id="prompt-popup-title" className="text-headline font-semibold">
         Record this meeting?
@@ -92,10 +95,10 @@ export function PromptPopup() {
             <Button tone="primary" size="small" onClick={() => answer("joinAndRecord")}>
               Join and record
             </Button>
-            <Button size="small" onClick={() => answer("join")}>
+            <Button size="small" className={QUIET_EDGE} onClick={() => answer("join")}>
               Join
             </Button>
-            <Button size="small" onClick={() => answer("record")}>
+            <Button size="small" className={QUIET_EDGE} onClick={() => answer("record")}>
               Record
             </Button>
           </>
@@ -104,7 +107,7 @@ export function PromptPopup() {
             Record
           </Button>
         )}
-        <Button size="small" onClick={() => answer("dismiss")}>
+        <Button size="small" className={QUIET_EDGE} onClick={() => answer("dismiss")}>
           Dismiss
         </Button>
       </ButtonRow>

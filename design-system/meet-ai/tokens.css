@@ -164,6 +164,7 @@
   --surface-glass-regular: var(--white-a60);
   --surface-glass-clear:   var(--white-a20);
   --surface-glass-raised:  var(--white-a80);
+  --surface-popup:         rgba(255, 255, 255, 0.96); /* floating popup card: near-solid */
   --surface-glass-sunken:  var(--black-a04);
 
   /* The window canvas — the bottom of the stack, and the only fully opaque
@@ -223,6 +224,7 @@
     --surface-glass-regular: var(--white-a10);
     --surface-glass-clear:   var(--white-a04);
     --surface-glass-raised:  var(--white-a14);
+    --surface-popup:         color-mix(in srgb, var(--gray-900) 96%, transparent);
     --surface-glass-sunken:  var(--black-a20);
 
     --surface-canvas:      var(--gray-950);
@@ -272,6 +274,7 @@
   --surface-glass-regular: var(--white-a10);
   --surface-glass-clear:   var(--white-a04);
   --surface-glass-raised:  var(--white-a14);
+  --surface-popup:         color-mix(in srgb, var(--gray-900) 96%, transparent);
   --surface-content:       rgba(28, 28, 32, 0.72);
   --rim-highlight: var(--white-a20);
   --rim-shadow:    var(--black-a45);
