@@ -306,9 +306,10 @@ Not OS cfgs, so never flagged: `cfg(test)`, `cfg(feature = ...)`,
 `target_os = "android"` or `"ios"`. That last one is Tauri's desktop-vs-mobile
 plugin gate (`src-tauri/src/lib.rs`, `notify.rs`), not a port.
 
-Three unix-only test modules in `crates/agent/src` still carry `cfg(unix)`:
-`process.rs`, `detect.rs` and `mcp/tests.rs` (one `#[cfg(unix)]` each). They
-run the `/bin/sh` fake harness, and TUR-54 makes them portable. They are the
+One unix-only test module in `crates/agent/src` still carries `cfg(unix)`:
+`detect.rs` (one `#[cfg(unix)]`). Its tests run `/bin/sh` scripts as a fake
+`claude`; they move to `test_support::FakeCli`, the Rust fake CLI TUR-54 put
+`process.rs` and `mcp/tests.rs` on, in a follow-up after TUR-53. It is the
 known-debt list, `R10_DEBT` in `scripts/quality-rules.sh`, keyed on the path
 and the cfg line's trimmed text (not its line number, so an edit above it does
 not break the build). Each entry lets through only the first hit with that
