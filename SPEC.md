@@ -546,6 +546,10 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 A13 is held by TUR-36 ([#83](https://github.com/shantanujumde/meet-ai-app/pull/83), Windows and Linux as targets), which is not merged yet; until it is, the numbers skip from A14 to A12.
 
+### A18 — 2026-10-04 · Softer brand tint, a more see-through sidebar, brighter grey text (amends A17; TUR-103)
+
+Side by side with the window A17 copied, the dark app read as purple, the sidebar as solid and the same tone as the content, and grey text as dim. The `--tint-*` mixes are halved (1–3% instead of 4–5%); dark cards start from a lighter grey so they stay a step off the canvas. `--surface-sidebar` drops from 84% to 66% in light and 60% in dark, still solid with glass off, Reduce Transparency, Increase Contrast and on Windows and Linux. Secondary and tertiary text move further from the background (dark 0.78 / 0.70, light 0.74 / 0.66), and `--accent-text` and `--status-danger-text` go a shade deeper so they still hold AA on the sidebar over `contrast.mjs`'s mid-grey backdrop. The rule is unchanged: every text colour holds AA on every surface it sits on.
+
 ### A17 — 2026-10-04 · Background surfaces may carry a brand tint; accent unchanged; Lucide icons (amends §2's Icons row and the brand-tokens rule; TUR-102)
 
 The window canvas, the sidebar and the cards are no longer plain grey or black: each is a neutral nudged a few percent toward the brand (`design-system/meet-ai/tokens.css`, `--tint-*`): near-white with a faint coral-violet in light, Ink nudged toward Dusk violet in dark. The tint is on background surfaces only. `--accent` stays macOS system blue (buttons, switches, the selected sidebar row, the chosen appearance tile); white words on a filled accent control use a deeper shade of the same blue (`--accent-fill`) so they hold WCAG AA. `brand-tokens.css`'s "do not repoint --accent at a brand colour" still holds.

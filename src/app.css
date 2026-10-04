@@ -385,7 +385,7 @@
   font-variant-numeric: tabular-nums;
   font-family: var(--font-mono);
   font-size: var(--text-caption1);
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
 }
 
 .transcript__text {

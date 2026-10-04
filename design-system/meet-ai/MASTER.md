@@ -179,22 +179,24 @@ ticks: `font-variant-numeric: tabular-nums`.
 
 ### 5.1 Sidebar
 
-See-through glass on macOS: `--surface-sidebar` (the sidebar tint at 84%)
-over the native window material, a tone off the content. It gets **no**
+See-through glass on macOS: `--surface-sidebar` (the sidebar tint at 66%, 60%
+in dark) over the native window material, a clear tone off the content. It gets **no**
 `backdrop-filter` of its own, because the window material is already the blur.
 Solid (`--surface-sidebar-solid`) with glass off, Reduce Transparency, Increase
 Contrast, and on Windows and Linux, where no material sits behind it.
 
 - Width `--sidebar-w` (240px), padding `--sidebar-pad`
 - A rounded find box at the top (capsule, `--surface-control`, search icon)
-- Pages grouped under small grey headings (11px semibold, tertiary) that fold
+- Pages grouped under small grey headings (11px semibold, secondary) that fold
   shut: a button with a chevron and `aria-expanded`
 - Every row is a 16px accent line icon (`--accent-text`) and a name. Height
   `--sidebar-row-h` (30px), radius `--sidebar-row-radius`, hover
   `--sidebar-row-hover`
 - The current page is a solid `--accent-fill` pill with white words and icon,
   and `aria-current`, never colour alone
-- Meeting rows: title (13px medium, truncates), date and state (11px)
+- Meeting rows: title (13px medium, truncates), date and state on one line
+  (12px, truncates). A recording with no transcript is dimmed: title
+  secondary, icon and meta tertiary
 - Recording meetings show the dot and the word, not a red title
 
 ### 5.1a Title bar

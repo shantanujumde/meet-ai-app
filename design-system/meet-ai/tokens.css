@@ -62,23 +62,25 @@
 
   /* --- Brand-tinted neutrals (TUR-102) --------------------------------------
      The window, sidebar and card surfaces are not plain grey: each is a
-     neutral nudged a few percent toward the brand (brand/brand-tokens.css).
+     neutral nudged a percent or two toward the brand (brand/brand-tokens.css).
+     TUR-103 halved the mixes: at 4-5% the dark surfaces read as purple and
+     muddied the grey text on them.
      Light mode mixes in Dusk (#C85396, the coral-to-violet tile's middle);
      dark mode starts from Ink and mixes in Dusk violet (#9B3CF2). Backgrounds
      only: the accent stays system blue.
-       tint-canvas  = mix(#FFFFFF, #C85396, 1.5%)
-       tint-card    = mix(#F4F5F7, #C85396, 3%)
-       tint-sidebar = mix(#ECECF0, #C85396, 4%)
-       tint-ink-canvas  = mix(#16181D, #9B3CF2, 4%)
-       tint-ink-card    = mix(#24262E, #9B3CF2, 5%)
-       tint-ink-sidebar = mix(#121317, #9B3CF2, 5%)
+       tint-canvas  = mix(#FFFFFF, #C85396, 0.75%)
+       tint-card    = mix(#F4F5F7, #C85396, 1.5%)
+       tint-sidebar = mix(#ECECF0, #C85396, 2%)
+       tint-ink-canvas  = mix(#1E1F24, #9B3CF2, 2%)
+       tint-ink-card    = mix(#2A2C33, #9B3CF2, 2%)
+       tint-ink-sidebar = mix(#121317, #9B3CF2, 3%)
      design-system/meet-ai/contrast.mjs checks every text colour on them. */
-  --tint-canvas:      #fefcfd;
-  --tint-card:        #f3f0f4;
-  --tint-sidebar:     #ebe6ec;
-  --tint-ink-canvas:  #1b1926;
-  --tint-ink-card:    #2a2738;
-  --tint-ink-sidebar: #191522;
+  --tint-canvas:      #fffefe;
+  --tint-card:        #f3f3f6;
+  --tint-sidebar:     #ebe9ee;
+  --tint-ink-canvas:  #212028;
+  --tint-ink-card:    #2c2c37;
+  --tint-ink-sidebar: #16141e;
 
   /* --- Blur radii -----------------------------------------------------------
      Four steps only. More steps means inconsistent depth and more GPU passes. */
@@ -215,9 +217,12 @@
   /* The sidebar (TUR-102): see-through glass over the native window
      material, in a tone a little different from the content. `-solid` is the
      same tone fully opaque, for glass off, Reduce Transparency and Increase
-     Contrast. 84% keeps every sidebar label at AA over a mid-grey backdrop
-     (contrast.mjs), which is darker than the light material ever gets. */
-  --surface-sidebar:       color-mix(in srgb, var(--tint-sidebar) 84%, transparent);
+     Contrast. TUR-103 dropped it from 84% (the sidebar looked solid and the
+     same tone as the content) to 66% here and 60% in dark: the lowest that
+     keeps every sidebar label at AA over a mid-grey backdrop (contrast.mjs),
+     which is darker than the light material ever gets. The accent and red
+     words went a shade deeper to hold AA at that alpha. */
+  --surface-sidebar:       color-mix(in srgb, var(--tint-sidebar) 66%, transparent);
   --surface-sidebar-solid: var(--tint-sidebar);
 
   /* Plain grey fills for secondary buttons and the switch's off track. Alpha,
@@ -236,10 +241,12 @@
 
   /* Text. TUR-102: secondary and tertiary darkened so every text colour holds
      WCAG AA (4.5:1) on every surface it sits on, cards and sidebar included;
-     contrast.mjs checks it. Tertiary stays a step quieter than secondary. */
+     contrast.mjs checks it. TUR-103 pushed both further from the background
+     (they read as dim next to Vorssaint). Tertiary stays a step quieter than
+     secondary. */
   --text-primary:   rgba(0, 0, 0, 0.85);
-  --text-secondary: rgba(0, 0, 0, 0.68);
-  --text-tertiary:  rgba(0, 0, 0, 0.61);
+  --text-secondary: rgba(0, 0, 0, 0.74);
+  --text-tertiary:  rgba(0, 0, 0, 0.66);
   --text-on-accent: #ffffff;
 
   /* Separators */
@@ -256,7 +263,7 @@
   --accent:          var(--sys-blue-light);
   --accent-fill:     color-mix(in srgb, var(--sys-blue-light) 86%, black);
   --accent-hover:    color-mix(in srgb, var(--sys-blue-light) 76%, black);
-  --accent-text:     color-mix(in srgb, var(--sys-blue-light) 74%, black);
+  --accent-text:     color-mix(in srgb, var(--sys-blue-light) 64%, black);
   --accent-glass:    color-mix(in srgb, var(--sys-blue-light) 14%, transparent);
   --focus-ring:      var(--sys-blue-light);
 
@@ -269,7 +276,7 @@
      The system red, orange and green themselves are under 4.5:1 on a light
      surface, so the words take a deeper shade of the same hue. The raw
      colours stay for dots, rings and other graphics (3:1). */
-  --status-danger-text:    color-mix(in srgb, var(--sys-red-light) 68%, black);
+  --status-danger-text:    color-mix(in srgb, var(--sys-red-light) 58%, black);
   --status-warning-text:   color-mix(in srgb, var(--sys-orange-light) 56%, black);
   --status-success-text:   color-mix(in srgb, var(--sys-green-light) 56%, black);
   --status-recording-text: var(--status-danger-text);
@@ -298,7 +305,7 @@
   --surface-content-alt: var(--black-a30);
   --surface-card:        var(--tint-ink-card);
 
-  --surface-sidebar:       color-mix(in srgb, var(--tint-ink-sidebar) 84%, transparent);
+  --surface-sidebar:       color-mix(in srgb, var(--tint-ink-sidebar) 60%, transparent);
   --surface-sidebar-solid: var(--tint-ink-sidebar);
 
   --surface-control:       var(--white-a10);
@@ -312,8 +319,8 @@
   --scrim-sheet: var(--black-a60);
 
   --text-primary:   rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.70);
-  --text-tertiary:  rgba(255, 255, 255, 0.61);
+  --text-secondary: rgba(255, 255, 255, 0.78);
+  --text-tertiary:  rgba(255, 255, 255, 0.70);
   --text-on-accent: #ffffff;
 
   --separator:        var(--white-a10);
@@ -330,7 +337,7 @@
   --status-success:   var(--sys-green-dark);
   --status-warning:   var(--sys-orange-dark);
   --status-danger:    var(--sys-red-dark);
-  --status-danger-text:    color-mix(in srgb, var(--sys-red-dark) 78%, white);
+  --status-danger-text:    color-mix(in srgb, var(--sys-red-dark) 60%, white);
   --status-warning-text:   var(--sys-orange-dark);
   --status-success-text:   var(--sys-green-dark);
   --status-recording-text: var(--status-danger-text);
