@@ -143,6 +143,9 @@ SOFTWARE.
     rotation and targets) from `src-tauri/src/lib.rs`
   - `.github/workflows/check.yml` (the "Enable long paths (Windows)" step of
     the `rust-native` job) from `.github/workflows/build.yml`
+  - `.github/workflows/release.yml` (the `build-other` matrix: windows-latest,
+    ubuntu-22.04 deb, ubuntu-24.04 AppImage, and its long-paths step) from
+    `.github/workflows/build.yml` (TUR-39)
   - `crates/audio/src/platform/windows_consent.rs` (`mic_consent`: the
     HKLM + HKCU + `NonPackaged` microphone consent decision) from
     `src-tauri/src/commands/audio.rs`, at commit
