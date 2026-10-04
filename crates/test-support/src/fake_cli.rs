@@ -34,9 +34,12 @@ impl FakeCli {
     /// its empty settings folder.
     pub fn install(dir: &Path, name: &str) -> Self {
         let path = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+        // quality: allow-unwrap test helper: a failure here should fail the test
         std::fs::create_dir_all(dir).expect("could not make the fake CLI's folder");
+        // quality: allow-unwrap test helper: a failure here should fail the test
         std::fs::copy(fake_cli_path(), &path).expect("could not copy fake-cli");
         let config = dir.join(format!("{name}.fake"));
+        // quality: allow-unwrap test helper: a failure here should fail the test
         std::fs::create_dir_all(&config).expect("could not make the fake CLI's settings");
         Self { path, config }
     }
@@ -48,6 +51,7 @@ impl FakeCli {
 
     /// Sets one setting (`stdout`, `code`, `sleep`, ...).
     pub fn set(&self, name: &str, value: impl AsRef<[u8]>) -> &Self {
+        // quality: allow-unwrap test helper: a failure here should fail the test
         std::fs::write(self.config.join(name), value).expect("could not write a fake CLI setting");
         self
     }
