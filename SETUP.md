@@ -125,6 +125,8 @@ Pin these exactly in `Cargo.toml` and commit `Cargo.lock`. 🆕 = new major with
 | `wasapi` | **0.25.0** | 🆕 TUR-60, Windows only. MIT. Safe wrappers over WASAPI's `IAudioSessionManager2` session list, for "mic and speakers in use by another app". Pure Rust over the `windows` crate. Moved out of §2.7: SPEC A13 makes Windows a target now |
 | `libpulse-binding` | **2.30.1** | 🆕 TUR-60, Linux only. MIT OR Apache-2.0 (we take MIT). The PulseAudio client API: source-output and sink-input lists. Links `libpulse.so` (`libpulse-dev` at build time); PipeWire desktops answer it through pipewire-pulse |
 | `winreg` | see `Cargo.toml` | Windows only (TUR-51): the microphone consent registry keys |
+| `cpal` features `pipewire`, `pulseaudio` | (cpal 0.18.2) | 🆕 TUR-38, Linux only. Pull `pipewire` 0.10.1 (MIT) and `pulseaudio` 0.3.1 (MIT). Host order PipeWire, then PulseAudio, then ALSA. Build deps `libasound2-dev libpulse-dev libpipewire-0.3-dev` (and `clang` for bindgen). ⚠️ Never bundle libpipewire or libspa in an AppImage: they load plugins from a build-time path and capture silence on other distros (anarlog #7549). No Flatpak: there is no audio-capture portal yet |
+| `libc` | **0.2.189** | 🆕 TUR-38, Linux only. `clock_gettime(CLOCK_MONOTONIC)`, the host clock PipeWire's capture times use. Already in the tree through cpal |
 
 ### 2.3 Speech-to-text
 

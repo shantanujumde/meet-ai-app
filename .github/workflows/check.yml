@@ -371,7 +371,8 @@ jobs:
           sudo apt-get -o Acquire::Retries=5 install -y \
             libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
             libssl-dev libayatana-appindicator3-dev librsvg2-dev \
-            libasound2-dev libpulse-dev patchelf
+            libasound2-dev libpulse-dev patchelf \
+            libpipewire-0.3-dev
 
       # MSVC compiles the C deps (sqlite, ring) through the `cc` crate, which
       # finds Visual Studio on its own. clang (LLVM) is on the image too and is
