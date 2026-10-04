@@ -15,6 +15,8 @@
 //! * ALSA: no monitor exists at all, so no system audio (Meetily's broken
 //!   Linux capture, PR #688, was this).
 
+use cpal::{BufferSize, SupportedBufferSize};
+
 /// The `cpal` host a device list came from, by `HostId::name()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SoundServer {
@@ -78,6 +80,38 @@ pub fn system_capture_device(
 
 /// The start of the ALSA `null` device's description (alsa-lib's hint).
 const ALSA_NULL_DESCRIPTION: &str = "Discard all samples";
+
+/// The record fragment asked of PulseAudio, in ms: about one PipeWire
+/// quantum (1024 frames at 48 kHz), so pipewire-pulse need not regroup.
+pub const PULSE_FRAGMENT_MS: u64 = 20;
+
+/// The buffer size to ask an input stream for. PulseAudio delivers a record
+/// stream in fragments of whatever `fragsize` it is given, and with none
+/// (`cpal`'s `BufferSize::Default`) the server picks, which can be seconds:
+/// every callback then carries that much audio at once, and the track runs
+/// that far ahead of its timestamps (measured in a container with
+/// pipewire-pulse: 2.2 s on the microphone at 5 s). A track's position pairs
+/// a packet's first-frame time with the frames through its end, so the
+/// fragment is also a constant offset: PulseAudio gets
+/// [`PULSE_FRAGMENT_MS`]. Every other host keeps its own default (PipeWire's
+/// graph quantum, Core Audio's and WASAPI's periods).
+pub fn input_buffer_size(
+    server: SoundServer,
+    supported: &SupportedBufferSize,
+    sample_rate: u32,
+) -> BufferSize {
+    match server {
+        SoundServer::PulseAudio => match supported {
+            SupportedBufferSize::Range { min, max } if min <= max && sample_rate > 0 => {
+                let frames = u64::from(sample_rate) * PULSE_FRAGMENT_MS / 1000;
+                let frames = u32::try_from(frames).unwrap_or(u32::MAX);
+                BufferSize::Fixed(frames.clamp(*min, *max))
+            }
+            _ => BufferSize::Default,
+        },
+        SoundServer::PipeWire | SoundServer::Alsa | SoundServer::Other => BufferSize::Default,
+    }
+}
 
 /// ALSA's `null` device: it opens, "records" silence with no clock behind
 /// it, and the callback spins the CPU (anarlog #7485). Never a microphone.
@@ -143,6 +177,32 @@ mod tests {
         let inputs = ids(&["default", "sink_default", "x.monitor"]);
         assert!(system_capture_device(SoundServer::Alsa, Some("x"), &inputs).is_err());
         assert!(system_capture_device(SoundServer::Other, Some("x"), &inputs).is_err());
+    }
+
+    #[test]
+    fn only_pulseaudio_gets_a_fixed_buffer() {
+        let range = SupportedBufferSize::Range {
+            min: 1,
+            max: 1 << 20,
+        };
+        assert_eq!(
+            input_buffer_size(SoundServer::PulseAudio, &range, 48_000),
+            BufferSize::Fixed(960)
+        );
+        assert_eq!(
+            input_buffer_size(
+                SoundServer::PulseAudio,
+                &SupportedBufferSize::Unknown,
+                48_000
+            ),
+            BufferSize::Default
+        );
+        for server in [SoundServer::PipeWire, SoundServer::Alsa, SoundServer::Other] {
+            assert_eq!(
+                input_buffer_size(server, &range, 48_000),
+                BufferSize::Default
+            );
+        }
     }
 
     #[test]

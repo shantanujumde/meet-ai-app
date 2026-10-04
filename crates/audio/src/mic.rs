@@ -16,7 +16,7 @@ use cpal::{SampleFormat, Stream, StreamConfig};
 use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
-use crate::loopback::sound_server::{SoundServer, is_alsa_null};
+use crate::loopback::sound_server::{SoundServer, input_buffer_size, is_alsa_null};
 use crate::mic_choice::{self, MicChoice};
 use crate::pipeline::Pipeline;
 use crate::platform::host_now_ns;
@@ -134,7 +134,14 @@ impl MicSource {
             .default_input_config()
             .map_err(|e| Error::NoDevice(format!("no usable input config: {e}")))?;
         let sample_format = supported.sample_format();
-        let config: StreamConfig = supported.into();
+        // TUR-38: PulseAudio's own record fragment can be seconds long.
+        let buffer_size = input_buffer_size(
+            SoundServer::from_host_name(host.id().name()),
+            supported.buffer_size(),
+            supported.sample_rate(),
+        );
+        let mut config: StreamConfig = supported.into();
+        config.buffer_size = buffer_size;
         let device_rate = config.sample_rate;
         let channels = config.channels as usize;
         // Read once from `cpal`, so it can go stale (a headset mic switching to

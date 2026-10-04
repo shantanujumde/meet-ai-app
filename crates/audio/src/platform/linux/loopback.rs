@@ -20,13 +20,13 @@
 use std::sync::{Mutex, PoisonError};
 
 use cpal::traits::{DeviceTrait, HostTrait};
-use cpal::{BufferSize, ErrorKind, HostId, SupportedStreamConfig};
+use cpal::{ErrorKind, HostId, SupportedStreamConfig};
 
 use super::clock::input_callback_ns;
 use super::devices::note_stream_lost;
 use crate::loopback::capture::Capture;
 use crate::loopback::cpal_stream::{self, CaptureSpec};
-use crate::loopback::sound_server::{SoundServer, system_capture_device};
+use crate::loopback::sound_server::{SoundServer, input_buffer_size, system_capture_device};
 use crate::loopback::source::{Backend, Format, LiveStream, LoopbackSource};
 use crate::{AUDIO_PERMISSION_TIMEOUT, AudioSource, Error};
 
@@ -48,6 +48,7 @@ pub(crate) fn system_source() -> Option<Box<dyn AudioSource>> {
 struct LinuxLoopback {
     capture: Option<(cpal::Device, SupportedStreamConfig)>,
     output: Option<cpal::Device>,
+    server: Option<SoundServer>,
 }
 
 /// `cpal::default_host()`, keeping a PipeWire host alive for the rest of the
@@ -121,6 +122,7 @@ impl Backend for LinuxLoopback {
         );
         self.capture = Some((device, supported));
         self.output = output;
+        self.server = Some(server);
         Ok(format)
     }
 
@@ -143,9 +145,14 @@ impl Backend for LinuxLoopback {
         let (device, supported) = self.opened()?;
         let spec = CaptureSpec {
             label: format.label.clone(),
-            // The graph's own quantum: a fixed size here would set the
-            // node latency of every stream grouped with this one.
-            buffer_size: BufferSize::Default,
+            // PipeWire keeps the graph's own quantum (a fixed size would set
+            // the node latency of every stream grouped with this one);
+            // PulseAudio gets about 80 ms instead of the server's fragment.
+            buffer_size: input_buffer_size(
+                self.server.unwrap_or(SoundServer::Other),
+                supported.buffer_size(),
+                supported.sample_rate(),
+            ),
             stamp: input_callback_ns,
             on_error: on_stream_error,
             timeout: AUDIO_PERMISSION_TIMEOUT,
