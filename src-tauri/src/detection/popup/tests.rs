@@ -8,7 +8,7 @@ fn zoom() -> Prompt {
     super::super::notify::prompt_for(
         Phase::Idle,
         &Signal::Process {
-            process: "zoom.us".to_string(),
+            process: detect::processes::name_of("Zoom").to_string(),
         },
     )
     .expect("asks when idle")
