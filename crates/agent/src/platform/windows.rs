@@ -5,9 +5,9 @@
 //! one process would leave its `node` (and the MCP servers `node` started)
 //! running. The child starts suspended and is resumed only once it is in
 //! process-wrap's job (which Cancel ends) and in a kill-on-close job of our
-//! own (`windows_job.rs`, so a crashed app takes the tree with it). `CREATE_NO_WINDOW` keeps a
-//! console window from flashing up for a console program started from the
-//! app.
+//! own (`windows_job.rs`, so a crashed app takes the tree with it).
+//! `CREATE_NO_WINDOW` keeps a console window from flashing up for a console
+//! program started from the app.
 
 use std::path::{Path, PathBuf};
 

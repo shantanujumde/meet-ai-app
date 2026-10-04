@@ -43,9 +43,8 @@ jobs on the PR.
   empty. The four tests about macOS app bundles and the Claude desktop app's
   `Library/Application Support` folder moved to `platform/macos.rs` (Mac-only
   paths; on Windows a copy there would also need an `.exe` ending).
-- Still unix-only, not R10 debt (integration tests may gate themselves):
-  `crates/agent/tests/claude.rs`, `crates/agent/tests/codex_fake.rs`, and the
-  `src-tauri` tests behind `skip_without_fake_cli!` / `FAKE_CLI_RUNS`
-  (`src-tauri/src/platform/mod.rs`, not this ticket's file). Follow-up: port
-  their `/bin/sh` scripts to `test_support::FakeCli`; `FakeHarness` itself now
-  runs on every OS.
+- `crates/agent/tests/claude.rs` and `tests/codex_fake.rs` run `fake-cli` on
+  every OS too. Still unix-only (not this ticket's files): the `src-tauri`
+  tests behind `skip_without_fake_cli!` / `FAKE_CLI_RUNS`
+  (`src-tauri/src/platform/mod.rs`). Follow-up: port their `/bin/sh` scripts
+  to `test_support::FakeCli`.

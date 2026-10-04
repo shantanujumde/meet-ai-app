@@ -32,6 +32,8 @@ fn main() {
     }
 
     let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    // Keep in step with `edition` in the workspace Cargo.toml; cargo does not
+    // pass the edition to build scripts.
     let status = Command::new(rustc)
         .args([
             "--edition",

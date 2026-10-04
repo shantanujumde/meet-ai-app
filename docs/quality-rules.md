@@ -307,9 +307,10 @@ Not OS cfgs, so never flagged: `cfg(test)`, `cfg(feature = ...)`,
 plugin gate (`src-tauri/src/lib.rs`, `notify.rs`), not a port.
 
 The known-debt list is empty since TUR-54, which moved the agent tests onto
-`test_support::FakeCli`, a Rust fake CLI that runs on every OS. The list, `R10_DEBT` in
-`scripts/quality-rules.sh`, is keyed on the path and the cfg line's trimmed text (not its line number, so an edit above it does
-not break the build). Each entry lets through only the first hit with that
+`test_support::FakeCli`, a Rust fake CLI that runs on every OS. The list,
+`R10_DEBT` in `scripts/quality-rules.sh`, is keyed on the path and the cfg
+line's trimmed text (not its line number, so an edit above it does not break
+the build). Each entry lets through only the first hit with that
 text in its file, so a new cfg in the same files still fails, even one spelled
 the same. Nothing else in the tree has an OS cfg outside the
 allowed paths (`crates/store` keeps its one, Windows' lock-violation codes, in
