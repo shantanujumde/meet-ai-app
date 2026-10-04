@@ -114,6 +114,12 @@ SOFTWARE.
   - `src-tauri/src/hooks/mod.rs` (`run_hook`: the timeout, kill on drop,
     capped output reads and `~`/`$HOME` expansion) from
     `crates/hooks/src/runner.rs` (TUR-63)
+  - `crates/audio/src/platform/windows_render_choice.rs`
+    (`endpoint_to_follow`: the default wins ties, otherwise the one endpoint
+    another process is actively rendering to) and
+    `crates/audio/src/platform/windows/render_in_use.rs` (the render-session
+    walk) from `render_device_in_use` and `has_foreign_active_session` in
+    `crates/audio-actual/src/speaker/windows.rs` (TUR-95)
 
 ```
 MIT License
