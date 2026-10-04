@@ -139,7 +139,7 @@ function FindBox({ value, onChange }: { value: string; onChange: (value: string)
         onChange={(event) => onChange(event.target.value)}
         className={cn(
           "h-(--control-h-large) w-full rounded-capsule border-[0.5px] border-separator bg-control",
-          "ps-10 pe-4 text-body text-fg-primary placeholder:text-fg-tertiary",
+          "ps-9 pe-4 text-body text-fg-primary placeholder:text-fg-tertiary",
           "contrast-more:border-separator-strong",
         )}
       />

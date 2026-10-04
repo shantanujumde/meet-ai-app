@@ -5,11 +5,13 @@
  * tickets, so the page loads them itself when it opens.
  */
 
+import { Plus, Ticket as TicketIcon } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { createTicket, listTickets, startWorkPrompt } from "@/ipc/client";
 import type { TicketStatus, TicketSummary, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { CopyPromptButton } from "@/ui/CopyPromptButton";
+import { IconSquare } from "@/ui/icons";
 import { Button, ButtonRow, cardVariants, Pill } from "@/ui/primitives";
 import { SyncButton } from "@/ui/SyncButton";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
@@ -83,7 +85,7 @@ export function Tickets() {
         />
       ) : (
         <ButtonRow>
-          <Button tone="primary" onClick={() => setFormOpen(true)}>
+          <Button tone="primary" icon={Plus} onClick={() => setFormOpen(true)}>
             New ticket
           </Button>
         </ButtonRow>
@@ -98,16 +100,21 @@ export function Tickets() {
         <ul className="flex flex-col gap-4">
           {tickets.map((ticket) => (
             <li key={ticket.id} className={cardVariants()}>
-              <div className="flex items-center justify-between gap-5">
-                <span className="font-mono text-caption1 text-fg-tertiary">{ticket.id}</span>
-                {ticket.status ? (
-                  <Pill tone={STATUS_TONE[ticket.status]}>{STATUS_LABEL[ticket.status]}</Pill>
-                ) : null}
+              <div className="flex items-start gap-5">
+                <IconSquare icon={TicketIcon} />
+                <div className="flex min-w-0 flex-1 flex-col gap-2">
+                  <div className="flex items-center justify-between gap-5">
+                    <span className="font-mono text-caption1 text-fg-tertiary">{ticket.id}</span>
+                    {ticket.status ? (
+                      <Pill tone={STATUS_TONE[ticket.status]}>{STATUS_LABEL[ticket.status]}</Pill>
+                    ) : null}
+                  </div>
+                  <h2 className="text-body font-semibold text-fg-primary">{ticket.title}</h2>
+                  {ticket.body ? (
+                    <p className="line-clamp-3 text-callout text-fg-secondary">{ticket.body}</p>
+                  ) : null}
+                </div>
               </div>
-              <h2 className="text-body font-medium text-fg-primary">{ticket.title}</h2>
-              {ticket.body ? (
-                <p className="line-clamp-3 text-callout text-fg-secondary">{ticket.body}</p>
-              ) : null}
               {/* L14: Rust renders the prompt; the user pastes it into their
                   own agent session in the repo. */}
               <ButtonRow className="items-start">
@@ -184,7 +191,7 @@ function NewTicketForm({
       </label>
       {error ? <ErrorState error={error} /> : null}
       <ButtonRow>
-        <Button type="submit" tone="primary" disabled={!canSubmit}>
+        <Button type="submit" tone="primary" icon={Plus} disabled={!canSubmit}>
           Create
         </Button>
         <Button onClick={onCancel} disabled={busy}>

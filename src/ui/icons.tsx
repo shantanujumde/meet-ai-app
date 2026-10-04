@@ -41,17 +41,33 @@ export function Icon({
   );
 }
 
+const SQUARE_TONE = {
+  accent: "bg-accent-glass text-accent-text",
+  // The AA shades as the icon, on a faint wash of the same hue.
+  danger: "bg-danger/12 text-danger",
+  warning: "bg-warning/14 text-warning",
+} as const;
+
 /**
  * The small rounded square a settings row's icon sits in: the accent icon on
- * a faint accent fill. Decorative; the row's name says what it is.
+ * a faint accent fill, or the warning or danger hue for an error or a
+ * question with a cost. Decorative; the words beside it say what it is.
  */
-export function IconSquare({ icon, className }: { icon: LucideIcon; className?: string }) {
+export function IconSquare({
+  icon,
+  tone = "accent",
+  className,
+}: {
+  icon: LucideIcon;
+  tone?: keyof typeof SQUARE_TONE;
+  className?: string;
+}) {
   return (
     <span
       aria-hidden="true"
       className={cn(
         "grid size-(--icon-box) shrink-0 place-items-center rounded-(--icon-box-radius)",
-        "bg-accent-glass text-accent-text",
+        SQUARE_TONE[tone],
         "contrast-more:border contrast-more:border-separator-strong",
         className,
       )}

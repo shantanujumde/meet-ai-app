@@ -11,9 +11,11 @@
  * wizard skips this step there and the copy below is only a fallback.
  */
 
+import { ArrowRight, Mic, RefreshCw, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { PermissionStatus } from "@/ipc/types";
 import { currentOs, type Os } from "@/lib/osText";
+import { IconSquare } from "@/ui/icons";
 import { PrivacyButtons } from "@/ui/PrivacyButtons";
 import { Button, ButtonRow, Card, Pill, Prose, Row, RowLabel } from "@/ui/primitives";
 import { Checking } from "@/ui/states";
@@ -45,7 +47,7 @@ export function PermissionStep({
 
       <Card>
         <Row bare>
-          <RowLabel name="Audio permission" detail={status?.detail ?? ""} mono={false} />
+          <RowLabel icon={Mic} name="Audio permission" detail={status?.detail ?? ""} mono={false} />
           {loading ? <Checking label="Checking…" /> : <Pill tone={badge.tone}>{badge.label}</Pill>}
         </Row>
       </Card>
@@ -63,7 +65,10 @@ function MacIntro() {
   return (
     <>
       <header className="page__header">
-        <h1 className="page__title">Let meet-ai hear your Mac</h1>
+        <h1 className="page__title flex items-center gap-4">
+          <IconSquare icon={ShieldCheck} />
+          Let meet-ai hear your Mac
+        </h1>
       </header>
 
       <Prose>
@@ -95,7 +100,7 @@ function MacNext({ state, onRecheck, onNext }: NextProps) {
             lost in the meantime.
           </Prose>
           <ButtonRow>
-            <Button tone="primary" onClick={onNext}>
+            <Button tone="primary" icon={ArrowRight} onClick={onNext}>
               Continue
             </Button>
             {/* Both panes, as on the denied path: the two grants live in
@@ -113,7 +118,10 @@ function OtherIntro({ os }: { os: Exclude<Os, "macos"> }) {
   return (
     <>
       <header className="page__header">
-        <h1 className="page__title">Let meet-ai use your microphone</h1>
+        <h1 className="page__title flex items-center gap-4">
+          <IconSquare icon={Mic} />
+          Let meet-ai use your microphone
+        </h1>
       </header>
       {os === "windows" ? (
         <Prose>
@@ -154,14 +162,16 @@ function OtherNext({ os, state, onRecheck, onNext }: NextProps & { os: Exclude<O
         </ol>
         <ButtonRow>
           <PrivacyButtons primary="microphone" />
-          <Button onClick={onRecheck}>Check again</Button>
+          <Button icon={RefreshCw} onClick={onRecheck}>
+            Check again
+          </Button>
         </ButtonRow>
       </div>
     );
   }
   return (
     <ButtonRow>
-      <Button tone="primary" onClick={onNext}>
+      <Button tone="primary" icon={ArrowRight} onClick={onNext}>
         Continue
       </Button>
       <PrivacyButtons />
@@ -207,7 +217,9 @@ function DeniedPath({ onRecheck }: { onRecheck: () => void }) {
 
       <ButtonRow>
         <PrivacyButtons primary="audio-capture" />
-        <Button onClick={onRecheck}>Check again</Button>
+        <Button icon={RefreshCw} onClick={onRecheck}>
+          Check again
+        </Button>
       </ButtonRow>
     </div>
   );

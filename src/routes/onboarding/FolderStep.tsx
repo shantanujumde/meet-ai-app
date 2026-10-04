@@ -3,10 +3,12 @@
  * records them.
  */
 
+import { ArrowRight, FolderOpen } from "lucide-react";
 import { revealMeeting } from "@/ipc/client";
 import { osText, shortcutLabel } from "@/lib/osText";
 import { useAppStore } from "@/state/app";
 import { FolderRow } from "@/ui/FolderRow";
+import { IconSquare } from "@/ui/icons";
 import { Button, ButtonRow, Card, Pill, Prose } from "@/ui/primitives";
 
 export function FolderStep({ onNext }: { onNext: () => void }) {
@@ -15,7 +17,10 @@ export function FolderStep({ onNext }: { onNext: () => void }) {
   return (
     <>
       <header className="page__header">
-        <h1 className="page__title">Where your meetings live</h1>
+        <h1 className="page__title flex items-center gap-4">
+          <IconSquare icon={FolderOpen} />
+          Where your meetings live
+        </h1>
       </header>
       <Prose>
         Every meeting becomes a folder here, holding the transcript, your notes and the audio. They
@@ -27,7 +32,7 @@ export function FolderStep({ onNext }: { onNext: () => void }) {
           bare
           status={
             rootExists ? (
-              <Button size="small" onClick={() => void revealFirstMeeting()}>
+              <Button size="small" icon={FolderOpen} onClick={() => void revealFirstMeeting()}>
                 Show in {osText("fileManager")}
               </Button>
             ) : (
@@ -42,7 +47,7 @@ export function FolderStep({ onNext }: { onNext: () => void }) {
         need to be open, or even visible.
       </Prose>
       <ButtonRow>
-        <Button tone="primary" onClick={onNext}>
+        <Button tone="primary" icon={ArrowRight} onClick={onNext}>
           Continue
         </Button>
       </ButtonRow>

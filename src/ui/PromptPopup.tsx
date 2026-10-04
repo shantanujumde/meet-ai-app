@@ -13,6 +13,7 @@
  * popup closes.
  */
 
+import { Circle, Video, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { onRecordingState } from "@/ipc/client";
 import {
@@ -23,6 +24,7 @@ import {
   promptPopupCurrent,
 } from "@/ipc/promptPopup";
 import { toUiError } from "@/ipc/types";
+import { IconSquare } from "./icons";
 import { Button, ButtonRow } from "./primitives";
 
 /** The neutral buttons' default fill is glass, which vanishes on a solid card: give them a visible fill and edge. */
@@ -83,31 +85,46 @@ export function PromptPopup() {
     <section
       aria-labelledby="prompt-popup-title"
       aria-live="polite"
-      className="flex h-screen flex-col gap-2 overflow-hidden rounded-card border-[0.5px] border-rim bg-popup px-4 py-3 text-fg-primary"
+      className="flex h-screen flex-col gap-4 overflow-hidden rounded-card border-[0.5px] border-rim bg-popup px-5 py-4 text-fg-primary"
     >
-      <h2 id="prompt-popup-title" className="text-headline font-semibold">
-        Record this meeting?
-      </h2>
-      <p className="line-clamp-2 text-body text-fg-secondary">{error ?? prompt.reason}</p>
+      <div className="flex items-start gap-4">
+        <IconSquare icon={Circle} />
+        <div className="flex min-w-0 flex-col gap-1">
+          <h2 id="prompt-popup-title" className="text-headline font-semibold">
+            Record this meeting?
+          </h2>
+          <p className="line-clamp-2 text-body text-fg-secondary">{error ?? prompt.reason}</p>
+        </div>
+      </div>
       <ButtonRow>
         {prompt.canJoin ? (
           <>
-            <Button tone="primary" size="small" onClick={() => answer("joinAndRecord")}>
+            <Button
+              tone="primary"
+              size="small"
+              icon={Video}
+              onClick={() => answer("joinAndRecord")}
+            >
               Join and record
             </Button>
-            <Button size="small" className={QUIET_EDGE} onClick={() => answer("join")}>
+            <Button size="small" icon={Video} className={QUIET_EDGE} onClick={() => answer("join")}>
               Join
             </Button>
-            <Button size="small" className={QUIET_EDGE} onClick={() => answer("record")}>
+            <Button
+              size="small"
+              icon={Circle}
+              className={QUIET_EDGE}
+              onClick={() => answer("record")}
+            >
               Record
             </Button>
           </>
         ) : (
-          <Button tone="primary" size="small" onClick={() => answer("record")}>
+          <Button tone="primary" size="small" icon={Circle} onClick={() => answer("record")}>
             Record
           </Button>
         )}
-        <Button size="small" className={QUIET_EDGE} onClick={() => answer("dismiss")}>
+        <Button size="small" icon={X} className={QUIET_EDGE} onClick={() => answer("dismiss")}>
           Dismiss
         </Button>
       </ButtonRow>

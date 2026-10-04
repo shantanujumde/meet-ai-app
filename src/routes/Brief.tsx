@@ -7,6 +7,7 @@
  * through the index and runs `git log`; nothing here starts an agent.
  */
 
+import { Clock, ExternalLink, GitCommitHorizontal } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { meetingBrief } from "@/ipc/client";
@@ -14,6 +15,7 @@ import type { MeetingBrief, PreviousMeeting, RepoCommits, UiError } from "@/ipc/
 import { toUiError } from "@/ipc/types";
 import { formatRelativeDate } from "@/lib/format";
 import { meetingPath } from "@/lib/routes";
+import { IconSquare } from "@/ui/icons";
 import { Button, ButtonRow, Card, Pill, Prose } from "@/ui/primitives";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 
@@ -77,7 +79,8 @@ function LastTime({ previous }: { previous: PreviousMeeting }) {
   const navigate = useNavigate();
   return (
     <section className="section" aria-labelledby="last-time-heading">
-      <h2 className="section__title" id="last-time-heading">
+      <h2 className="section__title flex items-center gap-4" id="last-time-heading">
+        <IconSquare icon={Clock} />
         Last time · {formatRelativeDate(previous.date)}
       </h2>
       <Card>
@@ -100,7 +103,11 @@ function LastTime({ previous }: { previous: PreviousMeeting }) {
           )}
         </article>
         <ButtonRow>
-          <Button size="small" onClick={() => navigate(meetingPath(previous.id))}>
+          <Button
+            size="small"
+            icon={ExternalLink}
+            onClick={() => navigate(meetingPath(previous.id))}
+          >
             Open last meeting
           </Button>
         </ButtonRow>
@@ -123,7 +130,8 @@ function Part({ heading, body, empty }: { heading: string; body: string | null; 
 function Commits({ commits }: { commits: RepoCommits }) {
   return (
     <section className="section" aria-labelledby="commits-heading">
-      <h2 className="section__title" id="commits-heading">
+      <h2 className="section__title flex items-center gap-4" id="commits-heading">
+        <IconSquare icon={GitCommitHorizontal} />
         Commits since then
       </h2>
       <Card>

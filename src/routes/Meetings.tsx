@@ -7,6 +7,7 @@
  * it has to say what this app is for and how to start.
  */
 
+import { AudioLines, FileText } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { cn } from "@/lib/cn";
@@ -129,6 +130,7 @@ export function Meetings() {
               onClick={() => navigate(meetingPath(meeting.id))}
             >
               <RowLabel
+                icon={meeting.recordingState === "interrupted" ? AudioLines : FileText}
                 name={
                   <>
                     {meeting.title}

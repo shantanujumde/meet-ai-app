@@ -6,14 +6,19 @@
  * never describe the same choice differently.
  */
 
+import { Bot, Check } from "lucide-react";
 import { AgentSetup } from "@/ui/agent/AgentSetup";
+import { IconSquare } from "@/ui/icons";
 import { Button, ButtonRow, Prose } from "@/ui/primitives";
 
 export function AgentStep({ onFinish }: { onFinish: () => void }) {
   return (
     <>
       <header className="page__header">
-        <h1 className="page__title">Who writes your notes</h1>
+        <h1 className="page__title flex items-center gap-4">
+          <IconSquare icon={Bot} />
+          Who writes your notes
+        </h1>
       </header>
       <Prose>
         When a call ends, meet-ai gives the transcript to an agent you already use: Claude Code or
@@ -24,7 +29,7 @@ export function AgentStep({ onFinish }: { onFinish: () => void }) {
       <AgentSetup />
 
       <ButtonRow>
-        <Button tone="primary" onClick={onFinish}>
+        <Button tone="primary" icon={Check} onClick={onFinish}>
           Done
         </Button>
       </ButtonRow>
