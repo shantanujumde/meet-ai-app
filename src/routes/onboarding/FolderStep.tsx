@@ -39,8 +39,8 @@ export function FolderStep({ onNext }: { onNext: () => void }) {
       </Card>
       <Prose>
         Audio is deleted after 7 days unless you change it. The text is kept forever. Press{" "}
-        <strong>{SHORTCUT_LABEL}</strong> from anywhere to start and stop. This window does not need to be
-        open, or even visible.
+        <strong>{SHORTCUT_LABEL}</strong> from anywhere to start and stop. This window does not need
+        to be open, or even visible.
       </Prose>
       <ButtonRow>
         <Button tone="primary" onClick={onNext}>

@@ -160,8 +160,8 @@ function FailedNotice({ detail }: { detail: string | null }) {
   return (
     <div className="live__notice" role="alert">
       <p className="live__notice-text">
-        Transcription stopped, but recording is still going. The audio is being saved as normal.
-        You can make the transcript from it after the meeting.
+        Transcription stopped, but recording is still going. The audio is being saved as normal. You
+        can make the transcript from it after the meeting.
       </p>
       {detail ? <p className="live__notice-detail">{detail}</p> : null}
     </div>

@@ -67,10 +67,10 @@ function MacIntro() {
       </header>
 
       <Prose>
-        A meeting has two sides, and macOS asks about each one separately. <strong>Microphone</strong> is
-        you talking. <strong>System Audio Recording</strong> is everyone else, coming out of your
-        speakers. meet-ai needs both. With only one, half of every conversation goes missing, and
-        nothing on screen would tell you which half.
+        A meeting has two sides, and macOS asks about each one separately.{" "}
+        <strong>Microphone</strong> is you talking. <strong>System Audio Recording</strong> is
+        everyone else, coming out of your speakers. meet-ai needs both. With only one, half of every
+        conversation goes missing, and nothing on screen would tell you which half.
       </Prose>
     </>
   );
@@ -202,8 +202,7 @@ function DeniedPath({ onRecheck }: { onRecheck: () => void }) {
         </Instruction>
         <Instruction>
           Come back here and choose <strong>Check again</strong>. If macOS asks you to quit and
-          reopen meet-ai first, do that. The change does not always work while the app is
-          running.
+          reopen meet-ai first, do that. The change does not always work while the app is running.
         </Instruction>
       </ol>
 
