@@ -8,6 +8,7 @@
  * switch itself is {@link SettingSwitch}.
  */
 
+import { Dock } from "lucide-react";
 import { appSettings, setShowInDockWhenClosed } from "@/ipc/client";
 import { SettingSwitch } from "./SettingSwitch";
 
@@ -19,6 +20,7 @@ const save = async (on: boolean) => (await setShowInDockWhenClosed(on)).showInDo
 export function DockSetting() {
   return (
     <SettingSwitch
+      icon={Dock}
       label={DOCK_SETTING_LABEL}
       detail="Closing the window keeps meet-ai running in the menu bar. Quit from the menu bar icon or with ⌘Q."
       load={load}

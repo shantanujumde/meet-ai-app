@@ -8,6 +8,7 @@
  * The switch itself is {@link SettingSwitch}.
  */
 
+import { CalendarClock } from "lucide-react";
 import { menuBarCountdown, setMenuBarCountdown } from "@/ipc/client";
 import { SettingSwitch } from "./SettingSwitch";
 
@@ -16,6 +17,7 @@ export const MENU_BAR_COUNTDOWN_LABEL = "Show next meeting in the menu bar";
 export function MenuBarCountdownSetting() {
   return (
     <SettingSwitch
+      icon={CalendarClock}
       label={MENU_BAR_COUNTDOWN_LABEL}
       detail="From an hour before it starts, like “Weekly sync in 12m”, next to the menu bar icon."
       load={menuBarCountdown}

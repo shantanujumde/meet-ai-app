@@ -7,10 +7,12 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { Info } from "lucide-react";
 import { type MouseEvent as ReactMouseEvent, useEffect, useState } from "react";
 import { modelCredits } from "@/ipc/client";
 import type { ModelCredit } from "@/ipc/types";
-import { Card, Row } from "@/ui/primitives";
+import { RowLabel, rowVariants } from "@/ui/primitives";
+import { SettingsSection } from "@/ui/settings/SettingsSection";
 
 /**
  * Open the link in the user's browser. The webview does not follow a
@@ -35,28 +37,30 @@ export function AboutSettings() {
   if (credits.length === 0) return null;
 
   return (
-    <section className="section" aria-labelledby="about-heading">
-      <h2 className="section__title" id="about-heading">
-        About
-      </h2>
-      <Card flush>
-        {credits.map((credit) => (
-          <Row stacked key={credit.url}>
-            <p className="m-0 text-footnote text-fg-secondary contrast-more:text-fg-primary">
-              {credit.text}
-            </p>
-            <a
-              href={credit.url}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(event) => openLink(event, credit.url)}
-              className="w-fit text-footnote text-accent"
-            >
-              {credit.url}
-            </a>
-          </Row>
-        ))}
-      </Card>
-    </section>
+    <SettingsSection title="About">
+      {credits.map((credit) => (
+        <div className={rowVariants()} key={credit.url}>
+          <RowLabel
+            icon={Info}
+            name="Credits"
+            mono={false}
+            detail={
+              <>
+                {credit.text}{" "}
+                <a
+                  href={credit.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => openLink(event, credit.url)}
+                  className="text-accent-text underline-offset-2 hover:underline"
+                >
+                  {credit.url}
+                </a>
+              </>
+            }
+          />
+        </div>
+      ))}
+    </SettingsSection>
   );
 }

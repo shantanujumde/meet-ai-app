@@ -9,6 +9,7 @@
  * Finder — so that is the one thing a caller passes in.
  */
 
+import { Folder, FolderOpen } from "lucide-react";
 import type { ReactNode } from "react";
 import { useChangeFolder } from "@/hooks/useChangeFolder";
 import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
@@ -33,11 +34,11 @@ export function FolderRow({
 
   return (
     <Row stacked bare={bare}>
-      <div className="flex justify-between gap-5">
-        <RowLabel name="Meetings folder" detail={root} />
+      <div className="flex items-center justify-between gap-6">
+        <RowLabel icon={Folder} name="Meetings folder" detail={root} />
         <RowValue className="flex items-center gap-4">
           {status}
-          <Button size="small" disabled={busy} onClick={() => void pick()}>
+          <Button size="small" icon={FolderOpen} disabled={busy} onClick={() => void pick()}>
             {busy ? "Moving…" : "Change…"}
           </Button>
         </RowValue>
