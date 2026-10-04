@@ -391,6 +391,25 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Parakeet TDT 0.6B v3 (speech model)
+
+Not code: the model the Parakeet engine (TUR-62) downloads at the user's
+request and runs. No file of it is in this repository or in the app bundle.
+CC-BY-4.0 asks for attribution wherever the model is used, so Settings, About
+shows the same credit (`stt::model::parakeet::CREDIT`).
+
+- URL: https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+- Licence: CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/)
+- Copyright: NVIDIA Corporation
+- Commit: `541d1f99c6b0c3cd0b11a95167540bb8edefd82b` (the model card read on
+  2026-10-04)
+- Files: none in the repository. The app downloads the ONNX export by
+  istupakov, https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx at
+  commit `8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce` (also CC-BY-4.0, derived
+  from NVIDIA's model): `encoder-model.int8.onnx`,
+  `decoder_joint-model.int8.onnx` and `vocab.txt`, pinned by SHA-256 in
+  `crates/stt/src/model/parakeet.rs`. meet-ai does not change them.
+
 ## To confirm
 
 Sources the project's documents name as a model for code we wrote, where it is
