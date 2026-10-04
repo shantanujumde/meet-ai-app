@@ -75,15 +75,16 @@ pub enum Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::processes::name_of;
 
     #[test]
     fn the_reason_names_the_app_by_its_label() {
         let zoom = Signal::Process {
-            process: "zoom.us".to_string(),
+            process: name_of("Zoom").to_string(),
         };
         assert_eq!(zoom.reason(), "Zoom is open.");
         let teams = Signal::Process {
-            process: "Microsoft Teams".to_string(),
+            process: name_of("Microsoft Teams").to_string(),
         };
         assert_eq!(teams.reason(), "Microsoft Teams is open.");
     }
