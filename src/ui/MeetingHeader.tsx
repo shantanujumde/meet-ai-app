@@ -3,6 +3,11 @@
  * it, and the folder actions on the right of the title row. Nothing else —
  * the notes switch lives with the meeting's notes, not here.
  *
+ * TUR-102: the title is big and bold with room around it; each meta fact
+ * (date, time, attendees, audio length) is quiet, led by a small icon that
+ * is decoration beside the word. The folder actions are the shared
+ * {@link IconButton}, each named for VoiceOver.
+ *
  * The meta line reads "Today · 22:36 · 50 min". While this meeting records,
  * its live state leads that line ("● Recording · 12 min"), with the length
  * from the window's own timer; the pulsing dot is never the only signal, the
@@ -13,6 +18,7 @@
  * buttons with an accessible name (MASTER.md §5.2).
  */
 
+import { Calendar, Check, Clock, Copy, FolderOpen, Timer, Users } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { MeetingSummary, RecordingStatus, UiError } from "@/ipc/types";
 import { copyText } from "@/lib/clipboard";
@@ -26,7 +32,8 @@ import {
   timestampToMs,
 } from "@/lib/format";
 import { osText } from "@/lib/osText";
-import { Button, rowDetailVariants } from "./primitives";
+import { Icon, type LucideIcon } from "./icons";
+import { IconButton, rowDetailVariants } from "./primitives";
 import { useElapsed } from "./RecordControl";
 import { ErrorState } from "./states";
 
@@ -61,16 +68,19 @@ export function MeetingHeader({
   const [copyRefused, setCopyRefused] = useState(false);
 
   return (
-    <header className="flex flex-col gap-4">
+    <header className="flex flex-col gap-5">
       <div className="flex items-start justify-between gap-5">
-        <div className="flex min-w-0 flex-col gap-2">
+        <div className="flex min-w-0 flex-col gap-3">
           <h1 className="page__title wrap-anywhere">{summary.title}</h1>
           <MetaLine summary={summary} live={live} interrupted={interrupted} />
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <IconButton label={SHOW_IN_FILE_MANAGER_LABEL} tooltip={path} onClick={onReveal}>
-            <FolderIcon />
-          </IconButton>
+          <IconButton
+            icon={FolderOpen}
+            label={SHOW_IN_FILE_MANAGER_LABEL}
+            title={path}
+            onClick={onReveal}
+          />
           <CopyPathButton path={path} onRefused={setCopyRefused} />
         </div>
       </div>
@@ -80,6 +90,16 @@ export function MeetingHeader({
       {copyRefused ? <p className={cn(rowDetailVariants(), "m-0 select-all")}>{path}</p> : null}
       {revealError ? <ErrorState error={revealError} /> : null}
     </header>
+  );
+}
+
+/** One quiet fact on the meta line: a small icon and its word. */
+function Fact({ icon, children }: { icon?: LucideIcon; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      {icon ? <Icon icon={icon} className="text-fg-tertiary" /> : null}
+      {children}
+    </span>
   );
 }
 
@@ -105,19 +125,26 @@ function MetaLine({
       </span>,
     );
   }
-  parts.push(formatRelativeDate(summary.date));
-  if (summary.time) parts.push(summary.time);
+  parts.push(<Fact icon={Calendar}>{formatRelativeDate(summary.date)}</Fact>);
+  if (summary.time) parts.push(<Fact icon={Clock}>{summary.time}</Fact>);
+  if (summary.attendees.length > 0) {
+    parts.push(<Fact icon={Users}>{attendeesWord(summary.attendees)}</Fact>);
+  }
   if (live && live.phase !== "idle") {
     if (live.startedAtMs !== null) {
-      parts.push(<LiveDuration key="elapsed" startedAtMs={live.startedAtMs} />);
+      parts.push(
+        <Fact key="elapsed" icon={Timer}>
+          <LiveDuration startedAtMs={live.startedAtMs} />
+        </Fact>,
+      );
     }
   } else {
     // A5: the WAV header is the true length; the last line stands in once
     // retention has deleted the audio.
     const length = summary.audioMs ?? timestampToMs(summary.lastTimestamp);
-    if (length !== null) parts.push(formatDuration(length));
+    if (length !== null) parts.push(<Fact icon={Timer}>{formatDuration(length)}</Fact>);
   }
-  if (summary.hasAnalysis && !live) parts.push("Wrapped up");
+  if (summary.hasAnalysis && !live) parts.push(<Fact icon={Check}>Wrapped up</Fact>);
   if (interrupted) parts.push(INTERRUPTED_LABEL);
 
   return (
@@ -137,34 +164,15 @@ function MetaLine({
   );
 }
 
+/** "3 people", or the one name when a meeting names exactly one. */
+function attendeesWord(attendees: string[]): string {
+  if (attendees.length === 1) return attendees[0] ?? "1 person";
+  return `${attendees.length} people`;
+}
+
 /** The live length, ticking on its own so the rest of the page does not re-render each second. */
 function LiveDuration({ startedAtMs }: { startedAtMs: number }) {
   return <>{formatDuration(useElapsed(startedAtMs))}</>;
-}
-
-function IconButton({
-  label,
-  tooltip,
-  onClick,
-  children,
-}: {
-  label: string;
-  tooltip: string;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <Button
-      tone="quiet"
-      size="small"
-      aria-label={label}
-      title={tooltip}
-      onClick={onClick}
-      className="w-(--control-h-regular) px-0"
-    >
-      {children}
-    </Button>
-  );
 }
 
 /**
@@ -199,64 +207,15 @@ function CopyPathButton({
   return (
     <>
       <IconButton
+        icon={copied ? Check : Copy}
         label={copied ? "Copied" : COPY_PATH_LABEL}
-        tooltip={copied ? "Copied" : COPY_PATH_LABEL}
+        title={copied ? "Copied" : COPY_PATH_LABEL}
         onClick={() => void copy()}
-      >
-        {copied ? <CheckIcon /> : <CopyIcon />}
-      </IconButton>
+      />
       {/* Heard, not seen: the check mark is the visible half. */}
       <span className="sr-only" role="status" aria-live="polite">
         {copied ? "Folder path copied to the clipboard" : ""}
       </span>
     </>
-  );
-}
-
-// --- icons ----------------------------------------------------------------
-// 16px, one stroke weight, `currentColor`, so they follow the button's text
-// colour in light, dark and Increase Contrast. Drawn for meet-ai.
-
-function Icon({ children }: { children: ReactNode }) {
-  return (
-    <svg
-      aria-hidden="true"
-      focusable="false"
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.25"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      {children}
-    </svg>
-  );
-}
-
-function FolderIcon() {
-  return (
-    <Icon>
-      <path d="M1.75 4.25a1 1 0 0 1 1-1h3.1l1.5 1.5h5.9a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z" />
-    </Icon>
-  );
-}
-
-function CopyIcon() {
-  return (
-    <Icon>
-      <rect x="5.25" y="5.25" width="8.5" height="8.5" rx="1.5" />
-      <path d="M10.75 5.25v-1.5a1.5 1.5 0 0 0-1.5-1.5h-5.5a1.5 1.5 0 0 0-1.5 1.5v5.5a1.5 1.5 0 0 0 1.5 1.5h1.5" />
-    </Icon>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <Icon>
-      <path d="M3 8.5l3.25 3.25L13 5" />
-    </Icon>
   );
 }

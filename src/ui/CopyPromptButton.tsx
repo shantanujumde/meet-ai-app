@@ -14,6 +14,7 @@
  *   user to copy themselves.
  */
 
+import { Check, Copy } from "lucide-react";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
@@ -87,6 +88,7 @@ export function CopyPromptButton({
         <Button
           size={size}
           tone={tone}
+          icon={copied ? Check : Copy}
           disabled={outcome.kind === "busy"}
           onClick={() => void handleClick()}
         >
