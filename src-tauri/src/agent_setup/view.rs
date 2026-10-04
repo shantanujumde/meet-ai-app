@@ -6,6 +6,7 @@
 //! and the models to offer (TUR-74: every model the CLI offers, and which
 //! one it picks on its own when its settings say).
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -13,6 +14,7 @@ use agent::{ClaudeHarness, CodexHarness, Harness as _, Install, ListCache};
 
 use super::{AgentChoice, AgentCli, AgentCliId, AgentCliState, AgentHarness, AgentModel};
 use crate::error::UiError;
+use crate::platform::{SIGN_IN_SHELL, SignInShell};
 
 /// Codex's own model list, per binary, so opening Settings again does not
 /// start Codex each time (up to 15 s).
@@ -36,7 +38,7 @@ impl AgentCliId {
         }
     }
 
-    /// The command typed in Terminal: `claude`, `codex`.
+    /// The command typed in PowerShell / Terminal: `claude`, `codex`.
     fn command(self) -> &'static str {
         match self {
             Self::ClaudeCode => "claude",
@@ -151,14 +153,33 @@ pub(super) fn cli_view(id: AgentCliId, install: Option<Install>, models: Vec<Str
     }
 }
 
-/// What to type in Terminal to sign in: `claude auth login`, `codex login`.
-///
-/// A copy inside an app bundle (Codex in ChatGPT.app, Claude Code in the
-/// Claude app) is not on the shell's `PATH`, so the bare name would not be
-/// found. That one gets its full path, quoted when it needs it.
+/// What to type in PowerShell / Terminal to sign in: `claude auth login`,
+/// `codex login`, written for this OS's terminal.
 pub(super) fn sign_in_command(id: AgentCliId, path: Option<&Path>) -> String {
-    let program = match path {
-        Some(path) if in_app_bundle(path) => shell_quote(&path.display().to_string()),
+    let path_var = std::env::var_os("PATH");
+    sign_in_command_for(SIGN_IN_SHELL, id, path, path_var.as_deref())
+}
+
+/// [`sign_in_command`] for `shell`, with `path_var` as the app's `PATH`.
+///
+/// The bare name is shown when the terminal will find it. A copy it would
+/// not (macOS: inside an app bundle, such as Codex in ChatGPT.app; Windows:
+/// in a folder not on `PATH`) gets its full path, quoted for that shell.
+pub(super) fn sign_in_command_for(
+    shell: SignInShell,
+    id: AgentCliId,
+    path: Option<&Path>,
+    path_var: Option<&OsStr>,
+) -> String {
+    let program = match (shell, path) {
+        (SignInShell::PosixAppBundles, Some(path)) if in_app_bundle(path) => {
+            shell_quote(&path.display().to_string())
+        }
+        (SignInShell::PowerShell, Some(path))
+            if path.is_absolute() && !folder_on_path(path, path_var) =>
+        {
+            powershell_program(&path.display().to_string())
+        }
         _ => id.command().to_owned(),
     };
     format!("{program} {}", id.sign_in_args())
@@ -171,8 +192,36 @@ fn in_app_bundle(path: &Path) -> bool {
         .any(|dir| dir.extension().is_some_and(|ext| ext == "app"))
 }
 
+/// Whether the folder holding `path` is on `path_var`. Windows folder names
+/// are case-insensitive and may end in a `\\`.
+fn folder_on_path(path: &Path, path_var: Option<&OsStr>) -> bool {
+    let Some(dir) = path.parent() else {
+        return false;
+    };
+    let normal = |p: &Path| {
+        p.to_string_lossy()
+            .trim_end_matches(['\\', '/'])
+            .to_lowercase()
+    };
+    let dir = normal(dir);
+    path_var.is_some_and(|var| std::env::split_paths(var).any(|entry| normal(&entry) == dir))
+}
+
+/// `text` as a PowerShell command: as is when it is plain, otherwise in
+/// single quotes (a `'` inside doubled) behind the call operator `&`, since a
+/// quoted string alone is just a string to PowerShell.
+fn powershell_program(text: &str) -> String {
+    let plain = text
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "\\/._-:".contains(c));
+    if plain && !text.is_empty() {
+        return text.to_owned();
+    }
+    format!("& '{}'", text.replace('\'', "''"))
+}
+
 /// `text` as one shell word: as is when it is plain, otherwise in single
-/// quotes, with any single quote inside written as `'\''`.
+/// quotes, with any single quote inside written as `'\\''`.
 fn shell_quote(text: &str) -> String {
     let plain = text
         .chars()

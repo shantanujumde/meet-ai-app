@@ -7,10 +7,17 @@
 //!
 //! 1. `agent.binary_path` from the config. When it is set, nothing else is
 //!    tried: a wrong path shows up as "not found", not as some other copy.
-//! 2. The login shell: `$SHELL -lc 'command -v claude'`.
-//! 3. Folders installers use: `~/.local/bin`, Homebrew, and the CLI's own
-//!    (`~/.claude/local` for Claude Code).
-//! 4. Copies inside app bundles: Codex inside `ChatGPT.app` or `Codex.app`,
+//! 2. The login shell: `$SHELL -lc 'command -v claude'` (macOS and Linux;
+//!    Windows has none to ask).
+//! 3. The app's own `PATH`, through the `which` crate, which respects
+//!    `PATHEXT` on Windows so `claude` finds `claude.cmd` or `claude.exe`.
+//! 4. Folders installers use (per OS, `platform::search_dirs`): on macOS
+//!    `~/.local/bin` and Homebrew; on Linux also npm's `~/.npm-global/bin`,
+//!    `~/.cargo/bin` and Linuxbrew; on Windows `%USERPROFILE%\.local\bin`,
+//!    `%APPDATA%\npm`, `%LOCALAPPDATA%\npm` and `%LOCALAPPDATA%\Programs`.
+//!    Then the CLI's own (`~/.claude/local` for Claude Code). Each name is
+//!    tried with the OS's program endings (`.exe`, `.cmd`, `.bat` on Windows).
+//! 5. Copies inside app bundles: Codex inside `ChatGPT.app` or `Codex.app`,
 //!    Claude Code inside the Claude desktop app's support folder.
 //!
 //! Then `--version`, and the CLI's own sign-in check: `claude auth status`,
@@ -21,12 +28,13 @@
 //! server, runs a hook, or opens a sign-in browser. Every command runs with an
 //! empty stdin, in a fresh empty folder, under a short time limit.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
 use crate::claude::ClaudeHarness;
-use crate::platform::is_executable;
+use crate::platform::{self, is_executable};
 use crate::process::{self, CliOutput, cli_command};
 use crate::{AgentError, Harness, Install, Job};
 
@@ -39,9 +47,6 @@ const SAMPLE_RUN_LIMIT: Duration = Duration::from_secs(60);
 
 /// Longest `--version` line kept. Anything longer is not a version.
 const MAX_VERSION_CHARS: usize = 100;
-
-/// The shell used when `$SHELL` is unset or not absolute: the macOS default.
-const DEFAULT_SHELL: &str = "/bin/zsh";
 
 /// Model for the sample run: the cheapest the CLI accepts by alias.
 const SAMPLE_MODEL: &str = "haiku";
@@ -116,8 +121,13 @@ pub const CODEX: Cli = Cli {
 pub struct Lookup {
     /// `agent.binary_path`. When set, it is the only place looked at.
     pub binary_path: Option<PathBuf>,
-    /// The login shell to ask.
-    pub shell: PathBuf,
+    /// The login shell to ask. `None` on Windows, which has none.
+    pub shell: Option<PathBuf>,
+    /// The `PATH` to search with `which`. `None`: skip that step.
+    pub path_var: Option<OsString>,
+    /// Program endings tried after each command name in [`Lookup::bin_dirs`]:
+    /// `[""]` on unix, `.exe`, `.cmd`, ... on Windows.
+    pub exe_suffixes: &'static [&'static str],
     /// The user's home folder.
     pub home: Option<PathBuf>,
     /// Install folders any CLI may be in, checked after the shell.
@@ -133,27 +143,17 @@ pub struct Lookup {
 }
 
 impl Lookup {
-    /// This Mac: `$SHELL`, the home folder, `/Applications` and
-    /// `~/Applications`, and the system temp folder.
+    /// This computer: its login shell (none on Windows), the app's `PATH`,
+    /// the home folder, the OS's install and app folders
+    /// (`platform::search_dirs`), and the system temp folder.
     pub fn system(binary_path: Option<&Path>) -> Self {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute());
-        let shell = std::env::var_os("SHELL")
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_SHELL));
-        let mut bin_dirs = Vec::new();
-        let mut app_dirs = vec![PathBuf::from("/Applications")];
-        if let Some(home) = &home {
-            bin_dirs.push(home.join(".local/bin"));
-            app_dirs.push(home.join("Applications"));
-        }
-        bin_dirs.push("/opt/homebrew/bin".into());
-        bin_dirs.push("/usr/local/bin".into());
+        let home = dirs::home_dir().filter(|p| p.is_absolute());
+        let (bin_dirs, app_dirs) = platform::search_dirs(home.as_deref());
         Self {
             binary_path: binary_path.map(Path::to_path_buf),
-            shell,
+            shell: platform::login_shell(),
+            path_var: std::env::var_os("PATH"),
+            exe_suffixes: platform::EXE_SUFFIXES,
             home,
             bin_dirs,
             app_dirs,
@@ -164,7 +164,7 @@ impl Lookup {
     }
 }
 
-/// Finds Claude Code on this Mac.
+/// Finds Claude Code on this computer.
 ///
 /// `binary_path` is `agent.binary_path`. That one config key belongs to the
 /// harness the user picked, so pass it only to that harness's detect, and
@@ -173,7 +173,7 @@ pub fn claude(binary_path: Option<&Path>) -> Option<Install> {
     detect(&CLAUDE, &Lookup::system(binary_path))
 }
 
-/// Finds Codex on this Mac.
+/// Finds Codex on this computer.
 ///
 /// `binary_path` is `agent.binary_path`: pass it only when Codex is the
 /// harness the user picked, as for [`claude`].
@@ -196,11 +196,17 @@ pub fn detect(cli: &Cli, lookup: &Lookup) -> Option<Install> {
 }
 
 /// Where `cli` is, in the order the module docs give.
+// Adapted from github.com/silverstein/minutes/crates/core/src/summarize.rs @ c1e236acf3a3aea0729976cfc6959dcceb5cd75f (MIT)
+// (`resolve_agent_path`: absolute path, then `which`, then known folders
+// with each program ending). Copyright (c) 2026 Mat Silverstein.
 pub fn find(cli: &Cli, lookup: &Lookup) -> Option<PathBuf> {
     if let Some(configured) = &lookup.binary_path {
-        let path = expand_home(configured, lookup.home.as_deref());
-        if path.as_deref().is_some_and(is_executable) {
-            return path;
+        // On Windows a configured `...\claude` may mean `claude.cmd`; only
+        // endings of that one path are tried, never another folder.
+        let found = expand_home(configured, lookup.home.as_deref())
+            .and_then(|path| with_suffixes(path, lookup.exe_suffixes).find(|p| is_executable(p)));
+        if found.is_some() {
+            return found;
         }
         tracing::warn!(cli = cli.name, path = %configured.display(), "agent.binary_path is not an executable file");
         return None;
@@ -210,13 +216,14 @@ pub fn find(cli: &Cli, lookup: &Lookup) -> Option<PathBuf> {
         .iter()
         .flat_map(|home| cli.own_dirs.iter().map(move |rel| home.join(rel)));
     from_login_shell(cli, lookup)
+        .or_else(|| from_path_var(cli, lookup))
         .or_else(|| {
             lookup
                 .bin_dirs
                 .iter()
                 .cloned()
                 .chain(own_dirs)
-                .map(|dir| dir.join(cli.name))
+                .flat_map(|dir| with_suffixes(dir.join(cli.name), lookup.exe_suffixes))
                 .find(|p| is_executable(p))
         })
         .or_else(|| {
@@ -229,10 +236,33 @@ pub fn find(cli: &Cli, lookup: &Lookup) -> Option<PathBuf> {
         .or_else(|| newest_versioned(cli, lookup))
 }
 
+/// `path` itself, then `path` with each of `suffixes` added to its name.
+fn with_suffixes(path: PathBuf, suffixes: &[&str]) -> impl Iterator<Item = PathBuf> {
+    let extra: Vec<PathBuf> = suffixes
+        .iter()
+        .filter(|s| !s.is_empty())
+        .map(|suffix| {
+            let mut name = path.as_os_str().to_owned();
+            name.push(suffix);
+            PathBuf::from(name)
+        })
+        .collect();
+    std::iter::once(path).chain(extra)
+}
+
+/// `cli.name` on [`Lookup::path_var`], through `which` (`PATHEXT` on
+/// Windows).
+fn from_path_var(cli: &Cli, lookup: &Lookup) -> Option<PathBuf> {
+    let path_var = lookup.path_var.as_ref()?;
+    which::which_in(cli.name, Some(path_var), &lookup.work_root)
+        .ok()
+        .filter(|p| p.is_absolute() && is_executable(p))
+}
+
 /// `$SHELL -lc 'command -v <name>'`. The shell's startup files may print
 /// other lines, so the last absolute path that is executable wins.
 fn from_login_shell(cli: &Cli, lookup: &Lookup) -> Option<PathBuf> {
-    let mut command = Command::new(&lookup.shell);
+    let mut command = Command::new(lookup.shell.as_ref()?);
     // `cli.name` is one of this module's constants, never user input.
     command.arg("-lc").arg(format!("command -v {}", cli.name));
     let out = probe(lookup, "login shell", command)
@@ -397,6 +427,134 @@ fn expand_home(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
+/// The search order on every OS, on a fake folder layout. Nothing is run:
+/// only `find`, which looks at files.
+#[cfg(test)]
+mod find_tests {
+    use super::*;
+    use std::fs;
+
+    /// A fake home with this OS's folders under it, and an empty work root.
+    struct Fake {
+        dir: tempfile::TempDir,
+    }
+
+    impl Fake {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            fs::create_dir_all(dir.path().join("home")).unwrap();
+            fs::create_dir_all(dir.path().join("work")).unwrap();
+            Self { dir }
+        }
+
+        fn home(&self) -> PathBuf {
+            self.dir.path().join("home")
+        }
+
+        /// This OS's lookup on the fake home: no shell, no `PATH`.
+        fn lookup(&self) -> Lookup {
+            let (bin_dirs, app_dirs) = platform::search_dirs_under(&self.home());
+            Lookup {
+                binary_path: None,
+                shell: None,
+                path_var: None,
+                exe_suffixes: platform::EXE_SUFFIXES,
+                home: Some(self.home()),
+                bin_dirs: bin_dirs
+                    .into_iter()
+                    .filter(|d| d.starts_with(self.dir.path()))
+                    .collect(),
+                app_dirs: app_dirs
+                    .into_iter()
+                    .filter(|d| d.starts_with(self.dir.path()))
+                    .collect(),
+                work_root: self.dir.path().join("work"),
+                quick_limit: Duration::from_secs(5),
+                sample_run_limit: Duration::from_secs(5),
+            }
+        }
+
+        /// A runnable file at `dir/<name><suffix>`.
+        fn program(&self, dir: &Path, name: &str, suffix: &str) -> PathBuf {
+            fs::create_dir_all(dir).unwrap();
+            let path = dir.join(format!("{name}{suffix}"));
+            fs::write(&path, "").unwrap();
+            platform::make_executable(&path);
+            path
+        }
+    }
+
+    #[test]
+    fn each_install_folder_and_program_ending_is_found() {
+        let dirs = Fake::new().lookup().bin_dirs;
+        assert!(!dirs.is_empty());
+        for (i, _) in dirs.iter().enumerate() {
+            for suffix in platform::EXE_SUFFIXES {
+                let fake = Fake::new();
+                let lookup = fake.lookup();
+                let dir = &lookup.bin_dirs[i];
+                let claude = fake.program(dir, "claude", suffix);
+                let codex = fake.program(dir, "codex", suffix);
+                assert_eq!(find(&CLAUDE, &lookup), Some(claude), "{dir:?} {suffix:?}");
+                assert_eq!(find(&CODEX, &lookup), Some(codex), "{dir:?} {suffix:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn earlier_folders_win() {
+        let fake = Fake::new();
+        let lookup = fake.lookup();
+        let suffix = platform::EXE_SUFFIXES[0];
+        let last = fake.program(lookup.bin_dirs.last().unwrap(), "claude", suffix);
+        assert_eq!(find(&CLAUDE, &lookup), Some(last));
+        let first = fake.program(&lookup.bin_dirs[0], "claude", suffix);
+        assert_eq!(find(&CLAUDE, &lookup), Some(first));
+    }
+
+    #[test]
+    fn path_is_searched_before_install_folders() {
+        let fake = Fake::new();
+        let mut lookup = fake.lookup();
+        // The ending `which` adds itself (`PATHEXT` on Windows).
+        let suffix = platform::EXE_SUFFIXES[platform::EXE_SUFFIXES.len().min(2) - 1];
+        fake.program(&lookup.bin_dirs[0], "claude", suffix);
+        let on_path = fake.program(&fake.dir.path().join("on-path"), "claude", suffix);
+        lookup.path_var = Some(fake.dir.path().join("on-path").into_os_string());
+        let found = find(&CLAUDE, &lookup).unwrap();
+        assert!(
+            found
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&on_path.to_string_lossy()),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn binary_path_wins_and_may_leave_off_the_ending() {
+        let fake = Fake::new();
+        let mut lookup = fake.lookup();
+        let suffix = *platform::EXE_SUFFIXES.last().unwrap();
+        fake.program(&lookup.bin_dirs[0], "claude", suffix);
+        let custom = fake.program(&fake.dir.path().join("custom"), "claude", suffix);
+        lookup.binary_path = Some(fake.dir.path().join("custom").join("claude"));
+        assert_eq!(find(&CLAUDE, &lookup), Some(custom));
+
+        lookup.binary_path = Some(fake.dir.path().join("nowhere").join("claude"));
+        assert_eq!(find(&CLAUDE, &lookup), None);
+    }
+
+    #[test]
+    fn a_non_program_file_is_skipped() {
+        let fake = Fake::new();
+        let lookup = fake.lookup();
+        let path = lookup.bin_dirs[0].join("claude.txt");
+        fs::create_dir_all(&lookup.bin_dirs[0]).unwrap();
+        fs::write(&path, "").unwrap();
+        assert_eq!(find(&CLAUDE, &lookup), None);
+    }
+}
+
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
@@ -427,7 +585,9 @@ mod tests {
         fn lookup(&self) -> Lookup {
             Lookup {
                 binary_path: None,
-                shell: self.script("shell", "exit 1"),
+                shell: Some(self.script("shell", "exit 1")),
+                path_var: None,
+                exe_suffixes: &[""],
                 home: Some(self.path("home")),
                 bin_dirs: vec![self.path("bin")],
                 app_dirs: vec![self.path("apps")],
@@ -472,7 +632,7 @@ esac"#;
         let mac = FakeMac::new();
         let claude = mac.fake_claude("opt/claude", CLAUDE_NEW);
         let mut lookup = mac.lookup();
-        lookup.shell = mac.script(
+        lookup.shell = Some(mac.script(
             "shell",
             &format!(
                 r#"[ "$1" = "-lc" ] && [ "$2" = "command -v claude" ] || exit 9
@@ -480,7 +640,7 @@ echo "Welcome from .zprofile"
 echo "{}""#,
                 claude.display()
             ),
-        );
+        ));
 
         let install = detect(&CLAUDE, &lookup).unwrap();
         assert_eq!(install.path, claude);
@@ -496,7 +656,7 @@ echo "{}""#,
         fs::create_dir_all(plain.parent().unwrap()).unwrap();
         fs::write(&plain, "not a program").unwrap();
         let mut lookup = mac.lookup();
-        lookup.shell = mac.script("shell", &format!("echo '{}'", plain.display()));
+        lookup.shell = Some(mac.script("shell", &format!("echo '{}'", plain.display())));
 
         assert_eq!(find(&CLAUDE, &lookup), None);
     }
@@ -505,7 +665,7 @@ echo "{}""#,
     fn a_hanging_login_shell_is_cut_off() {
         let mac = FakeMac::new();
         let mut lookup = mac.lookup();
-        lookup.shell = mac.script("shell", "sleep 30 </dev/null >/dev/null 2>&1");
+        lookup.shell = Some(mac.script("shell", "sleep 30 </dev/null >/dev/null 2>&1"));
         lookup.quick_limit = Duration::from_millis(300);
         let in_bin = mac.fake_claude("bin/claude", CLAUDE_NEW);
 
@@ -520,7 +680,7 @@ echo "{}""#,
         let configured = mac.fake_claude("custom/claude", CLAUDE_NEW);
         mac.fake_claude("bin/claude", CLAUDE_NEW);
         let mut lookup = mac.lookup();
-        lookup.shell = mac.script("shell", "echo should-not-be-asked; exit 1");
+        lookup.shell = Some(mac.script("shell", "echo should-not-be-asked; exit 1"));
         lookup.binary_path = Some(configured.clone());
 
         assert_eq!(find(&CLAUDE, &lookup), Some(configured));
