@@ -6,10 +6,9 @@
 //! running. process-wrap starts the child suspended, puts it in the job, then
 //! resumes it, so nothing escapes before it is in. `CREATE_NO_WINDOW` keeps a
 //! console window from flashing up for a console program started from the
-//! app. Execute permission is not a file bit here, so any regular file counts.
+//! app.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use process_wrap::std::{CommandWrap, CreationFlags, JobObject};
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
