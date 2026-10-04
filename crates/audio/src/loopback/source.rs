@@ -80,6 +80,13 @@ pub trait Backend: Send + 'static {
         format: &Format,
         capture: Capture,
     ) -> Result<Box<dyn LiveStream>, Error>;
+
+    /// The smallest jump in capture times that counts as a gap (TUR-38).
+    /// WASAPI's times are device positions, so the shared floor; a backend
+    /// whose callbacks can run late without losing audio raises it.
+    fn min_gap_ns(&self) -> u64 {
+        super::clock::GAP_THRESHOLD_MIN_NS
+    }
 }
 
 /// Pause every stream a failed start had opened, before the error goes back.
@@ -189,7 +196,8 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
             Arc::clone(&last_ns),
             format.channels,
             Arc::clone(&stats),
-        );
+        )
+        .with_min_gap(self.backend.min_gap_ns());
         let stream = match self.backend.start_capture(&format, capture) {
             Ok(stream) => stream,
             Err(e) => {

@@ -91,6 +91,13 @@ impl Capture {
         }
     }
 
+    /// Gaps must also be longer than `min_gap_ns` ([`Timeline::with_min_gap`],
+    /// TUR-38). Before the first packet only.
+    pub(crate) fn with_min_gap(mut self, min_gap_ns: u64) -> Self {
+        self.timeline = Timeline::with_min_gap(min_gap_ns);
+        self
+    }
+
     /// One packet from the OS: interleaved `samples` (conditioned in place),
     /// the instant its first frame was captured (`None` when the OS gave
     /// none), and whether the OS flagged it silent.

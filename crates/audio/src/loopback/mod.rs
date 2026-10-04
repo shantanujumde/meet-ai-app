@@ -38,11 +38,17 @@ pub mod capture;
 /// Capture timestamps to a monotonic timeline, and the gaps in it.
 pub mod clock;
 
+/// The `cpal` streams of a loopback backend (TUR-38).
+pub mod cpal_stream;
+
 /// When a default-device change is real: the switch policy.
 pub mod follower;
 
 /// Zero-filling buffers the OS marked silent, and non-finite samples.
 pub mod silent;
+
+/// Which device records system audio on each Linux sound server (TUR-38).
+pub mod sound_server;
 
 /// The loopback [`crate::AudioSource`] over an OS [`source::Backend`].
 pub mod source;

@@ -52,6 +52,8 @@ struct FakeBackend {
     keepalive_fails: bool,
     capture_fails: bool,
     slot: Slot,
+    /// `Backend::min_gap_ns`, when the test raises it (TUR-38).
+    min_gap_ns: Option<u64>,
 }
 
 impl FakeBackend {
@@ -68,6 +70,7 @@ impl FakeBackend {
             keepalive_fails: false,
             capture_fails: false,
             slot: Arc::clone(&slot),
+            min_gap_ns: None,
         };
         (backend, log, slot)
     }
@@ -108,6 +111,11 @@ impl Backend for FakeBackend {
             name: "capture",
             log: self.log.clone(),
         }))
+    }
+
+    fn min_gap_ns(&self) -> u64 {
+        self.min_gap_ns
+            .unwrap_or(crate::loopback::clock::GAP_THRESHOLD_MIN_NS)
     }
 }
 
@@ -421,4 +429,27 @@ fn a_reopened_segment_appends_to_the_same_file() {
         total += source.position().unwrap().1;
     }
     assert_eq!(read_wav(&path).len() as u64, total);
+}
+
+#[test]
+fn a_backend_with_a_raised_gap_floor_writes_no_silence_for_a_late_callback() {
+    // 16 kHz mono, 10 ms packets, one of them 60 ms late (TUR-38: a PipeWire
+    // callback on a busy main loop). The default floor would fill 60 ms.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("system.wav");
+    let (mut backend, _log, slot) = FakeBackend::new(16_000, 1);
+    backend.min_gap_ns = Some(100 * MS);
+    let mut source = LoopbackSource::new(backend);
+    source.start(path.clone()).unwrap();
+    let mut ns = 1_000 * MS;
+    for n in 0..100 {
+        if n == 50 {
+            ns += 60 * MS;
+        }
+        packet(&slot, &tone(160, n * 160), Some(ns), false);
+        ns += 10 * MS;
+    }
+    source.stop().unwrap();
+    let frames = read_wav(&path).len();
+    assert!(frames <= 100 * 160, "{frames} frames: silence was added");
 }

@@ -33,6 +33,37 @@ pub fn qpc_to_ns(counter: u64, frequency: u64) -> u64 {
     u64::try_from(units_100ns * 100).unwrap_or(u64::MAX)
 }
 
+/// A callback time within this much of the host clock's "now" is taken to
+/// be on the host clock already (TUR-38). `cpal`'s PipeWire host stamps
+/// callbacks with `pw_stream_get_time_n`, which is CLOCK_MONOTONIC, the
+/// Linux host clock. Its PulseAudio and ALSA hosts count from when the
+/// stream was built instead, which is nowhere near the uptime-sized host
+/// clock.
+pub const SAME_CLOCK_WINDOW_NS: u64 = 1_000_000_000;
+
+/// A callback's capture time on the host clock, from `cpal`'s two
+/// timestamps (`callback`, `capture`, in ns on the stream's own clock) and
+/// the host clock read in that callback (`now_ns`), TUR-38.
+///
+/// * The callback time is within [`SAME_CLOCK_WINDOW_NS`] of `now_ns`: the
+///   stream runs on the host clock, and `capture` is used as is.
+/// * Otherwise the stream has a clock of its own, and only the latency
+///   between the two times is kept: `now_ns - (callback - capture)`. The
+///   error is however long the callback took to get here, microseconds.
+///
+/// `None` when the stream gave no time at all, so the caller stamps the
+/// callback with `now_ns`.
+pub fn capture_on_host_clock(callback_ns: u64, capture_ns: u64, now_ns: u64) -> Option<u64> {
+    if callback_ns == 0 && capture_ns == 0 {
+        return None;
+    }
+    if now_ns.abs_diff(callback_ns) <= SAME_CLOCK_WINDOW_NS {
+        return (capture_ns != 0).then_some(capture_ns);
+    }
+    let latency = callback_ns.saturating_sub(capture_ns);
+    Some(now_ns.saturating_sub(latency)).filter(|&ns| ns != 0)
+}
+
 /// How long `frames` last at `rate`, in ns. 0 for a zero rate.
 pub fn frames_to_ns(frames: u64, rate: u32) -> u64 {
     if rate == 0 {
@@ -65,9 +96,21 @@ pub struct Stamp {
 pub struct Timeline {
     /// The previous packet's start and its frame count.
     last: Option<(u64, u64)>,
+    /// The smallest jump that counts as a gap; `None` is
+    /// [`GAP_THRESHOLD_MIN_NS`] (TUR-38).
+    min_gap_ns: Option<u64>,
 }
 
 impl Timeline {
+    /// A timeline whose gaps must also be longer than `min_gap_ns`, for a
+    /// stream whose callbacks can run late without losing audio (TUR-38).
+    pub fn with_min_gap(min_gap_ns: u64) -> Self {
+        Self {
+            last: None,
+            min_gap_ns: Some(min_gap_ns),
+        }
+    }
+
     /// One packet: its capture time (`None` or 0 when the OS gave none),
     /// how many frames it holds, and the rate they run at.
     ///
@@ -99,7 +142,8 @@ impl Timeline {
         if let Some(ns) = raw.filter(|&ns| ns > last_ns) {
             stamp.host_ns = ns;
             let late = ns.saturating_sub(expected);
-            if late > last_len.max(GAP_THRESHOLD_MIN_NS) {
+            let floor = self.min_gap_ns.unwrap_or(GAP_THRESHOLD_MIN_NS);
+            if late > last_len.max(floor) {
                 stamp.gap_capped = late > MAX_GAP_FILL_NS;
                 stamp.gap_frames = ns_to_frames(late.min(MAX_GAP_FILL_NS), rate);
             }
@@ -135,6 +179,43 @@ mod tests {
             qpc_to_ns(86_400 * 10_000_000, 10_000_000),
             86_400 * 1_000_000_000
         );
+    }
+
+    #[test]
+    fn a_stream_on_the_host_clock_keeps_its_capture_time() {
+        // PipeWire: both times are CLOCK_MONOTONIC, an hour of uptime in.
+        let now = 3_600_000 * MS;
+        let callback = now - 2 * MS;
+        let capture = callback - 21 * MS;
+        assert_eq!(capture_on_host_clock(callback, capture, now), Some(capture));
+        // A little ahead of our read is the same clock too.
+        assert_eq!(
+            capture_on_host_clock(now + 5 * MS, now - 16 * MS, now),
+            Some(now - 16 * MS)
+        );
+    }
+
+    #[test]
+    fn a_stream_on_its_own_clock_keeps_only_the_latency() {
+        // PulseAudio: 1.5 s since the stream was built, 40 ms of latency.
+        let now = 3_600_000 * MS;
+        let mapped = capture_on_host_clock(1_500 * MS, 1_460 * MS, now);
+        assert_eq!(mapped, Some(now - 40 * MS));
+        // A capture time past the callback time is no latency, not negative.
+        assert_eq!(
+            capture_on_host_clock(1_500 * MS, 1_600 * MS, now),
+            Some(now)
+        );
+    }
+
+    #[test]
+    fn no_stream_time_leaves_it_to_the_caller() {
+        let now = 3_600_000 * MS;
+        assert_eq!(capture_on_host_clock(0, 0, now), None);
+        // On the host clock but with no capture time.
+        assert_eq!(capture_on_host_clock(now, 0, now), None);
+        // A host clock read of 0 maps to nothing usable either.
+        assert_eq!(capture_on_host_clock(5_000 * MS, 4_000 * MS, 0), None);
     }
 
     #[test]
@@ -228,6 +309,19 @@ mod tests {
         assert_eq!(s.host_ns, 1_030 * MS);
         // A real time again is taken as is.
         assert_eq!(stamp(&mut t, 1_040 * MS).host_ns, 1_040 * MS);
+    }
+
+    #[test]
+    fn a_raised_gap_floor_lets_late_callbacks_through() {
+        // A callback 60 ms late, then the queued one right behind it: under
+        // a 100 ms floor that is jitter, not 60 ms of invented silence.
+        let mut t = Timeline::with_min_gap(100 * MS);
+        stamp(&mut t, 1_000 * MS);
+        assert_eq!(stamp(&mut t, 1_070 * MS).gap_frames, 0);
+        assert_eq!(stamp(&mut t, 1_071 * MS).gap_frames, 0);
+        // A real silence of 2 s is still filled.
+        let s = stamp(&mut t, 1_081 * MS + 2_000 * MS);
+        assert_eq!(s.gap_frames, 2 * u64::from(RATE));
     }
 
     #[test]

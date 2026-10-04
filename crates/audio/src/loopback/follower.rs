@@ -131,6 +131,63 @@ impl DeviceWatch {
     }
 }
 
+/// The least time between two reopens a lost stream asks for (TUR-38), so a
+/// stream that dies again at once costs one segment per interval, not one
+/// per tick.
+pub const LOSS_REOPEN_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Turns a running count of lost capture streams (a sink removed under a
+/// PipeWire stream: `cpal`'s `DeviceNotAvailable`) into a generation number
+/// the device read reports next to the endpoint, so the session sees a
+/// changed device and opens a new segment (TUR-38).
+///
+/// A loss bumps the generation at most once per [`LOSS_REOPEN_INTERVAL`];
+/// losses inside that wait are reported together when it ends. A watch not
+/// polled for [`STALE_AFTER`] (no recording) forgets the losses it has not
+/// reported, so a new recording does not start with a reopen.
+#[derive(Debug, Default)]
+pub struct LossWatch {
+    /// The loss count already folded into `generation`.
+    seen: u64,
+    generation: u64,
+    last_bump_ns: Option<u64>,
+    last_poll_ns: Option<u64>,
+}
+
+impl LossWatch {
+    /// A watch that has seen nothing; `const` so it can be a `static`.
+    pub const fn new() -> Self {
+        Self {
+            seen: 0,
+            generation: 0,
+            last_bump_ns: None,
+            last_poll_ns: None,
+        }
+    }
+
+    /// The generation to report now, on a monotonic clock `now_ns`, given
+    /// `losses`, the number of streams lost so far.
+    pub fn poll(&mut self, now_ns: u64, losses: u64) -> u64 {
+        let stale = self
+            .last_poll_ns
+            .is_none_or(|last| now_ns.saturating_sub(last) >= STALE_AFTER.as_nanos() as u64);
+        self.last_poll_ns = Some(now_ns);
+        if stale {
+            self.seen = losses;
+            return self.generation;
+        }
+        let rested = self.last_bump_ns.is_none_or(|last| {
+            now_ns.saturating_sub(last) >= LOSS_REOPEN_INTERVAL.as_nanos() as u64
+        });
+        if losses > self.seen && rested {
+            self.seen = losses;
+            self.generation = self.generation.wrapping_add(1);
+            self.last_bump_ns = Some(now_ns);
+        }
+        self.generation
+    }
+}
+
 /// A `Copy` key for an endpoint id string, which is what the session compares
 /// (`crate::platform::DeviceId`). FNV-1a: stable across runs and builds,
 /// unlike `std`'s hasher.
@@ -302,6 +359,46 @@ mod tests {
             Some("headset"),
             "the new recording's baseline, not a switch it must confirm"
         );
+    }
+
+    #[test]
+    fn a_lost_stream_bumps_the_generation_once() {
+        let mut watch = LossWatch::new();
+        assert_eq!(watch.poll(0, 0), 0, "the baseline");
+        assert_eq!(watch.poll(S / 5, 0), 0);
+        assert_eq!(watch.poll(2 * S / 5, 1), 1, "the sink went away");
+        assert_eq!(watch.poll(3 * S / 5, 1), 1, "and stays reported once");
+    }
+
+    #[test]
+    fn losses_right_after_a_bump_wait_for_the_interval() {
+        let mut watch = LossWatch::new();
+        watch.poll(0, 0);
+        assert_eq!(watch.poll(S, 1), 1);
+        // The reopened stream dies at once, twice: one more bump, 10 s on.
+        let mut seen = Vec::new();
+        let mut ms = 1_200;
+        while ms < 15_000 {
+            seen.push((ms, watch.poll(ms * 1_000_000, 3)));
+            ms += 200;
+        }
+        let bumps: Vec<u64> = seen
+            .windows(2)
+            .filter(|w| w[0].1 != w[1].1)
+            .map(|w| w[1].0)
+            .collect();
+        assert_eq!(bumps, vec![11_000]);
+        assert_eq!(seen.last().map(|(_, g)| *g), Some(2));
+    }
+
+    #[test]
+    fn a_stale_loss_watch_absorbs_old_losses() {
+        let mut watch = LossWatch::new();
+        watch.poll(0, 0);
+        // Lost while no recording polled; an hour later a new one starts.
+        assert_eq!(watch.poll(3_600 * S, 4), 0);
+        assert_eq!(watch.poll(3_600 * S + S / 5, 4), 0);
+        assert_eq!(watch.poll(3_600 * S + 2 * S / 5, 5), 1);
     }
 
     #[test]
