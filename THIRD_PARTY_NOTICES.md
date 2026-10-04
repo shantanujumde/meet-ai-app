@@ -247,6 +247,21 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## process-wrap
+
+- URL: https://github.com/watchexec/process-wrap
+- Licence: Apache-2.0 (process-wrap is Apache-2.0 OR MIT; we chose Apache-2.0,
+  because the two functions came to process-wrap from watchexec under
+  Apache-2.0 only). Full text: our [`LICENSE`](./LICENSE).
+- Copyright: Copyrights in this project are retained by their contributors
+  (process-wrap `COPYRIGHT`); `job_object()` and `resume_threads()` are
+  adapted from watchexec `lib/src/process.rs`, copyright Matt Green.
+- Commit: ca45003a831ac125e6673b8759430e5ef33cc1db
+- Files:
+  - `crates/agent/src/platform/windows_job.rs` (`guard_tree`,
+    `resume_threads`) from `src/windows.rs` (`make_job_object`,
+    `resume_threads`)
+
 ## To confirm
 
 Sources the project's documents name as a model for code we wrote, where it is

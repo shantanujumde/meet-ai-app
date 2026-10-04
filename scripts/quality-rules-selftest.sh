@@ -325,8 +325,16 @@ printf '#[cfg(unix)]\nfn a() {}\n' >crates/x/src/old.rs
 printf '#[cfg(windows)]\nfn a() {}\n' >crates/x/src/platform/windows.rs
 printf '#[cfg(not(any(target_os = "android", target_os = "ios")))]\nmod tray;\n' >src-tauri/src/lib.rs
 # A known-debt line (R10_DEBT, keyed on its text, not its line number: here
-# at line 3, not 504 as on main), then a new cfg with the same text and one
-# with other text below it.
+# at line 3), then a new cfg with the same text and one with other text below
+# it. The real list is empty since TUR-54, so this test's copy of the script
+# gets one entry; the copy is restored after.
+cp scripts/quality-rules.sh "$work/quality-rules.sh.orig"
+sed "s/^R10_DEBT=''\$/R10_DEBT='crates\/agent\/src\/detect.rs|#[cfg(unix)]'/" \
+  "$work/quality-rules.sh.orig" >scripts/quality-rules.sh
+grep -q "^R10_DEBT='crates/agent/src/detect.rs" scripts/quality-rules.sh || {
+  echo "FAIL R10: could not put a debt entry in the selftest's copy"
+  exit 1
+}
 {
   echo '// line 1'
   echo '// line 2'
@@ -336,22 +344,23 @@ printf '#[cfg(not(any(target_os = "android", target_os = "ios")))]\nmod tray;\n'
   echo '    mod more_unix_tests {}'
   echo '#[cfg(windows)]'
   echo 'mod windows_tests {}'
-} >crates/agent/src/process.rs
+} >crates/agent/src/detect.rs
 git add -A
 git commit -q -m "tree"
 expect10tree "R10 tree: a cfg already in the base fails" crates/x/src/old.rs 1 ERROR
 expect10tree "R10 tree: the platform module passes" crates/x/src/platform/windows.rs 1 none
 expect10tree "R10 tree: the desktop-vs-mobile gate passes" src-tauri/src/lib.rs 1 none
-expect10tree "R10 tree: a known-debt line warns, wherever it sits" crates/agent/src/process.rs 3 WARN
-expect10tree "R10 tree: a new cfg with the debt line's text fails" crates/agent/src/process.rs 5 ERROR
-expect10tree "R10 tree: a new cfg with other text in a debt file fails" crates/agent/src/process.rs 7 ERROR
+expect10tree "R10 tree: a known-debt line warns, wherever it sits" crates/agent/src/detect.rs 3 WARN
+expect10tree "R10 tree: a new cfg with the debt line's text fails" crates/agent/src/detect.rs 5 ERROR
+expect10tree "R10 tree: a new cfg with other text in a debt file fails" crates/agent/src/detect.rs 7 ERROR
 ran=$((ran + 1))
-if scripts/quality-rules.sh crates/agent/src/process.rs >/dev/null 2>&1; then
+if scripts/quality-rules.sh crates/agent/src/detect.rs >/dev/null 2>&1; then
   echo "ok   R10: the known-debt lines pass a normal (added-lines) run"
 else
   echo "FAIL R10: the known-debt lines pass a normal (added-lines) run"
   failed=$((failed + 1))
 fi
+cp "$work/quality-rules.sh.orig" scripts/quality-rules.sh
 git rm -rq crates/x crates/agent src-tauri
 git commit -q -m "untree"
 ran=$((ran + 1))

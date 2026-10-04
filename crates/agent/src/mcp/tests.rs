@@ -187,11 +187,10 @@ fn a_blank_server_has_no_tools() {
     }
 }
 
-#[cfg(unix)]
+/// Runs a copy of `fake-cli` (test-support) as the CLI, on every OS.
 mod fake_cli {
     use super::*;
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
 
     /// A fake CLI in a temp folder. It writes its arguments to `args.log`,
@@ -206,27 +205,16 @@ mod fake_cli {
     impl FakeCli {
         fn new(expected: &str, stdout: &str, exit: i32) -> Self {
             let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("cli");
-            let log = |name: &str| dir.path().join(name).display().to_string();
-            let script = format!(
-                "#!/bin/sh
-printf '%s\\n' \"$*\" > '{args}'
-pwd -P > '{cwd}'
-ls -A | wc -l >> '{cwd}'
-cat > '{stdin}'
-if [ \"$*\" != '{expected}' ]; then exit 7; fi
-cat <<'MEET_AI_EOF'
-{stdout}MEET_AI_EOF
-echo 'boom' >&2
-exit {exit}
-",
-                args = log("args.log"),
-                cwd = log("cwd.log"),
-                stdin = log("stdin.log"),
-            );
-            fs::write(&path, script).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-            Self { dir, path }
+            let cli = test_support::FakeCli::install(dir.path(), "cli");
+            cli.set("log_dir", dir.path().display().to_string())
+                .set("expect_args", expected)
+                .set("stdout", stdout)
+                .set("stderr", "boom\n")
+                .set("code", exit.to_string());
+            Self {
+                path: cli.path().to_path_buf(),
+                dir,
+            }
         }
 
         fn log(&self, name: &str) -> String {
@@ -323,7 +311,9 @@ exit {exit}
     #[test]
     fn a_hanging_list_is_stopped_at_the_time_limit() {
         let cli = FakeCli::new("never", "", 0);
-        fs::write(&cli.path, "#!/bin/sh\nsleep 30\n").unwrap();
+        let settings = cli.dir.path().join("cli.fake");
+        fs::remove_file(settings.join("expect_args")).unwrap();
+        fs::write(settings.join("sleep"), "30").unwrap();
         let err = claude_servers(&cli.path, Duration::from_millis(300)).unwrap_err();
         assert!(matches!(err, AgentError::TimedOut { .. }), "{err:?}");
     }

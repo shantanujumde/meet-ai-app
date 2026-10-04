@@ -21,6 +21,12 @@ thiserror.workspace = true
 tracing.workspace = true
 # PATH lookup that respects PATHEXT, so `claude` finds `claude.cmd` (TUR-53).
 which.workspace = true
+# The whole process tree on Cancel and the time limit (TUR-54): a process
+# group on unix, a Job Object on Windows.
+process-wrap.workspace = true
+# The fake harness runs the `fake-cli` program from here (feature
+# `test-support` only).
+test-support = { workspace = true, optional = true }
 
 [dev-dependencies]
 # The crate's own tests use the fake harness.
@@ -28,4 +34,14 @@ agent = { path = ".", features = ["test-support"] }
 
 [features]
 # `FakeHarness`, for tests in this crate and in the app. Never on in a build.
-test-support = []
+test-support = ["dep:test-support"]
+
+# No console window flashes up for a CLI started on Windows, and its
+# kill-on-close Job Object (TUR-54, platform/windows_job.rs).
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+  "Win32_Security",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }

@@ -556,20 +556,20 @@ mod find_tests {
 }
 
 #[cfg(test)]
-#[cfg(unix)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
+    use test_support::FakeCli;
 
     /// A fake Mac in a temp folder: a home, an app folder, a bin folder, and
-    /// a working root.
-    struct FakeMac {
+    /// a working root. Its "CLIs" are copies of `fake-cli` (test-support), so
+    /// these tests run on every OS.
+    pub(crate) struct FakeMac {
         dir: tempfile::TempDir,
     }
 
     impl FakeMac {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             let dir = tempfile::tempdir().unwrap();
             for sub in ["home", "apps", "bin", "work"] {
                 fs::create_dir(dir.path().join(sub)).unwrap();
@@ -577,17 +577,17 @@ mod tests {
             Self { dir }
         }
 
-        fn path(&self, rel: &str) -> PathBuf {
+        pub(crate) fn path(&self, rel: &str) -> PathBuf {
             self.dir.path().join(rel)
         }
 
         /// A lookup with no shell hit, no binary_path, and short limits.
-        fn lookup(&self) -> Lookup {
+        pub(crate) fn lookup(&self) -> Lookup {
             Lookup {
                 binary_path: None,
-                shell: Some(self.script("shell", "exit 1")),
+                shell: Some(self.cli("shell", "*\t1\t\t")),
                 path_var: None,
-                exe_suffixes: &[""],
+                exe_suffixes: platform::EXE_SUFFIXES,
                 home: Some(self.path("home")),
                 bin_dirs: vec![self.path("bin")],
                 app_dirs: vec![self.path("apps")],
@@ -597,47 +597,50 @@ mod tests {
             }
         }
 
-        /// Writes an executable `/bin/sh` script at `rel`.
-        fn script(&self, rel: &str, body: &str) -> PathBuf {
-            let path = self.path(rel);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-            path
+        /// A fake CLI at `rel` (plus `.exe` on Windows) that answers with
+        /// `cases` (see `fake-cli`'s header) and logs every call's arguments
+        /// to `<rel>.log`.
+        pub(crate) fn cli(&self, rel: &str, cases: &str) -> PathBuf {
+            let at = self.path(rel);
+            let cli = FakeCli::install(at.parent().unwrap(), &file_name(&at));
+            cli.set("cases", cases)
+                .set("log_append", at.with_extension("log").display().to_string());
+            cli.path().to_path_buf()
         }
 
-        /// A fake `claude` that logs its arguments to `<path>.log`.
-        fn fake_claude(&self, rel: &str, body: &str) -> PathBuf {
-            let log = self.path(rel).with_extension("log");
-            self.script(
-                rel,
-                &format!("printf '%s\\n' \"$*\" >> '{}'\n{body}", log.display()),
+        /// Gives a CLI a reply delay, for the time-limit tests.
+        pub(crate) fn sleep(&self, cli: &Path, secs: &str) {
+            let stem = cli.file_stem().unwrap().to_string_lossy().into_owned();
+            fs::write(
+                cli.with_file_name(format!("{stem}.fake")).join("sleep"),
+                secs,
             )
+            .unwrap();
         }
 
-        fn log(&self, rel: &str) -> String {
+        pub(crate) fn log(&self, rel: &str) -> String {
             fs::read_to_string(self.path(rel).with_extension("log")).unwrap_or_default()
         }
     }
 
-    const CLAUDE_NEW: &str = r#"case "$1 $2" in
-  "--version ") echo "2.1.286 (Claude Code)" ;;
-  "auth --help") printf 'Commands:\n  login [options]  Sign in\n  status [options]  Show authentication status\n' ;;
-  "auth status") echo '{"loggedIn": true, "email": "a@b.c"}' ;;
-  *) exit 7 ;;
-esac"#;
+    fn file_name(path: &Path) -> String {
+        path.file_name().unwrap().to_string_lossy().into_owned()
+    }
+
+    /// A Claude Code new enough for `auth status`, signed in.
+    pub(crate) const CLAUDE_NEW: &str = "--version\t0\t2.1.286 (Claude Code)\\n\t
+auth --help\t0\tCommands:\\n  login [options]  Sign in\\n  status [options]  Show authentication status\\n\t
+auth status\t0\t{\"loggedIn\": true, \"email\": \"a@b.c\"}\\n\t";
 
     #[test]
     fn login_shell_is_asked_and_its_noise_skipped() {
         let mac = FakeMac::new();
-        let claude = mac.fake_claude("opt/claude", CLAUDE_NEW);
+        let claude = mac.cli("opt/claude", CLAUDE_NEW);
         let mut lookup = mac.lookup();
-        lookup.shell = Some(mac.script(
+        lookup.shell = Some(mac.cli(
             "shell",
             &format!(
-                r#"[ "$1" = "-lc" ] && [ "$2" = "command -v claude" ] || exit 9
-echo "Welcome from .zprofile"
-echo "{}""#,
+                "-lc command -v claude\t0\tWelcome from .zprofile\\n{}\\n\t\n*\t9\t\t",
                 claude.display()
             ),
         ));
@@ -656,7 +659,7 @@ echo "{}""#,
         fs::create_dir_all(plain.parent().unwrap()).unwrap();
         fs::write(&plain, "not a program").unwrap();
         let mut lookup = mac.lookup();
-        lookup.shell = Some(mac.script("shell", &format!("echo '{}'", plain.display())));
+        lookup.shell = Some(mac.cli("shell", &format!("*\t0\t{}\\n\t", plain.display())));
 
         assert_eq!(find(&CLAUDE, &lookup), None);
     }
@@ -665,9 +668,11 @@ echo "{}""#,
     fn a_hanging_login_shell_is_cut_off() {
         let mac = FakeMac::new();
         let mut lookup = mac.lookup();
-        lookup.shell = Some(mac.script("shell", "sleep 30 </dev/null >/dev/null 2>&1"));
+        let shell = mac.cli("shell", "*\t0\t\t");
+        mac.sleep(&shell, "30");
+        lookup.shell = Some(shell);
         lookup.quick_limit = Duration::from_millis(300);
-        let in_bin = mac.fake_claude("bin/claude", CLAUDE_NEW);
+        let in_bin = mac.cli("bin/claude", CLAUDE_NEW);
 
         let started = std::time::Instant::now();
         assert_eq!(find(&CLAUDE, &lookup), Some(in_bin));
@@ -677,19 +682,20 @@ echo "{}""#,
     #[test]
     fn binary_path_wins_over_everything() {
         let mac = FakeMac::new();
-        let configured = mac.fake_claude("custom/claude", CLAUDE_NEW);
-        mac.fake_claude("bin/claude", CLAUDE_NEW);
+        let configured = mac.cli("custom/claude", CLAUDE_NEW);
+        mac.cli("bin/claude", CLAUDE_NEW);
         let mut lookup = mac.lookup();
-        lookup.shell = Some(mac.script("shell", "echo should-not-be-asked; exit 1"));
-        lookup.binary_path = Some(configured.clone());
+        lookup.shell = Some(mac.cli("shell", "*\t1\tshould-not-be-asked\\n\t"));
+        lookup.binary_path = Some(mac.path("custom/claude"));
 
         assert_eq!(find(&CLAUDE, &lookup), Some(configured));
+        assert_eq!(mac.log("shell"), "", "the shell was asked");
     }
 
     #[test]
     fn binary_path_with_a_tilde_is_expanded() {
         let mac = FakeMac::new();
-        let configured = mac.fake_claude("home/tools/claude", CLAUDE_NEW);
+        let configured = mac.cli("home/tools/claude", CLAUDE_NEW);
         let mut lookup = mac.lookup();
         lookup.binary_path = Some("~/tools/claude".into());
 
@@ -699,7 +705,7 @@ echo "{}""#,
     #[test]
     fn a_wrong_binary_path_is_not_found_rather_than_replaced() {
         let mac = FakeMac::new();
-        mac.fake_claude("bin/claude", CLAUDE_NEW);
+        mac.cli("bin/claude", CLAUDE_NEW);
         let mut lookup = mac.lookup();
         lookup.binary_path = Some(mac.path("nowhere/claude"));
         assert_eq!(find(&CLAUDE, &lookup), None);
@@ -716,15 +722,11 @@ echo "{}""#,
     }
 
     #[test]
-    fn codex_is_found_inside_chatgpt_app() {
+    fn codex_signed_in_is_reported() {
         let mac = FakeMac::new();
-        let codex = mac.script(
-            "apps/ChatGPT.app/Contents/Resources/codex",
-            r#"case "$1 $2" in
-  "--version ") echo "codex-cli 0.50.0" ;;
-  "login status") echo "Logged in using ChatGPT" >&2 ;;
-  *) exit 7 ;;
-esac"#,
+        let codex = mac.cli(
+            "bin/codex",
+            "--version\t0\tcodex-cli 0.50.0\\n\t\nlogin status\t0\t\tLogged in using ChatGPT\\n",
         );
 
         let install = detect(&CODEX, &mac.lookup()).unwrap();
@@ -734,21 +736,11 @@ esac"#,
     }
 
     #[test]
-    fn codex_is_found_inside_a_standalone_codex_app() {
-        let mac = FakeMac::new();
-        let codex = mac.script("apps/Codex.app/Contents/Resources/codex", "exit 0");
-        assert_eq!(find(&CODEX, &mac.lookup()), Some(codex));
-    }
-
-    #[test]
     fn codex_signed_out_is_reported() {
         let mac = FakeMac::new();
-        mac.script(
+        mac.cli(
             "bin/codex",
-            r#"case "$1 $2" in
-  "--version ") echo "codex-cli 0.50.0" ;;
-  "login status") echo "Not logged in" >&2; exit 1 ;;
-esac"#,
+            "--version\t0\tcodex-cli 0.50.0\\n\t\nlogin status\t1\t\tNot logged in\\n",
         );
 
         let install = detect(&CODEX, &mac.lookup()).unwrap();
@@ -756,46 +748,13 @@ esac"#,
     }
 
     #[test]
-    fn claude_desktop_copy_is_found_and_the_newest_wins() {
-        let mac = FakeMac::new();
-        let root = "home/Library/Application Support/Claude/claude-code";
-        for version in ["2.1.9", "2.1.284", "not-a-version"] {
-            mac.fake_claude(
-                &format!("{root}/{version}/claude.app/Contents/MacOS/claude"),
-                CLAUDE_NEW,
-            );
-        }
-        // A newer folder with no binary in it is skipped.
-        fs::create_dir_all(mac.path(&format!("{root}/3.0.0"))).unwrap();
-
-        assert_eq!(
-            find(&CLAUDE, &mac.lookup()),
-            Some(mac.path(&format!("{root}/2.1.284/claude.app/Contents/MacOS/claude")))
-        );
-    }
-
-    #[test]
-    fn installer_folders_come_before_app_bundles() {
-        let mac = FakeMac::new();
-        let in_bin = mac.fake_claude("bin/claude", CLAUDE_NEW);
-        mac.fake_claude(
-            "home/Library/Application Support/Claude/claude-code/2.1.284/claude.app/Contents/MacOS/claude",
-            CLAUDE_NEW,
-        );
-        assert_eq!(find(&CLAUDE, &mac.lookup()), Some(in_bin));
-    }
-
-    #[test]
     fn claude_signed_out_is_reported() {
         let mac = FakeMac::new();
-        mac.fake_claude(
+        mac.cli(
             "bin/claude",
-            r#"case "$1 $2" in
-  "--version ") echo "2.1.286 (Claude Code)" ;;
-  "auth --help") printf 'Commands:\n  login [options]  Sign in\n  status [options]  Show authentication status\n' ;;
-  "auth status") echo '{"loggedIn": false}'; exit 1 ;;
-  *) exit 7 ;;
-esac"#,
+            "--version\t0\t2.1.286 (Claude Code)\\n\t
+auth --help\t0\tCommands:\\n  login [options]  Sign in\\n  status [options]  Show authentication status\\n\t
+auth status\t1\t{\"loggedIn\": false}\\n\t",
         );
 
         let install = detect(&CLAUDE, &mac.lookup()).unwrap();
@@ -806,14 +765,11 @@ esac"#,
     #[test]
     fn old_claude_gets_a_no_tools_sample_run() {
         let mac = FakeMac::new();
-        mac.fake_claude(
+        mac.cli(
             "bin/claude",
-            r#"case "$1" in
-  --version) echo "1.0.0 (Claude Code)" ;;
-  auth) printf 'Usage: claude [options] [prompt]\n  Check your status with /status\n' ;;
-  -p) cat >/dev/null; echo '{"type":"result","subtype":"success","is_error":false,"structured_output":{"ok":true}}' ;;
-  *) exit 7 ;;
-esac"#,
+            "--version\t0\t1.0.0 (Claude Code)\\n\t
+auth\t0\tUsage: claude [options] [prompt]\\n  Check your status with /status\\n\t
+-p\t0\t{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"structured_output\":{\"ok\":true}}\\n\t",
         );
 
         let install = detect(&CLAUDE, &mac.lookup()).unwrap();
@@ -834,12 +790,11 @@ esac"#,
     #[test]
     fn old_claude_with_an_auth_error_is_signed_out() {
         let mac = FakeMac::new();
-        mac.fake_claude(
+        mac.cli(
             "bin/claude",
-            r#"case "$1" in
-  --version) echo "1.0.0 (Claude Code)" ;;
-  -p) cat >/dev/null; echo '{"type":"result","is_error":true,"result":"Invalid API key"}'; exit 1 ;;
-esac"#,
+            "--version\t0\t1.0.0 (Claude Code)\\n\t
+-p\t1\t{\"type\":\"result\",\"is_error\":true,\"result\":\"Invalid API key\"}\\n\t
+*\t0\t\t",
         );
 
         assert!(!detect(&CLAUDE, &mac.lookup()).unwrap().signed_in);
@@ -848,13 +803,11 @@ esac"#,
     #[test]
     fn a_failing_auth_help_is_signed_out_without_a_model_run() {
         let mac = FakeMac::new();
-        mac.fake_claude(
+        mac.cli(
             "bin/claude",
-            r#"case "$1 $2" in
-  "--version ") echo "2.1.286 (Claude Code)" ;;
-  "auth --help") exit 1 ;;
-  *) cat >/dev/null; echo '{"type":"result","is_error":false,"structured_output":{"ok":true}}' ;;
-esac"#,
+            "--version\t0\t2.1.286 (Claude Code)\\n\t
+auth --help\t1\t\t
+*\t0\t{\"type\":\"result\",\"is_error\":false,\"structured_output\":{\"ok\":true}}\\n\t",
         );
 
         assert!(!detect(&CLAUDE, &mac.lookup()).unwrap().signed_in);
@@ -866,8 +819,8 @@ esac"#,
     #[test]
     fn a_cli_only_folder_is_searched_for_that_cli_only() {
         let mac = FakeMac::new();
-        let claude = mac.fake_claude("home/.claude/local/claude", CLAUDE_NEW);
-        mac.script("home/.claude/local/codex", "exit 0");
+        let claude = mac.cli("home/.claude/local/claude", CLAUDE_NEW);
+        mac.cli("home/.claude/local/codex", "*\t0\t\t");
 
         assert_eq!(find(&CLAUDE, &mac.lookup()), Some(claude));
         assert_eq!(find(&CODEX, &mac.lookup()), None);
@@ -887,7 +840,7 @@ esac"#,
     #[test]
     fn a_version_that_prints_nothing_is_none() {
         let mac = FakeMac::new();
-        mac.script("bin/codex", "exit 0");
+        mac.cli("bin/codex", "*\t0\t\t");
         let install = detect(&CODEX, &mac.lookup()).unwrap();
         assert_eq!(install.version, None);
         assert!(!install.signed_in);

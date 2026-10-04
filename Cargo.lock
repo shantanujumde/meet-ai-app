@@ -32,12 +32,15 @@ dependencies = [
  "agent",
  "dirs 6.0.0",
  "jsonschema",
+ "process-wrap",
  "serde",
  "serde_json",
  "tempfile",
+ "test-support",
  "thiserror 2.0.20",
  "tracing",
  "which",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -4573,6 +4576,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "process-wrap"
+version = "10.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f21b97672d2dc848e7b25701ab4535618b92f4861c13cc3f7f7bed52ad3c8da"
+dependencies = [
+ "indexmap 2.14.2",
+ "nix",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "prompts"
 version = "0.3.0"
 dependencies = [
@@ -6568,6 +6582,9 @@ dependencies = [
 [[package]]
 name = "test-support"
 version = "0.3.0"
+dependencies = [
+ "sysinfo",
+]
 
 [[package]]
 name = "thiserror"

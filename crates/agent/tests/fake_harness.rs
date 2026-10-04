@@ -1,8 +1,6 @@
 //! The fake harness, driven only through `dyn Harness`, the way the app holds
 //! the user's pick. Every run goes through the real child-process path.
 
-#![cfg(unix)]
-
 use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};

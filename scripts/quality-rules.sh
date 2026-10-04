@@ -743,12 +743,9 @@ R10_FIND_AWK='
 # file still fails (even one spelled the same). Matters for --r10-tree only: on
 # added lines, an untouched old cfg never counts. Better than editing an entry:
 # make the test portable and drop it.
-#   crates/agent/src/process.rs     TUR-54 removes this (unix-only /bin/sh fake harness tests)
-#   crates/agent/src/detect.rs      TUR-54 removes this (same)
-#   crates/agent/src/mcp/tests.rs   TUR-54 removes this (same)
-R10_DEBT='crates/agent/src/process.rs|#[cfg(unix)]
-crates/agent/src/detect.rs|#[cfg(unix)]
-crates/agent/src/mcp/tests.rs|#[cfg(unix)]'
+# Empty since TUR-54. scripts/quality-rules-selftest.sh puts an entry in its
+# own copy of this file to check the mechanism still works.
+R10_DEBT=''
 
 rule_r10() {
   local f=$1 first last
@@ -771,7 +768,7 @@ rule_r10() {
     key="$f|$(sed -n "${first}p" "$f" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
     if [ "$(printf '%s\n' "$seen" | grep -cFx -- "$key")" -lt "$(printf '%s\n' "$R10_DEBT" | grep -cFx -- "$key")" ]; then
       seen="$seen$key"$'\n'
-      [ "$R10_TREE" = 1 ] && report warn R10 "$f" "$first" "known OS cfg outside a platform module (R10_DEBT in scripts/quality-rules.sh); TUR-54 removes it"
+      [ "$R10_TREE" = 1 ] && report warn R10 "$f" "$first" "known OS cfg outside a platform module (R10_DEBT in scripts/quality-rules.sh); make it portable and drop the entry"
       continue
     fi
     # Only a cfg with at least one added line counts.
