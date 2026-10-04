@@ -26,7 +26,7 @@
 //! real speech would be a worse bug than the one it fixes.
 
 use std::path::{Path, PathBuf};
-use std::sync::Once;
+use std::sync::{Arc, Once};
 
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
@@ -36,6 +36,14 @@ use whisper_rs::{
 /// per process no matter how many engines are constructed.
 static INSTALL_LOGGING_HOOKS: Once = Once::new();
 
+/// Route whisper.cpp's and ggml's logging through `tracing`, once per process.
+/// Also called before anything else asks ggml a question
+/// ([`crate::hardware::ggml_gpu_devices`]).
+pub(crate) fn install_logging_hooks() {
+    INSTALL_LOGGING_HOOKS.call_once(whisper_rs::install_logging_hooks);
+}
+
+use crate::gpu_guard::{self, GpuGuard};
 use crate::session::{
     LiveEmitter, LiveListener, SessionOptions, SessionOutcome, SpanAssembler, SttSession,
 };
@@ -155,6 +163,12 @@ pub struct WhisperConfig {
     /// whisper on 200 ms of audio produces noise, and noise on screen is
     /// worse than nothing there yet. Ignored unless [`Self::live_partials`].
     pub partial_min_sec: f64,
+
+    /// The folder for the GPU crash marker ([`crate::gpu_guard`]), usually
+    /// `.app/`. `None` (the default) starts whisper the way whisper-rs does
+    /// with no marker: on the GPU when the build has one. A recording always
+    /// sets it (`platform::recording_config`).
+    pub gpu_guard: Option<PathBuf>,
 }
 
 impl Default for WhisperConfig {
@@ -168,6 +182,7 @@ impl Default for WhisperConfig {
             segmentation: SegmentConfig::default(),
             live_partials: false,
             partial_min_sec: 1.0,
+            gpu_guard: None,
         }
     }
 }
@@ -178,6 +193,8 @@ pub struct WhisperEngine {
     vad: Box<dyn Vad>,
     config: WhisperConfig,
     model_path: PathBuf,
+    /// The armed GPU crash marker, cleared by the first decode that works.
+    gpu: Option<Arc<GpuGuard>>,
 }
 
 impl WhisperEngine {
@@ -198,18 +215,34 @@ impl WhisperEngine {
         // app that is noise in the log file; inside any CLI that speaks a line
         // protocol it is corruption. The `tracing_backend` feature routes them
         // through `tracing` instead, but only once this is called.
-        INSTALL_LOGGING_HOOKS.call_once(whisper_rs::install_logging_hooks);
-        let context =
-            WhisperContext::new_with_params(model_path, WhisperContextParameters::default())
-                .map_err(|e| {
-                    Error::Engine(format!("could not load {}: {e}", model_path.display()))
-                })?;
+        install_logging_hooks();
+
+        // `use_gpu` defaults to whether this build has a GPU backend (Metal
+        // on macOS, Vulkan on Windows x64 and Linux). With no usable device
+        // whisper.cpp stays on the CPU by itself; the marker is for a GPU that
+        // is there and crashes.
+        let mut params = WhisperContextParameters::default();
+        let gpu = match &config.gpu_guard {
+            Some(dir) if params.use_gpu => {
+                let decision = gpu_guard::arm(dir);
+                params.use_gpu = decision.use_gpu;
+                decision.guard
+            }
+            _ => None,
+        };
+        tracing::info!(use_gpu = params.use_gpu, model = %model_path.display(), "loading whisper");
+
+        let context = WhisperContext::new_with_params(model_path, params)
+            .map_err(|e| Error::Engine(format!("could not load {}: {e}", model_path.display())))?;
+        // A load that fails returns here and drops `gpu`, which clears the
+        // marker: an error is not a crash.
 
         Ok(Self {
             context,
             vad: Box::new(EarshotVad::new()),
             config,
             model_path: model_path.to_path_buf(),
+            gpu,
         })
     }
 
@@ -290,12 +323,17 @@ fn decode(
     samples: &[i16],
     span_start_sec: f64,
     audio: &mut Vec<f32>,
+    gpu: Option<&GpuGuard>,
 ) -> Result<Vec<(f64, String)>, Error> {
     to_whisper_audio(samples, audio);
 
     state
         .full(params(config), audio)
         .map_err(|e| Error::Engine(format!("whisper inference failed: {e}")))?;
+    // The first decode that came back is the GPU working: clear the marker.
+    if let Some(gpu) = gpu {
+        gpu.passed();
+    }
 
     let mut lines = Vec::new();
     for segment in state.as_iter() {
@@ -367,6 +405,7 @@ impl crate::SttEngine for WhisperEngine {
                 span.samples(&pcm),
                 span.start_sec(),
                 &mut audio,
+                self.gpu.as_deref(),
             )? {
                 sink.write(&Utterance {
                     start_sec: start_sec as u64,
@@ -396,6 +435,7 @@ impl crate::SttEngine for WhisperEngine {
             emitter: LiveEmitter::new(&options, listener),
             sink,
             audio: Vec::new(),
+            gpu: self.gpu.clone(),
         }))
     }
 }
@@ -419,6 +459,8 @@ pub struct WhisperSession {
     sink: Box<dyn TranscriptSink + Send>,
     /// Scratch for the `f32` copy whisper takes, reused by every decode.
     audio: Vec<f32>,
+    /// The engine's GPU crash marker, cleared by the first decode that works.
+    gpu: Option<Arc<GpuGuard>>,
 }
 
 impl WhisperSession {
@@ -430,6 +472,7 @@ impl WhisperSession {
             &span.samples,
             span.start_sec,
             &mut self.audio,
+            self.gpu.as_deref(),
         )? {
             self.emitter
                 .finalize(start_sec, &text, self.sink.as_mut())?;
@@ -449,7 +492,14 @@ impl WhisperSession {
             return Ok(());
         }
 
-        let guessed = decode(&mut self.state, &self.config, samples, 0.0, &mut self.audio)?;
+        let guessed = decode(
+            &mut self.state,
+            &self.config,
+            samples,
+            0.0,
+            &mut self.audio,
+            self.gpu.as_deref(),
+        )?;
         // One tail per speaker, so several segments over one open span are one
         // hypothesis. An empty result withdraws the tail rather than freezing
         // the last guess on screen — whisper deciding the span is not speech

@@ -46,7 +46,6 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use stt::registry::Preference;
 
-use crate::engine::DEFAULT_MODEL;
 use crate::error::UiError;
 
 mod agent_section;
@@ -116,7 +115,8 @@ impl Default for Transcription {
 }
 
 fn default_model() -> String {
-    DEFAULT_MODEL.to_string()
+    // TUR-61: by hardware tier, not one fixed model.
+    crate::engine::default_model()
 }
 
 /// `~/Meetings/.app`, the folder `config.jsonc` lives in.
@@ -188,7 +188,10 @@ mod tests {
     fn a_missing_file_is_the_spec_3_5_defaults() {
         assert_eq!(parse(""), Transcription::default());
         assert_eq!(Transcription::default().engine, Preference::Auto);
-        assert_eq!(Transcription::default().model, DEFAULT_MODEL);
+        assert_eq!(
+            Transcription::default().model,
+            crate::engine::default_model()
+        );
     }
 
     #[test]

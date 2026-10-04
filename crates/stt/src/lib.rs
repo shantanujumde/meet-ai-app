@@ -31,6 +31,9 @@
 use std::path::Path;
 
 pub mod apple;
+// The GPU crash marker and the hardware tier (TUR-61).
+pub mod gpu_guard;
+pub mod hardware;
 pub mod languages;
 pub mod model;
 /// `stt::parakeet`, the ONNX Runtime engine for computers with no GPU (TUR-62).

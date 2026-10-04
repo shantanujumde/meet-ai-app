@@ -37,6 +37,10 @@ pub const APP_DIR: &str = ".app";
 pub const MODELS_DIR: &str = "models";
 /// The app's log file and local crash files, inside [`APP_DIR`] (SPEC §3.1).
 pub const LOGS_DIR: &str = "logs";
+/// The GPU crash marker, inside [`APP_DIR`] (TUR-61): written before whisper
+/// first starts on the GPU, removed once that worked. Still there at the next
+/// start means the GPU took the app down, so whisper runs on the CPU.
+pub const GPU_CHECK_FILE: &str = "gpu-check";
 
 /// `meeting.md` — frontmatter plus the four fixed sections (§3.2).
 pub const MEETING_FILE: &str = "meeting.md";
