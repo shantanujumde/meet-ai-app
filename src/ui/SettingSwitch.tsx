@@ -7,13 +7,15 @@
  * A real switch: a button with `role="switch"` and `aria-checked`, named by
  * its visible label (a `<label htmlFor>` for a button, so clicking the words
  * flips it too). On and off differ in the knob's side as well as the fill,
- * never by colour alone. The "on" fill is green rather than the accent: the
- * accent is kept for the one primary control per window (Record, or Stop).
+ * never by colour alone. TUR-102: bigger (44 × 24, the `--switch-*` tokens),
+ * and the "on" fill is the system-blue accent, the way the OS draws its own
+ * switches; off is the plain grey control fill.
  */
 
 import { type ReactNode, useEffect, useId, useState } from "react";
 import { toUiError, type UiError } from "@/ipc/types";
 import { cn } from "@/lib/cn";
+import type { LucideIcon } from "./icons";
 import { Row, RowLabel } from "./primitives";
 import { ErrorState } from "./states";
 
@@ -41,19 +43,19 @@ export function Switch({
       disabled={disabled}
       onClick={() => onChange(!on)}
       className={cn(
-        "inline-flex h-(--control-h-small) w-[36px] shrink-0 cursor-default items-center rounded-capsule p-1",
-        "border-[0.5px] [transition:background-color_var(--dur-fast)_var(--ease-out)]",
+        "inline-flex h-(--switch-h) w-(--switch-w) shrink-0 cursor-default items-center rounded-capsule p-[calc((var(--switch-h)-var(--switch-knob))/2)]",
+        "border-[0.5px] border-transparent [transition:background-color_var(--dur-fast)_var(--ease-out)]",
         "disabled:cursor-not-allowed disabled:opacity-40",
         "contrast-more:border contrast-more:border-separator-strong",
-        on ? "border-transparent bg-success" : "border-rim bg-glass-sunken",
+        on ? "bg-accent" : "bg-control-hover",
       )}
     >
       <span
         aria-hidden="true"
         className={cn(
-          "size-6 rounded-capsule bg-on-accent shadow-raised",
+          "size-(--switch-knob) rounded-capsule bg-on-accent shadow-raised",
           "[transition:translate_var(--dur-fast)_var(--ease-out)] motion-reduce:transition-none",
-          on ? "translate-x-6" : "translate-x-0",
+          on ? "translate-x-[calc(var(--switch-w)-var(--switch-h))]" : "translate-x-0",
         )}
       />
     </button>
@@ -69,11 +71,14 @@ export function Switch({
 export function SettingSwitch({
   label,
   detail,
+  icon,
   load,
   save,
 }: {
   label: string;
   detail: ReactNode;
+  /** The row's icon, in its rounded square (TUR-102). */
+  icon?: LucideIcon;
   /** Read on mount; pass a function defined outside the component. */
   load: () => Promise<boolean>;
   save: (on: boolean) => Promise<boolean>;
@@ -112,7 +117,12 @@ export function SettingSwitch({
   return (
     <>
       <Row>
-        <RowLabel name={<label htmlFor={id}>{label}</label>} detail={detail} mono={false} />
+        <RowLabel
+          icon={icon}
+          name={<label htmlFor={id}>{label}</label>}
+          detail={detail}
+          mono={false}
+        />
         <Switch
           id={id}
           on={on ?? false}

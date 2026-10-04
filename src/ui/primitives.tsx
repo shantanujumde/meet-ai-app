@@ -2,19 +2,20 @@
  * The small, repeated pieces every screen is built from — buttons, pills,
  * cards and their rows — as Tailwind utilities with `cva` variants.
  *
- * These replace the `.btn`, `.badge`, `.card` and `.row` blocks that used to
- * live in `app.css`, value for value: every utility here resolves to the same
- * design-system token the old rule used (see the `@theme` block in
- * `src/theme.css`). Rules from MASTER.md that are easy to lose in a move, and
- * so are restated where they apply:
+ * TUR-102 restyled them after a calm, roomy settings window: rounded cards a
+ * step off the brand-tinted canvas, one row pattern (an icon in a small
+ * rounded square, the name in bold, one grey line, the control on the
+ * right), plain grey secondary buttons, and Lucide icons through `./icons`.
+ * Every utility resolves to a design-system token (the `@theme` block in
+ * `src/theme.css`). Rules from MASTER.md that are easy to lose, restated
+ * where they apply:
  *
  * * One tinted control per window: `tone: "primary"`. Everything else is
- *   neutral.
- * * Increase Contrast turns rims into solid 1px borders and secondary text
- *   into primary — glass is decoration and the interface survives losing it.
+ *   neutral grey.
+ * * Increase Contrast turns soft edges into solid 1px borders and secondary
+ *   text into primary — glass is decoration and the interface survives
+ *   losing it.
  * * Rows carry no radius: a flush card's `overflow-hidden` clips their corners.
- *   The concentric rule would compute `--radius-panel - --space-6` for them,
- *   which is negative — the sign that those corners are the card's.
  *
  * The variant functions are exported as well as the components, for elements
  * that need the look without the element — a `NavLink` styled as a button, a
@@ -24,6 +25,7 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import type { ComponentProps, ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { Icon, IconSquare, type LucideIcon } from "./icons";
 
 // --- buttons --------------------------------------------------------------
 
@@ -41,10 +43,14 @@ export const buttonVariants = cva(
   {
     variants: {
       tone: {
-        neutral: "border-rim bg-glass-raised text-fg-primary not-disabled:hover:bg-glass-regular",
-        primary: "border-transparent bg-accent text-on-accent not-disabled:hover:bg-accent-hover",
+        // Plain grey: every button but the one primary action (TUR-102).
+        neutral:
+          "border-transparent bg-control text-fg-primary not-disabled:hover:bg-control-hover",
+        // `accent-fill`, not the raw accent: white on it holds 4.5:1.
+        primary:
+          "border-transparent bg-accent-fill text-on-accent not-disabled:hover:bg-accent-hover",
         quiet:
-          "border-transparent bg-transparent text-fg-secondary not-disabled:hover:bg-row-hover not-disabled:hover:text-fg-primary",
+          "border-transparent bg-transparent text-fg-secondary not-disabled:hover:bg-control not-disabled:hover:text-fg-primary",
       },
       size: {
         regular: "h-(--control-h-large) px-5 text-body",
@@ -64,16 +70,55 @@ export function Button({
   tone,
   size,
   block,
+  icon,
+  className,
+  type = "button",
+  children,
+  ...props
+}: ComponentProps<"button"> &
+  ButtonVariants & {
+    /** A Lucide icon before the words. */
+    icon?: LucideIcon;
+  }) {
+  return (
+    <button type={type} className={cn(buttonVariants({ tone, size, block }), className)} {...props}>
+      {icon ? <Icon icon={icon} /> : null}
+      {children}
+    </button>
+  );
+}
+
+/**
+ * A button that is only an icon. `label` is required: it is the button's
+ * accessible name and its tooltip, because an icon alone names nothing to
+ * VoiceOver (MASTER.md §5.2).
+ */
+export function IconButton({
+  icon,
+  label,
+  tone = "quiet",
   className,
   type = "button",
   ...props
-}: ComponentProps<"button"> & ButtonVariants) {
+}: Omit<ComponentProps<"button">, "children" | "aria-label"> & {
+  icon: LucideIcon;
+  label: string;
+  tone?: ButtonVariants["tone"];
+}) {
   return (
     <button
       type={type}
-      className={cn(buttonVariants({ tone, size, block }), className)}
+      aria-label={label}
+      title={label}
+      className={cn(
+        buttonVariants({ tone, size: "small" }),
+        "size-(--control-h-large) px-0",
+        className,
+      )}
       {...props}
-    />
+    >
+      <Icon icon={icon} />
+    </button>
   );
 }
 
@@ -115,14 +160,19 @@ export function Pill({
 
 export const cardVariants = cva(
   [
-    "flex flex-col gap-5 rounded-panel border-[0.5px] border-separator bg-content-alt",
+    // Opaque, a step off the canvas, no outline: the fill alone separates it
+    // (TUR-102). Increase Contrast adds a solid edge.
+    "flex flex-col gap-5 rounded-(--card-radius) bg-card",
     "contrast-more:border contrast-more:border-separator-strong",
   ],
   {
     variants: {
-      /** Rows sit edge to edge and pad themselves; the card only clips them. */
+      /**
+       * Rows sit edge to edge inside the card's side padding, so the
+       * hairlines between them stop short of the card's edges.
+       */
       flush: {
-        true: "overflow-hidden",
+        true: "gap-0 overflow-hidden px-(--card-pad-x)",
         false: "p-6",
       },
     },
@@ -138,17 +188,20 @@ export function Card({
   return <div className={cn(cardVariants({ flush }), className)} {...props} />;
 }
 
-export const rowVariants = cva("flex justify-between gap-5", {
+export const rowVariants = cva("flex justify-between gap-6", {
   variants: {
     /** Label and control on one line, with more (progress, an error) below. */
     stacked: {
       true: "flex-col items-stretch",
       false: "items-center",
     },
-    /** Inside a padded card, whose own padding already frames the row. */
+    /**
+     * Inside a padded card, whose own padding already frames the row. Not
+     * bare, the row pads itself top and bottom; a flush card pads the sides.
+     */
     bare: {
       true: "p-0",
-      false: "px-6 py-5",
+      false: "min-h-(--row-min-h) py-(--row-pad-y)",
     },
     /** A hairline between consecutive rows. */
     divided: {
@@ -170,33 +223,50 @@ export function Row({
 }
 
 /**
- * The quiet line under a row's name. Monospace by default, for paths and
+ * The grey line under a row's name. Monospace by default, for paths and
  * other evidence; `mono: false` for a sentence.
  */
-export const rowDetailVariants = cva("text-caption1 text-fg-tertiary wrap-anywhere", {
-  variants: {
-    mono: {
-      true: "font-mono",
-      false: "font-ui",
+export const rowDetailVariants = cva(
+  "text-caption1 leading-normal text-fg-secondary wrap-anywhere contrast-more:text-fg-primary",
+  {
+    variants: {
+      mono: {
+        true: "font-mono",
+        false: "font-ui",
+      },
     },
+    defaultVariants: { mono: true },
   },
-  defaultVariants: { mono: true },
-});
+);
 
-/** A row's left side: its name, and a detail line under it. */
+/**
+ * A row's left side, the one pattern every settings row follows (TUR-102):
+ * an icon in a small rounded square, the name in bold, and one grey line
+ * under it saying what the row does.
+ */
 export function RowLabel({
   name,
   detail,
   mono,
+  icon,
 }: {
   name: ReactNode;
   detail?: ReactNode;
   mono?: boolean;
+  /** The row's Lucide icon, drawn in its rounded square. */
+  icon?: LucideIcon;
 }) {
-  return (
+  const text = (
     <span className="flex min-w-0 flex-col gap-1">
-      <span className="text-body font-medium">{name}</span>
+      <span className="text-body font-semibold">{name}</span>
       {detail !== undefined ? <span className={rowDetailVariants({ mono })}>{detail}</span> : null}
+    </span>
+  );
+  if (!icon) return text;
+  return (
+    <span className="flex min-w-0 items-center gap-5">
+      <IconSquare icon={icon} />
+      {text}
     </span>
   );
 }

@@ -3,6 +3,10 @@
  * render into.
  *
  * The titlebar is a drag region with a 78px inset for the traffic lights.
+ * TUR-102 made it slim and calm: back and forward arrows, the window title,
+ * and the record control, on the canvas colour. The sidebar under it is
+ * glass; the titlebar and the content column stay opaque, because body text
+ * does not live on glass.
  *
  * The CSS `-webkit-app-region: drag` in app.css is not enough on Tauri's
  * macOS WKWebView (TUR-83: the window could not be dragged at all once
@@ -15,6 +19,7 @@
  * it so clicks keep working.
  */
 
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRef } from "react";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 import type { PrivacyPane } from "@/ipc/types";
@@ -23,9 +28,10 @@ import { openPermissionScreen } from "@/lib/permissionRoute";
 import { isOnboardingPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
-import { Button } from "./primitives";
+import { Button, IconButton } from "./primitives";
 import { RecordControl } from "./RecordControl";
 import { Sidebar } from "./Sidebar";
+import { useHistoryArrows } from "./useHistoryArrows";
 import { useResetScrollOnRouteChange } from "./useResetScrollOnRouteChange";
 
 export function Shell() {
@@ -50,10 +56,29 @@ export function Shell() {
   // otherwise carry from one route into the next (TUR-82).
   const pane = useRef<HTMLElement>(null);
   useResetScrollOnRouteChange(pane);
+  const { canBack, canForward } = useHistoryArrows();
 
   return (
     <div className={focused ? "shell shell--focused" : "shell"}>
       <header className="titlebar" data-tauri-drag-region>
+        {!focused ? (
+          <span className="flex items-center gap-1">
+            <IconButton
+              icon={ChevronLeft}
+              label="Back"
+              className="size-(--titlebar-button)"
+              disabled={!canBack}
+              onClick={() => navigate(-1)}
+            />
+            <IconButton
+              icon={ChevronRight}
+              label="Forward"
+              className="size-(--titlebar-button)"
+              disabled={!canForward}
+              onClick={() => navigate(1)}
+            />
+          </span>
+        ) : null}
         <h1 className="titlebar__title" data-tauri-drag-region>
           meet-ai
         </h1>

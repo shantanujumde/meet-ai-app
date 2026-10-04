@@ -34,13 +34,11 @@
   font-family: var(--font-ui);
   font-size: var(--text-body);
   color: var(--text-primary);
-  /* Opaque. The window is `transparent: true` with a native material behind
-     it, and that material is nowhere near opaque enough to read body text
-     against — whatever is behind the window shows straight through the
-     titlebar and the content column. MASTER.md §8 settles this: glass yields.
-     The material still shapes the corners, the shadow and the active-state
-     dimming, which is what it is genuinely good at. */
-  background: var(--surface-canvas);
+  /* Transparent, so the native window material shows through the sidebar's
+     glass (TUR-102). The titlebar and the content column paint their own
+     opaque canvas: the material is nowhere near opaque enough to read body
+     text against, so MASTER.md §8 settles it there: glass yields. */
+  background: transparent;
 }
 
 /* Onboarding takes the whole window: no sidebar to navigate to yet, and a
@@ -81,124 +79,6 @@
 }
 
 /* -----------------------------------------------------------------------------
-   Sidebar — the meeting list
-   Native window vibrancy is already behind this, so it gets no blur of its own.
-   -------------------------------------------------------------------------- */
-
-.sidebar {
-  grid-area: sidebar;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding: var(--sidebar-pad);
-  gap: var(--space-4);
-  background: var(--sidebar-fill);
-  border-right: 0.5px solid var(--separator);
-}
-
-.sidebar__heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding-inline: var(--space-3);
-  font-size: var(--text-caption1);
-  font-weight: var(--weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-tertiary);
-}
-
-.sidebar__count {
-  font-variant-numeric: tabular-nums;
-  text-transform: none;
-  letter-spacing: 0;
-  font-weight: var(--weight-regular);
-}
-
-.sidebar__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.sidebar__footer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding-top: var(--space-4);
-  border-top: 0.5px solid var(--separator);
-}
-
-/* Selection is marked by fill AND a leading accent bar, never by colour alone. */
-.meeting-row {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: default;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--sidebar-row-radius);
-  position: relative;
-  transition: background-color var(--dur-fast) var(--ease-out);
-}
-
-.meeting-row:hover {
-  background: var(--sidebar-row-hover);
-}
-
-.meeting-row[aria-current="true"] {
-  background: var(--sidebar-row-active);
-}
-
-.meeting-row[aria-current="true"]::before {
-  content: "";
-  position: absolute;
-  inset-block: var(--space-2);
-  inset-inline-start: 0;
-  width: 2px;
-  border-radius: var(--radius-capsule);
-  background: var(--accent);
-}
-
-.meeting-row__title {
-  display: block;
-  font-size: var(--text-body);
-  font-weight: var(--weight-medium);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.meeting-row__meta {
-  display: flex;
-  gap: var(--space-3);
-  font-size: var(--text-caption1);
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-  margin-top: 1px;
-}
-
-.meeting-row__badge {
-  color: var(--text-secondary);
-}
-
-/* TUR-97. The word carries the meaning; the colour only matches `.badge--warn`
-   on the list page, so the two surfaces read as the same signal. */
-.meeting-row__badge--interrupted {
-  color: var(--status-warning);
-}
-
-/* -----------------------------------------------------------------------------
    Content column
    -------------------------------------------------------------------------- */
 
@@ -207,26 +87,26 @@
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
-  background: var(--notes-fill);
+  background: var(--surface-canvas);
 }
 
 .page {
-  max-width: 62rem;
+  max-width: var(--page-max);
   margin: 0 auto;
-  padding: var(--space-9) var(--notes-pad) var(--space-10);
+  padding: var(--page-pad-top) var(--page-pad-x) var(--space-12);
   display: flex;
   flex-direction: column;
-  gap: var(--space-7);
+  gap: var(--page-gap);
 }
 
 .page--narrow {
-  max-width: 34rem;
+  max-width: var(--page-max-narrow);
 }
 
 .page__header {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
 .page__title {
@@ -266,7 +146,7 @@
 .section {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
+  gap: var(--section-gap);
 }
 
 .section__header {
@@ -277,14 +157,14 @@
 }
 
 .section__title {
-  font-size: var(--text-title3);
+  font-size: var(--text-headline);
   font-weight: var(--weight-semibold);
   margin: 0;
 }
 
 .section__hint {
   font-size: var(--text-footnote);
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   margin: 0;
 }
 
@@ -318,8 +198,8 @@
   height: var(--control-h-large);
   padding-inline: var(--space-5);
   border-radius: var(--radius-capsule);
-  border: 0.5px solid var(--rim-border);
-  background: var(--surface-glass-raised);
+  border: 0.5px solid transparent;
+  background: var(--surface-control);
   color: var(--text-primary);
   font: inherit;
   font-size: var(--text-body);
@@ -328,7 +208,8 @@
 }
 
 .record__button[data-recording="true"] {
-  background: var(--status-recording);
+  /* The deeper red: white on it holds 4.5:1 (TUR-102). */
+  background: var(--status-danger-fill);
   border-color: transparent;
   color: var(--text-on-accent);
 }
@@ -361,7 +242,7 @@
 
 .record__shortcut {
   font-size: var(--text-caption1);
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -390,9 +271,11 @@
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-5);
-  padding: var(--space-9) var(--space-6);
-  border: 0.5px dashed var(--separator-strong);
-  border-radius: var(--radius-panel);
+  /* A card like every other group (TUR-102), roomy, with no dashed edge. */
+  padding: var(--space-9) var(--space-8);
+  border: 0.5px solid transparent;
+  border-radius: var(--card-radius);
+  background: var(--surface-card);
   text-align: left;
 }
 
@@ -526,9 +409,9 @@
   height: min(24rem, 45vh);
   overflow-y: auto;
   padding: var(--space-6);
-  border: 0.5px solid var(--separator);
-  border-radius: var(--radius-card);
-  background: var(--surface-content);
+  border: 0.5px solid transparent;
+  border-radius: var(--card-radius);
+  background: var(--surface-card);
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -561,8 +444,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-4) var(--space-6);
-  border-radius: var(--radius-card);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--card-radius);
   font-size: var(--text-footnote);
   line-height: var(--leading-normal);
   background: color-mix(in srgb, var(--status-warning) 12%, transparent);
@@ -595,8 +478,8 @@
   min-height: 14rem;
   resize: vertical;
   border: 0.5px solid var(--separator);
-  border-radius: var(--radius-card);
-  background: var(--surface-content);
+  border-radius: var(--card-radius);
+  background: var(--surface-card);
   color: var(--text-primary);
   padding: var(--space-6);
   font-family: var(--font-ui);
@@ -616,7 +499,7 @@
 }
 
 .notes__status[data-tone="error"] {
-  color: var(--status-danger);
+  color: var(--status-danger-text);
 }
 
 /* -----------------------------------------------------------------------------
