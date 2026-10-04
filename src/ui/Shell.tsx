@@ -115,11 +115,11 @@ function deniedBannerText(denied: PrivacyPane[]): string {
   const names = denied.map((pane) => PANE_LABEL[pane]);
   // TUR-87: only system audio off still records the microphone.
   if (denied.length === 1 && denied[0] === "audio-capture") {
-    return `System audio is off: System Audio Recording is switched off for meet-ai in ${osText("settings")}, so recordings capture only your microphone.`;
+    return `System audio is off: System Audio Recording is turned off for meet-ai in ${osText("settings")}, so recordings capture only your microphone.`;
   }
   if (names.length === 0) {
-    return "meet-ai cannot record this Mac's audio yet, so recording is turned off.";
+    return "meet-ai cannot record this Mac's audio yet, so recording is off.";
   }
   const verb = names.length === 1 ? "is" : "are";
-  return `${names.join(" and ")} ${verb} switched off for meet-ai in ${osText("settings")}, so recording is turned off.`;
+  return `${names.join(" and ")} ${verb} turned off for meet-ai in ${osText("settings")}, so recording is off.`;
 }

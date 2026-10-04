@@ -194,7 +194,7 @@ function MeetingReview({ id }: { id: string }) {
                 <CopyPromptButton
                   label="Copy prompt"
                   size="small"
-                  hint="No agent set up — paste this into Claude Code or Codex and it will write the notes."
+                  hint="No agent is set up. Paste this into Claude Code or Codex and it will write the notes."
                   render={() => wrapUpPrompt(summary.id)}
                 />
               </Row>
@@ -211,7 +211,7 @@ function MeetingReview({ id }: { id: string }) {
             <h2 className="section__title" id="transcript-heading">
               Transcript
             </h2>
-            <p className="section__hint">Read-only — transcript.md is the record</p>
+            <p className="section__hint">Read-only. This is what transcript.md says</p>
           </div>
 
           {/* SPEC §7: the UI flags a file it could only partly read rather than
@@ -219,20 +219,20 @@ function MeetingReview({ id }: { id: string }) {
           {unparsedLineCount > 0 ? (
             <p className="state__detail">
               {unparsedLineCount === 1
-                ? `1 line in this file is not in meet-ai's transcript format and is not shown below. Nothing has been changed — open the file in ${osText("fileManager")} to see it.`
-                : `${unparsedLineCount} lines in this file are not in meet-ai's transcript format and are not shown below. Nothing has been changed — open the file in ${osText("fileManager")} to see them.`}
+                ? `1 line in this file is not in meet-ai's transcript format and is not shown below. Nothing was changed. Open the file in ${osText("fileManager")} to see it.`
+                : `${unparsedLineCount} lines in this file are not in meet-ai's transcript format and are not shown below. Nothing was changed. Open the file in ${osText("fileManager")} to see them.`}
             </p>
           ) : null}
 
           {transcriptMissing ? (
             <EmptyState
               title="There is no transcript file for this meeting"
-              body="The folder exists but transcript.md is not in it. That happens if the file was moved or deleted outside meet-ai — your notes below are unaffected."
+              body="The folder exists but transcript.md is not in it. That happens if the file was moved or deleted outside meet-ai. Your notes below are not affected."
             />
           ) : lines.length === 0 ? (
             <EmptyState
               title="Nothing was transcribed"
-              body="transcript.md is empty. Either nobody spoke, or this meeting was recorded before transcription was switched on. The audio, if it was kept, is still in the meeting folder."
+              body="transcript.md is empty. Either nobody spoke, or this meeting was recorded before transcription was turned on. The audio, if it was kept, is still in the meeting folder."
             />
           ) : (
             <ol className="transcript">
