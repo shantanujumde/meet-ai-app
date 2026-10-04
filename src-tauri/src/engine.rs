@@ -30,6 +30,10 @@ use crate::meetings;
 mod choices;
 pub use choices::{EngineChoice, EngineChoices, choices, save_choice};
 
+// The Parakeet model folder: found, shown and downloaded (TUR-62).
+mod parakeet;
+pub use parakeet::{ModelCredit, ParakeetModelView, credits};
+
 /// SPEC §3.5's defaults.
 ///
 /// `DEFAULT_MODEL` is only the fallback: `crate::config::transcription` reads
@@ -247,6 +251,7 @@ fn discover_with(dirs: &ModelDirs, locale: &str, model_id: &str) -> Environment 
         .filter(|spec| dirs.installed(spec).is_some())
         .map(|spec| spec.id.to_string())
         .collect();
+    environment.parakeet_model = parakeet::installed(dirs);
     environment
 }
 
@@ -310,6 +315,29 @@ pub fn catalogue() -> Vec<ModelView> {
         .collect()
 }
 
+/// What a `download_model` id names: a whisper file or the Parakeet folder.
+#[derive(Debug, Clone, Copy)]
+enum Download {
+    Whisper(&'static ModelSpec),
+    Parakeet(&'static stt::model::parakeet::ParakeetModel),
+}
+
+impl Download {
+    fn find(id: &str) -> Option<Self> {
+        stt::model::find(id)
+            .map(Self::Whisper)
+            .or_else(|| stt::model::parakeet::find(id).map(Self::Parakeet))
+    }
+
+    /// Where it is already, in full, if anywhere.
+    fn installed(self, dirs: &ModelDirs) -> Option<PathBuf> {
+        match self {
+            Self::Whisper(spec) => dirs.installed(spec),
+            Self::Parakeet(_) => parakeet::installed(dirs),
+        }
+    }
+}
+
 /// Download a model, reporting progress as Tauri events.
 ///
 /// `modelfetch::ensure` fires `on_progress` at least twice for any real
@@ -320,7 +348,7 @@ pub fn catalogue() -> Vec<ModelView> {
 /// A model that is only present as a stranded copy (see [`ModelDirs`]) is
 /// returned as-is rather than fetched again.
 pub async fn download(app: AppHandle, model_id: String) -> Result<String, UiError> {
-    let spec = stt::model::find(&model_id).ok_or_else(|| {
+    let target = Download::find(&model_id).ok_or_else(|| {
         UiError::app(
             "unknown-model",
             format!("meet-ai does not have a model called {model_id:?} in its list."),
@@ -351,7 +379,7 @@ pub async fn download(app: AppHandle, model_id: String) -> Result<String, UiErro
 
         let dir = models_dir()?;
         let dirs = ModelDirs::around(Some(dir.clone()));
-        if let Some(stranded) = dirs.installed(spec)
+        if let Some(stranded) = target.installed(&dirs)
             && !stranded.starts_with(&dir)
         {
             return Ok(stranded.display().to_string());
@@ -376,8 +404,14 @@ pub async fn download(app: AppHandle, model_id: String) -> Result<String, UiErro
                 }
             };
 
-            modelfetch::ensure(spec, &dir, &mut on_progress)
-                .await
+            let fetched = match target {
+                Download::Whisper(spec) => modelfetch::ensure(spec, &dir, &mut on_progress).await,
+                // A folder of files, one bar for all of them (TUR-62).
+                Download::Parakeet(model) => {
+                    modelfetch::ensure_folder(model.files, &model.dir(&dir), &mut on_progress).await
+                }
+            };
+            fetched
                 .map(|path| path.display().to_string())
                 .map_err(UiError::from)
         })
@@ -558,5 +592,40 @@ mod tests {
         let view = environment(DEFAULT_LOCALE, DEFAULT_MODEL);
         assert_eq!(view.locale, DEFAULT_LOCALE);
         assert_eq!(view.model_id, DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn the_download_command_knows_whisper_files_and_the_parakeet_folder() {
+        assert!(matches!(
+            Download::find("small.en-q5_1"),
+            Some(Download::Whisper(spec)) if spec.id == "small.en-q5_1"
+        ));
+        assert!(matches!(
+            Download::find("parakeet-tdt-0.6b-v3"),
+            Some(Download::Parakeet(model)) if model.id == "parakeet-tdt-0.6b-v3"
+        ));
+        assert!(Download::find("tiny-made-up").is_none());
+    }
+
+    #[test]
+    fn discovery_finds_a_downloaded_parakeet_folder_for_the_registry() {
+        let scratch = Scratch::new("engine-parakeet");
+        let primary = scratch.0.join("chosen/.app/models");
+        let model = &stt::model::parakeet::PARAKEET_V3;
+        let dirs = ModelDirs {
+            primary: Some(primary.clone()),
+            stranded: None,
+        };
+        assert_eq!(
+            discover_with(&dirs, DEFAULT_LOCALE, DEFAULT_MODEL).parakeet_model,
+            None
+        );
+        for file in model.files {
+            install(&model.dir(&primary), file);
+        }
+        assert_eq!(
+            discover_with(&dirs, DEFAULT_LOCALE, DEFAULT_MODEL).parakeet_model,
+            Some(model.dir(&primary))
+        );
     }
 }

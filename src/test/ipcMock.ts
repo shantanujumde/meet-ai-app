@@ -74,6 +74,16 @@ const APPLE_READY: EngineChoices = {
   auto: "apple-speech",
   apple: { available: true, reason: null },
   whisper: { available: false, reason: "Download a model first." },
+  parakeet: { available: false, reason: "Download the Parakeet model first." },
+  parakeetModel: {
+    id: "parakeet-tdt-0.6b-v3",
+    displayName: "Parakeet (25 European languages)",
+    goodFor: "Fast on a computer without a graphics card, so live captions keep up.",
+    bytes: 670_479_942,
+    installed: false,
+    runtimeReady: true,
+    languages: ["English", "German"],
+  },
   languages: ["en-US"],
 };
 
@@ -246,6 +256,13 @@ export const ipc = {
   downloadModel: vi.fn<typeof Client.downloadModel>(async (id) => id),
   // TUR-75: a Mac on macOS 26 with Apple's engine ready and no model downloaded.
   engineChoices: vi.fn<typeof Client.engineChoices>(async () => APPLE_READY),
+  // TUR-62: the credit Settings, About shows.
+  modelCredits: vi.fn<typeof Client.modelCredits>(async () => [
+    {
+      text: "Parakeet speech model: parakeet-tdt-0.6b-v3 by NVIDIA, used under CC-BY-4.0.",
+      url: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
+    },
+  ]),
   setTranscription: vi.fn<typeof Client.setTranscription>(async (engine, model) => ({
     ...APPLE_READY,
     engine,

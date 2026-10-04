@@ -129,7 +129,7 @@ export type EnvironmentView = {
 
 /** Which engine will actually be used. Costs a ~160 ms subprocess probe. */
 export type SelectionView = {
-  engine: "apple-speech" | "whisper";
+  engine: "apple-speech" | "whisper" | "parakeet";
   reason: string;
 };
 
@@ -160,7 +160,7 @@ export type ModelTag =
   | "slower";
 
 /** `transcription.engine` in config.jsonc. */
-export type EngineChoice = "auto" | "apple-speech" | "whisper";
+export type EngineChoice = "auto" | "apple-speech" | "whisper" | "parakeet";
 
 /** Whether one engine can be picked; `reason` says why not, in a sentence. */
 export type EngineAvailability = {
@@ -175,11 +175,35 @@ export type EngineChoices = {
   /** `transcription.model`: the whisper model used when whisper runs. */
   model: string;
   /** What "Automatic" resolves to on this Mac; null when nothing is ready. */
-  auto: "apple-speech" | "whisper" | null;
+  auto: "apple-speech" | "whisper" | "parakeet" | null;
   apple: EngineAvailability;
   whisper: EngineAvailability;
+  /** Parakeet (TUR-62): pickable once its model is downloaded. */
+  parakeet: EngineAvailability;
+  /** The Parakeet row's facts and whether its model is here. */
+  parakeetModel: ParakeetModelView;
   /** Locales Apple's engine has installed, as BCP 47 ids. */
   languages: string[];
+};
+
+/** The Parakeet model (TUR-62): one download of several files. */
+export type ParakeetModelView = {
+  /** The id `downloadModel` takes. */
+  id: string;
+  displayName: string;
+  goodFor: string;
+  /** Every file together, in bytes. */
+  bytes: number;
+  installed: boolean;
+  /** ONNX Runtime is here to run it; false on a Windows build without it. */
+  runtimeReady: boolean;
+  languages: string[];
+};
+
+/** A model licence Settings, About credits (TUR-62). */
+export type ModelCredit = {
+  text: string;
+  url: string;
 };
 
 export type ModelProgress = {

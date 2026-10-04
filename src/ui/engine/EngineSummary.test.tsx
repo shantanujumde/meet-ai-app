@@ -26,6 +26,16 @@ function choices(overrides: Partial<EngineChoices> = {}): EngineChoices {
     auto: "apple-speech",
     apple: { available: true, reason: null },
     whisper: { available: true, reason: null },
+    parakeet: { available: false, reason: "Download the Parakeet model first." },
+    parakeetModel: {
+      id: "parakeet-tdt-0.6b-v3",
+      displayName: "Parakeet (25 European languages)",
+      goodFor: "Fast on a computer without a graphics card, so live captions keep up.",
+      bytes: 670_479_942,
+      installed: false,
+      runtimeReady: true,
+      languages: ["English", "German"],
+    },
     languages: ["en-US"],
     ...overrides,
   };
@@ -305,5 +315,85 @@ describe("EngineSummary: the model rows", () => {
     expect(screen.queryByText("In use")).toBeNull();
     // Still the saved pick, ready for when Whisper is chosen.
     expect(screen.getByRole("radio", { name: /Small \(English only\)/ })).toBeChecked();
+  });
+});
+
+describe("EngineSummary: Parakeet (TUR-62)", () => {
+  const { downloadModel } = ipc;
+
+  /** The Parakeet row, found by its radio. */
+  function parakeetRow(): HTMLElement {
+    const row = engine(/^Parakeet/).closest(".flex-col.items-stretch");
+    if (!(row instanceof HTMLElement)) throw new Error("no Parakeet row");
+    return row;
+  }
+
+  test("is disabled with its reason and offers the download until it is here", async () => {
+    const user = userEvent.setup();
+    engineChoices.mockResolvedValue(choices());
+    await renderCard();
+
+    expect(engine(/^Parakeet/)).toBeDisabled();
+    expect(screen.getByText("Download the Parakeet model first.")).toBeInTheDocument();
+    expect(screen.getByText(/Needs a 670 MB download, then kept\./)).toBeInTheDocument();
+
+    await user.click(within(parakeetRow()).getByRole("button", { name: "Download" }));
+    expect(downloadModel).toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
+    expect(setTranscription).not.toHaveBeenCalled();
+  });
+
+  test("once downloaded it can be picked, and saves parakeet", async () => {
+    const user = userEvent.setup();
+    const base = choices();
+    engineChoices.mockResolvedValue(
+      choices({
+        parakeet: { available: true, reason: null },
+        parakeetModel: { ...base.parakeetModel, installed: true },
+      }),
+    );
+    await renderCard();
+
+    expect(within(parakeetRow()).queryByRole("button", { name: "Download" })).toBeNull();
+    await user.click(screen.getByText("Parakeet"));
+    expect(setTranscription).toHaveBeenCalledWith("parakeet", "large-v3-turbo-q5_0");
+  });
+
+  test("a failed download says why under the row and can be tried again", async () => {
+    const user = userEvent.setup();
+    engineChoices.mockResolvedValue(choices());
+    downloadModel.mockRejectedValue({
+      domain: "app",
+      kind: "download",
+      message: "model download failed: timed out",
+    });
+    await renderCard();
+
+    await user.click(within(parakeetRow()).getByRole("button", { name: "Download" }));
+    await waitFor(() => expect(downloadModel).toHaveBeenCalledTimes(1));
+    expect(await within(parakeetRow()).findByRole("alert")).toBeInTheDocument();
+  });
+});
+
+describe("EngineSummary: Parakeet without ONNX Runtime (TUR-62)", () => {
+  test("says it is not ready here and offers no download", async () => {
+    const base = choices();
+    engineChoices.mockResolvedValue(
+      choices({
+        parakeet: {
+          available: false,
+          reason:
+            "Not ready on this system yet: this copy of meet-ai does not include the ONNX Runtime library Parakeet runs on.",
+        },
+        parakeetModel: { ...base.parakeetModel, runtimeReady: false },
+      }),
+    );
+    await renderCard();
+
+    expect(screen.getByRole("radio", { name: /^Parakeet/ })).toBeDisabled();
+    expect(screen.getByText(/Not ready on this system yet/)).toBeInTheDocument();
+    const row = screen.getByRole("radio", { name: /^Parakeet/ }).closest(".flex-col.items-stretch");
+    if (!(row instanceof HTMLElement)) throw new Error("no Parakeet row");
+    expect(within(row).queryByRole("button", { name: "Download" })).toBeNull();
+    expect(within(row).queryByText(/download, then kept/)).toBeNull();
   });
 });

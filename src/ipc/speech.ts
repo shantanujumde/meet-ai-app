@@ -7,8 +7,8 @@
  */
 
 import { commands } from "./bindings";
-import { call } from "./client";
-import type { EngineChoice, EngineChoices } from "./types";
+import { call, hasBackend } from "./client";
+import type { EngineChoice, EngineChoices, ModelCredit } from "./types";
 
 /**
  * The saved choice, what "Automatic" lands on here, and which choices this
@@ -26,4 +26,13 @@ export function engineChoices(): Promise<EngineChoices> {
  */
 export function setTranscription(engine: EngineChoice, model: string): Promise<EngineChoices> {
   return call(() => commands.setTranscription(engine, model));
+}
+
+/**
+ * The model licences to credit in Settings, About (TUR-62: Parakeet's
+ * CC-BY-4.0). Constant data from Rust; none without the app behind the window.
+ */
+export async function modelCredits(): Promise<ModelCredit[]> {
+  if (!hasBackend()) return [];
+  return call(() => commands.modelCredits());
 }

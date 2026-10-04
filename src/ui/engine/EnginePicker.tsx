@@ -1,6 +1,6 @@
 /**
- * The speech engine picker (TUR-75): Automatic, Apple, or Whisper, each with
- * one plain line on what it does here.
+ * The speech engine picker (TUR-75): Automatic, Apple, Whisper or Parakeet
+ * (TUR-62), each with one plain line on what it does here.
  *
  * Which choices are greyed out, and the reason under them, come from Rust
  * (`stt::registry::options`, the same decision `auto` uses). Nothing here
@@ -12,9 +12,12 @@
 
 import { type ReactNode, useId } from "react";
 import type { EngineChoice, EngineChoices } from "@/ipc/types";
-import { Card, Row, RowValue, rowDetailVariants } from "@/ui/primitives";
+import { formatBytes } from "@/lib/format";
+import { Button, Card, Row, RowValue, rowDetailVariants } from "@/ui/primitives";
 import { Radio } from "@/ui/Radio";
-import { Checking } from "@/ui/states";
+import { Checking, ErrorState } from "@/ui/states";
+import { DownloadProgress } from "./DownloadProgress";
+import type { ModelState } from "./ModelRow";
 import { languageNames } from "./tags";
 
 /** What "Automatic" would do on this Mac, in one line. */
@@ -22,6 +25,7 @@ export function autoDetail(choices: EngineChoices | null): string {
   if (!choices) return "Picks the best engine for this Mac";
   if (choices.auto === "apple-speech") return "Uses Apple's engine on this Mac";
   if (choices.auto === "whisper") return "Uses Whisper on this Mac, since Apple's engine can't run";
+  if (choices.auto === "parakeet") return "Uses Parakeet";
   return "Nothing is ready yet: download a model below";
 }
 
@@ -36,17 +40,37 @@ export function appleDetail(choices: EngineChoices | null): string {
 
 const WHISPER_DETAIL = "Works offline on any Mac. Uses one of the models below.";
 
+/** Parakeet's line (TUR-62): what it is good for, then the one download it needs. */
+export function parakeetDetail(choices: EngineChoices | null): string {
+  if (!choices) return "Fast on a computer without a graphics card.";
+  const model = choices.parakeetModel;
+  if (!model.runtimeReady) return model.goodFor;
+  const download = model.installed
+    ? "Downloaded."
+    : `Needs a ${formatBytes(model.bytes)} download, then kept.`;
+  return `${model.goodFor} ${download}`;
+}
+
 export function EnginePicker({
   choices,
   checking,
   onPick,
+  parakeetDownload,
+  onDownloadParakeet,
 }: {
   choices: EngineChoices | null;
   checking: boolean;
   onPick: (engine: EngineChoice) => void;
+  /** The Parakeet model's download in flight, if any (TUR-62). */
+  parakeetDownload: ModelState;
+  onDownloadParakeet: () => void;
 }) {
   const group = useId();
   const ready = choices !== null;
+  // No download to offer where ONNX Runtime is missing: it could not run.
+  const parakeetMissing =
+    choices !== null && choices.parakeetModel.runtimeReady && !choices.parakeetModel.installed;
+  const parakeetBusy = Boolean(parakeetDownload.busy) && parakeetMissing;
 
   return (
     <fieldset className="contents">
@@ -82,6 +106,37 @@ export function EnginePicker({
           disabled={!ready || !choices.whisper.available}
           onPick={onPick}
         />
+        <EngineOption
+          group={group}
+          value="parakeet"
+          name="Parakeet"
+          detail={parakeetDetail(choices)}
+          reason={choices?.parakeet.available === false ? choices.parakeet.reason : null}
+          checked={choices?.engine === "parakeet"}
+          disabled={!ready || !choices.parakeet.available}
+          onPick={onPick}
+          status={
+            parakeetMissing ? (
+              <Button size="small" disabled={parakeetBusy} onClick={onDownloadParakeet}>
+                {parakeetBusy ? "Downloading…" : "Download"}
+              </Button>
+            ) : null
+          }
+        >
+          {parakeetBusy && choices ? (
+            <DownloadProgress
+              progress={parakeetDownload.progress}
+              total={choices.parakeetModel.bytes}
+            />
+          ) : null}
+          {parakeetDownload.error ? (
+            <ErrorState
+              error={parakeetDownload.error}
+              busy={parakeetBusy}
+              onRemedy={onDownloadParakeet}
+            />
+          ) : null}
+        </EngineOption>
       </Card>
     </fieldset>
   );
@@ -97,6 +152,7 @@ function EngineOption({
   disabled,
   onPick,
   status = null,
+  children = null,
 }: {
   group: string;
   value: EngineChoice;
@@ -108,6 +164,8 @@ function EngineOption({
   disabled: boolean;
   onPick: (engine: EngineChoice) => void;
   status?: ReactNode;
+  /** More under the row, such as a download's progress. */
+  children?: ReactNode;
 }) {
   return (
     <Row stacked>
@@ -133,6 +191,7 @@ function EngineOption({
           {reason}
         </p>
       ) : null}
+      {children}
     </Row>
   );
 }

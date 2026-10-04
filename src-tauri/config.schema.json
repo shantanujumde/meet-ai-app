@@ -30,7 +30,7 @@
       "description": "How speech is turned into text.",
       "properties": {
         "engine": {
-          "enum": ["auto", "apple-speech", "whisper"],
+          "enum": ["auto", "apple-speech", "whisper", "parakeet"],
           "description": "Which speech-to-text engine to use. \"auto\" picks the best one for this Mac. Forcing an engine this Mac cannot run is an error, not a silent fallback.",
           "default": "auto"
         },

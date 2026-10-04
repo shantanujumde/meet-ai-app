@@ -22,7 +22,9 @@ export const TAG_LABELS: Record<ModelTag, string> = {
  * The engine a recording would open with this choice: the forced one, or what
  * "Automatic" lands on (null when nothing is ready).
  */
-export function engineInUse(choices: EngineChoices): "apple-speech" | "whisper" | null {
+export function engineInUse(
+  choices: EngineChoices,
+): "apple-speech" | "whisper" | "parakeet" | null {
   if (choices.engine === "auto") return choices.auto;
   return choices.engine;
 }

@@ -113,6 +113,11 @@ export const commands = {
 	 */
 	engineChoices: () => typedError<meet_ai_lib_engine_choices_EngineChoices, meet_ai_lib_error_UiError>(__TAURI_INVOKE("engine_choices")),
 	/**
+	 *  The model licences Settings, About must credit (TUR-62: Parakeet's
+	 *  CC-BY-4.0). Constant data, no disk.
+	 */
+	modelCredits: () => __TAURI_INVOKE<meet_ai_lib_engine_parakeet_ModelCredit[]>("model_credits"),
+	/**
 	 *  Save `transcription.engine` and `transcription.model` into config.jsonc,
 	 *  keeping the rest of the file. Takes effect on the next recording. Writes
 	 *  under the meetings root, so through the [`FolderGate`].
@@ -594,7 +599,7 @@ export type meet_ai_lib_engine_choices_EngineAvailability = {
 };
 
 /**  `transcription.engine`, as the window sends and receives it. */
-export type meet_ai_lib_engine_choices_EngineChoice = "auto" | "apple-speech" | "whisper";
+export type meet_ai_lib_engine_choices_EngineChoice = "auto" | "apple-speech" | "whisper" | "parakeet";
 
 /**  Everything the picker draws. */
 export type meet_ai_lib_engine_choices_EngineChoices = {
@@ -606,6 +611,10 @@ export type meet_ai_lib_engine_choices_EngineChoices = {
 	auto: meet_ai_lib_engine_choices_ResolvedEngine | null,
 	apple: meet_ai_lib_engine_choices_EngineAvailability,
 	whisper: meet_ai_lib_engine_choices_EngineAvailability,
+	/**  Parakeet (TUR-62): pickable once its model folder is downloaded. */
+	parakeet: meet_ai_lib_engine_choices_EngineAvailability,
+	/**  The Parakeet row's facts and whether its model is here. */
+	parakeetModel: meet_ai_lib_engine_parakeet_ParakeetModelView,
 	/**  The locales Apple's engine has installed, e.g. `en-US`. */
 	languages: string[],
 };
@@ -802,6 +811,14 @@ export type meet_ai_lib_meetings_view_MeetingSummary = {
 	audioMs: number | null,
 };
 
+/**  One model licence the app must credit (Settings, About). */
+export type meet_ai_lib_engine_parakeet_ModelCredit = {
+	/**  The sentence to show, written in `stt`. */
+	text: string,
+	/**  Where the model and its licence are published. */
+	url: string,
+};
+
 /**
  *  One word about a model, drawn as a small chip. The UI owns the label for
  *  each, so the wording stays the same on every row.
@@ -895,6 +912,24 @@ export type meet_ai_lib_permission_Pane =
  *  [`Status::denied`] list.
  */
 "calendars";
+
+/**  The Parakeet row's facts, from the Rust catalogue. */
+export type meet_ai_lib_engine_parakeet_ParakeetModelView = {
+	/**  The id `download_model` takes. */
+	id: string,
+	displayName: string,
+	goodFor: string,
+	/**  Every file together. */
+	bytes: number,
+	installed: boolean,
+	/**
+	 *  ONNX Runtime is here to run it. False on a Windows build without
+	 *  `onnxruntime.dll`, where a download would not help, so none is offered.
+	 */
+	runtimeReady: boolean,
+	/**  English names, in the model card's order, for the (i) button. */
+	languages: string[],
+};
 
 /**
  *  Where the recorder is right now.
@@ -1007,7 +1042,7 @@ export type meet_ai_lib_brief_RepoCommits = {
 };
 
 /**  An engine that actually runs: what "Automatic" lands on. */
-export type meet_ai_lib_engine_choices_ResolvedEngine = "apple-speech" | "whisper";
+export type meet_ai_lib_engine_choices_ResolvedEngine = "apple-speech" | "whisper" | "parakeet";
 
 /**  Which engine this Mac will actually use, and why. */
 export type meet_ai_lib_engine_SelectionView = {
