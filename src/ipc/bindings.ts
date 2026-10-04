@@ -362,6 +362,17 @@ export const commands = {
 	 *  start a recording named after this meeting.
 	 */
 	recordRemindedMeeting: (eventId: string, join: boolean) => typedError<meet_ai_lib_recording_Status, meet_ai_lib_error_UiError>(__TAURI_INVOKE("record_reminded_meeting", { eventId, join })),
+	/**  The prompt the popup should show, for a window that just loaded. */
+	promptPopupCurrent: () => __TAURI_INVOKE<{
+	/**
+	 *  This prompt's id; an answer names it, so a stale click is ignored.
+	 *  A JS number: ids count up from 1 and never get near 2^53.
+	 */
+	id: number,
+	prompt: meet_ai_lib_detection_notify_Prompt,
+} | null>("prompt_popup_current"),
+	/**  A popup button was pressed for prompt `id`. */
+	answerPromptPopup: (id: number, answer: meet_ai_lib_detection_popup_PopupAnswer) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("answer_prompt_popup", { id, answer })),
 };
 
 /* Constants */
@@ -376,6 +387,8 @@ export const MODEL_PROGRESS_EVENT = "model://progress" as const;
 export const NAVIGATE_EVENT = "app://navigate" as const;
 
 export const PERMISSION_STATUS_EVENT = "permission://status" as const;
+
+export const PROMPT_POPUP_EVENT = "prompt-popup://show" as const;
 
 export const QUIT_CONFIRM_EVENT = "app://confirm-quit" as const;
 
@@ -860,6 +873,22 @@ export type meet_ai_lib_permission_Pane =
  *  in that window must be ignored rather than queued.
  */
 export type meet_ai_lib_recording_phase_Phase = "idle" | "starting" | "recording" | "stopping";
+
+/**  A button in the popup. */
+export type meet_ai_lib_detection_popup_PopupAnswer = "record" | "joinAndRecord" | "join" | "dismiss";
+
+/**
+ *  What the popup window shows, on [`PROMPT_POPUP_EVENT`] and from
+ *  [`prompt_popup_current`].
+ */
+export type meet_ai_lib_detection_popup_PopupPrompt = {
+	/**
+	 *  This prompt's id; an answer names it, so a stale click is ignored.
+	 *  A JS number: ids count up from 1 and never get near 2^53.
+	 */
+	id: number,
+	prompt: meet_ai_lib_detection_notify_Prompt,
+};
 
 /**  What was said last time. */
 export type meet_ai_lib_brief_PreviousMeeting = {

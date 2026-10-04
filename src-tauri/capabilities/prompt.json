@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "prompt",
+  "description": "The \"Record this meeting?\" popup window (TUR-59): it only hears its prompt and the recording state.",
+  "windows": ["prompt"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

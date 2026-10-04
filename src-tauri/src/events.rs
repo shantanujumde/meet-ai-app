@@ -40,3 +40,7 @@ pub const QUIT_CONFIRM_EVENT: &str = "app://confirm-quit";
 /// Rust wants the window on a screen: the menu bar's "Open brief" and
 /// "Calendar not connected" (TUR-77). `lifecycle::NavigateTo`.
 pub const NAVIGATE_EVENT: &str = "app://navigate";
+
+/// The prompt popup window (TUR-59, Windows and Linux) has a prompt to show:
+/// `detection::popup::PopupPrompt`. Sent to that window only.
+pub const PROMPT_POPUP_EVENT: &str = "prompt-popup://show";
