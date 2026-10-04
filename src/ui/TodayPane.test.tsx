@@ -131,7 +131,7 @@ describe("TodayPane", () => {
     const rows = screen.getAllByRole("listitem");
     expect(rows).toHaveLength(3);
     expect(rows[0]).toHaveTextContent("Standup");
-    expect(rows[0]).toHaveTextContent(`${formatTime(NINE)} – ${formatTime(NINE + HALF_HOUR)}`);
+    expect(rows[0]).toHaveTextContent(`${formatTime(NINE)} to ${formatTime(NINE + HALF_HOUR)}`);
     expect(rows[0]).toHaveTextContent("4 people");
     expect(rows[0]).not.toHaveAttribute("aria-disabled");
 

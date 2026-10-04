@@ -165,7 +165,7 @@ function TodayRow({ event, minAttendees }: { event: TodayEvent; minAttendees: nu
     <>
       <RowLabel
         name={event.title}
-        detail={`${formatTime(event.startMs)} – ${formatTime(event.endMs)}`}
+        detail={`${formatTime(event.startMs)} to ${formatTime(event.endMs)}`}
         mono={false}
       />
       <RowValue>{formatAttendees(event.attendees)}</RowValue>

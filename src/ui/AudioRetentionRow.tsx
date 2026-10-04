@@ -12,7 +12,8 @@ import { type AudioRetention, audioRetentionDays } from "@/ipc/client";
 import { Row, RowLabel } from "./primitives";
 
 /** The line while the retention job is paused (TUR-85). */
-export const RETENTION_PAUSED = "Audio cleanup paused: config.jsonc could not be read";
+export const RETENTION_PAUSED =
+  "Audio cleanup is paused because meet-ai could not read its settings file (config.jsonc)";
 
 /** What `retention_days` means, in one sentence. */
 export function retentionSentence(days: number): string {

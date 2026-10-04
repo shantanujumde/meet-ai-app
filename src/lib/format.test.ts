@@ -25,7 +25,7 @@ describe("model sizes", () => {
     expect(formatBytes(2_500_000_000)).toBe("2.5 GB");
   });
 
-  test("nonsense in gets a dash, not NaN", () => {
+  test("nonsense in gets 'unknown size', not NaN", () => {
     expect(formatBytes(Number.NaN)).toBe("unknown size");
     expect(formatBytes(-1)).toBe("unknown size");
   });

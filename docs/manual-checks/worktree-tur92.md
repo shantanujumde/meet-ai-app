@@ -19,8 +19,8 @@ text at real window widths.
 
 ## Choices made
 
-- En dashes in ranges: kept. The only one in the UI is the time range on the
-  Today pane ("9:00 – 9:30"), which is the usual way to write a time range.
+- Ranges use "to", not an en dash. The only one in the UI was the time range on
+  the Today pane, now "9:00 to 9:30".
 - `formatBytes` shows "unknown size" instead of "—" for a size it cannot read.
 - R11 checks `src/` and `src-tauri/src/`. `crates/` is not checked (mostly logs
   and CLI output); its three strings that reach the window were reworded by hand.

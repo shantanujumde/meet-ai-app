@@ -111,7 +111,7 @@ function PickedAgent({
     return (
       <>
         <Prose>
-          Nothing is sent anywhere. meet-ai runs no agent; you paste the prompt into one yourself.
+          Nothing is sent anywhere. meet-ai runs no agent. You paste the prompt into one yourself.
         </Prose>
         <Card flush key="none">
           <AgentTest

@@ -99,7 +99,7 @@ test("a denied permission disables recording instead of letting it fail at click
 
   // And the reason is on screen, naming the switch, with a route to fixing it.
   await waitFor(() => {
-    expect(screen.getByText(/Microphone is switched off for meet-ai/i)).toBeInTheDocument();
+    expect(screen.getByText(/Microphone is turned off for meet-ai/i)).toBeInTheDocument();
   });
   expect(screen.getByRole("button", { name: /fix this/i })).toBeInTheDocument();
 });

@@ -34,7 +34,7 @@ export function appleDetail(choices: EngineChoices | null): string {
   return `${about} Languages: ${languages}`;
 }
 
-const WHISPER_DETAIL = "Works offline on any Mac; uses one of the models below.";
+const WHISPER_DETAIL = "Works offline on any Mac. Uses one of the models below.";
 
 export function EnginePicker({
   choices,
