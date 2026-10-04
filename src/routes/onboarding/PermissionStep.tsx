@@ -124,7 +124,7 @@ function OtherIntro({ os }: { os: Exclude<Os, "macos"> }) {
       ) : (
         <Prose>
           Linux has no audio permissions to grant. meet-ai records as soon as it can find a
-          microphone; if it cannot, it says which device failed.
+          microphone. If it cannot, it says which device failed.
         </Prose>
       )}
     </>
@@ -137,8 +137,7 @@ function OtherNext({ os, state, onRecheck, onNext }: NextProps & { os: Exclude<O
       <div className="state state--error" role="alert">
         <h2 className="state__title">Windows is blocking the microphone</h2>
         <p className="state__body">
-          Recording is switched off until this is fixed. Nothing you have already recorded is
-          affected.
+          Recording is off until this is fixed. Nothing you have already recorded is affected.
         </p>
         <ol className="flex flex-col gap-5 [counter-reset:step]">
           <Instruction>

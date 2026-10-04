@@ -16,7 +16,7 @@ export function SpeechStep({ onNext }: { onNext: () => void }) {
       </header>
       <Prose>
         This happens on your Mac, not on a server. Newer Macs have Apple's speech engine built in
-        and need nothing at all; older ones use a model meet-ai downloads once and then keeps.
+        and need nothing at all. Older ones use a model meet-ai downloads once and then keeps.
       </Prose>
 
       <EngineSummary />
