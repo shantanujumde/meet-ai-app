@@ -18,6 +18,10 @@
 //!
 //! In order, each step only when its setting is there:
 //!
+//! (Before any of them: with `FAKE_CLI_INSTALL_TO` set in the environment it
+//! only copies itself to that path and exits; that is how
+//! `test_support::FakeCli::install` places a copy, TUR-96.)
+//!
 //! - `touch`: creates this file.
 //! - `log_dir`: writes `args.log` (the arguments joined by spaces, then a
 //!   newline), `argv.log` (one argument per line), `cwd.log` (the working
@@ -58,10 +62,24 @@ use std::time::Duration;
 /// Set on the sleeping copy that `grandchild_pid_file` starts.
 const SLEEPER: &str = "FAKE_CLI_SLEEPER";
 
+/// Set by `test_support::FakeCli::install`: copy this program to that path
+/// and exit (TUR-96). The copy is made here, in a process of its own, so the
+/// test process never holds a file open for writing that it will run next.
+const INSTALL_TO: &str = "FAKE_CLI_INSTALL_TO";
+
 fn main() -> ExitCode {
     if std::env::var_os(SLEEPER).is_some() {
         std::thread::sleep(Duration::from_secs(30));
         return ExitCode::SUCCESS;
+    }
+    if let Some(to) = std::env::var_os(INSTALL_TO) {
+        return match std::env::current_exe().and_then(|me| std::fs::copy(me, to)) {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("fake-cli: could not install a copy: {e}");
+                ExitCode::from(101)
+            }
+        };
     }
     match run() {
         Ok(code) => ExitCode::from(code),

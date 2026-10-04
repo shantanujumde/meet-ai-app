@@ -6,6 +6,10 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+/// Tells `fake-cli` to copy itself to this path and exit; see
+/// [`FakeCli::install`]. Same name as in `src/bin/fake_cli.rs`.
+const INSTALL_TO: &str = "FAKE_CLI_INSTALL_TO";
+
 /// The `fake-cli` program `build.rs` compiled for this test run.
 ///
 /// # Panics
@@ -33,12 +37,28 @@ pub struct FakeCli {
 impl FakeCli {
     /// Copies `fake-cli` to `<dir>/<name>` (plus `.exe` on Windows) and makes
     /// its empty settings folder.
+    ///
+    /// The copy is written by a `fake-cli` process of its own, never by this
+    /// one (TUR-96). A file this process had open for writing could be
+    /// inherited by a child another test thread forks at that moment, and
+    /// until that child execs, Linux refuses to run the file with
+    /// `ETXTBSY` ("Text file busy"). That was the flaky
+    /// `codex_printing_garbage_is_invalid_json`. The helper process has
+    /// exited, and its file closed, before this returns, so nothing in the
+    /// test process can hold the copy open.
     pub fn install(dir: &Path, name: &str) -> Self {
         let path = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
         // quality: allow-unwrap test helper: a failure here should fail the test
         std::fs::create_dir_all(dir).expect("could not make the fake CLI's folder");
-        // quality: allow-unwrap test helper: a failure here should fail the test
-        std::fs::copy(fake_cli_path(), &path).expect("could not copy fake-cli");
+        let status = std::process::Command::new(fake_cli_path())
+            .env(INSTALL_TO, &path)
+            .stdin(std::process::Stdio::null())
+            .status();
+        assert!(
+            matches!(status, Ok(s) if s.success()),
+            "could not copy fake-cli to {}: {status:?}",
+            path.display()
+        );
         let config = dir.join(format!("{name}.fake"));
         // quality: allow-unwrap test helper: a failure here should fail the test
         std::fs::create_dir_all(&config).expect("could not make the fake CLI's settings");
@@ -140,6 +160,35 @@ mod tests {
             .output()
             .unwrap();
         assert_eq!(out.status.code(), Some(7));
+    }
+
+    /// TUR-96: copies installed and run on many threads at once. With the
+    /// copy written by this process, a fork on one thread inherited the
+    /// half-written copy of another and Linux failed its exec with
+    /// `ETXTBSY` now and then.
+    #[test]
+    fn copies_installed_and_run_on_many_threads_at_once_all_start() {
+        let dir = tempfile_dir();
+        let threads: Vec<_> = (0..8)
+            .map(|t| {
+                let dir = dir.clone();
+                std::thread::spawn(move || {
+                    for i in 0..25 {
+                        let cli = FakeCli::install(&dir, &format!("cli-{t}-{i}"));
+                        cli.set("stdout", "ok");
+                        let out = Command::new(cli.path())
+                            .stdin(Stdio::null())
+                            .output()
+                            .unwrap_or_else(|e| panic!("thread {t} run {i}: {e}"));
+                        assert_eq!(out.stdout, b"ok", "thread {t} run {i}: {out:?}");
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// A fresh folder under the system temp folder; this crate has no
