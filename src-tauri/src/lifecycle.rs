@@ -152,6 +152,11 @@ pub fn reveal_for_prompt(app: &AppHandle) {
 
 /// `Builder::on_window_event`: a close of the main window hides it.
 pub fn on_window_event(window: &Window, event: &WindowEvent) {
+    // TUR-58: the Windows taskbar may have switched light/dark.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if let WindowEvent::ThemeChanged(_) = event {
+        crate::tray::refresh_icon(window.app_handle());
+    }
     let WindowEvent::CloseRequested { api, .. } = event else {
         return;
     };

@@ -3,8 +3,9 @@
 
 The template (`src-tauri/icons/meet-aiTemplate@2x.png`) is black with an alpha
 channel; macOS recolours it, Windows and Linux do not. So each variant here is
-the same glyph and the same alpha, filled with one brand colour
-(`design-system/meet-ai/brand/tools/geometry.mjs`). No new artwork.
+the same glyph and the same alpha, filled with one existing colour: the brand
+palette (`design-system/meet-ai/brand/tools/geometry.mjs`) for idle, and the
+app's recording red for recording. No new artwork.
 
 Standard library only (zlib), so it runs on any machine with Python 3:
 
@@ -23,7 +24,10 @@ VARIANTS = {
     "tray-chalk.png": (0xF4, 0xF5, 0xF7),  # idle, dark Windows taskbar
     "tray-ink.png": (0x16, 0x18, 0x1D),  # idle, light Windows taskbar
     "tray-ember.png": (0xFF, 0x8A, 0x3C),  # idle on Linux: readable on light and dark panels
-    "tray-recording.png": (0xE5, 0x48, 0x4D),  # recording, every non-macOS tray
+    # recording, every non-macOS tray: --status-recording, i.e. --sys-red-dark
+    # #ff453a (design-system/meet-ai/tokens.css), the dark variant since the
+    # Windows 11 default taskbar and most Linux panels are dark
+    "tray-recording.png": (0xFF, 0x45, 0x3A),
 }
 
 

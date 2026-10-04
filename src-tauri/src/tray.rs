@@ -28,20 +28,6 @@ mod today;
 
 pub use today::{redraw_soon, reread_soon};
 
-// The menu-bar glyph: "m.", the brand symbol, drawn on the 16px pixel grid by
-// the brand build (`design-system/meet-ai/brand/tools/build.mjs`) and
-// rasterised by its `render.sh`. Never hand-exported.
-//
-// The 2x raster is the one embedded. `tray-icon` sizes every status-item image
-// to 18pt tall whatever it is handed, so the larger art is the one with pixels
-// to spare when AppKit scales it.
-//
-// Embedded rather than bundled as a resource: a resource that fails to copy
-// leaves a menu-bar item with no icon at all, and that is a far worse failure
-// than a slightly bigger binary.
-//
-// TUR-58: the bytes live in `icons.rs` now, with the Windows and Linux
-// variants beside them; [`current_art`] picks one.
 pub use icons::TrayOs;
 use icons::{TrayArt, pick};
 
@@ -110,27 +96,43 @@ fn build(app: &AppHandle) -> tauri::Result<()> {
 /// Windows taskbar theme as it is now). On macOS [`current_art`] never
 /// changes, so the icon is never touched there.
 fn watch_recording_state(app: &AppHandle, toggle: MenuItem<tauri::Wry>, first: TrayArt) {
+    app.manage(ShownArt(std::sync::Mutex::new(first)));
     let handle = app.clone();
-    let shown = std::sync::Mutex::new(first);
     app.listen(crate::events::RECORDING_STATE_EVENT, move |_event| {
         let Some(recorder) = handle.try_state::<recording::Recorder>() else {
             return;
         };
-        let phase = recorder.status().phase;
-        if let Err(error) = toggle.set_text(label_for(phase)) {
+        if let Err(error) = toggle.set_text(label_for(recorder.status().phase)) {
             tracing::warn!(%error, "could not relabel the menu-bar recording item");
         }
-        let art = current_art(phase != Phase::Idle);
-        let Ok(mut shown) = shown.lock() else {
-            return;
-        };
-        if *shown != art {
-            if let Err(error) = set_art(&handle, art) {
-                tracing::warn!(%error, "could not change the tray icon");
-            }
-            *shown = art;
-        }
+        refresh_icon(&handle);
     });
+}
+
+/// The icon the tray shows now, so a redraw that changes nothing is skipped.
+struct ShownArt(std::sync::Mutex<TrayArt>);
+
+/// Pick the tray icon again from the recording phase and the taskbar theme
+/// as they are now (TUR-58). Called on every recording transition and when
+/// the OS theme changes (`lifecycle::on_window_event`), so a Windows taskbar
+/// switched to light or dark while idle gets the matching glyph at once.
+pub fn refresh_icon(app: &AppHandle) {
+    let (Some(recorder), Some(shown)) = (
+        app.try_state::<recording::Recorder>(),
+        app.try_state::<ShownArt>(),
+    ) else {
+        return;
+    };
+    let art = current_art(recorder.status().phase != Phase::Idle);
+    let Ok(mut shown) = shown.0.lock() else {
+        return;
+    };
+    if *shown != art {
+        if let Err(error) = set_art(app, art) {
+            tracing::warn!(%error, "could not change the tray icon");
+        }
+        *shown = art;
+    }
 }
 
 /// The picture for this OS and taskbar right now.

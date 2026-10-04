@@ -80,7 +80,7 @@ pub fn run() {
             // the shortcut) toggles in this, the running app, and shows no
             // window, the same as pressing the shortcut.
             if cli::wants_toggle(&argv) {
-                spawn_toggle(app, "--toggle-recording");
+                spawn_toggle(app, cli::TOGGLE_RECORDING_FLAG);
                 return;
             }
             // TUR-76: the window may be hidden, with no Dock icon.

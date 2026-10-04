@@ -103,6 +103,7 @@ Pin these exactly in `Cargo.toml` and commit `Cargo.lock`. 🆕 = new major with
 | `tauri-plugin-fs` | **2.5.2** | |
 | `tauri-plugin-log` | **2.9.1** | |
 | `tauri-plugin-single-instance` | **2.4.4** | |
+| `tauri-plugin-autostart` | **2.5.1** | Start at login (TUR-58); 2.6+ needs tauri 2.12 |
 | `tauri-plugin-updater` | **2.11.0** | added now, `active: false` — §8.1 ⛔ seam |
 
 ### 2.2 Audio (🔴 the risky crate)

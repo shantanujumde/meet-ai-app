@@ -11,8 +11,10 @@ not draw a tray or press keys.
 1. Install the PR's Windows build. Taskbar on dark (Settings, Personalization,
    Colors, "Choose your mode": Dark). Expected: a light "m." in the tray
    overflow or tray, clearly visible.
-2. Switch the mode to Light, then start and stop a recording (the switch is
-   read whenever the icon changes). Expected: a dark "m." when idle.
+2. With meet-ai idle, switch the mode to Light. Expected: the tray icon turns
+   into a dark "m." within a moment, with no recording needed. Switch back to
+   Dark: light again. (Driven by the window's ThemeChanged event; if the icon
+   does not follow while the window is hidden, note it.)
 3. Press Ctrl+Alt+R with another app focused. Expected: recording starts, the
    tray icon turns red and the menu item reads "Stop recording". Press again:
    it stops and the icon goes back.

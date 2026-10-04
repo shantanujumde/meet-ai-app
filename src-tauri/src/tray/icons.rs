@@ -14,8 +14,19 @@
 // (the theme-by-OS icon pick: template on macOS, by taskbar theme on Windows,
 // always coloured on Linux; rewritten for our states and art).
 
-/// The macOS template glyph (see `tray.rs`).
-pub const TEMPLATE: &[u8] = include_bytes!("../../icons/meet-aiTemplate@2x.png");
+/// The menu-bar glyph: "m.", the brand symbol, drawn on the 16px pixel grid by
+/// the brand build (`design-system/meet-ai/brand/tools/build.mjs`) and
+/// rasterised by its `render.sh`. Never hand-exported. macOS recolours it as a
+/// template; the other files here are filled copies of it.
+///
+/// The 2x raster is the one embedded. `tray-icon` sizes every status-item image
+/// to 18pt tall whatever it is handed, so the larger art is the one with pixels
+/// to spare when AppKit scales it.
+///
+/// Embedded rather than bundled as a resource: a resource that fails to copy
+/// leaves a menu-bar item with no icon at all, and that is a far worse failure
+/// than a slightly bigger binary.
+const TEMPLATE: &[u8] = include_bytes!("../../icons/meet-aiTemplate@2x.png");
 const CHALK: &[u8] = include_bytes!("../../icons/tray-chalk.png");
 const INK: &[u8] = include_bytes!("../../icons/tray-ink.png");
 const EMBER: &[u8] = include_bytes!("../../icons/tray-ember.png");
