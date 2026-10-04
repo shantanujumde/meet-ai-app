@@ -56,7 +56,7 @@ function large(overrides: Partial<ModelView> = {}): ModelView {
     displayName: "Large turbo (multilingual)",
     goodFor:
       "Close to Large in accuracy and much faster. Understands 100 languages. Slightly less accurate than Large for some languages other than English.",
-    tags: ["multilingual", "slower"],
+    tags: ["multilingual"],
     languages: ["English", "Chinese", "Hindi"],
     recommended:
       "This Mac has Apple silicon and 32 GB of memory, enough for Large turbo, close to the most accurate model and much faster.",
@@ -239,9 +239,8 @@ describe("EngineSummary: the model rows", () => {
 
     const big = modelRow("Large turbo (multilingual)");
     expect(within(big).queryByText("Most accurate")).toBeNull();
-    for (const tag of ["Multilingual", "Slower"]) {
-      expect(within(big).getByText(tag)).toBeInTheDocument();
-    }
+    expect(within(big).getByText("Multilingual")).toBeInTheDocument();
+    expect(within(big).queryByText("Slower")).toBeNull();
   });
 
   test("the recommended model is marked, with its reason", async () => {

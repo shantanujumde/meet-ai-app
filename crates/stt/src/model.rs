@@ -168,7 +168,7 @@ pub const MODELS: &[ModelSpec] = &[
             display_name: "Large turbo (multilingual)",
             good_for: "Close to Large in accuracy and much faster. Understands 100 languages. \
                        Slightly less accurate than Large for some languages other than English.",
-            tags: &[ModelTag::Multilingual, ModelTag::Slower],
+            tags: &[ModelTag::Multilingual],
             languages: LanguageSet::Multilingual100,
         },
     },
@@ -392,7 +392,7 @@ mod tests {
         );
         let turbo = find("large-v3-turbo-q5_0").unwrap().facts;
         assert_eq!(turbo.display_name, "Large turbo (multilingual)");
-        assert_eq!(turbo.tags, &[ModelTag::Multilingual, ModelTag::Slower]);
+        assert_eq!(turbo.tags, &[ModelTag::Multilingual]);
         let medium = find("medium-q5_0").unwrap().facts;
         assert_eq!(medium.display_name, "Medium (multilingual)");
         assert_eq!(medium.tags, &[ModelTag::Multilingual]);
@@ -406,6 +406,15 @@ mod tests {
                 ModelTag::Slower
             ]
         );
+        // Only Large carries the Slower chip.
+        for spec in MODELS {
+            assert_eq!(
+                spec.facts.tags.contains(&ModelTag::Slower),
+                spec.id == "large-v3-q5_0",
+                "{}",
+                spec.id
+            );
+        }
         // Only Large claims to be the most accurate.
         for spec in MODELS {
             assert_eq!(
