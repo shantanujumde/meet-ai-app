@@ -1,6 +1,8 @@
 /* =============================================================================
    meet-ai design system — token layer
    Platform: macOS (Tauri 2 + WKWebView). Apple Liquid Glass constructs.
+   Light or dark is `<html data-theme>`, always set by src/lib/appearance.ts
+   (TUR-102: System follows the OS, or the user picks one in Settings).
    Layers: 1 primitive -> 2 semantic -> 3 component. Never use layer 1 in a
    component. Never hardcode a raw value in a component.
    ============================================================================= */
@@ -58,6 +60,26 @@
   --sys-orange-light: #ff9500;
   --sys-orange-dark:  #ff9f0a;
 
+  /* --- Brand-tinted neutrals (TUR-102) --------------------------------------
+     The window, sidebar and card surfaces are not plain grey: each is a
+     neutral nudged a few percent toward the brand (brand/brand-tokens.css).
+     Light mode mixes in Dusk (#C85396, the coral-to-violet tile's middle);
+     dark mode starts from Ink and mixes in Dusk violet (#9B3CF2). Backgrounds
+     only: the accent stays system blue.
+       tint-canvas  = mix(#FFFFFF, #C85396, 1.5%)
+       tint-card    = mix(#F4F5F7, #C85396, 3%)
+       tint-sidebar = mix(#ECECF0, #C85396, 4%)
+       tint-ink-canvas  = mix(#16181D, #9B3CF2, 4%)
+       tint-ink-card    = mix(#24262E, #9B3CF2, 5%)
+       tint-ink-sidebar = mix(#121317, #9B3CF2, 5%)
+     design-system/meet-ai/contrast.mjs checks every text colour on them. */
+  --tint-canvas:      #fefcfd;
+  --tint-card:        #f3f0f4;
+  --tint-sidebar:     #ebe6ec;
+  --tint-ink-canvas:  #1b1926;
+  --tint-ink-card:    #2a2738;
+  --tint-ink-sidebar: #191522;
+
   /* --- Blur radii -----------------------------------------------------------
      Four steps only. More steps means inconsistent depth and more GPU passes. */
   --blur-thin:    8px;   /* inline chips, hover layers */
@@ -74,7 +96,7 @@
      Concentric rule: an inner radius equals the outer radius minus the padding
      between them. Compute with calc(), never eyeball. */
   --radius-window:  12px;  /* macOS 26 window corner */
-  --radius-panel:   14px;
+  --radius-panel:   16px;  /* cards, popovers (TUR-102: rounder) */
   --radius-card:    10px;
   --radius-control: 8px;
   --radius-chip:    6px;
@@ -93,6 +115,8 @@
   --space-8:  24px;
   --space-9:  32px;
   --space-10: 40px;
+  --space-11: 48px;  /* page margins (TUR-102: calm, roomy) */
+  --space-12: 64px;
 
   /* --- Control heights — AppKit metrics ------------------------------------- */
   --control-h-small:   20px;
@@ -157,9 +181,13 @@
 /* -----------------------------------------------------------------------------
    LAYER 2 — SEMANTIC
    What a value means. Components consume only this layer.
-   Light mode is the default. Dark mode overrides below.
+   Light mode is the default. Dark mode is `:root[data-theme="dark"]` below;
+   src/lib/appearance.ts sets the attribute from the saved theme, following
+   the OS when that is "system".
    -------------------------------------------------------------------------- */
 :root {
+  color-scheme: light;
+
   /* Glass surfaces — alpha fills that sit on the blurred backdrop */
   --surface-glass-regular: var(--white-a60);
   --surface-glass-clear:   var(--white-a20);
@@ -168,17 +196,34 @@
   --surface-glass-sunken:  var(--black-a04);
 
   /* The window canvas — the bottom of the stack, and the only fully opaque
-     surface in the system.
+     surface in the system. TUR-102: near-white with a faint brand tint.
      Everything above it is alpha over *something*, and that something has to
      be a known colour or §7's "body text holds 4.5:1 against its composed
      backdrop" is unmeasurable. The native NSVisualEffectView still sits behind
      this and shapes the window's corners, shadow and active-state dimming; it
      is not asked to carry contrast for body text, because it cannot. */
-  --surface-canvas:       #ffffff;
+  --surface-canvas:       var(--tint-canvas);
 
   /* The content layer — sits on the canvas, under the glass layer */
   --surface-content:      rgba(255, 255, 255, 0.72);
   --surface-content-alt:  var(--white-a45);
+
+  /* Cards (TUR-102): the rounded groups every screen is built from. Opaque,
+     a step off the canvas: soft grey in light, a step lighter in dark. */
+  --surface-card:         var(--tint-card);
+
+  /* The sidebar (TUR-102): see-through glass over the native window
+     material, in a tone a little different from the content. `-solid` is the
+     same tone fully opaque, for glass off, Reduce Transparency and Increase
+     Contrast. 84% keeps every sidebar label at AA over a mid-grey backdrop
+     (contrast.mjs), which is darker than the light material ever gets. */
+  --surface-sidebar:       color-mix(in srgb, var(--tint-sidebar) 84%, transparent);
+  --surface-sidebar-solid: var(--tint-sidebar);
+
+  /* Plain grey fills for secondary buttons and the switch's off track. Alpha,
+     so they read the same on the canvas, a card and the sidebar. */
+  --surface-control:       var(--black-a06);
+  --surface-control-hover: var(--black-a10);
 
   /* Rim light. Glass has a bright top edge and a dark bottom edge. */
   --rim-highlight: var(--white-a80);
@@ -189,20 +234,30 @@
   --scrim-clear:  var(--black-a20);
   --scrim-sheet:  var(--black-a30);
 
-  /* Text */
+  /* Text. TUR-102: secondary and tertiary darkened so every text colour holds
+     WCAG AA (4.5:1) on every surface it sits on, cards and sidebar included;
+     contrast.mjs checks it. Tertiary stays a step quieter than secondary. */
   --text-primary:   rgba(0, 0, 0, 0.85);
-  --text-secondary: rgba(0, 0, 0, 0.55);
-  --text-tertiary:  rgba(0, 0, 0, 0.35);
+  --text-secondary: rgba(0, 0, 0, 0.68);
+  --text-tertiary:  rgba(0, 0, 0, 0.61);
   --text-on-accent: #ffffff;
 
   /* Separators */
   --separator:        var(--black-a10);
   --separator-strong: var(--black-a20);
 
-  /* Accent — one tint per window. Used for the single primary action. */
+  /* Accent — one tint per window, always macOS system blue (TUR-102 keeps
+     it: the brand tint is for backgrounds only). `--accent` is the blue
+     itself, for switches, outlines, icons and the focus ring. A filled
+     control that carries white text (a primary button, the selected sidebar
+     row) uses `--accent-fill`, the same blue a shade deeper, because white on
+     the system blue itself is 4.0:1 and AA needs 4.5. `--accent-text` is the
+     blue as text on a surface. */
   --accent:          var(--sys-blue-light);
-  --accent-hover:    color-mix(in srgb, var(--sys-blue-light) 88%, black);
-  --accent-glass:    color-mix(in srgb, var(--sys-blue-light) 22%, transparent);
+  --accent-fill:     color-mix(in srgb, var(--sys-blue-light) 86%, black);
+  --accent-hover:    color-mix(in srgb, var(--sys-blue-light) 76%, black);
+  --accent-text:     color-mix(in srgb, var(--sys-blue-light) 74%, black);
+  --accent-glass:    color-mix(in srgb, var(--sys-blue-light) 14%, transparent);
   --focus-ring:      var(--sys-blue-light);
 
   /* Status — recording is the app's loudest state, so it owns red */
@@ -210,6 +265,15 @@
   --status-success:   var(--sys-green-light);
   --status-warning:   var(--sys-orange-light);
   --status-danger:    var(--sys-red-light);
+  /* TUR-102: the status colours as words, and as fills under white text.
+     The system red, orange and green themselves are under 4.5:1 on a light
+     surface, so the words take a deeper shade of the same hue. The raw
+     colours stay for dots, rings and other graphics (3:1). */
+  --status-danger-text:    color-mix(in srgb, var(--sys-red-light) 68%, black);
+  --status-warning-text:   color-mix(in srgb, var(--sys-orange-light) 56%, black);
+  --status-success-text:   color-mix(in srgb, var(--sys-green-light) 56%, black);
+  --status-recording-text: var(--status-danger-text);
+  --status-danger-fill:    color-mix(in srgb, var(--sys-red-light) 80%, black);
 
   /* Speaker colors for the transcript. Distinguishable without relying on hue
      alone — pair each with an initial and a position. */
@@ -219,74 +283,103 @@
   --speaker-4: #00c7be;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --surface-glass-regular: var(--white-a10);
-    --surface-glass-clear:   var(--white-a04);
-    --surface-glass-raised:  var(--white-a14);
-    --surface-popup:         color-mix(in srgb, var(--gray-900) 96%, transparent);
-    --surface-glass-sunken:  var(--black-a20);
-
-    --surface-canvas:      var(--gray-950);
-    --surface-content:     rgba(28, 28, 32, 0.72);
-    --surface-content-alt: var(--black-a30);
-
-    --rim-highlight: var(--white-a20);
-    --rim-shadow:    var(--black-a45);
-    --rim-border:    var(--white-a10);
-
-    --scrim-clear: var(--black-a45);
-    --scrim-sheet: var(--black-a60);
-
-    --text-primary:   rgba(255, 255, 255, 0.92);
-    --text-secondary: rgba(255, 255, 255, 0.62);
-    --text-tertiary:  rgba(255, 255, 255, 0.40);
-    --text-on-accent: #ffffff;
-
-    --separator:        var(--white-a10);
-    --separator-strong: var(--white-a20);
-
-    --accent:       var(--sys-blue-dark);
-    --accent-hover: color-mix(in srgb, var(--sys-blue-dark) 88%, white);
-    --accent-glass: color-mix(in srgb, var(--sys-blue-dark) 26%, transparent);
-    --focus-ring:   var(--sys-blue-dark);
-
-    --status-recording: var(--sys-red-dark);
-    --status-success:   var(--sys-green-dark);
-    --status-warning:   var(--sys-orange-dark);
-    --status-danger:    var(--sys-red-dark);
-
-    --speaker-1: var(--sys-blue-dark);
-    --speaker-2: #bf5af2;
-    --speaker-3: var(--sys-orange-dark);
-    --speaker-4: #66d4cf;
-
-    --shadow-raised:   0 1px 2px var(--black-a45), 0 0 0 0.5px var(--white-a06);
-    --shadow-floating: 0 4px 16px var(--black-a60), 0 0 0 0.5px var(--white-a10);
-    --shadow-sheet:    0 16px 48px var(--black-a80), 0 0 0 0.5px var(--white-a10);
-  }
-}
-
-/* Explicit dark override so an in-app theme toggle wins over the system */
+/* Dark. The one dark block: `data-theme` is always set (see the header). */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --surface-canvas:        var(--gray-950);
+
   --surface-glass-regular: var(--white-a10);
   --surface-glass-clear:   var(--white-a04);
   --surface-glass-raised:  var(--white-a14);
   --surface-popup:         color-mix(in srgb, var(--gray-900) 96%, transparent);
-  --surface-content:       rgba(28, 28, 32, 0.72);
+  --surface-glass-sunken:  var(--black-a20);
+
+  --surface-canvas:      var(--tint-ink-canvas);
+  --surface-content:     color-mix(in srgb, var(--tint-ink-canvas) 72%, transparent);
+  --surface-content-alt: var(--black-a30);
+  --surface-card:        var(--tint-ink-card);
+
+  --surface-sidebar:       color-mix(in srgb, var(--tint-ink-sidebar) 84%, transparent);
+  --surface-sidebar-solid: var(--tint-ink-sidebar);
+
+  --surface-control:       var(--white-a10);
+  --surface-control-hover: var(--white-a14);
+
   --rim-highlight: var(--white-a20);
   --rim-shadow:    var(--black-a45);
   --rim-border:    var(--white-a10);
-  --scrim-clear:   var(--black-a45);
+
+  --scrim-clear: var(--black-a45);
+  --scrim-sheet: var(--black-a60);
+
   --text-primary:   rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.62);
-  --text-tertiary:  rgba(255, 255, 255, 0.40);
-  --separator:      var(--white-a10);
-  --accent:         var(--sys-blue-dark);
-  --focus-ring:     var(--sys-blue-dark);
+  --text-secondary: rgba(255, 255, 255, 0.70);
+  --text-tertiary:  rgba(255, 255, 255, 0.61);
+  --text-on-accent: #ffffff;
+
+  --separator:        var(--white-a10);
+  --separator-strong: var(--white-a20);
+
+  --accent:       var(--sys-blue-dark);
+  --accent-fill:  color-mix(in srgb, var(--sys-blue-dark) 82%, black);
+  --accent-hover: color-mix(in srgb, var(--sys-blue-dark) 72%, black);
+  --accent-text:  color-mix(in srgb, var(--sys-blue-dark) 62%, white);
+  --accent-glass: color-mix(in srgb, var(--sys-blue-dark) 22%, transparent);
+  --focus-ring:   var(--sys-blue-dark);
+
   --status-recording: var(--sys-red-dark);
+  --status-success:   var(--sys-green-dark);
+  --status-warning:   var(--sys-orange-dark);
+  --status-danger:    var(--sys-red-dark);
+  --status-danger-text:    color-mix(in srgb, var(--sys-red-dark) 78%, white);
+  --status-warning-text:   var(--sys-orange-dark);
+  --status-success-text:   var(--sys-green-dark);
+  --status-recording-text: var(--status-danger-text);
+  --status-danger-fill:    color-mix(in srgb, var(--sys-red-dark) 76%, black);
+
+  --speaker-1: var(--sys-blue-dark);
+  --speaker-2: #bf5af2;
+  --speaker-3: var(--sys-orange-dark);
+  --speaker-4: #66d4cf;
+
+  --shadow-raised:   0 1px 2px var(--black-a45), 0 0 0 0.5px var(--white-a06);
+  --shadow-floating: 0 4px 16px var(--black-a60), 0 0 0 0.5px var(--white-a10);
+  --shadow-sheet:    0 16px 48px var(--black-a80), 0 0 0 0.5px var(--white-a10);
+}
+
+/* Glass off (Settings → Appearance, `appearance.glass: false`), and the OS's
+   Reduce Transparency: every see-through surface turns solid. The popup was
+   already near-solid (TUR-100); now it is fully opaque. */
+:root[data-glass="off"] {
+  --surface-sidebar: var(--surface-sidebar-solid);
+  --surface-popup:   var(--surface-card);
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  :root[data-theme="dark"] {
+    --surface-sidebar: var(--surface-sidebar-solid);
+    --surface-popup:   var(--surface-card);
+  }
+}
+
+/* Increase Contrast: solid surfaces, stronger text and lines. Secondary and
+   tertiary collapse into primary; separators get dark enough to see. */
+@media (prefers-contrast: more) {
+  :root,
+  :root[data-theme="dark"] {
+    --surface-sidebar: var(--surface-sidebar-solid);
+    --text-secondary:  var(--text-primary);
+    --text-tertiary:   var(--text-primary);
+  }
+  :root {
+    --separator:        var(--black-a30);
+    --separator-strong: var(--black-a45);
+    --accent-text:      color-mix(in srgb, var(--sys-blue-light) 70%, black);
+  }
+  :root[data-theme="dark"] {
+    --separator:        var(--white-a30);
+    --separator-strong: var(--white-a45);
+    --accent-text:      color-mix(in srgb, var(--sys-blue-dark) 60%, white);
+  }
 }
 
 /* -----------------------------------------------------------------------------
@@ -295,22 +388,68 @@
    Concentric radii are computed, never typed by hand.
    -------------------------------------------------------------------------- */
 :root {
-  /* Titlebar — transparent, drag region, merges with the toolbar */
+  /* Titlebar — slim drag region: arrows, title, record control */
   --titlebar-h:       38px;
-  --titlebar-fill:    transparent;
+  --titlebar-fill:    var(--surface-canvas); /* opaque; the sidebar below is the glass */
+  --titlebar-button:  28px; /* back and forward (TUR-102) */
   --titlebar-pad-x:   var(--space-5);
   --titlebar-traffic-inset: 78px; /* clearance for the traffic lights */
 
-  /* Sidebar — meeting list. Native vibrancy behind it, no extra blur. */
-  --sidebar-w:        228px;
+  /* Sidebar — navigation and the meeting list (TUR-102). On macOS a
+     see-through glass fill over the native window material, a tone off the
+     content; solid with glass off, Reduce Transparency, Increase Contrast,
+     and on Windows and Linux (no material behind it there). No
+     backdrop-filter of its own: the native material is the blur. */
+  --sidebar-w:        240px;
   --sidebar-w-min:    180px;
   --sidebar-w-max:    320px;
-  --sidebar-fill:     transparent;
-  --sidebar-pad:      var(--space-4);
-  --sidebar-row-h:    28px;
-  --sidebar-row-radius: var(--radius-chip);
-  --sidebar-row-hover:  var(--white-a10);
-  --sidebar-row-active: var(--accent-glass);
+  --sidebar-fill:     var(--surface-sidebar);
+  --sidebar-pad:      var(--space-5);
+  --sidebar-row-h:    30px;
+  --sidebar-row-radius: var(--radius-control);
+  --sidebar-row-hover:  var(--surface-control);
+  /* The current page: a solid accent pill with white text and icon. */
+  --sidebar-row-active: var(--accent-fill);
+
+  /* Pages — big bold title, lots of room around it (TUR-102) */
+  --page-max:         56rem;
+  --page-max-narrow:  34rem;
+  --page-pad-top:     var(--space-10);
+  --page-pad-x:       var(--space-11);
+  --page-gap:         var(--space-9);   /* between sections */
+  --section-gap:      var(--space-5);   /* a section's heading to its card */
+
+  /* Settings cards and rows — icon square, name, grey line, control */
+  --card-radius:      var(--radius-panel);
+  --card-pad-x:       var(--space-6);
+  --row-pad-y:        var(--space-5);
+  --row-min-h:        52px;
+  --icon-size:        16px;
+  --icon-stroke:      1.75;   /* the one stroke weight, every icon */
+  --icon-box:         28px;   /* the rounded square a row's icon sits in */
+  --icon-box-radius:  var(--radius-control);
+
+  /* Switch — bigger, like the system's large switch (TUR-102) */
+  --switch-w:         44px;
+  --switch-h:         24px;
+  --switch-knob:      20px;
+
+  /* Appearance picker tiles: a tiny drawing of a window in each look. The
+     drawings show a theme that is not necessarily the current one, so their
+     colours are fixed here and never change with data-theme. */
+  --tile-w:           132px;
+  --tile-h:           84px;
+  --preview-light-window:  var(--tint-canvas);
+  --preview-light-sidebar: var(--tint-sidebar);
+  --preview-light-bar:     var(--tint-card);
+  --preview-light-line:    var(--black-a20);
+  --preview-dark-window:   var(--tint-ink-canvas);
+  --preview-dark-sidebar:  var(--tint-ink-sidebar);
+  --preview-dark-bar:      var(--tint-ink-card);
+  --preview-dark-line:     var(--white-a30);
+  --preview-dot-close:     var(--sys-red-light);
+  --preview-dot-min:       var(--sys-orange-light);
+  --preview-dot-max:       var(--sys-green-light);
 
   /* Floating toolbar — the glass layer above the content */
   --toolbar-pad:      var(--space-2);
@@ -364,5 +503,5 @@
 
 :root:is([data-os="windows"], [data-os="linux"]) {
   --titlebar-traffic-inset: var(--titlebar-pad-x);
-  --sidebar-fill: var(--surface-canvas);
+  --sidebar-fill: var(--surface-sidebar-solid);
 }

@@ -4,6 +4,8 @@
    surfaces. They are deliberately NOT wired into the product UI. The interface
    uses macOS system colours on purpose (design-system/meet-ai/tokens.css, the
    "macOS system colors" block). Do not repoint --accent at a brand colour.
+   Background surfaces (window, sidebar, cards) may carry a faint brand tint
+   since TUR-102 (tokens.css, "Brand-tinted neutrals"); the accent stays blue.
    ============================================================================= */
 :root {
   /* Dusk — the app-icon tile. Coral at the top, violet at the bottom. */
