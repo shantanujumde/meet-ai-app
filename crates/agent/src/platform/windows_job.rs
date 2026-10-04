@@ -12,7 +12,7 @@
 //! process-wrap not to resume it), put in this job, and only then resumed, so
 //! nothing it starts can slip out before it is in.
 
-// Adapted from watchexec/process-wrap/src/windows.rs @ ca45003a831ac125e6673b8759430e5ef33cc1db (Apache-2.0)
+// Adapted from github.com/watchexec/process-wrap/src/windows.rs @ ca45003a831ac125e6673b8759430e5ef33cc1db (Apache-2.0)
 // (`make_job_object` and `resume_threads`; process-wrap is Apache-2.0 OR MIT,
 // and these two functions came to it from watchexec under Apache-2.0 only.)
 
