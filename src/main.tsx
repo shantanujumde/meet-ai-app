@@ -6,6 +6,7 @@ import { App } from "./App";
 import { lockDocumentScroll } from "./lib/documentScroll";
 import "./index.css";
 import { applyOsAttribute } from "./lib/osAttribute";
+import { watchAppearance } from "./state/appearance";
 import { PromptPopup } from "./ui/PromptPopup";
 
 /** TUR-59: the "Record this meeting?" popup window (Windows, Linux) gets only its prompt. */
@@ -31,6 +32,10 @@ lockDocumentScroll();
 
 // TUR-57: CSS keys the per-OS chrome off <html data-os>.
 applyOsAttribute();
+
+// TUR-102: Light / Dark / System and the glass switch, on <html>, before the
+// first paint; both windows (the popup too) follow the saved choice.
+watchAppearance();
 
 createRoot(container).render(<StrictMode>{isPromptWindow ? <PromptPopup /> : <App />}</StrictMode>);
 

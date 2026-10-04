@@ -575,6 +575,8 @@ export async function calendarRefreshMinutes(): Promise<number> {
 
 // --- command groups in their own modules ------------------------------------
 
+// Settings' Light / Dark / System picker and glass switch (TUR-102).
+export * from "./appearance";
 export * from "./brief";
 export * from "./calendar";
 // Closing and quitting (TUR-76). Re-exported, so every caller (and
