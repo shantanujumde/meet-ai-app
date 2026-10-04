@@ -145,6 +145,9 @@ pub fn measure() -> Status {
         return forced;
     }
 
+    // TUR-91: the mic this check opens is the one the recording after it
+    // opens, so both follow the setting as `config.jsonc` has it now.
+    crate::mic_setting::apply();
     combine(
         permission_check::check_mic(),
         permission_check::check_system(),

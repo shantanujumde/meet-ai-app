@@ -267,6 +267,8 @@ export const ipc = {
   // TUR-77: no countdown next to the menu-bar icon.
   menuBarCountdown: vi.fn<typeof Client.menuBarCountdown>(async () => false),
   setMenuBarCountdown: vi.fn<typeof Client.setMenuBarCountdown>(async (show) => show),
+  builtinMicWithBluetooth: vi.fn<typeof Client.builtinMicWithBluetooth>(async () => true),
+  setBuiltinMicWithBluetooth: vi.fn<typeof Client.setBuiltinMicWithBluetooth>(async (on) => on),
 
   // TUR-78: the SPEC §3.5 detection defaults, and notifications allowed.
   notificationSettings: vi.fn<typeof Client.notificationSettings>(async () => ({

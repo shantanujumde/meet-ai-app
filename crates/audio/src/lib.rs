@@ -96,6 +96,10 @@ pub mod activity;
 /// gated under `macos`.
 pub mod mic;
 
+/// Which microphone a recording opens: the Mac's own when the default is
+/// Bluetooth, so headphones stay in playback mode (TUR-91).
+pub mod mic_choice;
+
 /// The real audio-permission measurement: runs the [`chime`] positive control
 /// against a live [`macos::tap::SystemSource`], and a start/stop probe against
 /// [`mic::MicSource`]. This is the "measurement" `src-tauri/src/permission.rs`

@@ -7,6 +7,7 @@ use crate::permission_check::{self, ChannelResult, ChannelState};
 use crate::{AudioSource, Error};
 
 pub(crate) use super::device_watch::{default_input_device, default_output_device};
+pub(crate) use super::input_devices::input_devices;
 
 /// A Core Audio device id, as [`default_output_device`] returns it.
 pub(crate) type DeviceId = objc2_core_audio::AudioObjectID;

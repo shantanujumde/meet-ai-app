@@ -333,6 +333,13 @@ export const commands = {
 	 *  bar picks it up at once rather than at its next minute.
 	 */
 	setMenuBarCountdown: (show: boolean) => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_menu_bar_countdown", { show })),
+	/**  The setting as saved. */
+	builtinMicWithBluetooth: () => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("builtin_mic_with_bluetooth")),
+	/**
+	 *  Save the setting and return it as saved. Writes under the meetings root,
+	 *  so through the [`FolderGate`]. The next mic open uses it.
+	 */
+	setBuiltinMicWithBluetooth: (on: boolean) => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_builtin_mic_with_bluetooth", { on })),
 	/**  `detection` from `config.jsonc`, defaults when missing or not valid. */
 	notificationSettings: () => typedError<meet_ai_lib_detection_settings_NotificationSettings, meet_ai_lib_error_UiError>(__TAURI_INVOKE("notification_settings")),
 	/**

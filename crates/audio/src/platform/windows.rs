@@ -11,6 +11,7 @@
 pub(crate) use super::other::DEVICE_ACTIVITY;
 #[cfg(test)]
 pub(crate) use super::other::F32_GOLDEN_HASHES;
+pub(crate) use super::other::input_devices;
 pub(crate) use super::other::{
     DeviceId, default_input_device, default_output_device, device_activity, host_now_ns,
     mic_source, start_sound, system_source,

@@ -572,6 +572,8 @@ export * from "./calendar";
 // `subscribe` are exported for such modules.
 export * from "./lifecycle";
 export * from "./logs";
+// Settings' Bluetooth mic switch (TUR-91).
+export * from "./micSetting";
 export * from "./notifications";
 // Settings' audio retention line (TUR-45, TUR-85).
 export * from "./retention";

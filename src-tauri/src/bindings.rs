@@ -86,6 +86,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::logs::open_logs_folder,
             crate::lifecycle::menu_bar_countdown,
             crate::lifecycle::set_menu_bar_countdown,
+            crate::mic_setting::builtin_mic_with_bluetooth,
+            crate::mic_setting::set_builtin_mic_with_bluetooth,
             crate::detection::settings::notification_settings,
             crate::detection::settings::set_notification_settings,
             crate::detection::settings::os_notifications_blocked,
