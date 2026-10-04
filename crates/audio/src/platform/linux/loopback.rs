@@ -25,17 +25,39 @@ use cpal::{ErrorKind, HostId, SupportedStreamConfig};
 use super::clock::input_callback_ns;
 use super::devices::note_stream_lost;
 use crate::loopback::capture::Capture;
+use crate::loopback::clock::GapRule;
 use crate::loopback::cpal_stream::{self, CaptureSpec};
 use crate::loopback::sound_server::{SoundServer, input_buffer_size, system_capture_device};
 use crate::loopback::source::{Backend, Format, LiveStream, LoopbackSource};
 use crate::{AUDIO_PERMISSION_TIMEOUT, AudioSource, Error};
 
-/// A jump in capture times shorter than this is not a gap. `cpal` runs
-/// PipeWire's process callback on an ordinary (not real-time) thread, so a
-/// late callback is common and loses nothing; filling it with silence would
-/// push the track ahead of wall time. Real silences (an idle sink with no
-/// keepalive) last seconds. Measure it with TUR-43.
-const MIN_GAP_NS: u64 = 100_000_000;
+/// PipeWire's capture times come from the graph clock
+/// (`pw_stream_get_time_n`), exact to the frame, and a cycle the stream
+/// misses shows as a packet starting exactly one quantum late, with no data
+/// for that quantum (measured in a container: one 21.3 ms jump a minute,
+/// more under load, about 1 ms per second all told). So more than half a
+/// packet late is a gap there.
+const PIPEWIRE_GAPS: GapRule = GapRule {
+    floor_ns: 2_000_000,
+    packet_percent: 50,
+};
+
+/// PulseAudio's capture times are cpal's latency estimate, which wanders by
+/// tens of ms between polls (measured: plus or minus 25 ms), so only a long
+/// silence counts. Measure it with TUR-43.
+const PULSEAUDIO_GAPS: GapRule = GapRule {
+    floor_ns: 100_000_000,
+    packet_percent: 100,
+};
+
+/// The gap rule for a sound server's capture times.
+fn gap_rule_for(server: Option<SoundServer>) -> GapRule {
+    match server {
+        Some(SoundServer::PipeWire) => PIPEWIRE_GAPS,
+        Some(SoundServer::PulseAudio) => PULSEAUDIO_GAPS,
+        Some(SoundServer::Alsa | SoundServer::Other) | None => GapRule::WASAPI,
+    }
+}
 
 /// The loopback source on the default sink.
 pub(crate) fn system_source() -> Option<Box<dyn AudioSource>> {
@@ -160,8 +182,8 @@ impl Backend for LinuxLoopback {
         cpal_stream::start_capture(device, supported, capture, spec)
     }
 
-    fn min_gap_ns(&self) -> u64 {
-        MIN_GAP_NS
+    fn gap_rule(&self) -> GapRule {
+        gap_rule_for(self.server)
     }
 }
 
@@ -195,6 +217,13 @@ mod tests {
         assert!(stream_is_lost(ErrorKind::StreamInvalidated));
         assert!(!stream_is_lost(ErrorKind::DeviceChanged));
         assert!(!stream_is_lost(ErrorKind::Xrun));
+    }
+
+    #[test]
+    fn each_sound_server_gets_its_gap_rule() {
+        assert_eq!(gap_rule_for(Some(SoundServer::PipeWire)), PIPEWIRE_GAPS);
+        assert_eq!(gap_rule_for(Some(SoundServer::PulseAudio)), PULSEAUDIO_GAPS);
+        assert_eq!(gap_rule_for(None), GapRule::WASAPI);
     }
 
     #[test]

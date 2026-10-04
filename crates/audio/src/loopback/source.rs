@@ -17,7 +17,7 @@ use ringbuf::traits::{Consumer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
 use super::capture::{Capture, CaptureStats};
-use super::clock::{frames_to_ns, ns_to_frames};
+use super::clock::{GapRule, frames_to_ns, ns_to_frames};
 use super::splice::{GapMark, Piece, splice};
 use crate::pipeline::Pipeline;
 use crate::rate_meter::{FixedRates, Rates};
@@ -81,11 +81,11 @@ pub trait Backend: Send + 'static {
         capture: Capture,
     ) -> Result<Box<dyn LiveStream>, Error>;
 
-    /// The smallest jump in capture times that counts as a gap (TUR-38).
-    /// WASAPI's times are device positions, so the shared floor; a backend
-    /// whose callbacks can run late without losing audio raises it.
-    fn min_gap_ns(&self) -> u64 {
-        super::clock::GAP_THRESHOLD_MIN_NS
+    /// How late a packet must start to be a gap (TUR-38), read after
+    /// [`Self::format`]. TUR-37's rule unless the backend knows its times
+    /// better (PipeWire) or worse (PulseAudio).
+    fn gap_rule(&self) -> GapRule {
+        GapRule::WASAPI
     }
 }
 
@@ -197,7 +197,7 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
             format.channels,
             Arc::clone(&stats),
         )
-        .with_min_gap(self.backend.min_gap_ns());
+        .with_gap_rule(self.backend.gap_rule());
         let stream = match self.backend.start_capture(&format, capture) {
             Ok(stream) => stream,
             Err(e) => {

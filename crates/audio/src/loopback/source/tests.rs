@@ -52,8 +52,8 @@ struct FakeBackend {
     keepalive_fails: bool,
     capture_fails: bool,
     slot: Slot,
-    /// `Backend::min_gap_ns`, when the test raises it (TUR-38).
-    min_gap_ns: Option<u64>,
+    /// `Backend::gap_rule`, when the test sets one (TUR-38).
+    gap_rule: Option<GapRule>,
 }
 
 impl FakeBackend {
@@ -70,7 +70,7 @@ impl FakeBackend {
             keepalive_fails: false,
             capture_fails: false,
             slot: Arc::clone(&slot),
-            min_gap_ns: None,
+            gap_rule: None,
         };
         (backend, log, slot)
     }
@@ -113,9 +113,8 @@ impl Backend for FakeBackend {
         }))
     }
 
-    fn min_gap_ns(&self) -> u64 {
-        self.min_gap_ns
-            .unwrap_or(crate::loopback::clock::GAP_THRESHOLD_MIN_NS)
+    fn gap_rule(&self) -> GapRule {
+        self.gap_rule.unwrap_or_default()
     }
 }
 
@@ -432,13 +431,16 @@ fn a_reopened_segment_appends_to_the_same_file() {
 }
 
 #[test]
-fn a_backend_with_a_raised_gap_floor_writes_no_silence_for_a_late_callback() {
-    // 16 kHz mono, 10 ms packets, one of them 60 ms late (TUR-38: a PipeWire
-    // callback on a busy main loop). The default floor would fill 60 ms.
+fn a_backend_with_a_raised_gap_floor_writes_no_silence_for_a_late_time() {
+    // 16 kHz mono, 10 ms packets, one of them 60 ms late (TUR-38: a
+    // PulseAudio time off by its latency guess). The default would fill it.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("system.wav");
     let (mut backend, _log, slot) = FakeBackend::new(16_000, 1);
-    backend.min_gap_ns = Some(100 * MS);
+    backend.gap_rule = Some(GapRule {
+        floor_ns: 100 * MS,
+        packet_percent: 100,
+    });
     let mut source = LoopbackSource::new(backend);
     source.start(path.clone()).unwrap();
     let mut ns = 1_000 * MS;

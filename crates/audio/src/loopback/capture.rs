@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ringbuf::HeapProd;
 use ringbuf::traits::{Observer, Producer};
 
-use super::clock::{Timeline, frames_to_ns};
+use super::clock::{GapRule, Timeline, frames_to_ns};
 use super::silent;
 use super::splice::GapMark;
 use crate::rate_meter::{CallbackMeter, FixedRates, Rates};
@@ -91,10 +91,10 @@ impl Capture {
         }
     }
 
-    /// Gaps must also be longer than `min_gap_ns` ([`Timeline::with_min_gap`],
+    /// Gaps by `rule` instead of the default ([`Timeline::with_rule`],
     /// TUR-38). Before the first packet only.
-    pub(crate) fn with_min_gap(mut self, min_gap_ns: u64) -> Self {
-        self.timeline = Timeline::with_min_gap(min_gap_ns);
+    pub(crate) fn with_gap_rule(mut self, rule: GapRule) -> Self {
+        self.timeline = Timeline::with_rule(rule);
         self
     }
 

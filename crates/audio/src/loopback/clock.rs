@@ -92,23 +92,48 @@ pub struct Stamp {
 
 /// The packets seen so far, as far as their timing goes. No allocation and
 /// integer maths only, so it runs inside the capture callback.
+/// How late a packet must start to be a gap (TUR-38): later than
+/// `packet_percent` % of the previous packet's length, and than `floor_ns`.
+/// The default, [`GapRule::WASAPI`], is TUR-37's: one whole packet, and at
+/// least [`GAP_THRESHOLD_MIN_NS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GapRule {
+    pub floor_ns: u64,
+    pub packet_percent: u64,
+}
+
+impl GapRule {
+    /// WASAPI's capture times are device positions, but a skipped packet
+    /// has only been seen as a whole silence (TUR-37).
+    pub const WASAPI: Self = Self {
+        floor_ns: GAP_THRESHOLD_MIN_NS,
+        packet_percent: 100,
+    };
+
+    /// The threshold after a packet `last_len_ns` long.
+    fn threshold(self, last_len_ns: u64) -> u64 {
+        let share = u128::from(last_len_ns) * u128::from(self.packet_percent) / 100;
+        u64::try_from(share).unwrap_or(u64::MAX).max(self.floor_ns)
+    }
+}
+
+impl Default for GapRule {
+    fn default() -> Self {
+        Self::WASAPI
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Timeline {
     /// The previous packet's start and its frame count.
     last: Option<(u64, u64)>,
-    /// The smallest jump that counts as a gap; `None` is
-    /// [`GAP_THRESHOLD_MIN_NS`] (TUR-38).
-    min_gap_ns: Option<u64>,
+    rule: GapRule,
 }
 
 impl Timeline {
-    /// A timeline whose gaps must also be longer than `min_gap_ns`, for a
-    /// stream whose callbacks can run late without losing audio (TUR-38).
-    pub fn with_min_gap(min_gap_ns: u64) -> Self {
-        Self {
-            last: None,
-            min_gap_ns: Some(min_gap_ns),
-        }
+    /// A timeline with its own [`GapRule`] (TUR-38).
+    pub fn with_rule(rule: GapRule) -> Self {
+        Self { last: None, rule }
     }
 
     /// One packet: its capture time (`None` or 0 when the OS gave none),
@@ -142,8 +167,7 @@ impl Timeline {
         if let Some(ns) = raw.filter(|&ns| ns > last_ns) {
             stamp.host_ns = ns;
             let late = ns.saturating_sub(expected);
-            let floor = self.min_gap_ns.unwrap_or(GAP_THRESHOLD_MIN_NS);
-            if late > last_len.max(floor) {
+            if late > self.rule.threshold(last_len) {
                 stamp.gap_capped = late > MAX_GAP_FILL_NS;
                 stamp.gap_frames = ns_to_frames(late.min(MAX_GAP_FILL_NS), rate);
             }
@@ -312,16 +336,45 @@ mod tests {
     }
 
     #[test]
-    fn a_raised_gap_floor_lets_late_callbacks_through() {
-        // A callback 60 ms late, then the queued one right behind it: under
-        // a 100 ms floor that is jitter, not 60 ms of invented silence.
-        let mut t = Timeline::with_min_gap(100 * MS);
+    fn a_raised_gap_floor_lets_jittery_times_through() {
+        // PulseAudio's interpolated times: one 60 ms late, the next right
+        // behind it. Under a 100 ms floor that is jitter, not silence.
+        let mut t = Timeline::with_rule(GapRule {
+            floor_ns: 100 * MS,
+            packet_percent: 100,
+        });
         stamp(&mut t, 1_000 * MS);
         assert_eq!(stamp(&mut t, 1_070 * MS).gap_frames, 0);
         assert_eq!(stamp(&mut t, 1_071 * MS).gap_frames, 0);
         // A real silence of 2 s is still filled.
         let s = stamp(&mut t, 1_081 * MS + 2_000 * MS);
         assert_eq!(s.gap_frames, 2 * u64::from(RATE));
+    }
+
+    #[test]
+    fn one_lost_cycle_is_a_gap_under_a_half_packet_rule() {
+        // PipeWire skipping one 1024-frame cycle: the next packet starts
+        // exactly one packet late. The WASAPI rule calls that jitter.
+        let quantum = 1_024;
+        let len = frames_to_ns(quantum, RATE);
+        let mut wasapi = Timeline::default();
+        let mut pipewire = Timeline::with_rule(GapRule {
+            floor_ns: 2 * MS,
+            packet_percent: 50,
+        });
+        for t in [&mut wasapi, &mut pipewire] {
+            t.stamp(Some(1_000 * MS), quantum, RATE);
+        }
+        let late = Some(1_000 * MS + 2 * len);
+        let w = wasapi.stamp(late, quantum, RATE).expect("timed");
+        let p = pipewire.stamp(late, quantum, RATE).expect("timed");
+        assert_eq!(w.gap_frames, 0);
+        assert_eq!(p.gap_frames, quantum);
+        // Under half a packet late is still jitter.
+        let s = pipewire
+            .stamp(Some(1_000 * MS + 3 * len + 3 * MS), quantum, RATE)
+            .expect("timed");
+        assert_eq!(s.gap_frames, 0);
     }
 
     #[test]
