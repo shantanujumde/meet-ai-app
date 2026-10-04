@@ -1,6 +1,6 @@
 import { platform } from "@tauri-apps/plugin-os";
 import { afterEach, expect, test, vi } from "vitest";
-import { currentOs, osText } from "./osText";
+import { currentOs, osText, shortcutLabel } from "./osText";
 
 vi.mock("@tauri-apps/plugin-os", () => ({ platform: vi.fn() }));
 
@@ -35,4 +35,15 @@ test("is macOS without the plugin or on another OS", () => {
   expect(currentOs()).toBe("macos");
   vi.mocked(platform).mockReturnValue("freebsd");
   expect(currentOs()).toBe("macos");
+});
+
+test("writes the record shortcut the way each OS does (TUR-58)", () => {
+  expect(shortcutLabel("macos")).toBe("⌘⇧R");
+  expect(shortcutLabel("windows")).toBe("Ctrl+Alt+R");
+  expect(shortcutLabel("linux")).toBe("Ctrl+Alt+R");
+});
+
+test("the record shortcut follows the plugin's OS", () => {
+  vi.mocked(platform).mockReturnValue("windows");
+  expect(shortcutLabel()).toBe("Ctrl+Alt+R");
 });

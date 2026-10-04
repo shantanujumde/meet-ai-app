@@ -14,9 +14,8 @@
 
 import { useEffect, useState } from "react";
 import type { PermissionStatus, RecordingStatus } from "@/ipc/types";
-import { SHORTCUT_LABEL } from "@/lib/constants";
 import { formatElapsed } from "@/lib/format";
-import { osText } from "@/lib/osText";
+import { osText, shortcutLabel } from "@/lib/osText";
 import { recordingBlocked } from "@/lib/recordingPermission";
 
 /** Human wording for each phase. `Starting`/`Stopping` get their own. */
@@ -89,7 +88,7 @@ export function RecordControl({
         data-recording={live}
         disabled={disabled}
         aria-label={accessibleName}
-        title={denied ? `Fix audio permission in ${osText("settings")} first` : SHORTCUT_LABEL}
+        title={denied ? `Fix audio permission in ${osText("settings")} first` : shortcutLabel()}
         onClick={onToggle}
       >
         <span
@@ -106,7 +105,7 @@ export function RecordControl({
       </span>
 
       <span className="record__shortcut" aria-hidden="true">
-        {SHORTCUT_LABEL}
+        {shortcutLabel()}
       </span>
     </div>
   );

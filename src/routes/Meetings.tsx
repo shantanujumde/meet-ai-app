@@ -10,13 +10,14 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { cn } from "@/lib/cn";
-import { DEFAULT_ROOT_LABEL, SHORTCUT_LABEL } from "@/lib/constants";
+import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
 import {
   formatLineCount,
   formatRelativeDate,
   INTERRUPTED_LABEL,
   NOTES_OFF_LABEL,
 } from "@/lib/format";
+import { shortcutLabel } from "@/lib/osText";
 import { openPermissionScreen } from "@/lib/permissionRoute";
 import { recordingBlocked } from "@/lib/recordingPermission";
 import { meetingPath } from "@/lib/routes";
@@ -76,8 +77,8 @@ export function Meetings() {
           title="No meetings yet"
           body={
             list?.rootExists
-              ? `Press ${SHORTCUT_LABEL} from anywhere, even with this window behind Zoom, and meet-ai starts recording. Everything is saved as plain text files in ${list.root}, and nothing leaves this Mac.`
-              : `Press ${SHORTCUT_LABEL} from anywhere, even with this window behind Zoom, and meet-ai starts recording. It creates ${list?.root ?? DEFAULT_ROOT_LABEL} for the first one. Everything is saved as plain text files, and nothing leaves this Mac.`
+              ? `Press ${shortcutLabel()} from anywhere, even with this window behind Zoom, and meet-ai starts recording. Everything is saved as plain text files in ${list.root}, and nothing leaves this Mac.`
+              : `Press ${shortcutLabel()} from anywhere, even with this window behind Zoom, and meet-ai starts recording. It creates ${list?.root ?? DEFAULT_ROOT_LABEL} for the first one. Everything is saved as plain text files, and nothing leaves this Mac.`
           }
           action={
             <ButtonRow>

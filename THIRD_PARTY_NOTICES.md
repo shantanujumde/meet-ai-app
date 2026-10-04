@@ -152,6 +152,9 @@ SOFTWARE.
     theme) and `src-tauri/src/platform/windows.rs` (`taskbar_is_light`, the
     `SystemUsesLightTheme` read) from `src-tauri/src/tray.rs`, at commit
     73ab851c2b6242283759a4c101b60f0ece132f08 (TUR-58)
+  - `src/lib/osText.ts` (`shortcutLabel`: OS-aware modifier key names)
+    from `src/lib/utils/keyboard.ts`, at commit
+    73ab851c2b6242283759a4c101b60f0ece132f08 (TUR-58)
 
 MIT License
 
