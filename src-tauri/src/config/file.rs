@@ -135,7 +135,7 @@ pub(super) fn write_in<E: From<ConfigError>>(
 }
 
 fn write_file_and_schema(dir: &Path, updated: &str) -> Result<(), ConfigError> {
-    std::fs::create_dir_all(dir)?;
+    store::create_app_dir(dir)?;
     write_atomic(&dir.join(FILE), updated)?;
     let schema = dir.join(SCHEMA_FILE);
     if std::fs::read_to_string(&schema).ok().as_deref() != Some(SCHEMA) {

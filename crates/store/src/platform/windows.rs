@@ -6,12 +6,6 @@ pub(crate) fn is_lock_violation(code: i32) -> bool {
     meeting_format::is_lock_violation(code)
 }
 
-/// Windows' `ReadDirectoryChangesW` watches a tree with one handle; there is
-/// no per-folder limit to run out of.
-pub(crate) fn is_out_of_watches(_code: i32) -> bool {
-    false
-}
-
 /// `FILE_ATTRIBUTE_HIDDEN`.
 const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
 /// `INVALID_FILE_ATTRIBUTES`: `GetFileAttributesW` failed.
@@ -109,6 +103,20 @@ mod hide_tests {
         std::fs::create_dir(&app).unwrap();
         let _watcher =
             crate::watcher::Watcher::start(root.path(), Default::default(), |_| {}).unwrap();
+        let attributes = std::fs::metadata(&app).unwrap().file_attributes();
+        assert_ne!(attributes & super::FILE_ATTRIBUTE_HIDDEN, 0);
+    }
+}
+
+#[cfg(test)]
+mod create_tests {
+    use std::os::windows::fs::MetadataExt as _;
+
+    #[test]
+    fn a_fresh_app_folder_is_created_hidden() {
+        let root = tempfile::tempdir().unwrap();
+        let app = root.path().join("Meetings").join(".app");
+        crate::create_app_dir(&app).unwrap();
         let attributes = std::fs::metadata(&app).unwrap().file_attributes();
         assert_ne!(attributes & super::FILE_ATTRIBUTE_HIDDEN, 0);
     }

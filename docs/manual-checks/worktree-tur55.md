@@ -16,12 +16,13 @@ machine.
 
 1. Linux: `sudo sysctl fs.inotify.max_user_watches=64`, make a meetings folder
    with 200 meeting subfolders, start meet-ai.
-   Expect: one warning in the log containing `fs.inotify.max_user_watches`
-   (and no repeat per folder). Restore the limit afterwards.
+   Expect: one warning in the log ("could not watch the meetings folder")
+   containing `fs.inotify.max_user_watches`, not repeated. Restore the limit afterwards.
    Why skipped: needs a Linux machine and root; no UI surface exists for
    watcher errors, so the message is log-only (warn). Showing it in the window
    is a follow-up.
-2. Windows: start meet-ai, open the meetings folder in Explorer with "Show
+2. Windows, fresh install (no meetings folder yet): start meet-ai, finish
+   onboarding or change a setting, then without restarting open the meetings folder in Explorer with "Show
    hidden items" off.
    Expect: `.app` is not listed.
    Why skipped: needs a real Windows machine and the running app.

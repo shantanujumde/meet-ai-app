@@ -34,10 +34,9 @@ pub(crate) fn is_lock_violation(code: i32) -> bool {
 }
 
 fn is_held(error: &io::Error) -> bool {
-    matches!(
-        error.raw_os_error(),
-        Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION)
-    )
+    error
+        .raw_os_error()
+        .is_some_and(|code| code == ERROR_ACCESS_DENIED || is_lock_violation(code))
 }
 
 fn rename_with(from: &Path, to: &Path, backoff_ms: &[u64]) -> io::Result<()> {
@@ -51,8 +50,8 @@ fn rename_with(from: &Path, to: &Path, backoff_ms: &[u64]) -> io::Result<()> {
                     return Err(io::Error::new(
                         error.kind(),
                         format!(
-                            "could not save {}: another program (an antivirus scan, the \
-                             search indexer or an editor) kept it open through {} tries ({error})",
+                            "could not save {}: it was held open by another program (an antivirus scan, \
+                             the search indexer or an editor) or is not writable, through {} tries ({error})",
                             to.display(),
                             backoff_ms.len() + 1
                         ),

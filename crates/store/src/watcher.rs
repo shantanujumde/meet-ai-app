@@ -108,6 +108,7 @@ impl Watcher {
     ) -> Result<Watcher, crate::Error> {
         let root = dunce::canonicalize(root)?;
         crate::platform::hide_app_dir(&meeting_format::layout::app_dir(&root));
+        // `create_app_dir` hides a `.app` made later (first launch).
         let filter_root = root.clone();
 
         let mut debouncer = new_debouncer(
@@ -156,8 +157,9 @@ impl Watcher {
 }
 
 fn to_io(error: notify::Error) -> crate::Error {
+    // No warn here: the caller logs the returned error, and the ticket
+    // asks for one message.
     if is_watch_limit(&error) {
-        warn_watch_limit_once();
         return crate::Error::Io(std::io::Error::other(WATCH_LIMIT_MESSAGE));
     }
     crate::Error::Io(std::io::Error::other(error))
@@ -165,20 +167,15 @@ fn to_io(error: notify::Error) -> crate::Error {
 
 /// The one message shown when the OS runs out of watches (Linux inotify's
 /// `max_user_watches`), with the fix, instead of silently missing changes.
-pub const WATCH_LIMIT_MESSAGE: &str = "The meetings folder has more subfolders than the system \
+const WATCH_LIMIT_MESSAGE: &str = "The meetings folder has more subfolders than the system \
      lets one app watch, so changes made outside meet-ai may be missed. Raise the limit \
      with `sudo sysctl fs.inotify.max_user_watches=524288` (add \
      `fs.inotify.max_user_watches=524288` to /etc/sysctl.conf to keep it), then restart meet-ai.";
 
-/// Did notify give up because the OS has no watches left?
+/// Did notify give up because the OS has no watches left? notify 8.2 turns
+/// inotify's `ENOSPC` into `MaxFilesWatch` itself.
 fn is_watch_limit(error: &notify::Error) -> bool {
-    match &error.kind {
-        notify::ErrorKind::MaxFilesWatch => true,
-        notify::ErrorKind::Io(io) => io
-            .raw_os_error()
-            .is_some_and(crate::platform::is_out_of_watches),
-        _ => false,
-    }
+    matches!(error.kind, notify::ErrorKind::MaxFilesWatch)
 }
 
 /// Log [`WATCH_LIMIT_MESSAGE`] once per process, however many folders fail.

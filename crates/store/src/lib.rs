@@ -59,6 +59,16 @@ pub mod meeting_event;
 pub mod notes;
 pub mod notes_switch;
 mod platform;
+
+/// Create `<root>/.app` (and its parents) and hide it where a dot name does
+/// not (Windows). Every writer that may be first to make `.app` calls this,
+/// so a fresh install's folder is hidden without waiting for a restart.
+/// Hiding is best effort: a failure is logged, never returned.
+pub fn create_app_dir(app_dir: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(app_dir)?;
+    platform::hide_app_dir(app_dir);
+    Ok(())
+}
 pub mod retention;
 pub mod ticket;
 pub mod transcript;
