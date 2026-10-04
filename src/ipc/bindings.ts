@@ -382,6 +382,10 @@ export const commands = {
 } | null>("prompt_popup_current"),
 	/**  A popup button was pressed for prompt `id`. */
 	answerPromptPopup: (id: number, answer: meet_ai_lib_detection_popup_PopupAnswer) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("answer_prompt_popup", { id, answer })),
+	/**  Whether meet-ai starts when the user logs in. */
+	startAtLogin: () => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("start_at_login")),
+	/**  Turn "Start at login" on or off, and return what the OS now says. */
+	setStartAtLogin: (enabled: boolean) => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_start_at_login", { enabled })),
 };
 
 /* Constants */
@@ -402,6 +406,10 @@ export const PROMPT_POPUP_EVENT = "prompt-popup://show" as const;
 export const QUIT_CONFIRM_EVENT = "app://confirm-quit" as const;
 
 export const RECORDING_STATE_EVENT = "recording://state" as const;
+
+export const RECORD_SHORTCUT_MAC = "CmdOrCtrl+Shift+R" as const;
+
+export const RECORD_SHORTCUT_OTHER = "Ctrl+Alt+R" as const;
 
 export const TRANSCRIPT_STATUS_EVENT = "transcript://status" as const;
 

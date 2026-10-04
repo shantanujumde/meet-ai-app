@@ -97,6 +97,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::detection::actions::record_reminded_meeting,
             crate::detection::popup::prompt_popup_current,
             crate::detection::popup::answer_prompt_popup,
+            crate::autostart::start_at_login,
+            crate::autostart::set_start_at_login,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)
@@ -109,6 +111,11 @@ pub fn builder() -> Builder<tauri::Wry> {
         .constant("QUIT_CONFIRM_EVENT", QUIT_CONFIRM_EVENT)
         .constant("NAVIGATE_EVENT", NAVIGATE_EVENT)
         .constant("PROMPT_POPUP_EVENT", PROMPT_POPUP_EVENT)
+        .constant("RECORD_SHORTCUT_MAC", crate::shortcut::RECORD_SHORTCUT_MAC)
+        .constant(
+            "RECORD_SHORTCUT_OTHER",
+            crate::shortcut::RECORD_SHORTCUT_OTHER,
+        )
         .typ::<crate::detection::notify::Prompt>()
         .typ::<crate::lifecycle::NavigateTo>()
 }

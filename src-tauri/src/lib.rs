@@ -6,9 +6,13 @@
 
 mod agent_run;
 mod agent_setup;
+// TUR-58: "Start at login".
+mod autostart;
 mod bindings;
 mod brief;
 mod calendar;
+// TUR-58: `meet-ai --toggle-recording`.
+mod cli;
 mod commands;
 mod config;
 mod copy_prompt;
@@ -33,6 +37,8 @@ mod recording_state;
 mod retention;
 mod search;
 mod settings_links;
+// TUR-58: the record shortcut per OS.
+mod shortcut;
 mod sync;
 mod tickets;
 mod watch;
@@ -47,7 +53,7 @@ mod tray;
 /// in the webview because a webview key handler only fires while the window has
 /// focus, and the whole point is that the user is in Zoom when they press it.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-const RECORD_SHORTCUT: &str = "CmdOrCtrl+Shift+R";
+const RECORD_SHORTCUT: &str = platform::RECORD_SHORTCUT;
 
 /// Start the app.
 ///
@@ -68,8 +74,15 @@ pub fn run() {
     {
         // Two recorders would fight over the system audio tap, so a second
         // launch must focus the existing window rather than start a new app.
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             use tauri::Manager as _;
+            // TUR-58: `meet-ai --toggle-recording` (Wayland's stand-in for
+            // the shortcut) toggles in this, the running app, and shows no
+            // window, the same as pressing the shortcut.
+            if cli::wants_toggle(&argv) {
+                spawn_toggle(app, cli::TOGGLE_RECORDING_FLAG);
+                return;
+            }
             // TUR-76: the window may be hidden, with no Dock icon.
             lifecycle::show_main_window(app);
             if let Some(window) = app.webview_windows().values().next() {
@@ -77,6 +90,8 @@ pub fn run() {
             }
         }));
         builder = builder.plugin(global_shortcut_plugin());
+        // TUR-58: "Start at login", off until the Settings switch says so.
+        builder = builder.plugin(autostart::plugin());
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
@@ -148,6 +163,11 @@ pub fn run() {
             // TUR-45: delete audio older than `audio.retention_days`, soon
             // after launch and then daily.
             retention::start(_app.handle());
+            // TUR-58: the first instance never records from its flag (SPEC
+            // L15, `cli.rs`); it only says so in the log.
+            if cli::wants_toggle(&std::env::args().collect::<Vec<_>>()) {
+                tracing::info!("started with --toggle-recording and no app running: not recording");
+            }
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 register_record_shortcut(_app.handle());

@@ -8,6 +8,7 @@
  */
 
 import { platform } from "@tauri-apps/plugin-os";
+import { RECORD_SHORTCUT_MAC, RECORD_SHORTCUT_OTHER } from "@/ipc/bindings";
 
 export type Os = "macos" | "windows" | "linux";
 
@@ -33,4 +34,37 @@ export type OsWord = keyof typeof WORDS;
 /** The OS's own name for `word`. */
 export function osText(word: OsWord, os: Os = currentOs()): string {
   return WORDS[word][os];
+}
+
+// Adapted from github.com/cjpais/Handy/src/lib/utils/keyboard.ts @ 73ab851c2b6242283759a4c101b60f0ece132f08 (MIT)
+// (OS-aware modifier names: Command/Option on macOS, Ctrl/Alt elsewhere.)
+const MAC_KEYS: Record<string, string> = {
+  cmdorctrl: "⌘",
+  cmd: "⌘",
+  command: "⌘",
+  ctrl: "⌃",
+  control: "⌃",
+  alt: "⌥",
+  option: "⌥",
+  shift: "⇧",
+};
+const OTHER_KEYS: Record<string, string> = {
+  cmdorctrl: "Ctrl",
+  ctrl: "Ctrl",
+  control: "Ctrl",
+  alt: "Alt",
+  shift: "Shift",
+  super: "Super",
+};
+
+/**
+ * The record shortcut as this OS writes it (TUR-58): "⌘⇧R" on macOS,
+ * "Ctrl+Alt+R" on Windows and Linux. The value itself is Rust's
+ * (`src-tauri/src/shortcut.rs`), through `bindings.ts`.
+ */
+export function shortcutLabel(os: Os = currentOs()): string {
+  const accelerator = os === "macos" ? RECORD_SHORTCUT_MAC : RECORD_SHORTCUT_OTHER;
+  const keys = os === "macos" ? MAC_KEYS : OTHER_KEYS;
+  const parts = accelerator.split("+").map((key) => keys[key.toLowerCase()] ?? key.toUpperCase());
+  return parts.join(os === "macos" ? "" : "+");
 }

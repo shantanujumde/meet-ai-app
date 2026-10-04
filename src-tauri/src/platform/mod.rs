@@ -20,6 +20,42 @@ use stt::SttEngine;
 
 use tauri::{AppHandle, RunEvent};
 
+#[cfg(windows)]
+mod windows;
+
+/// Which tray icon family this OS gets (TUR-58, `tray/icons.rs`).
+#[cfg(target_os = "macos")]
+pub const TRAY_OS: crate::tray::TrayOs = crate::tray::TrayOs::MacOs;
+
+/// Which tray icon family this OS gets (TUR-58, `tray/icons.rs`).
+#[cfg(windows)]
+pub const TRAY_OS: crate::tray::TrayOs = crate::tray::TrayOs::Windows;
+
+/// Which tray icon family this OS gets (TUR-58, `tray/icons.rs`).
+#[cfg(all(unix, not(target_os = "macos")))]
+pub const TRAY_OS: crate::tray::TrayOs = crate::tray::TrayOs::Linux;
+
+/// Whether the taskbar the tray sits on is light (TUR-58). Only Windows has
+/// one setting to read; elsewhere the answer does not change the icon.
+pub fn taskbar_is_light() -> bool {
+    #[cfg(windows)]
+    {
+        windows::taskbar_is_light()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// The record shortcut this OS registers (TUR-58): ⌘⇧R on macOS, Ctrl+Alt+R
+/// on Windows and Linux, where Ctrl+Shift+R is every browser's hard reload.
+pub const RECORD_SHORTCUT: &str = if cfg!(target_os = "macos") {
+    crate::shortcut::RECORD_SHORTCUT_MAC
+} else {
+    crate::shortcut::RECORD_SHORTCUT_OTHER
+};
+
 /// The whisper engine for `model`, the way `stt::registry::select` builds it
 /// for the whisper choice. For the live-transcript end-to-end tests, which then
 /// compile on every OS; whisper itself is only built for macOS so far.

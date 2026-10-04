@@ -4,8 +4,7 @@
  */
 
 import { revealMeeting } from "@/ipc/client";
-import { SHORTCUT_LABEL } from "@/lib/constants";
-import { osText } from "@/lib/osText";
+import { osText, shortcutLabel } from "@/lib/osText";
 import { useAppStore } from "@/state/app";
 import { FolderRow } from "@/ui/FolderRow";
 import { Button, ButtonRow, Card, Pill, Prose } from "@/ui/primitives";
@@ -39,8 +38,8 @@ export function FolderStep({ onNext }: { onNext: () => void }) {
       </Card>
       <Prose>
         Audio is deleted after 7 days unless you change it. The text is kept forever. Press{" "}
-        <strong>{SHORTCUT_LABEL}</strong> from anywhere to start and stop. This window does not need
-        to be open, or even visible.
+        <strong>{shortcutLabel()}</strong> from anywhere to start and stop. This window does not
+        need to be open, or even visible.
       </Prose>
       <ButtonRow>
         <Button tone="primary" onClick={onNext}>
