@@ -75,6 +75,20 @@ url = "=2.5.8"
 
 # --- speech-to-text (SETUP.md §2.3) ---
 whisper-rs = "=0.16.0"
+# Parakeet (TUR-62): NVIDIA parakeet-tdt-0.6b-v3 over ONNX Runtime, on the CPU
+# only (no DirectML, no CUDA, no CoreML). MIT OR Apache-2.0. No default
+# features: they turn on `ort/default`, whose TLS and linking choices are made
+# per OS in crates/stt/Cargo.toml instead. `api-28` is the API level
+# parakeet-rs 0.3.8 ships with, matching ONNX Runtime 1.28.
+parakeet-rs = { version = "=0.3.8", default-features = false, features = [
+  "cpu",
+  "api-28",
+] }
+# The ONNX Runtime binding parakeet-rs 0.3.8 pins. MIT OR Apache-2.0.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = [
+  "std",
+  "tracing",
+] }
 
 # --- model download (SETUP.md §2.5) ---
 # Listed under "Calendar & auth" in SETUP.md because Phase 5 was the first

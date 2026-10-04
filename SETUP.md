@@ -131,6 +131,8 @@ Pin these exactly in `Cargo.toml` and commit `Cargo.lock`. 🆕 = new major with
 | Crate | Version | Notes |
 |---|---|---|
 | `whisper-rs` | **0.16.0** | wraps `whisper-rs-sys` 0.15 |
+| `parakeet-rs` | **0.3.8** | 🆕 TUR-62. MIT OR Apache-2.0. The Parakeet engine (`nvidia/parakeet-tdt-0.6b-v3`, ONNX int8). `default-features = false`, features `cpu` + `api-28`: CPU only, no DirectML/CUDA/CoreML. Moved here from §2.7 |
+| `ort` | **2.0.0-rc.13** | 🆕 TUR-62. MIT OR Apache-2.0. The exact version parakeet-rs 0.3.8 pins (a pre-release, see §1.1). macOS/Linux: `download-binaries` + `tls-rustls`, pyke's ONNX Runtime 1.28 linked statically at build time. Windows: `load-dynamic`, `onnxruntime.dll` loaded by full path from next to the exe (it must be shipped there; System32 has an older one) |
 
 Features confirmed present on 0.16.0: `metal`, `coreml`, `cuda`, `vulkan`, `hipblas`, `intel-sycl`, `openblas`, `openmp`, `tracing_backend`, `raw-api`.
 
@@ -252,9 +254,8 @@ Real-account checks are in `docs/manual-checks/worktree-tur48.md`.
 |---|---|---|
 | `rmcp` | 3.2.0 | MCP server (L12, v1.1) |
 | `sqlite-vec` | 0.1.9 | semantic search (L8) |
-| `ort` | 2.0.0-rc.13 | Silero VAD upgrade, or Parakeet |
+| `ort` | 2.0.0-rc.13 | Silero VAD upgrade (Parakeet added it in TUR-62, §2.3) |
 | `sherpa-rs` | 0.6.8 | N-speaker diarization |
-| `parakeet-rs` | 0.3.7 | low-latency streaming STT |
 
 **Dropped from SPEC §2.3 entirely:** `serde_yaml` (deprecated), `gray_matter` (redundant), `json_comments` (stale), `voice_activity_detector` + `ort` (§1.1).
 

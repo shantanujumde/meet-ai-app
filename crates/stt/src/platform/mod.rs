@@ -28,6 +28,20 @@ use other as os;
 
 pub(crate) use os::APPLE_SPEECH_UNSUPPORTED;
 
+// ONNX Runtime for the Parakeet engine (TUR-62): linked in on macOS and Linux,
+// loaded from onnxruntime.dll at run time on Windows.
+#[cfg(windows)]
+#[path = "onnx_windows.rs"]
+mod onnx;
+
+#[cfg(not(windows))]
+#[path = "onnx_linked.rs"]
+mod onnx;
+
+#[cfg(test)]
+pub(crate) use onnx::ONNX_RUNTIME_LOADED_AT_RUN_TIME;
+pub(crate) use onnx::{onnx_runtime_missing, prepare_onnx_runtime};
+
 /// Load the whisper model at `model` — what [`crate::registry::select`] builds
 /// for the whisper choice. The language comes from the model (TUR-94): `en`
 /// for an English-only one, auto-detect for a multilingual one.
