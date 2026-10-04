@@ -120,5 +120,7 @@ agent = { workspace = true, features = ["test-support"] }
 # `calendar::fake::FakeProvider` for the Today pane tests (TUR-28).
 # Also names recordings from fixture events, without Calendar.app (TUR-29).
 calendar = { workspace = true, features = ["fake"] }
+# `detect::processes::name_of` for per-OS process names in tests (TUR-60).
+detect = { workspace = true, features = ["test-util"] }
 # A throwaway meetings folder for each notes-run test.
 tempfile.workspace = true
