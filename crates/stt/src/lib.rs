@@ -31,6 +31,7 @@
 use std::path::Path;
 
 pub mod apple;
+pub mod languages;
 pub mod model;
 pub mod registry;
 pub mod replay;

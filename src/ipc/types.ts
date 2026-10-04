@@ -144,6 +144,8 @@ export type ModelView = {
   /** One line on when to pick it. */
   goodFor: string;
   tags: ModelTag[];
+  /** English names of the languages it understands (TUR-94); ["English"] for English-only. */
+  languages: string[];
   /** Why this is the one to pick on this Mac; set on that one row only. */
   recommended: string | null;
 };

@@ -41,6 +41,7 @@ function small(overrides: Partial<ModelView> = {}): ModelView {
     goodFor:
       "Lightweight and fast. Good for clear English calls; less accurate with accents, cross-talk or jargon.",
     tags: ["fast", "light", "english-only"],
+    languages: ["English"],
     recommended: null,
     ...overrides,
   };
@@ -54,10 +55,11 @@ function large(overrides: Partial<ModelView> = {}): ModelView {
     installed: false,
     displayName: "Large turbo (multilingual)",
     goodFor:
-      "Most accurate. Understands ~100 languages and mixed-language calls. Slower and uses more memory.",
-    tags: ["most-accurate", "multilingual", "slower"],
+      "Close to Large in accuracy and much faster. Understands 100 languages. Slightly less accurate than Large for some languages other than English.",
+    tags: ["multilingual"],
+    languages: ["English", "Chinese", "Hindi"],
     recommended:
-      "This Mac has Apple silicon and 32 GB of memory, enough for the most accurate model.",
+      "This Mac has Apple silicon and 32 GB of memory, enough for Large turbo, close to the most accurate model and much faster.",
     ...overrides,
   };
 }
@@ -236,9 +238,9 @@ describe("EngineSummary: the model rows", () => {
     expect(screen.getByText("Small (English only)").textContent).not.toMatch(/q5|ggml|RTF/);
 
     const big = modelRow("Large turbo (multilingual)");
-    for (const tag of ["Most accurate", "Multilingual", "Slower"]) {
-      expect(within(big).getByText(tag)).toBeInTheDocument();
-    }
+    expect(within(big).queryByText("Most accurate")).toBeNull();
+    expect(within(big).getByText("Multilingual")).toBeInTheDocument();
+    expect(within(big).queryByText("Slower")).toBeNull();
   });
 
   test("the recommended model is marked, with its reason", async () => {
