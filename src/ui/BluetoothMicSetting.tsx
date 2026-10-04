@@ -8,6 +8,7 @@
  * {@link SettingSwitch}.
  */
 
+import { Bluetooth } from "lucide-react";
 import { builtinMicWithBluetooth, setBuiltinMicWithBluetooth } from "@/ipc/client";
 import { SettingSwitch } from "./SettingSwitch";
 
@@ -16,6 +17,7 @@ export const BLUETOOTH_MIC_LABEL = "Use the Mac's own mic when Bluetooth headpho
 export function BluetoothMicSetting() {
   return (
     <SettingSwitch
+      icon={Bluetooth}
       label={BLUETOOTH_MIC_LABEL}
       detail="Keeps your headphones sounding normal while you record. Turn off to record the headphones' mic."
       load={builtinMicWithBluetooth}

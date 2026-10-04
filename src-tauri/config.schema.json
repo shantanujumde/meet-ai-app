@@ -25,6 +25,22 @@
         }
       }
     },
+    "appearance": {
+      "type": "object",
+      "description": "How the meet-ai window looks.",
+      "properties": {
+        "theme": {
+          "enum": ["system", "light", "dark"],
+          "description": "The window's colour scheme. \"system\" follows the computer's own light or dark setting.",
+          "default": "system"
+        },
+        "glass": {
+          "type": "boolean",
+          "description": "The see-through glass look of the sidebar and the record prompt. false = solid surfaces. Reduce Transparency in the computer's accessibility settings also makes them solid.",
+          "default": true
+        }
+      }
+    },
     "transcription": {
       "type": "object",
       "description": "How speech is turned into text.",

@@ -1,12 +1,17 @@
 /** Onboarding step 1: what meet-ai is, and what it will never do. */
 
+import { ArrowRight, Sparkles } from "lucide-react";
+import { IconSquare } from "@/ui/icons";
 import { Button, ButtonRow, Prose } from "@/ui/primitives";
 
 export function WelcomeStep({ onNext }: { onNext: () => void }) {
   return (
     <>
       <header className="page__header">
-        <h1 className="page__title">meet-ai records your meetings</h1>
+        <h1 className="page__title flex items-center gap-4">
+          <IconSquare icon={Sparkles} />
+          meet-ai records your meetings
+        </h1>
       </header>
       <Prose>
         It listens to your microphone and to whatever your Mac is playing, writes both sides out as
@@ -19,7 +24,7 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
       </Prose>
       <Prose>Four things to set up, then you are done.</Prose>
       <ButtonRow>
-        <Button tone="primary" onClick={onNext}>
+        <Button tone="primary" icon={ArrowRight} onClick={onNext}>
           Get started
         </Button>
       </ButtonRow>

@@ -7,6 +7,7 @@
  * reason when it failed.
  */
 
+import { FlaskConical } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { testAgent } from "@/ipc/client";
 import type { AgentChoice, AgentTestResult, UiError } from "@/ipc/types";
@@ -46,6 +47,7 @@ export function AgentTest({
     <Row stacked>
       <div className="flex justify-between gap-5">
         <RowLabel
+          icon={FlaskConical}
           name="Test"
           detail={
             blocked ?? `Runs a 3-line sample meeting through ${name} and shows the notes it writes.`
@@ -54,6 +56,7 @@ export function AgentTest({
         />
         <Button
           size="small"
+          icon={FlaskConical}
           className="shrink-0"
           disabled={blocked !== null || running}
           onClick={() => void run()}

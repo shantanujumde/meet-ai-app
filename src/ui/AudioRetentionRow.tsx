@@ -7,6 +7,7 @@
  * rather than showing a default (TUR-85).
  */
 
+import { AudioLines } from "lucide-react";
 import { useEffect, useState } from "react";
 import { type AudioRetention, audioRetentionDays } from "@/ipc/client";
 import { Row, RowLabel } from "./primitives";
@@ -49,7 +50,7 @@ export function AudioRetentionRow() {
   if (retention === null) return null;
   return (
     <Row>
-      <RowLabel name="Audio" detail={retentionDetail(retention)} mono={false} />
+      <RowLabel icon={AudioLines} name="Audio" detail={retentionDetail(retention)} mono={false} />
     </Row>
   );
 }

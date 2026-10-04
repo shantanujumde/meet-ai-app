@@ -12,11 +12,13 @@
  *   left wondering why.
  */
 
+import { Mic, Square } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { PermissionStatus, RecordingStatus } from "@/ipc/types";
 import { formatElapsed } from "@/lib/format";
 import { osText, shortcutLabel } from "@/lib/osText";
 import { recordingBlocked } from "@/lib/recordingPermission";
+import { Icon } from "./icons";
 
 /** Human wording for each phase. `Starting`/`Stopping` get their own. */
 function labelFor(phase: RecordingStatus["phase"]): string {
@@ -91,10 +93,14 @@ export function RecordControl({
         title={denied ? `Fix audio permission in ${osText("settings")} first` : shortcutLabel()}
         onClick={onToggle}
       >
-        <span
-          className={live ? "record__dot record__dot--live" : "record__dot"}
-          aria-hidden="true"
-        />
+        {/* The pulse is the live signal (never the only one: the red fill, the
+            elapsed timer and the word Stop carry it too). Idle and the two
+            transitions get the action's icon instead. */}
+        {live ? (
+          <span className="record__dot record__dot--live" aria-hidden="true" />
+        ) : (
+          <Icon icon={status.phase === "stopping" ? Square : Mic} />
+        )}
         {labelFor(status.phase)}
       </button>
 

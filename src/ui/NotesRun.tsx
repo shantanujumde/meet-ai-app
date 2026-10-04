@@ -26,6 +26,7 @@
  * readable as is, and no markdown library for four short sections.
  */
 
+import { RotateCcw, Sparkles, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type { NotesRun as NotesRunModel } from "@/hooks/useNotesRun";
 import type {
@@ -175,7 +176,7 @@ function runPanel({
           }
           body="Your agent is reading the transcript. This can take a minute or two."
         >
-          <Button size="small" disabled={busy} onClick={cancel}>
+          <Button size="small" icon={X} disabled={busy} onClick={cancel}>
             Cancel
           </Button>
         </RunCard>
@@ -200,7 +201,7 @@ function runPanel({
             }
             body="Your agent can write a summary, the decisions and the tasks from this transcript."
           >
-            <Button size="small" disabled={busy} onClick={start}>
+            <Button size="small" icon={Sparkles} disabled={busy} onClick={start}>
               Make notes now
             </Button>
           </RunCard>
@@ -211,7 +212,7 @@ function runPanel({
           status={<span className="text-body font-medium">No notes yet</span>}
           body="Your agent can write a summary, the decisions and the tasks from this transcript."
         >
-          <Button size="small" disabled={busy} onClick={start}>
+          <Button size="small" icon={Sparkles} disabled={busy} onClick={start}>
             Write notes
           </Button>
         </RunCard>
@@ -274,7 +275,7 @@ function Failed({
         </span>
       ) : null}
       {canRetry ? (
-        <Button size="small" disabled={busy} onClick={onRetry}>
+        <Button size="small" icon={RotateCcw} disabled={busy} onClick={onRetry}>
           Retry
         </Button>
       ) : null}

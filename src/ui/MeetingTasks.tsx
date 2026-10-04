@@ -9,11 +9,13 @@
  * Renders nothing for a meeting with no tasks.
  */
 
+import { ListTodo, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { meetingTasks, onMeetingsChanged } from "@/ipc/client";
 import type { TicketSummary, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
-import { Button, Card } from "./primitives";
+import { IconSquare } from "./icons";
+import { Button, Card, Row } from "./primitives";
 import { SyncControls } from "./SyncButton";
 import { InlineError } from "./states";
 import { useCanSync, useTicketSync } from "./useTicketSync";
@@ -93,7 +95,7 @@ export function MeetingTasks({ meetingId }: { meetingId: string }) {
           {unsynced === 0 ? "All synced" : `${unsynced} not synced yet`}
         </p>
         {canSync && unsynced > 0 ? (
-          <Button size="small" disabled={busy} onClick={() => void syncAll(tasks)}>
+          <Button size="small" icon={RefreshCw} disabled={busy} onClick={() => void syncAll(tasks)}>
             Sync all
           </Button>
         ) : null}
@@ -101,24 +103,27 @@ export function MeetingTasks({ meetingId }: { meetingId: string }) {
       <Card flush>
         <ul>
           {tasks.map((task) => (
-            <li
-              key={task.id}
-              className="flex flex-col gap-3 px-6 py-5 [&+&]:border-t-[0.5px] [&+&]:border-separator"
-            >
-              <div className="flex min-w-0 items-baseline gap-4">
-                <span className="font-mono text-caption1 text-fg-tertiary">{task.id}</span>
-                <span className="text-body font-medium text-fg-primary">{task.title}</span>
-              </div>
-              <SyncControls
-                ticket={task}
-                state={stateOf(task.id)}
-                meetingId={meetingId}
-                canSync={canSync === true}
-                disabled={busy}
-                onSync={() => void sync(task, meetingId)}
-                onCancel={() => cancelTask(task.id)}
-                onDismiss={() => void dismiss(task.id, meetingId)}
-              />
+            <li key={task.id} className="[&+&]:border-t-[0.5px] [&+&]:border-separator">
+              <Row divided={false} className="gap-4">
+                <span className="flex min-w-0 items-center gap-5">
+                  <IconSquare icon={ListTodo} />
+                  <span className="flex min-w-0 flex-col gap-1">
+                    <span className="text-body font-semibold text-fg-primary">{task.title}</span>
+                    <span className="font-mono text-caption1 text-fg-secondary">{task.id}</span>
+                  </span>
+                </span>
+                <SyncControls
+                  ticket={task}
+                  state={stateOf(task.id)}
+                  meetingId={meetingId}
+                  canSync={canSync === true}
+                  disabled={busy}
+                  className="shrink-0"
+                  onSync={() => void sync(task, meetingId)}
+                  onCancel={() => cancelTask(task.id)}
+                  onDismiss={() => void dismiss(task.id, meetingId)}
+                />
+              </Row>
             </li>
           ))}
         </ul>

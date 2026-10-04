@@ -6,6 +6,8 @@
 
 mod agent_run;
 mod agent_setup;
+// TUR-102: Light / Dark / System and the glass switch.
+mod appearance;
 // TUR-58: "Start at login".
 mod autostart;
 mod bindings;
@@ -146,6 +148,8 @@ pub fn run() {
                     tracing::info!(rewritten, "made interrupted recordings' audio playable");
                 }
             }
+            // TUR-102: the saved Light / Dark / System, before the window paints.
+            appearance::init(_app.handle());
             // TUR-47/48: the cloud calendars read their sign-in through the app handle.
             calendar::cloud::init(_app.handle());
             // TUR-27: watch for a meeting app opening, and ask before recording.

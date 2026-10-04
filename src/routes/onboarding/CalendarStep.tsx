@@ -8,10 +8,12 @@
  * same thing later.
  */
 
+import { ArrowRight, CalendarDays } from "lucide-react";
 import { useState } from "react";
 import type { CalendarAccount } from "@/ipc/client";
 import { PROVIDER_NAME, SIGN_IN_TO_SEE_TODAY } from "@/ui/calendar/copy";
 import { SignInButtons } from "@/ui/calendar/SignInButtons";
+import { IconSquare } from "@/ui/icons";
 import { Button, ButtonRow, Prose } from "@/ui/primitives";
 
 export function CalendarStep({ onNext }: { onNext: () => void }) {
@@ -20,7 +22,10 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
   return (
     <>
       <header className="page__header">
-        <h1 className="page__title">See today's meetings</h1>
+        <h1 className="page__title flex items-center gap-4">
+          <IconSquare icon={CalendarDays} />
+          See today's meetings
+        </h1>
       </header>
       <Prose>
         {SIGN_IN_TO_SEE_TODAY}. meet-ai uses your calendar to name recordings, remind you before a
@@ -39,11 +44,13 @@ export function CalendarStep({ onNext }: { onNext: () => void }) {
 
       <ButtonRow>
         {signedIn ? (
-          <Button tone="primary" onClick={onNext}>
+          <Button tone="primary" icon={ArrowRight} onClick={onNext}>
             Continue
           </Button>
         ) : (
-          <Button onClick={onNext}>Skip</Button>
+          <Button icon={ArrowRight} onClick={onNext}>
+            Skip
+          </Button>
         )}
       </ButtonRow>
     </>

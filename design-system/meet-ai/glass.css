@@ -226,37 +226,42 @@ html, body, #root {
    decoration; the interface must survive losing it entirely.
    -------------------------------------------------------------------------- */
 
-/* Reduce Transparency — replace every blur with an opaque surface. */
+/* Reduce Transparency, and the app's own glass switch turned off (TUR-102,
+   `appearance.glass: false`, which sets <html data-glass="off">): replace
+   every blur with an opaque surface. The token side (the sidebar, the
+   popup) is in tokens.css. */
 @media (prefers-reduced-transparency: reduce) {
   .glass,
   .glass--clear {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
-    background-color: var(--gray-50);
+    background-color: var(--surface-card);
     border-color: var(--separator-strong);
   }
   .glass::before,
   .glass--lensed::after,
   .glass--clear::after { display: none; }
-  html, body { background: var(--gray-100); }
-
-  @media (prefers-color-scheme: dark) {
-    .glass, .glass--clear { background-color: var(--gray-900); }
-    html, body { background: var(--gray-950); }
-  }
+}
+:root[data-glass="off"] :is(.glass, .glass--clear) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background-color: var(--surface-card);
+  border-color: var(--separator-strong);
+}
+:root[data-glass="off"] .glass::before,
+:root[data-glass="off"] .glass--lensed::after,
+:root[data-glass="off"] .glass--clear::after {
+  display: none;
 }
 
-/* Increase Contrast — solid borders, no soft rims, stronger text. */
+/* Increase Contrast — solid borders, no soft rims. The stronger text and
+   separators are tokens (tokens.css). */
 @media (prefers-contrast: more) {
   .glass, .glass--clear {
     border: 1px solid var(--text-primary);
-    background-color: var(--surface-glass-raised);
+    background-color: var(--surface-card);
   }
   .glass::before { display: none; }
-  :root {
-    --text-secondary: var(--text-primary);
-    --separator: var(--text-primary);
-  }
 }
 
 /* Reduce Motion — keep state changes, drop the travel. */

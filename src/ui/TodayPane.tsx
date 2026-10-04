@@ -24,6 +24,7 @@
  * other event is a link to its pre-meeting brief (TUR-32).
  */
 
+import { CalendarClock, ExternalLink, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import {
@@ -130,10 +131,16 @@ function TodayBody({ state, onRetry }: { state: State; onRetry: () => void }) {
         <div className="state state--error" role="alert">
           <p className="state__body">{CALENDAR_DENIED_COPY}</p>
           <ButtonRow>
-            <Button tone="primary" onClick={() => void openSettings("calendars")}>
+            <Button
+              tone="primary"
+              icon={ExternalLink}
+              onClick={() => void openSettings("calendars")}
+            >
               Open {osText("settings")}
             </Button>
-            <Button onClick={onRetry}>Check again</Button>
+            <Button icon={RotateCcw} onClick={onRetry}>
+              Check again
+            </Button>
           </ButtonRow>
         </div>
       );
@@ -164,6 +171,7 @@ function TodayRow({ event, minAttendees }: { event: TodayEvent; minAttendees: nu
   const body = (
     <>
       <RowLabel
+        icon={CalendarClock}
         name={event.title}
         detail={`${formatTime(event.startMs)} to ${formatTime(event.endMs)}`}
         mono={false}

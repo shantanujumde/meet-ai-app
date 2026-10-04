@@ -1,161 +1,44 @@
-<title>meet-ai Glass Bench</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap">
+<!doctype html>
+<html lang="en" data-theme="light" data-os="macos">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>meet-ai Specimen - TUR-102 restyle</title>
+
+<!-- The real design system. No copied token block; these are the source files. -->
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="glass.css">
+
 <style>
 /* ============================================================
-   Page chrome tokens (--pg-*) are separate from the design
-   system tokens below, which are the real thing from tokens.css.
+   Page chrome only (--pg-*). These dress the specimen page
+   itself; they are NOT part of the design system. Everything
+   inside the mock window uses the real tokens from tokens.css
+   and glass.css above.
    ============================================================ */
 :root {
-  color-scheme: light;
-
-  /* Page chrome — neutrals biased slightly blue toward the system accent */
-  --pg-ground:      #eceef2;
-  --pg-panel:       #f8f9fb;
-  --pg-panel-2:     #ffffff;
-  --pg-ink:         #14161c;
-  --pg-ink-2:       #545a68;
-  --pg-ink-3:       #868d9c;
-  --pg-rule:        #d7dae2;
-  --pg-rule-soft:   #e6e8ee;
-  --pg-accent:      #0060df;
-  --pg-flag:        #b3261e;
-
-  --pg-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --pg-ground:    #e9eaef;
+  --pg-panel:     #f7f8fb;
+  --pg-panel-2:   #ffffff;
+  --pg-ink:       #14161c;
+  --pg-ink-2:     #545a68;
+  --pg-ink-3:     #868d9c;
+  --pg-rule:      #d7dae2;
+  --pg-rule-soft: #e6e8ee;
+  --pg-accent:    #0060df;
+  --pg-mono: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
   --pg-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", sans-serif;
-
-  /* ---- Real design system tokens (subset of tokens.css) ---- */
-  --white-a04: rgba(255,255,255,.04);
-  --white-a10: rgba(255,255,255,.10);
-  --white-a14: rgba(255,255,255,.14);
-  --white-a20: rgba(255,255,255,.20);
-  --white-a45: rgba(255,255,255,.45);
-  --white-a60: rgba(255,255,255,.60);
-  --white-a80: rgba(255,255,255,.80);
-  --black-a04: rgba(0,0,0,.04);
-  --black-a10: rgba(0,0,0,.10);
-  --black-a14: rgba(0,0,0,.14);
-  --black-a20: rgba(0,0,0,.20);
-  --black-a30: rgba(0,0,0,.30);
-  --black-a45: rgba(0,0,0,.45);
-  --black-a60: rgba(0,0,0,.60);
-
-  --sys-blue: #007aff;
-  --sys-red:  #ff3b30;
-
-  --blur-thin: 8px;
-  --blur-regular: 20px;
-  --blur-thick: 40px;
-  --sat-glass: 180%;
-  --sat-clear: 140%;
-
-  --radius-panel: 14px;
-  --radius-card: 10px;
-  --radius-chip: 6px;
-  --radius-capsule: 999px;
-
-  --surface-glass-regular: var(--white-a60);
-  --surface-glass-clear:   var(--white-a20);
-  --surface-glass-raised:  var(--white-a80);
-  --surface-content:       rgba(255,255,255,.72);
-  --rim-highlight: var(--white-a80);
-  --rim-shadow:    var(--black-a10);
-  --rim-border:    var(--black-a10);
-  --scrim-clear:   var(--black-a20);
-
-  --text-primary:   rgba(0,0,0,.85);
-  --text-secondary: rgba(0,0,0,.55);
-  --text-tertiary:  rgba(0,0,0,.35);
-  --separator:      var(--black-a10);
-
-  --accent:       var(--sys-blue);
-  --accent-glass: color-mix(in srgb, var(--sys-blue) 22%, transparent);
-  --focus-ring:   var(--sys-blue);
-  --status-recording: var(--sys-red);
-
-  --speaker-1: #007aff;
-  --speaker-2: #af52de;
-  --speaker-3: #ff9500;
-
-  --shadow-raised:   0 1px 2px var(--black-a10), 0 0 0 .5px var(--black-a10);
-  --shadow-floating: 0 4px 16px var(--black-a20), 0 0 0 .5px var(--black-a14);
-
-  --dur-instant: 80ms;
-  --dur-fast: 140ms;
-  --dur-normal: 220ms;
-  --ease-out: cubic-bezier(.25,.46,.45,.94);
-
-  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
 }
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --pg-ground:    #101218;
-    --pg-panel:     #181b23;
-    --pg-panel-2:   #1f232c;
-    --pg-ink:       #eef0f5;
-    --pg-ink-2:     #a2a9b8;
-    --pg-ink-3:     #6f7686;
-    --pg-rule:      #2b303b;
-    --pg-rule-soft: #232833;
-    --pg-accent:    #6ba7ff;
-    --pg-flag:      #ff6b60;
-
-    --sys-blue: #0a84ff;
-    --sys-red:  #ff453a;
-
-    --surface-glass-regular: var(--white-a10);
-    --surface-glass-clear:   var(--white-a04);
-    --surface-glass-raised:  var(--white-a14);
-    --surface-content:       rgba(28,28,32,.72);
-    --rim-highlight: var(--white-a20);
-    --rim-shadow:    var(--black-a45);
-    --rim-border:    var(--white-a10);
-    --scrim-clear:   var(--black-a45);
-
-    --text-primary:   rgba(255,255,255,.92);
-    --text-secondary: rgba(255,255,255,.62);
-    --text-tertiary:  rgba(255,255,255,.40);
-    --separator:      var(--white-a10);
-
-    --speaker-2: #bf5af2;
-    --speaker-3: #ff9f0a;
-
-    --shadow-raised:   0 1px 2px var(--black-a45), 0 0 0 .5px var(--white-a10);
-    --shadow-floating: 0 4px 16px var(--black-a60), 0 0 0 .5px var(--white-a10);
-  }
-}
-
 :root[data-theme="dark"] {
-  color-scheme: dark;
-  --pg-ground:    #101218;
-  --pg-panel:     #181b23;
-  --pg-panel-2:   #1f232c;
+  --pg-ground:    #0f1016;
+  --pg-panel:     #181b22;
+  --pg-panel-2:   #20242d;
   --pg-ink:       #eef0f5;
   --pg-ink-2:     #a2a9b8;
   --pg-ink-3:     #6f7686;
   --pg-rule:      #2b303b;
   --pg-rule-soft: #232833;
   --pg-accent:    #6ba7ff;
-  --pg-flag:      #ff6b60;
-  --sys-blue: #0a84ff;
-  --sys-red:  #ff453a;
-  --surface-glass-regular: var(--white-a10);
-  --surface-glass-clear:   var(--white-a04);
-  --surface-glass-raised:  var(--white-a14);
-  --surface-content:       rgba(28,28,32,.72);
-  --rim-highlight: var(--white-a20);
-  --rim-shadow:    var(--black-a45);
-  --rim-border:    var(--white-a10);
-  --scrim-clear:   var(--black-a45);
-  --text-primary:   rgba(255,255,255,.92);
-  --text-secondary: rgba(255,255,255,.62);
-  --text-tertiary:  rgba(255,255,255,.40);
-  --separator:      var(--white-a10);
-  --speaker-2: #bf5af2;
-  --speaker-3: #ff9f0a;
-  --shadow-raised:   0 1px 2px var(--black-a45), 0 0 0 .5px var(--white-a10);
-  --shadow-floating: 0 4px 16px var(--black-a60), 0 0 0 .5px var(--white-a10);
 }
 
 * { box-sizing: border-box; }
@@ -165,69 +48,55 @@ body {
   background: var(--pg-ground);
   color: var(--pg-ink);
   font-family: var(--pg-ui);
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
 
 .wrap {
-  max-width: 1080px;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: 40px 28px 96px;
+  padding: 36px 28px 96px;
   display: flex;
   flex-direction: column;
-  gap: 44px;
+  gap: 40px;
 }
 
 /* ---------- Masthead ---------- */
-.mast { display: flex; flex-direction: column; gap: 14px; }
+.mast { display: flex; flex-direction: column; gap: 12px; }
 .eyebrow {
-  font-family: var(--pg-mono);
-  font-size: 11px;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  color: var(--pg-ink-3);
+  font-family: var(--pg-mono); font-size: 11px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--pg-ink-3);
 }
 h1 {
-  margin: 0;
-  font-size: clamp(30px, 4.4vw, 42px);
-  line-height: 1.08;
-  letter-spacing: -.022em;
-  font-weight: 700;
-  text-wrap: balance;
+  margin: 0; font-size: clamp(28px, 4vw, 38px); line-height: 1.08;
+  letter-spacing: -.02em; font-weight: 700; text-wrap: balance;
 }
-.lede { margin: 0; max-width: 62ch; color: var(--pg-ink-2); font-size: 16px; }
-
+.lede { margin: 0; max-width: 64ch; color: var(--pg-ink-2); font-size: 15px; }
 .meta {
   display: flex; flex-wrap: wrap; gap: 8px 18px;
   font-family: var(--pg-mono); font-size: 12px; color: var(--pg-ink-3);
-  padding-top: 6px; border-top: 1px solid var(--pg-rule-soft);
+  padding-top: 8px; border-top: 1px solid var(--pg-rule-soft);
 }
 .meta b { color: var(--pg-ink-2); font-weight: 500; }
 
-/* ---------- Section scaffolding ---------- */
-section { display: flex; flex-direction: column; gap: 18px; }
+/* ---------- Sections ---------- */
+section { display: flex; flex-direction: column; gap: 16px; }
 h2 {
   margin: 0; font-size: 13px; font-weight: 700;
   font-family: var(--pg-mono); letter-spacing: .1em; text-transform: uppercase;
-  color: var(--pg-ink-2);
-  display: flex; align-items: baseline; gap: 10px;
+  color: var(--pg-ink-2); display: flex; align-items: baseline; gap: 10px;
 }
-h2::after {
-  content: ""; flex: 1; height: 1px; background: var(--pg-rule-soft);
-}
-h3 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
-.note { margin: 0; color: var(--pg-ink-2); font-size: 14px; max-width: 68ch; }
-code, .mono { font-family: var(--pg-mono); font-size: .88em; }
-code { color: var(--pg-accent); }
+h2::after { content: ""; flex: 1; height: 1px; background: var(--pg-rule-soft); }
+.note { margin: 0; color: var(--pg-ink-2); font-size: 14px; max-width: 72ch; }
+.note code, .mono { font-family: var(--pg-mono); font-size: .86em; }
+.note code { color: var(--pg-accent); }
 
 /* ---------- Bench controls ---------- */
 .bench-controls {
   display: flex; flex-wrap: wrap; gap: 18px 26px; align-items: flex-end;
-  padding: 16px 18px;
-  background: var(--pg-panel);
-  border: 1px solid var(--pg-rule);
-  border-radius: 12px;
+  padding: 16px 18px; background: var(--pg-panel);
+  border: 1px solid var(--pg-rule); border-radius: 12px;
 }
 .ctrl { display: flex; flex-direction: column; gap: 7px; }
 .ctrl > span {
@@ -236,38 +105,66 @@ code { color: var(--pg-accent); }
 }
 .seg { display: flex; gap: 4px; padding: 3px; background: var(--pg-ground); border-radius: 9px; border: 1px solid var(--pg-rule-soft); }
 .seg button {
-  font: 500 12px/1 var(--pg-ui);
-  padding: 7px 11px; border-radius: 6px; border: 1px solid transparent;
-  background: transparent; color: var(--pg-ink-2); cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  font: 500 12px/1 var(--pg-ui); padding: 7px 11px; border-radius: 6px;
+  border: 1px solid transparent; background: transparent; color: var(--pg-ink-2);
+  cursor: pointer; transition: background .14s, color .14s;
 }
 .seg button:hover { background: var(--pg-rule-soft); }
-.seg button[aria-pressed="true"] { background: var(--pg-panel-2); color: var(--pg-ink); border-color: var(--pg-rule); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.seg button[aria-pressed="true"] {
+  background: var(--pg-panel-2); color: var(--pg-ink);
+  border-color: var(--pg-rule); box-shadow: 0 1px 2px rgba(0,0,0,.06);
+}
 .toggles { display: flex; flex-wrap: wrap; gap: 6px; }
 .toggles label {
-  display: inline-flex; align-items: center; gap: 7px;
-  font-size: 12.5px; color: var(--pg-ink-2);
-  padding: 7px 11px; border: 1px solid var(--pg-rule); border-radius: 8px;
-  background: var(--pg-panel-2); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;
+  color: var(--pg-ink-2); padding: 7px 11px; border: 1px solid var(--pg-rule);
+  border-radius: 8px; background: var(--pg-panel-2); cursor: pointer;
 }
 .toggles input { accent-color: var(--pg-accent); margin: 0; }
-:where(button, input, a, [tabindex]):focus-visible {
+:where(.wrap button, .wrap input, .wrap a, .wrap [tabindex]):focus-visible {
   outline: 2px solid var(--pg-accent); outline-offset: 2px;
 }
 
-/* ---------- The stage: a backdrop glass must survive ---------- */
+/* ---------- Surface swatches ---------- */
+.swatches { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+.swatch {
+  border-radius: 12px; border: 1px solid var(--pg-rule); overflow: hidden;
+  background: var(--pg-panel);
+}
+/* The busy backdrop a glass sidebar surface has to survive. */
+.swatch .plate {
+  height: 92px; position: relative;
+  background:
+    repeating-linear-gradient(58deg, rgba(255,255,255,.9) 0 20px, rgba(16,16,16,.9) 20px 40px),
+    #808080;
+  display: grid; place-items: center; padding: 14px;
+}
+.swatch .plate.grey {
+  background: #808080;
+}
+.swatch .fill {
+  width: 100%; height: 100%; border-radius: 8px;
+  border: .5px solid var(--rim-border);
+  display: grid; place-items: center;
+  font: 600 12px var(--pg-ui); color: var(--text-primary);
+}
+.swatch .meta2 { padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.swatch .meta2 .n { font: 600 12.5px var(--pg-ui); }
+.swatch .meta2 .v { font-family: var(--pg-mono); font-size: 11px; color: var(--pg-ink-3); }
+
+/* ---------- The stage behind the window ---------- */
 .stage {
-  position: relative;
-  border-radius: 16px;
-  border: 1px solid var(--pg-rule);
-  padding: 30px;
-  overflow: hidden;
-  min-height: 440px;
-  display: flex; flex-direction: column; gap: 26px;
+  position: relative; border-radius: 18px; border: 1px solid var(--pg-rule);
+  padding: 34px; overflow: hidden; display: flex; justify-content: center;
 }
 .stage::before {
   content: ""; position: absolute; inset: 0; z-index: 0;
-  transition: opacity var(--dur-normal) var(--ease-out);
+}
+[data-backdrop="grey"] .stage::before { background: #808080; }
+[data-backdrop="busy"] .stage::before {
+  background:
+    repeating-linear-gradient(58deg, #ffffff 0 22px, #101010 22px 44px),
+    #808080;
 }
 [data-backdrop="vivid"] .stage::before {
   background:
@@ -276,493 +173,553 @@ code { color: var(--pg-accent); }
     radial-gradient(85% 85% at 78% 92%, #6a3dff 0%, transparent 58%),
     linear-gradient(160deg, #d6317c 0%, #2a1d8f 70%);
 }
-[data-backdrop="bright"] .stage::before {
-  background:
-    radial-gradient(80% 70% at 20% 10%, #ffffff 0%, transparent 60%),
-    radial-gradient(70% 60% at 90% 80%, #dbe7ff 0%, transparent 55%),
-    linear-gradient(150deg, #f7f8fb 0%, #cfd8e8 100%);
-}
-[data-backdrop="dark"] .stage::before {
-  background:
-    radial-gradient(70% 60% at 25% 15%, #2b3550 0%, transparent 58%),
-    radial-gradient(60% 60% at 85% 85%, #1d2b3a 0%, transparent 55%),
-    linear-gradient(155deg, #10131b 0%, #05070c 100%);
-}
-[data-backdrop="busy"] .stage::before {
-  background:
-    repeating-linear-gradient(58deg, #ffffff 0 22px, #101010 22px 44px),
-    #808080;
-}
 .stage > * { position: relative; z-index: 1; }
-.stage-caption {
-  font-family: var(--pg-mono); font-size: 11px; letter-spacing: .06em;
-  color: var(--white-a80); text-shadow: 0 1px 3px rgba(0,0,0,.55);
-  display: flex; align-items: center; gap: 8px;
-}
-[data-backdrop="bright"] .stage-caption { color: rgba(0,0,0,.6); text-shadow: none; }
 
-/* ---------- Glass recipes (from glass.css) ---------- */
-.glass {
-  position: relative; isolation: isolate;
-  background-color: var(--surface-glass-regular);
+/* ============================================================
+   The mock window. Everything below uses real tokens only.
+   ============================================================ */
+.win {
+  width: 100%; max-width: 940px;
+  border-radius: var(--radius-window);
+  overflow: hidden;
+  background: var(--surface-canvas);
+  box-shadow: 0 26px 70px rgba(0,0,0,.4), 0 0 0 .5px var(--black-a30);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  display: flex; flex-direction: column;
+}
+
+/* --- Titlebar --- */
+.titlebar {
+  height: var(--titlebar-h); flex: none;
+  display: flex; align-items: center; gap: var(--space-5);
+  padding: 0 var(--titlebar-pad-x);
+  background: var(--titlebar-fill);
+  border-bottom: .5px solid var(--separator);
+}
+.traffic { display: flex; gap: 8px; }
+.traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.traffic i:nth-child(1) { background: var(--preview-dot-close); }
+.traffic i:nth-child(2) { background: var(--preview-dot-min); }
+.traffic i:nth-child(3) { background: var(--preview-dot-max); }
+.navarrows { display: flex; gap: 2px; margin-left: 6px; }
+.navarrows button {
+  width: var(--titlebar-button); height: var(--control-h-regular);
+  display: grid; place-items: center; border: none; background: transparent;
+  border-radius: var(--radius-chip); color: var(--text-secondary); cursor: pointer;
+}
+.navarrows button:hover { background: var(--surface-control); color: var(--text-primary); }
+.navarrows button:last-child { color: var(--text-tertiary); }
+.titlebar .wtitle { font-size: var(--text-headline); font-weight: var(--weight-semibold); }
+
+/* --- Body: sidebar + main --- */
+.body { display: grid; grid-template-columns: var(--sidebar-w) minmax(0,1fr); min-height: 560px; }
+
+/* --- Sidebar (glass over the native material) --- */
+.sidebar {
+  background: var(--sidebar-fill);
+  border-right: .5px solid var(--separator);
+  padding: var(--sidebar-pad);
+  display: flex; flex-direction: column; gap: var(--space-2);
   backdrop-filter: blur(var(--blur-regular)) saturate(var(--sat-glass));
   -webkit-backdrop-filter: blur(var(--blur-regular)) saturate(var(--sat-glass));
-  border-radius: var(--radius-panel);
-  box-shadow: var(--shadow-floating);
-  border: .5px solid var(--rim-border);
-  color: var(--text-primary);
 }
-.glass::before {
-  content: ""; position: absolute; inset: 0; border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(180deg, var(--rim-highlight) 0%, transparent 42%, transparent 58%, var(--rim-shadow) 100%);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor; mask-composite: exclude;
-  pointer-events: none; z-index: 1;
-}
-.glass--clear {
-  background-color: var(--surface-glass-clear);
-  backdrop-filter: blur(var(--blur-thin)) saturate(var(--sat-clear));
-  -webkit-backdrop-filter: blur(var(--blur-thin)) saturate(var(--sat-clear));
-}
-.glass--clear::after {
-  content: ""; position: absolute; inset: 0; border-radius: inherit;
-  background: var(--scrim-clear); pointer-events: none; z-index: -1;
-}
-.glass--noscrim::after { background: transparent; }
-.glass--interactive {
-  transition: background-color var(--dur-fast) var(--ease-out),
-              transform var(--dur-instant) var(--ease-out),
-              box-shadow var(--dur-fast) var(--ease-out);
-  cursor: pointer;
-}
-.glass--interactive:hover { background-color: var(--surface-glass-raised); }
-.glass--interactive:active { transform: scale(.97); box-shadow: var(--shadow-raised); }
-.glass--tinted {
-  background-color: var(--accent-glass);
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-}
-
-/* ---------- App mock ---------- */
-.mock {
-  display: grid;
-  grid-template-columns: 208px minmax(0, 1fr);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 22px 60px rgba(0,0,0,.34), 0 0 0 .5px var(--black-a30);
-  min-height: 340px;
-  font-family: var(--font-ui);
-  font-size: 13px;
-  color: var(--text-primary);
-}
-.mock-side {
-  background: var(--surface-glass-regular);
-  backdrop-filter: blur(var(--blur-thick)) saturate(var(--sat-glass));
-  -webkit-backdrop-filter: blur(var(--blur-thick)) saturate(var(--sat-glass));
-  border-right: .5px solid var(--separator);
-  padding: 8px;
-  display: flex; flex-direction: column; gap: 2px;
-}
-.traffic { display: flex; gap: 8px; padding: 6px 6px 12px; }
-.traffic i { width: 12px; height: 12px; border-radius: 50%; display: block; }
-.traffic i:nth-child(1) { background: #ff5f57; }
-.traffic i:nth-child(2) { background: #febc2e; }
-.traffic i:nth-child(3) { background: #28c840; }
-.side-label {
-  font-size: 11px; font-weight: 600; letter-spacing: .04em;
-  color: var(--text-tertiary); padding: 8px 8px 4px; text-transform: uppercase;
-}
-.row {
-  display: flex; align-items: center; gap: 8px;
-  height: 28px; padding: 0 8px; border-radius: var(--radius-chip);
-  position: relative; cursor: default;
-  transition: background-color var(--dur-fast) var(--ease-out);
-}
-.row:hover { background: var(--white-a10); }
-.row[data-selected="true"] { background: var(--accent-glass); }
-.row[data-selected="true"]::before {
-  content: ""; position: absolute; left: 0; top: 5px; bottom: 5px;
-  width: 3px; border-radius: 2px; background: var(--accent);
-}
-.row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row time { margin-left: auto; font-size: 11px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
-.dot-rec {
-  width: 8px; height: 8px; border-radius: 50%; background: var(--status-recording);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-recording) 25%, transparent);
-  flex: none; animation: pulse 2s cubic-bezier(.45,.05,.55,.95) infinite;
-}
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
-
-.mock-main { position: relative; background: var(--surface-content); display: flex; }
-.notes { padding: 22px 24px; flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.notes h4 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
-.notes p { margin: 0; font-size: 14px; line-height: 1.6; color: var(--text-primary); max-width: 46ch; }
-.notes p.dim { color: var(--text-secondary); }
-.decision {
-  display: flex; gap: 8px; align-items: flex-start;
-  padding: 9px 11px; border-radius: var(--radius-card);
-  background: var(--white-a20); border: .5px solid var(--separator);
-  font-size: 13px;
-}
-.decision b { font-weight: 600; }
-.tag {
-  font-family: var(--pg-mono); font-size: 9.5px; letter-spacing: .08em;
-  text-transform: uppercase; padding: 2px 6px; border-radius: 4px;
-  background: var(--accent-glass); color: var(--text-primary); flex: none; margin-top: 2px;
-}
-
-.transcript {
-  width: 236px; flex: none; margin: 12px 12px 12px 0;
-  border-radius: var(--radius-panel); padding: 12px;
-  display: flex; flex-direction: column; gap: 10px;
-  align-self: stretch;
-}
-.tr-head { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-secondary); }
-.tr-line { display: flex; gap: 8px; font-size: 12px; line-height: 1.45; }
-.avatar {
-  width: 18px; height: 18px; border-radius: 50%; flex: none; margin-top: 1px;
-  display: grid; place-items: center; color: #fff; font-size: 9px; font-weight: 700;
-}
-.tr-line.volatile { color: var(--text-tertiary); }
-.tr-line.final { color: var(--text-primary); }
-
-.toolbar {
-  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 4px; padding: 4px;
+.search {
+  display: flex; align-items: center; gap: var(--space-3);
+  height: var(--control-h-large); padding: 0 var(--space-4);
   border-radius: var(--radius-capsule);
+  background: var(--surface-glass-sunken);
+  border: .5px solid var(--separator);
+  color: var(--text-tertiary); font-size: var(--text-body);
+  margin-bottom: var(--space-3);
 }
-.toolbar button {
-  height: 32px; min-width: 32px; padding: 0 10px;
-  border: none; background: transparent; border-radius: calc(var(--radius-capsule) - 4px);
-  color: var(--text-primary); font: 500 12px/1 var(--font-ui); cursor: pointer;
-  display: inline-flex; align-items: center; gap: 6px;
-  transition: background-color var(--dur-fast) var(--ease-out);
+.search svg { color: var(--text-tertiary); flex: none; }
+.group-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-caption1); font-weight: var(--weight-semibold);
+  letter-spacing: .02em; text-transform: uppercase; color: var(--text-tertiary);
+  padding: var(--space-5) var(--space-3) var(--space-2);
 }
-.toolbar button:hover { background: var(--white-a14); }
-.toolbar button[data-primary] { background: var(--accent); color: #fff; padding: 0 14px; }
-.toolbar button[data-primary]:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
-.toolbar .sep { width: 1px; height: 18px; background: var(--separator); margin: 0 3px; }
-svg.i { width: 15px; height: 15px; flex: none; }
+.group-head svg { flex: none; }
+.navrow {
+  display: flex; align-items: center; gap: var(--space-4);
+  height: var(--sidebar-row-h); padding: 0 var(--space-3);
+  border-radius: var(--sidebar-row-radius); color: var(--text-secondary);
+  cursor: default; transition: background-color var(--dur-fast) var(--ease-out);
+}
+.navrow svg { flex: none; color: var(--text-secondary); }
+.navrow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.navrow:hover { background: var(--sidebar-row-hover); color: var(--text-primary); }
+.navrow:hover svg { color: var(--text-primary); }
+.navrow[data-active="true"] {
+  background: var(--sidebar-row-active); color: var(--text-on-accent);
+}
+.navrow[data-active="true"] svg { color: var(--text-on-accent); }
 
-/* ---------- Recipe strip ---------- */
-.recipes { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
-.recipe { padding: 14px; display: flex; flex-direction: column; gap: 6px; min-height: 104px; }
-.recipe .name { font: 600 13px/1.3 var(--font-ui); }
-.recipe .desc { font-size: 12px; line-height: 1.45; color: var(--text-secondary); }
-.recipe .cls { font-family: var(--pg-mono); font-size: 10.5px; color: var(--text-secondary); margin-top: auto; }
+/* --- Main content --- */
+.main {
+  background: var(--surface-canvas);
+  padding: var(--page-pad-top) var(--page-pad-x) var(--space-11);
+  display: flex; flex-direction: column; gap: var(--page-gap);
+  overflow: hidden;
+}
+.page-title { margin: 0; font-size: var(--text-title1); font-weight: var(--weight-bold); letter-spacing: -.02em; }
 
-/* ---------- Tables ---------- */
+.card {
+  background: var(--surface-card);
+  border-radius: var(--card-radius);
+  border: .5px solid var(--separator);
+  overflow: hidden;
+}
+.section-head {
+  font-size: var(--text-footnote); font-weight: var(--weight-semibold);
+  color: var(--text-secondary); padding: 0 var(--space-2) var(--space-3);
+}
+
+/* --- Row pattern --- */
+.srow {
+  display: flex; align-items: center; gap: var(--space-5);
+  padding: var(--row-pad-y) var(--card-pad-x); min-height: var(--row-min-h);
+  border-top: .5px solid var(--separator);
+}
+.srow:first-child { border-top: none; }
+.srow .iconbox {
+  width: var(--icon-box); height: var(--icon-box); flex: none;
+  border-radius: var(--icon-box-radius);
+  background: var(--accent-glass); color: var(--accent-text);
+  display: grid; place-items: center;
+}
+.srow .rtext { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.srow .rname { font-size: var(--text-body); font-weight: var(--weight-semibold); }
+.srow .rsub { font-size: var(--text-footnote); color: var(--text-tertiary); }
+.srow .rctl { margin-left: auto; display: flex; align-items: center; gap: var(--space-4); }
+
+/* --- Switch (44x24, knob 20) --- */
+.switch {
+  --on: var(--accent); --off: var(--surface-control-hover);
+  width: var(--switch-w); height: var(--switch-h); flex: none;
+  border: none; padding: 2px; border-radius: var(--radius-capsule);
+  background: var(--off); cursor: pointer; position: relative;
+  transition: background-color var(--dur-normal) var(--ease-out);
+}
+.switch .knob {
+  width: var(--switch-knob); height: var(--switch-knob); border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px var(--black-a30);
+  transform: translateX(0); transition: transform var(--dur-normal) var(--ease-spring);
+  display: block;
+}
+.switch[aria-checked="true"] { background: var(--on); }
+.switch[aria-checked="true"] .knob { transform: translateX(calc(var(--switch-w) - var(--switch-knob) - 4px)); }
+
+/* --- Select-ish control --- */
+.pill-select {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  height: var(--control-h-large); padding: 0 var(--space-4);
+  border-radius: var(--radius-control); border: .5px solid var(--separator);
+  background: var(--surface-control); color: var(--text-primary); font-size: var(--text-footnote);
+}
+.pill-select svg { color: var(--text-tertiary); }
+
+/* --- Buttons --- */
+.btn {
+  height: var(--control-h-large); padding: 0 var(--space-6);
+  border-radius: var(--radius-control); border: .5px solid var(--separator);
+  background: var(--surface-control); color: var(--text-primary);
+  font: var(--weight-medium) var(--text-footnote)/1 var(--font-ui); cursor: pointer;
+}
+.btn:hover { background: var(--surface-control-hover); }
+.btn--primary {
+  background: var(--accent-fill); color: var(--text-on-accent); border-color: transparent;
+}
+.btn--primary:hover { background: var(--accent-hover); }
+
+/* --- Appearance picker --- */
+.appearance { padding: var(--card-pad-x); display: flex; flex-direction: column; gap: var(--space-5); }
+.app-head { font-size: var(--text-headline); font-weight: var(--weight-semibold); }
+.tiles { display: flex; gap: var(--space-5); flex-wrap: wrap; }
+.tile {
+  width: var(--tile-w); display: flex; flex-direction: column; gap: var(--space-3);
+  align-items: center; cursor: pointer; border: none; background: transparent; padding: 0;
+}
+.tile .pic {
+  width: 100%; height: var(--tile-h); border-radius: var(--radius-card);
+  border: 1.5px solid var(--separator); overflow: hidden; position: relative;
+  background: var(--surface-control);
+}
+.tile[aria-checked="true"] .pic {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glass);
+}
+.tile[aria-checked="true"] .lbl { color: var(--accent-text); font-weight: var(--weight-semibold); }
+.tile .lbl { font-size: var(--text-footnote); color: var(--text-secondary); }
+
+/* The tiny window drawing inside each tile. Colours are fixed per the
+   component tokens; they do NOT follow data-theme. */
+.draw { position: absolute; inset: 0; display: grid; grid-template-columns: 34% 1fr; }
+.draw .d-side { padding: 6px 4px; display: flex; flex-direction: column; gap: 4px; }
+.draw .d-dots { display: flex; gap: 2.5px; }
+.draw .d-dots i { width: 3.5px; height: 3.5px; border-radius: 50%; display: block; }
+.draw .d-dots i:nth-child(1) { background: var(--preview-dot-close); }
+.draw .d-dots i:nth-child(2) { background: var(--preview-dot-min); }
+.draw .d-dots i:nth-child(3) { background: var(--preview-dot-max); }
+.draw .d-line { height: 3px; border-radius: 2px; }
+.draw .d-main { padding: 8px 7px; display: flex; flex-direction: column; gap: 5px; }
+.draw .d-line.lg { height: 4px; }
+
+.draw--light { background: var(--preview-light-window); }
+.draw--light .d-side { background: var(--preview-light-sidebar); }
+.draw--light .d-line { background: var(--preview-light-line); }
+.draw--light .d-dots { }
+.draw--dark { background: var(--preview-dark-window); }
+.draw--dark .d-side { background: var(--preview-dark-sidebar); }
+.draw--dark .d-line { background: var(--preview-dark-line); }
+/* System tile: a diagonal split of light and dark. */
+.draw--system { background: var(--preview-light-window); }
+.draw--system .split-dark {
+  position: absolute; inset: 0; background: var(--preview-dark-window);
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+.draw--system .d-side { background: var(--preview-light-sidebar); z-index: 2; }
+.draw--system .d-main { z-index: 2; }
+.draw--system .d-line { background: var(--preview-light-line); }
+.draw--system .d-main .d-line { background: var(--preview-dark-line); }
+
+.app-note { font-size: var(--text-footnote); color: var(--text-tertiary); }
+
+/* The see-through glass switch row inside the Appearance card. */
+.glass-row {
+  margin-top: var(--space-2);
+  display: flex; align-items: center; gap: var(--space-5);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-card);
+}
+.glass-row .rtext { display: flex; flex-direction: column; gap: 1px; }
+.glass-row .rname { font-size: var(--text-body); font-weight: var(--weight-semibold); }
+.glass-row .rsub { font-size: var(--text-footnote); color: var(--text-secondary); }
+.glass-row .rctl { margin-left: auto; }
+
+/* ---------- Contrast table ---------- */
 .tablewrap { overflow-x: auto; border: 1px solid var(--pg-rule); border-radius: 10px; background: var(--pg-panel); }
-table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--pg-rule-soft); vertical-align: middle; }
 th {
   font-family: var(--pg-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
   color: var(--pg-ink-3); font-weight: 500; background: var(--pg-panel-2);
 }
 tbody tr:last-child td { border-bottom: none; }
-td.mono, td .mono { font-family: var(--pg-mono); font-size: 12px; }
-td.num { font-variant-numeric: tabular-nums; }
-.chip { display: inline-block; width: 15px; height: 15px; border-radius: 4px; border: 1px solid var(--black-a20); vertical-align: -3px; margin-right: 8px; }
-
-/* Type scale specimens */
-.scale-row { display: flex; align-items: baseline; gap: 16px; padding: 7px 0; border-bottom: 1px solid var(--pg-rule-soft); }
-.scale-row:last-child { border-bottom: none; }
-.scale-row .label { font-family: var(--pg-mono); font-size: 11px; color: var(--pg-ink-3); width: 168px; flex: none; }
-.scale-row .sample { font-family: var(--font-ui); color: var(--pg-ink); }
-
-/* Rules list */
-.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
-.rule {
-  padding: 14px 16px; border-radius: 10px; background: var(--pg-panel);
-  border: 1px solid var(--pg-rule); border-left: 3px solid var(--pg-flag);
-  display: flex; flex-direction: column; gap: 5px;
-}
-.rule.keep { border-left-color: var(--pg-accent); }
-.rule b { font-size: 13.5px; }
-.rule span { font-size: 12.5px; color: var(--pg-ink-2); line-height: 1.5; }
+td.env { font-weight: 600; }
+td .pair, td.pair { font-family: var(--pg-mono); font-size: 12px; }
+td.ratio { font-variant-numeric: tabular-nums; font-family: var(--pg-mono); }
 
 footer {
   border-top: 1px solid var(--pg-rule); padding-top: 18px;
   font-size: 12.5px; color: var(--pg-ink-3); display: flex; flex-wrap: wrap; gap: 6px 20px;
 }
 
-/* ---------- Simulated system settings ---------- */
-:root[data-sim-transparency="on"] .glass,
-:root[data-sim-transparency="on"] .glass--clear,
-:root[data-sim-transparency="on"] .mock-side {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  background-color: #f4f5f8;
-  border-color: var(--black-a20);
-}
-:root[data-sim-transparency="on"] .glass::before,
-:root[data-sim-transparency="on"] .glass--clear::after { display: none; }
-:root[data-sim-transparency="on"] .mock-main { background: #fbfbfd; }
-:root[data-sim-transparency="on"][data-theme="dark"] .glass,
-:root[data-sim-transparency="on"][data-theme="dark"] .glass--clear,
-:root[data-sim-transparency="on"][data-theme="dark"] .mock-side { background-color: #1c1c20; }
-:root[data-sim-transparency="on"][data-theme="dark"] .mock-main { background: #131316; }
-
-:root[data-sim-contrast="on"] .glass,
-:root[data-sim-contrast="on"] .glass--clear {
-  border: 1px solid var(--text-primary);
-  background-color: var(--surface-glass-raised);
-}
-:root[data-sim-contrast="on"] .glass::before { display: none; }
-:root[data-sim-contrast="on"] { --text-secondary: var(--text-primary); --separator: var(--text-primary); }
-
-:root[data-sim-motion="on"] *, :root[data-sim-motion="on"] *::before {
-  animation-duration: 1ms !important; transition-duration: 1ms !important;
-}
-:root[data-sim-motion="on"] .dot-rec { animation: none; opacity: 1; }
-
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
-}
-
-@media (max-width: 720px) {
-  .mock { grid-template-columns: 1fr; }
-  .mock-side { border-right: none; border-bottom: .5px solid var(--separator); }
-  .transcript { display: none; }
-  .stage { padding: 18px; }
+@media (max-width: 760px) {
+  .body { grid-template-columns: 1fr; }
+  .sidebar { border-right: none; border-bottom: .5px solid var(--separator); }
+  .stage { padding: 16px; }
 }
 </style>
+</head>
 
+<body>
 <div class="wrap">
 
   <header class="mast">
-    <div class="eyebrow">meet-ai · design system · v1</div>
-    <h1>Glass Bench</h1>
+    <div class="eyebrow">meet-ai · design system · TUR-102</div>
+    <h1>Settings specimen</h1>
     <p class="lede">
-      The Liquid Glass system for meet-ai, a botless meeting assistant for macOS.
-      Glass only works if it survives the backdrop behind it, so this page lets you
-      change that backdrop and switch on the accessibility settings that take the
-      glass away entirely.
+      A standalone render of the restyled meet-ai look. This page links the real
+      <code>tokens.css</code> and <code>glass.css</code> from this folder, so what you
+      see is the actual token layer, not a copy. Flip the theme, drop the glass, and
+      simulate Increase Contrast to watch every surface, row and switch respond.
     </p>
     <div class="meta">
       <span><b>Platform</b> macOS 26 Tahoe</span>
-      <span><b>Stack</b> Tauri 2 · React 19 · shadcn/ui</span>
+      <span><b>Stack</b> Tauri 2 · React 19</span>
       <span><b>Base text</b> 13px</span>
-      <span><b>Grid</b> 4pt</span>
-      <span><b>Source</b> tokens.css · glass.css · MASTER.md</span>
+      <span><b>Accent</b> system blue</span>
+      <span><b>Source</b> tokens.css · glass.css</span>
     </div>
   </header>
 
   <section>
-    <h2>The bench</h2>
-    <p class="note">
-      Every control below changes what sits behind the glass, or takes a system
-      setting away. The striped backdrop is the worst realistic case. If text stays
-      readable there, it stays readable anywhere.
-    </p>
-
+    <h2>Bench</h2>
     <div class="bench-controls">
-      <div class="ctrl">
-        <span>Backdrop</span>
-        <div class="seg" id="backdrops">
-          <button type="button" data-b="vivid" aria-pressed="true">Vivid wallpaper</button>
-          <button type="button" data-b="bright" aria-pressed="false">Bright</button>
-          <button type="button" data-b="dark" aria-pressed="false">Dark</button>
-          <button type="button" data-b="busy" aria-pressed="false">Busy stripes</button>
-        </div>
-      </div>
       <div class="ctrl">
         <span>Appearance</span>
         <div class="seg" id="themes">
-          <button type="button" data-t="light" aria-pressed="false">Light</button>
-          <button type="button" data-t="dark" aria-pressed="true">Dark</button>
+          <button type="button" data-t="light" aria-pressed="true">Light</button>
+          <button type="button" data-t="dark" aria-pressed="false">Dark</button>
         </div>
       </div>
       <div class="ctrl">
-        <span>System settings</span>
+        <span>Backdrop behind window</span>
+        <div class="seg" id="backdrops">
+          <button type="button" data-b="grey" aria-pressed="true">Mid grey</button>
+          <button type="button" data-b="busy" aria-pressed="false">Busy stripes</button>
+          <button type="button" data-b="vivid" aria-pressed="false">Vivid</button>
+        </div>
+      </div>
+      <div class="ctrl">
+        <span>Toggles</span>
         <div class="toggles">
-          <label><input type="checkbox" id="simTransparency"> Reduce Transparency</label>
+          <label><input type="checkbox" id="glassOff"> Liquid Glass off</label>
           <label><input type="checkbox" id="simContrast"> Increase Contrast</label>
-          <label><input type="checkbox" id="simMotion"> Reduce Motion</label>
         </div>
       </div>
     </div>
+  </section>
+
+  <section>
+    <h2>Brand-tinted surfaces</h2>
+    <p class="note">
+      The window surfaces are not plain grey. Each is a neutral nudged a few percent
+      toward the brand: Dusk coral in light, Dusk violet in dark. The sidebar is
+      see-through glass over the native material, shown here over a mid grey and a busy
+      backdrop so you can judge it where it is weakest. Hex values follow each swatch.
+    </p>
+    <div class="swatches">
+      <div class="swatch">
+        <div class="plate grey"><div class="fill" style="background: var(--surface-canvas)">canvas</div></div>
+        <div class="meta2"><span class="n">--surface-canvas</span><span class="v" id="hex-canvas">light #fefcfd · dark #1b1926</span></div>
+      </div>
+      <div class="swatch">
+        <div class="plate grey"><div class="fill" style="background: var(--surface-card)">card</div></div>
+        <div class="meta2"><span class="n">--surface-card</span><span class="v">light #f3f0f4 · dark #2a2738</span></div>
+      </div>
+      <div class="swatch">
+        <div class="plate"><div class="fill" style="background: var(--surface-sidebar); backdrop-filter: blur(var(--blur-regular)) saturate(var(--sat-glass)); -webkit-backdrop-filter: blur(var(--blur-regular)) saturate(var(--sat-glass));">sidebar glass</div></div>
+        <div class="meta2"><span class="n">--surface-sidebar</span><span class="v">tint-sidebar at 84% over the material</span></div>
+      </div>
+      <div class="swatch">
+        <div class="plate grey"><div class="fill" style="background: var(--surface-sidebar-solid)">sidebar solid</div></div>
+        <div class="meta2"><span class="n">--surface-sidebar-solid</span><span class="v">light #ebe6ec · dark #191522</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The window</h2>
+    <p class="note">
+      A mock Settings window: a slim title bar, a glass sidebar of grouped rows with
+      line icons and one solid accent pill for the current page, then a roomy content
+      area of rounded cards.
+    </p>
 
     <div class="stage">
-      <div class="stage-caption" id="stageCaption">Vivid wallpaper · dark appearance</div>
-
-      <div class="mock">
-        <aside class="mock-side">
+      <div class="win">
+        <!-- Title bar -->
+        <div class="titlebar">
           <div class="traffic"><i></i><i></i><i></i></div>
-          <div class="side-label">Today</div>
-          <div class="row" data-selected="true">
-            <span class="dot-rec"></span>
-            <span>Storage layer sync</span>
-            <time>14:02</time>
+          <div class="navarrows">
+            <button type="button" aria-label="Back">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+            </button>
+            <button type="button" aria-label="Forward">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+            </button>
           </div>
-          <div class="row"><span>Standup</span><time>09:30</time></div>
-          <div class="side-label">Yesterday</div>
-          <div class="row"><span>Whisper build config</span><time>16:15</time></div>
-          <div class="row"><span>Calendar OAuth scopes</span><time>11:00</time></div>
-          <div class="row"><span>Audio tap spike</span><time>10:05</time></div>
-        </aside>
+          <span class="wtitle">meet-ai Settings</span>
+        </div>
 
-        <div class="mock-main">
-          <div class="notes">
-            <h4>Storage layer sync</h4>
-            <p class="dim">Recording · 3 speakers · 18 min elapsed</p>
-            <div class="decision">
-              <span class="tag">Decision</span>
-              <span><b>Markdown stays the source of truth.</b> The FTS5 index is derived and can be rebuilt from disk at any time.</span>
+        <div class="body">
+          <!-- Sidebar -->
+          <aside class="sidebar">
+            <div class="search">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+              <span>Search settings</span>
             </div>
-            <div class="decision">
-              <span class="tag">Open</span>
-              <span>Does the index rebuild block startup, or run behind a progress row in the sidebar?</span>
+
+            <div class="group-head">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              Essentials
             </div>
-            <p>Partial transcript text is never written to disk. It lives in the event channel and in UI memory only.</p>
-          </div>
+            <div class="navrow" data-active="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+              <span>General</span>
+            </div>
+            <div class="navrow">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg>
+              <span>Menu bar</span>
+            </div>
+            <div class="navrow">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+              <span>Features</span>
+            </div>
+            <div class="navrow">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M9 12h6"/></svg>
+              <span>Recording</span>
+            </div>
 
-          <div class="transcript glass">
-            <div class="tr-head"><span>Live transcript</span><span class="mono">3</span></div>
-            <div class="tr-line final"><span class="avatar" style="background: var(--speaker-1)">S</span><span>Rebuild takes about four seconds on a year of meetings.</span></div>
-            <div class="tr-line final"><span class="avatar" style="background: var(--speaker-2)">P</span><span>Then it does not need to block launch at all.</span></div>
-            <div class="tr-line volatile"><span class="avatar" style="background: var(--speaker-3)">M</span><span>we could show it in the sidebar as a progress…</span></div>
-          </div>
+            <div class="group-head">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              Transcription
+            </div>
+            <div class="navrow">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+              <span>Speech engine</span>
+            </div>
+            <div class="navrow">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h11M4 18h7"/></svg>
+              <span>Transcript</span>
+            </div>
 
-          <div class="toolbar glass">
-            <button type="button" aria-label="Toggle live transcript">
-              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h11M4 17h7"/></svg>
-            </button>
-            <button type="button" aria-label="Mark a decision">
-              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>
-            </button>
-            <span class="sep"></span>
-            <button type="button" data-primary>
-              <svg class="i" viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
-              Stop · 18:04
-            </button>
-          </div>
-        </div>
-      </div>
+            <div class="group-head">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              App
+            </div>
+            <div class="navrow">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>
+              <span>About</span>
+            </div>
+            <div class="navrow">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 11.1A8.4 8.4 0 1 1 11 3.2M12 7v5l3 2"/></svg>
+              <span>Support</span>
+            </div>
+          </aside>
 
-      <div class="recipes">
-        <div class="recipe glass">
-          <span class="name">Regular</span>
-          <span class="desc">The default. Adaptive, carries its own separation, works on any backdrop.</span>
-          <span class="cls">.glass</span>
-        </div>
-        <div class="recipe glass glass--clear">
-          <span class="name">Clear + scrim</span>
-          <span class="desc">More transparent, for use over media. The dimming layer is part of the recipe.</span>
-          <span class="cls">.glass--clear</span>
-        </div>
-        <div class="recipe glass glass--clear glass--noscrim">
-          <span class="name">Clear, no scrim</span>
-          <span class="desc">What the rule prevents. Compare this against the panel to its left on the striped backdrop.</span>
-          <span class="cls">never ship this</span>
-        </div>
-        <div class="recipe glass glass--interactive glass--tinted" tabindex="0">
-          <span class="name">Tinted, interactive</span>
-          <span class="desc">One per window, reserved for the primary action. Hover and press it.</span>
-          <span class="cls">.glass--tinted</span>
+          <!-- Main -->
+          <div class="main">
+            <h1 class="page-title">General</h1>
+
+            <!-- Card 1: plain rows -->
+            <div>
+              <div class="card">
+                <div class="srow">
+                  <div class="iconbox">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>
+                  </div>
+                  <div class="rtext">
+                    <span class="rname">Launch at login</span>
+                    <span class="rsub">Opens meet-ai when you log in. It does not start recording.</span>
+                  </div>
+                  <div class="rctl">
+                    <button class="switch" role="switch" aria-checked="true" aria-label="Launch at login"><span class="knob"></span></button>
+                  </div>
+                </div>
+                <div class="srow">
+                  <div class="iconbox">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
+                  </div>
+                  <div class="rtext">
+                    <span class="rname">Language</span>
+                    <span class="rsub">The language meet-ai shows its own interface in.</span>
+                  </div>
+                  <div class="rctl">
+                    <span class="pill-select">English (US)
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4-4 4 4M8 14l4 4 4-4"/></svg>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 2: Appearance -->
+            <div>
+              <div class="card">
+                <div class="appearance">
+                  <div class="app-head">Appearance</div>
+                  <div class="tiles" id="tiles">
+                    <button class="tile" role="radio" aria-checked="false" data-mode="system">
+                      <span class="pic">
+                        <span class="draw draw--system">
+                          <span class="split-dark"></span>
+                          <span class="d-side"><span class="d-dots"><i></i><i></i><i></i></span><span class="d-line"></span><span class="d-line"></span></span>
+                          <span class="d-main"><span class="d-line lg"></span><span class="d-line"></span><span class="d-line"></span></span>
+                        </span>
+                      </span>
+                      <span class="lbl">System</span>
+                    </button>
+                    <button class="tile" role="radio" aria-checked="true" data-mode="light">
+                      <span class="pic">
+                        <span class="draw draw--light">
+                          <span class="d-side"><span class="d-dots"><i></i><i></i><i></i></span><span class="d-line"></span><span class="d-line"></span></span>
+                          <span class="d-main"><span class="d-line lg"></span><span class="d-line"></span><span class="d-line"></span></span>
+                        </span>
+                      </span>
+                      <span class="lbl">Light</span>
+                    </button>
+                    <button class="tile" role="radio" aria-checked="false" data-mode="dark">
+                      <span class="pic">
+                        <span class="draw draw--dark">
+                          <span class="d-side"><span class="d-dots"><i></i><i></i><i></i></span><span class="d-line"></span><span class="d-line"></span></span>
+                          <span class="d-main"><span class="d-line lg"></span><span class="d-line"></span><span class="d-line"></span></span>
+                        </span>
+                      </span>
+                      <span class="lbl">Dark</span>
+                    </button>
+                  </div>
+                  <div class="app-note">Applies to meet-ai's own windows, not the rest of this computer.</div>
+
+                  <div class="glass-row glass glass--clear">
+                    <div class="rtext">
+                      <span class="rname">Liquid Glass</span>
+                      <span class="rsub">See-through, glass-like panels.</span>
+                    </div>
+                    <div class="rctl">
+                      <button class="switch" role="switch" aria-checked="true" aria-label="Liquid Glass"><span class="knob"></span></button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 3: Feedback with buttons -->
+            <div>
+              <div class="card">
+                <div class="srow">
+                  <div class="iconbox">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></svg>
+                  </div>
+                  <div class="rtext">
+                    <span class="rname">Feedback</span>
+                    <span class="rsub">Send a bug report or an idea to the person who maintains meet-ai.</span>
+                  </div>
+                  <div class="rctl">
+                    <button class="btn" type="button">Reset</button>
+                    <button class="btn btn--primary" type="button">Send feedback</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
         </div>
       </div>
     </div>
   </section>
 
   <section>
-    <h2>Color</h2>
+    <h2>Text contrast</h2>
     <p class="note">
-      Glass surfaces are alpha over an unknown backdrop, so the neutral scale is
-      defined in alpha rather than opaque hex. The opaque values exist only for the
-      Reduce Transparency fallback. Accent and status colors come from the macOS
-      system palette, because system affordances should not use an invented blue.
+      The weakest text-on-surface pairing in each environment, straight from
+      <code>node design-system/meet-ai/contrast.mjs</code>. Every pairing in the system
+      clears its minimum (792 pairs, 0 below). These are the lowest in each run.
     </p>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>Token</th><th>Light</th><th>Dark</th><th>Role</th></tr></thead>
+        <thead><tr><th>Environment</th><th>Ratio</th><th>Lowest text pair</th></tr></thead>
         <tbody>
-          <tr><td class="mono">--surface-glass-regular</td><td class="mono">white 60%</td><td class="mono">white 10%</td><td>Default glass fill</td></tr>
-          <tr><td class="mono">--surface-glass-clear</td><td class="mono">white 20%</td><td class="mono">white 4%</td><td>Clear glass, needs scrim</td></tr>
-          <tr><td class="mono">--surface-content</td><td class="mono">white 72%</td><td class="mono">#1c1c20 72%</td><td>Content layer, notes pane</td></tr>
-          <tr><td class="mono">--rim-highlight</td><td class="mono">white 80%</td><td class="mono">white 20%</td><td>Specular top edge</td></tr>
-          <tr><td class="mono">--text-primary</td><td class="mono">black 85%</td><td class="mono">white 92%</td><td>Body and labels</td></tr>
-          <tr><td class="mono">--accent</td><td><span class="chip" style="background:#007aff"></span><span class="mono">#007AFF</span></td><td><span class="chip" style="background:#0a84ff"></span><span class="mono">#0A84FF</span></td><td>Primary action only</td></tr>
-          <tr><td class="mono">--status-recording</td><td><span class="chip" style="background:#ff3b30"></span><span class="mono">#FF3B30</span></td><td><span class="chip" style="background:#ff453a"></span><span class="mono">#FF453A</span></td><td>Recording, never translucent</td></tr>
-          <tr><td class="mono">--speaker-1..4</td><td><span class="chip" style="background:#007aff"></span><span class="chip" style="background:#af52de"></span><span class="chip" style="background:#ff9500"></span><span class="chip" style="background:#00c7be"></span></td><td><span class="chip" style="background:#0a84ff"></span><span class="chip" style="background:#bf5af2"></span><span class="chip" style="background:#ff9f0a"></span><span class="chip" style="background:#66d4cf"></span></td><td>Always paired with an initial</td></tr>
+          <tr><td class="env">light</td><td class="ratio">4.55:1</td><td class="pair">--accent-text on sidebar</td></tr>
+          <tr><td class="env">dark</td><td class="ratio">4.64:1</td><td class="pair">--text-tertiary on button hover on card</td></tr>
+          <tr><td class="env">light, Increase Contrast</td><td class="ratio">4.99:1</td><td class="pair">--status-warning-text on sunken on card</td></tr>
+          <tr><td class="env">dark, Increase Contrast</td><td class="ratio">5.14:1</td><td class="pair">--accent-text on chosen tile on card</td></tr>
+          <tr><td class="env">light, Reduce Transparency</td><td class="ratio">4.88:1</td><td class="pair">--accent-text on chosen tile on card</td></tr>
+          <tr><td class="env">dark, Reduce Transparency</td><td class="ratio">4.64:1</td><td class="pair">--text-tertiary on button hover on card</td></tr>
+          <tr><td class="env">light, glass off</td><td class="ratio">4.88:1</td><td class="pair">--accent-text on chosen tile on card</td></tr>
+          <tr><td class="env">dark, glass off</td><td class="ratio">4.64:1</td><td class="pair">--text-tertiary on button hover on card</td></tr>
         </tbody>
       </table>
-    </div>
-  </section>
-
-  <section>
-    <h2>Type</h2>
-    <p class="note">
-      The system font, resolved through <code>-apple-system</code>. A Mac app that ships a
-      webfont reads as a website in a window frame. Base size is 13px, not the 16px
-      the web assumes, because macOS is a pointer platform at a shorter viewing distance.
-    </p>
-    <div>
-      <div class="scale-row"><span class="label">--text-title1 · 28 · 700</span><span class="sample" style="font-size:28px;font-weight:700;letter-spacing:-.02em">Storage layer sync</span></div>
-      <div class="scale-row"><span class="label">--text-title2 · 22 · 600</span><span class="sample" style="font-size:22px;font-weight:600;letter-spacing:-.01em">Decisions from this call</span></div>
-      <div class="scale-row"><span class="label">--text-title3 · 17 · 600</span><span class="sample" style="font-size:17px;font-weight:600">Live transcript</span></div>
-      <div class="scale-row"><span class="label">--text-headline · 15 · 600</span><span class="sample" style="font-size:15px;font-weight:600">Markdown stays the source of truth</span></div>
-      <div class="scale-row"><span class="label">--text-callout · 14 · 400</span><span class="sample" style="font-size:14px">Notes body. Measure is capped at 68 characters.</span></div>
-      <div class="scale-row"><span class="label">--text-body · 13 · 400</span><span class="sample" style="font-size:13px">Default interface text, sidebar rows, menu items.</span></div>
-      <div class="scale-row"><span class="label">--text-footnote · 12 · 400</span><span class="sample" style="font-size:12px">Transcript lines and metadata.</span></div>
-      <div class="scale-row"><span class="label">--text-caption1 · 11 · 400</span><span class="sample" style="font-size:11px;font-variant-numeric:tabular-nums">14:02 · Speaker 3 · 18 min</span></div>
-    </div>
-  </section>
-
-  <section>
-    <h2>Material and motion</h2>
-    <div class="tablewrap">
-      <table>
-        <thead><tr><th>Token</th><th class="num">Value</th><th>Applied to</th></tr></thead>
-        <tbody>
-          <tr><td class="mono">--blur-thin</td><td class="mono num">8px</td><td>Inline chips, hover layers, clear glass</td></tr>
-          <tr><td class="mono">--blur-regular</td><td class="mono num">20px</td><td>Default glass: toolbars, popovers, transcript</td></tr>
-          <tr><td class="mono">--blur-thick</td><td class="mono num">40px</td><td>Sheets, sidebar, modal scrims</td></tr>
-          <tr><td class="mono">--sat-glass</td><td class="mono num">180%</td><td>Saturation lift. Without it, glass reads as gray sludge</td></tr>
-          <tr><td class="mono">--radius-panel</td><td class="mono num">14px</td><td>Panels. Inner radii computed, never typed</td></tr>
-          <tr><td class="mono">--radius-capsule</td><td class="mono num">999px</td><td>Standalone floating controls</td></tr>
-          <tr><td class="mono">--dur-instant</td><td class="mono num">80ms</td><td>Press feedback</td></tr>
-          <tr><td class="mono">--dur-fast</td><td class="mono num">140ms</td><td>Hover, tint change</td></tr>
-          <tr><td class="mono">--dur-normal</td><td class="mono num">220ms</td><td>Popover in, panel expand</td></tr>
-          <tr><td class="mono">--dur-slow</td><td class="mono num">320ms</td><td>Sheets, glass morph</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section>
-    <h2>Rules that decide the look</h2>
-    <div class="rules">
-      <div class="rule">
-        <b>Never stack glass on glass</b>
-        <span>Two blurs compound into a smear and double the compositing cost. Siblings share one container and become plain fills inside it.</span>
-      </div>
-      <div class="rule">
-        <b>One tinted control per window</b>
-        <span>The tint is what marks the primary action. A second one and it stops meaning anything.</span>
-      </div>
-      <div class="rule">
-        <b>Body text never lives on glass</b>
-        <span>Reading surfaces sit on the opaque content layer. Glass carries labels, icons, and short controls.</span>
-      </div>
-      <div class="rule">
-        <b>Never animate the blur radius</b>
-        <span>It forces a full recomposite every frame, and this app is running Whisper on the GPU at the same time.</span>
-      </div>
-      <div class="rule keep">
-        <b>Concentric radii are computed</b>
-        <span>An inner radius is the outer radius minus the padding. Write the calc, or corners drift the moment padding changes.</span>
-      </div>
-      <div class="rule keep">
-        <b>Three glass surfaces at once, maximum</b>
-        <span>Each backdrop-filter is a separate GPU pass. If glass and transcription cannot both fit in the frame budget, glass yields.</span>
-      </div>
     </div>
   </section>
 
   <footer>
-    <span>Apple ships Liquid Glass as a native API. A web view cannot call it.</span>
-    <span>This system reproduces the observable properties in CSS and takes the real material from the window through Tauri.</span>
+    <span>Linked live from tokens.css and glass.css in this folder.</span>
+    <span>System font only, 13px base. No webfont, no network resources.</span>
   </footer>
 
 </div>
@@ -770,42 +727,102 @@ footer {
 <script>
 (function () {
   var root = document.documentElement;
-  var caption = document.getElementById('stageCaption');
-  var names = { vivid: 'Vivid wallpaper', bright: 'Bright', dark: 'Dark', busy: 'Busy stripes' };
-  var state = { b: 'vivid', t: 'dark' };
 
-  root.setAttribute('data-backdrop', state.b);
-  root.setAttribute('data-theme', state.t);
+  // Theme segmented control -> data-theme
+  var themes = document.getElementById('themes');
+  themes.addEventListener('click', function (e) {
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    root.setAttribute('data-theme', btn.getAttribute('data-t'));
+    Array.prototype.forEach.call(themes.querySelectorAll('button'), function (b) {
+      b.setAttribute('aria-pressed', String(b === btn));
+    });
+  });
 
-  function caption_update() {
-    caption.textContent = names[state.b] + ' · ' + state.t + ' appearance';
-  }
-  caption_update();
+  // Backdrop segmented control -> data-backdrop on <html>
+  var backdrops = document.getElementById('backdrops');
+  root.setAttribute('data-backdrop', 'grey');
+  backdrops.addEventListener('click', function (e) {
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    root.setAttribute('data-backdrop', btn.getAttribute('data-b'));
+    Array.prototype.forEach.call(backdrops.querySelectorAll('button'), function (b) {
+      b.setAttribute('aria-pressed', String(b === btn));
+    });
+  });
 
-  function wire(id, attr, key) {
-    var group = document.getElementById(id);
-    group.addEventListener('click', function (e) {
-      var btn = e.target.closest('button');
-      if (!btn) return;
-      var value = btn.getAttribute(attr);
-      state[key] = value;
-      root.setAttribute(key === 'b' ? 'data-backdrop' : 'data-theme', value);
-      Array.prototype.forEach.call(group.querySelectorAll('button'), function (b) {
-        b.setAttribute('aria-pressed', String(b === btn));
+  // Glass off -> data-glass="off" (same attribute the app uses)
+  document.getElementById('glassOff').addEventListener('change', function () {
+    if (this.checked) root.setAttribute('data-glass', 'off');
+    else root.removeAttribute('data-glass');
+  });
+
+  // Simulated Increase Contrast. The media-query rules in tokens.css and
+  // glass.css fire on the OS setting; this attribute mirrors those same
+  // overrides so the toggle works from the page.
+  var contrastStyle = document.getElementById('contrastSim');
+  document.getElementById('simContrast').addEventListener('change', function () {
+    root.setAttribute('data-sim-contrast', this.checked ? 'on' : 'off');
+  });
+
+  // Switches
+  Array.prototype.forEach.call(document.querySelectorAll('.switch'), function (sw) {
+    sw.addEventListener('click', function () {
+      sw.setAttribute('aria-checked', sw.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+    });
+  });
+
+  // Appearance tiles behave as a radio group and also drive the live theme.
+  var tiles = document.getElementById('tiles');
+  tiles.addEventListener('click', function (e) {
+    var tile = e.target.closest('.tile');
+    if (!tile) return;
+    Array.prototype.forEach.call(tiles.querySelectorAll('.tile'), function (t) {
+      t.setAttribute('aria-checked', String(t === tile));
+    });
+    var mode = tile.getAttribute('data-mode');
+    if (mode === 'light' || mode === 'dark') {
+      root.setAttribute('data-theme', mode);
+      Array.prototype.forEach.call(themes.querySelectorAll('button'), function (b) {
+        b.setAttribute('aria-pressed', String(b.getAttribute('data-t') === mode));
       });
-      caption_update();
-    });
-  }
-  wire('backdrops', 'data-b', 'b');
-  wire('themes', 'data-t', 't');
-
-  [['simTransparency', 'data-sim-transparency'],
-   ['simContrast', 'data-sim-contrast'],
-   ['simMotion', 'data-sim-motion']].forEach(function (pair) {
-    var el = document.getElementById(pair[0]);
-    el.addEventListener('change', function () {
-      root.setAttribute(pair[1], el.checked ? 'on' : 'off');
-    });
+    }
   });
 })();
 </script>
+
+<!-- Simulated Increase Contrast: mirror the (prefers-contrast: more) overrides
+     from tokens.css and glass.css onto a data attribute the toggle can set. -->
+<style id="contrastSim">
+:root[data-sim-contrast="on"],
+:root[data-sim-contrast="on"][data-theme="dark"] {
+  --surface-sidebar: var(--surface-sidebar-solid);
+  --text-secondary: var(--text-primary);
+  --text-tertiary:  var(--text-primary);
+}
+:root[data-sim-contrast="on"]:not([data-theme="dark"]) {
+  --separator:        var(--black-a30);
+  --separator-strong: var(--black-a45);
+  --accent-text:      color-mix(in srgb, var(--sys-blue-light) 70%, black);
+}
+:root[data-sim-contrast="on"][data-theme="dark"] {
+  --separator:        var(--white-a30);
+  --separator-strong: var(--white-a45);
+  --accent-text:      color-mix(in srgb, var(--sys-blue-dark) 60%, white);
+}
+:root[data-sim-contrast="on"] :is(.glass, .glass--clear) {
+  border: 1px solid var(--text-primary);
+  background-color: var(--surface-card);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-sim-contrast="on"] .glass::before,
+:root[data-sim-contrast="on"] .glass--clear::after { display: none; }
+:root[data-sim-contrast="on"] .sidebar {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+</style>
+
+</body>
+</html>

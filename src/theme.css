@@ -20,7 +20,7 @@
                   `text-warning`. Text colours are `fg-*` so that `text-*`
                   stays free for the type scale.
      * spacing  — `p-5`, `gap-4` are `--space-5`, `--space-4`: the 4pt grid,
-                  not Tailwind's 0.25rem steps. Only 1–10 exist; reach for a
+                  not Tailwind's 0.25rem steps. Only 1–12 exist; reach for a
                   token-named arbitrary value before anything past that.
      * radius   — `rounded-card`, `rounded-capsule`, …
      * type     — `text-body`, `text-caption1`, `leading-prose`, `font-ui`.
@@ -34,6 +34,9 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-glass: var(--accent-glass);
+  /* TUR-102: the accent as a fill under white text, and as text. */
+  --color-accent-fill: var(--accent-fill);
+  --color-accent-text: var(--accent-text);
 
   --color-canvas: var(--surface-canvas);
   --color-content: var(--surface-content);
@@ -43,16 +46,25 @@
   --color-glass-raised: var(--surface-glass-raised);
   --color-popup: var(--surface-popup);
   --color-glass-sunken: var(--surface-glass-sunken);
+  /* TUR-102: cards, the glass sidebar, and grey control fills. */
+  --color-card: var(--surface-card);
+  --color-sidebar: var(--surface-sidebar);
+  --color-sidebar-solid: var(--surface-sidebar-solid);
+  --color-control: var(--surface-control);
+  --color-control-hover: var(--surface-control-hover);
   --color-row-hover: var(--sidebar-row-hover);
 
   --color-rim: var(--rim-border);
   --color-separator: var(--separator);
   --color-separator-strong: var(--separator-strong);
 
-  --color-recording: var(--status-recording);
-  --color-success: var(--status-success);
-  --color-warning: var(--status-warning);
-  --color-danger: var(--status-danger);
+  /* TUR-102: as words these are the AA shades; `bg-danger-fill` is the red
+     a filled button carries white text on. */
+  --color-recording: var(--status-recording-text);
+  --color-success: var(--status-success-text);
+  --color-warning: var(--status-warning-text);
+  --color-danger: var(--status-danger-text);
+  --color-danger-fill: var(--status-danger-fill);
 
   --color-speaker-1: var(--speaker-1);
   --color-speaker-2: var(--speaker-2);
@@ -69,6 +81,8 @@
   --spacing-8: var(--space-8);
   --spacing-9: var(--space-9);
   --spacing-10: var(--space-10);
+  --spacing-11: var(--space-11);
+  --spacing-12: var(--space-12);
 
   --radius-window: var(--radius-window);
   --radius-panel: var(--radius-panel);

@@ -5,6 +5,7 @@
  * meet-ai reads. Settings has its own per-account rows instead.
  */
 
+import { LogIn } from "lucide-react";
 import { type CalendarAccount, SIGN_IN_PROVIDERS } from "@/ipc/client";
 import { Button, ButtonRow } from "../primitives";
 import { InlineError } from "../states";
@@ -27,6 +28,7 @@ export function SignInButtons({
         {SIGN_IN_PROVIDERS.map((provider) => (
           <Button
             key={provider}
+            icon={LogIn}
             disabled={connecting !== null}
             onClick={() => void connect(provider)}
           >

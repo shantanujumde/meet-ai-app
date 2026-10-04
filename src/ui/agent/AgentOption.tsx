@@ -7,6 +7,7 @@
  * Terminal for you.
  */
 
+import { Copy } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import type { AgentCli } from "@/ipc/types";
 import { copyText } from "@/lib/clipboard";
@@ -39,7 +40,7 @@ export function AgentOption({
   children?: ReactNode;
 }) {
   return (
-    <Row stacked>
+    <Row stacked className="pl-10">
       <div className="flex justify-between gap-5">
         {/* flex-1, so the empty space up to the status picks the row too. */}
         <Radio name={group} value={value} checked={checked} onChange={onPick} className="flex-1">
@@ -95,7 +96,7 @@ export function SignInCommand({ command }: { command: string }) {
         <code className="min-w-0 flex-1 select-all wrap-anywhere rounded-control border-[0.5px] border-separator bg-glass-sunken px-4 py-2 font-mono text-caption1 text-fg-primary">
           {command}
         </code>
-        <Button size="small" onClick={() => void copy()}>
+        <Button size="small" icon={Copy} onClick={() => void copy()}>
           {copied ? "Copied" : "Copy"}
         </Button>
       </div>

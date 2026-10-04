@@ -14,7 +14,10 @@
  * and "Checking…" beside Automatic, and fills itself in.
  */
 
+import { Info } from "lucide-react";
+import { osText } from "@/lib/osText";
 import { Prose, Row, RowLabel, RowValue } from "@/ui/primitives";
+import { SettingsSection } from "@/ui/settings/SettingsSection";
 import { ErrorState } from "@/ui/states";
 import { EnginePicker } from "./EnginePicker";
 import { ModelList } from "./ModelList";
@@ -28,14 +31,44 @@ export function EngineSummary() {
   const { environment, choices } = speech;
 
   return (
-    <section className="section" aria-labelledby="engine-heading">
-      <div className="section__header">
-        <h2 className="section__title" id="engine-heading">
-          Speech
-        </h2>
-        <p className="section__hint">Everything here runs on this Mac</p>
-      </div>
+    <SettingsSection
+      title="Speech"
+      description={`Everything here runs on ${osText("thisComputer")}`}
+      after={
+        <>
+          <Prose>{NEXT_RECORDING_NOTE}</Prose>
 
+          {speech.saveError ? <ErrorState error={speech.saveError} /> : null}
+          {speech.choicesError ? (
+            <ErrorState error={speech.choicesError} onRemedy={() => void speech.check()} />
+          ) : null}
+          {/* `stt::Error::EngineUnavailable` maps to "This Mac will use the
+              downloadable speech model" + Download. The mapping lives in
+              ipc/errors.ts; this just renders whichever it returns. */}
+          {speech.selectionError ? (
+            <ErrorState error={speech.selectionError} onRemedy={() => void speech.check()} />
+          ) : null}
+
+          <ModelList speech={speech} />
+
+          {/* Debugging facts, not settings: folded away unless asked for. */}
+          <details>
+            <summary className="w-fit cursor-default text-footnote text-fg-secondary hover:text-fg-primary">
+              Details
+            </summary>
+            <Row bare className="pt-4">
+              <RowLabel
+                icon={Info}
+                name="Speech helper"
+                detail={environment?.sidecar ?? "Not found in this build"}
+              />
+              <RowValue>{environment?.locale ?? ""}</RowValue>
+            </Row>
+          </details>
+          {speech.environmentError ? <ErrorState error={speech.environmentError} /> : null}
+        </>
+      }
+    >
       <EnginePicker
         choices={choices}
         checking={speech.checking}
@@ -45,35 +78,6 @@ export function EngineSummary() {
           if (choices) void speech.download(choices.parakeetModel.id);
         }}
       />
-      <Prose>{NEXT_RECORDING_NOTE}</Prose>
-
-      {speech.saveError ? <ErrorState error={speech.saveError} /> : null}
-      {speech.choicesError ? (
-        <ErrorState error={speech.choicesError} onRemedy={() => void speech.check()} />
-      ) : null}
-      {/* `stt::Error::EngineUnavailable` maps to "This Mac will use the
-          downloadable speech model" + Download. The mapping lives in
-          ipc/errors.ts; this just renders whichever it returns. */}
-      {speech.selectionError ? (
-        <ErrorState error={speech.selectionError} onRemedy={() => void speech.check()} />
-      ) : null}
-
-      <ModelList speech={speech} />
-
-      {/* Debugging facts, not settings: folded away unless asked for. */}
-      <details>
-        <summary className="w-fit cursor-default text-footnote text-fg-secondary hover:text-fg-primary">
-          Details
-        </summary>
-        <Row bare className="pt-4">
-          <RowLabel
-            name="Speech helper"
-            detail={environment?.sidecar ?? "Not found in this build"}
-          />
-          <RowValue>{environment?.locale ?? ""}</RowValue>
-        </Row>
-      </details>
-      {speech.environmentError ? <ErrorState error={speech.environmentError} /> : null}
-    </section>
+    </SettingsSection>
   );
 }

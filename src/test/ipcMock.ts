@@ -289,6 +289,12 @@ export const ipc = {
   // TUR-101: notes start on their own after a call.
   notesAutoRun: vi.fn<typeof Client.notesAutoRun>(async () => true),
   saveNotesAutoRun: vi.fn<typeof Client.saveNotesAutoRun>(async (on) => on),
+  // TUR-102: follow the OS, glass on.
+  appearanceSettings: vi.fn<typeof Client.appearanceSettings>(async () => ({
+    theme: "system",
+    glass: true,
+  })),
+  setAppearance: vi.fn<typeof Client.setAppearance>(async (appearance) => appearance),
   // TUR-58: meet-ai does not start at login until the user says so.
   startAtLogin: vi.fn<typeof Client.startAtLogin>(async () => false),
   setStartAtLogin: vi.fn<typeof Client.setStartAtLogin>(async (enabled) => enabled),

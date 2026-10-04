@@ -14,6 +14,7 @@
  * the issue's address; the window never opens a URL itself.
  */
 
+import { ExternalLink, RefreshCw, RotateCcw, X } from "lucide-react";
 import { useState } from "react";
 import { openSyncedIssue } from "@/ipc/client";
 import type { TicketSummary, UiError } from "@/ipc/types";
@@ -93,6 +94,7 @@ export function SyncControls({
         ) : (
           <Button
             size="small"
+            icon={failed ? RotateCcw : RefreshCw}
             disabled={disabled}
             aria-label={failed ? `Retry sync of ${ticket.id}` : `Sync ${ticket.id}`}
             onClick={onSync}
@@ -104,6 +106,7 @@ export function SyncControls({
           <Button
             size="small"
             tone="quiet"
+            icon={X}
             aria-label={`Dismiss the unsaved issue of ${ticket.id}`}
             onClick={onDismiss}
           >
@@ -149,7 +152,7 @@ function SyncedIssue({
           <span className="font-mono text-caption1 text-fg-secondary">{ticket.externalId}</span>
         ) : null}
         {ticket.externalUrl ? (
-          <Button size="small" onClick={() => void open()}>
+          <Button size="small" icon={ExternalLink} onClick={() => void open()}>
             {openLabel(ticket.syncedTo)}
           </Button>
         ) : null}

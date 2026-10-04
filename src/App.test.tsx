@@ -486,7 +486,7 @@ test("a recording meeting with notes off keeps its recording dot beside the mark
 
   render(<App />);
 
-  const sidebar = await screen.findByRole("navigation", { name: "Meetings" });
+  const sidebar = await screen.findByRole("navigation", { name: "Sidebar" });
   await waitFor(() => expect(within(sidebar).getByText("● Recording")).toBeInTheDocument());
   expect(within(sidebar).getByText("Notes off")).toBeInTheDocument();
 });

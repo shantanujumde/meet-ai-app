@@ -13,9 +13,11 @@
  * not be the destructive answer. Tab stays inside the dialog while it is up.
  */
 
+import { Square, TriangleAlert, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { confirmQuit, onQuitConfirm } from "@/ipc/client";
 import { useRecordingStore } from "@/state/recording";
+import { IconSquare } from "./icons";
 import { Button, ButtonRow } from "./primitives";
 
 export function QuitPrompt() {
@@ -77,24 +79,35 @@ export function QuitPrompt() {
         aria-labelledby={titleId}
         aria-describedby={bodyId}
         onKeyDown={onKeyDown}
-        className="flex w-[min(26rem,100%)] flex-col gap-4 rounded-card border-[0.5px] border-rim bg-glass-raised px-6 py-5 text-fg-primary shadow-floating"
+        className="flex w-[min(26rem,100%)] flex-col gap-5 rounded-(--card-radius) bg-card px-6 py-6 text-fg-primary shadow-floating contrast-more:border contrast-more:border-separator-strong"
       >
-        <h2 id={titleId} className="text-headline font-semibold">
-          Stop recording and quit?
-        </h2>
-        <p id={bodyId} className="text-body text-fg-secondary">
-          meet-ai is recording. Quitting stops the recording and saves what was captured so far.
-        </p>
+        <div className="flex items-start gap-5">
+          <IconSquare icon={TriangleAlert} tone="warning" />
+          <div className="flex min-w-0 flex-col gap-2">
+            <h2 id={titleId} className="text-headline font-semibold">
+              Stop recording and quit?
+            </h2>
+            <p id={bodyId} className="text-body text-fg-secondary">
+              meet-ai is recording. Quitting stops the recording and saves what was captured so far.
+            </p>
+          </div>
+        </div>
         <ButtonRow className="justify-end">
-          <Button ref={cancelRef} size="small" disabled={quitting} onClick={() => setOpen(false)}>
+          <Button
+            ref={cancelRef}
+            size="small"
+            icon={X}
+            disabled={quitting}
+            onClick={() => setOpen(false)}
+          >
             Cancel
           </Button>
           <Button
-            tone="primary"
             size="small"
+            icon={Square}
             disabled={quitting}
             onClick={() => void stopAndQuit()}
-            className="bg-danger not-disabled:hover:bg-danger"
+            className="bg-danger-fill text-on-accent not-disabled:hover:bg-danger-fill"
           >
             {quitting ? "Stopping…" : "Stop and quit"}
           </Button>

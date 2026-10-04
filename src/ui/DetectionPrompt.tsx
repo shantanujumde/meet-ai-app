@@ -28,6 +28,7 @@
  * answers the question too, so the banner goes away.
  */
 
+import { Circle, Video, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
@@ -39,6 +40,7 @@ import {
 import { toUiError } from "@/ipc/types";
 import { briefPath, isOnboardingPath } from "@/lib/routes";
 import { useRecordingStore } from "@/state/recording";
+import { IconSquare } from "./icons";
 import { Button, ButtonRow } from "./primitives";
 
 export function DetectionPrompt() {
@@ -112,27 +114,38 @@ export function DetectionPrompt() {
     <section
       aria-labelledby="detection-prompt-title"
       aria-live="polite"
-      className="fixed right-6 bottom-6 z-50 flex w-[min(24rem,calc(100vw-3rem))] flex-col gap-3 rounded-card border-[0.5px] border-rim bg-glass-raised px-5 py-4 text-fg-primary shadow-floating"
+      className="fixed right-6 bottom-6 z-50 flex w-[min(24rem,calc(100vw-3rem))] flex-col gap-5 rounded-(--card-radius) bg-card px-6 py-5 text-fg-primary shadow-floating contrast-more:border contrast-more:border-separator-strong"
     >
-      <h2 id="detection-prompt-title" className="text-headline font-semibold">
-        Record this meeting?
-      </h2>
-      <p className="text-body text-fg-secondary">{prompt.reason}</p>
+      <div className="flex items-start gap-5">
+        <IconSquare icon={Circle} />
+        <div className="flex min-w-0 flex-col gap-2">
+          <h2 id="detection-prompt-title" className="text-headline font-semibold">
+            Record this meeting?
+          </h2>
+          <p className="text-body text-fg-secondary">{prompt.reason}</p>
+        </div>
+      </div>
       <ButtonRow>
         {prompt.canJoin ? (
           <>
-            <Button tone="primary" size="small" disabled={busy} onClick={joinAndRecord}>
+            <Button
+              tone="primary"
+              size="small"
+              icon={Video}
+              disabled={busy}
+              onClick={joinAndRecord}
+            >
               Join and record
             </Button>
-            <Button size="small" onClick={join}>
+            <Button size="small" icon={Video} onClick={join}>
               Join
             </Button>
-            <Button size="small" disabled={busy} onClick={record}>
+            <Button size="small" icon={Circle} disabled={busy} onClick={record}>
               Record
             </Button>
           </>
         ) : (
-          <Button tone="primary" size="small" disabled={busy} onClick={record}>
+          <Button tone="primary" size="small" icon={Circle} disabled={busy} onClick={record}>
             Record
           </Button>
         )}
@@ -141,7 +154,7 @@ export function DetectionPrompt() {
             Open brief
           </Button>
         )}
-        <Button size="small" onClick={() => setPrompt(null)}>
+        <Button size="small" icon={X} onClick={() => setPrompt(null)}>
           Dismiss
         </Button>
       </ButtonRow>

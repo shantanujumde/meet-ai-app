@@ -4,6 +4,7 @@
  * to attach. The app never sends these anywhere itself.
  */
 
+import { FolderOpen, ScrollText } from "lucide-react";
 import { useState } from "react";
 import { openLogsFolder } from "@/ipc/client";
 import type { UiError } from "@/ipc/types";
@@ -27,13 +28,14 @@ export function LogsFolderRow() {
 
   return (
     <Row stacked>
-      <div className="flex justify-between gap-5">
+      <div className="flex items-center justify-between gap-6">
         <RowLabel
+          icon={ScrollText}
           name="Logs"
           detail="The app's log and crash files, to attach to a bug report"
           mono={false}
         />
-        <Button size="small" onClick={() => void open()}>
+        <Button size="small" icon={FolderOpen} onClick={() => void open()}>
           Open logs folder
         </Button>
       </div>

@@ -7,12 +7,14 @@
  * skipped one is visible by its absence.
  */
 
+import { Inbox, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { copyFor, detailsFor } from "@/ipc/errors";
 import type { UiError } from "@/ipc/types";
 import { copyText } from "@/lib/clipboard";
 import { COPIED_RESET_MS } from "@/lib/constants";
+import { IconSquare } from "./icons";
 import { Button, ButtonRow } from "./primitives";
 
 /**
@@ -34,6 +36,7 @@ export function EmptyState({
 }) {
   return (
     <div className={centered ? "state state--center" : "state"}>
+      <IconSquare icon={Inbox} />
       <h2 className="state__title">{title}</h2>
       <p className="state__body">{body}</p>
       {action}
@@ -110,6 +113,7 @@ export function ErrorState({
 
   return (
     <div className={copy.security ? "state state--security" : "state state--error"} role="alert">
+      <IconSquare icon={TriangleAlert} tone={copy.security ? "warning" : "danger"} />
       <h2 className="state__title">{copy.headline}</h2>
       <p className="state__body">{copy.body}</p>
       {/* The Rust error's own sentence, verbatim. Never the only thing shown,

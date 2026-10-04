@@ -401,6 +401,14 @@ export const commands = {
 	startAtLogin: () => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("start_at_login")),
 	/**  Turn "Start at login" on or off, and return what the OS now says. */
 	setStartAtLogin: (enabled: boolean) => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_start_at_login", { enabled })),
+	/**  `appearance` from `config.jsonc`, defaults when missing or not valid. */
+	appearanceSettings: () => typedError<meet_ai_lib_config_appearance_section_AppearanceConfig, meet_ai_lib_error_UiError>(__TAURI_INVOKE("appearance_settings")),
+	/**
+	 *  Save the theme and the glass switch, and return them as saved. Writes
+	 *  under the meetings root, so through the [`FolderGate`]. The native
+	 *  appearance changes at once.
+	 */
+	setAppearance: (appearance: meet_ai_lib_config_appearance_section_AppearanceConfig) => typedError<meet_ai_lib_config_appearance_section_AppearanceConfig, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_appearance", { appearance })),
 };
 
 /* Constants */
@@ -533,6 +541,13 @@ export type meet_ai_lib_agent_setup_AgentTestTask = {
 export type meet_ai_lib_lifecycle_AppSettings = {
 	/**  macOS: keep the Dock icon while the window is closed. */
 	showInDockWhenClosed: boolean,
+};
+
+/**  `appearance` in `config.jsonc`, as the Settings screen shows it. */
+export type meet_ai_lib_config_appearance_section_AppearanceConfig = {
+	theme: meet_ai_lib_config_appearance_section_Theme,
+	/**  The see-through sidebar and record prompt. On by default. */
+	glass: boolean,
 };
 
 /**  What Settings' retention line says. */
@@ -1244,6 +1259,11 @@ export type meet_ai_lib_recording_Status = {
 	 */
 	error: meet_ai_lib_error_UiError | null,
 };
+
+/**  `appearance.theme`: which colour scheme the window uses. */
+export type meet_ai_lib_config_appearance_section_Theme = 
+/**  Follow the OS, and change with it. */
+"system" | "light" | "dark";
 
 /**  One ticket as the webview sees it. */
 export type meet_ai_lib_tickets_TicketSummary = {

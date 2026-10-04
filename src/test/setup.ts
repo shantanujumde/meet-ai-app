@@ -16,12 +16,15 @@ import { resetIpcMock } from "./ipcMock";
  */
 export async function resetStores(): Promise<void> {
   sessionStorage.clear();
-  const [{ useAppStore }, { useRecordingStore }, { useTranscriptStore }] = await Promise.all([
-    import("@/state/app"),
-    import("@/state/recording"),
-    import("@/state/transcript"),
-  ]);
+  const [{ useAppStore }, { useRecordingStore }, { useTranscriptStore }, { useAppearanceStore }] =
+    await Promise.all([
+      import("@/state/app"),
+      import("@/state/recording"),
+      import("@/state/transcript"),
+      import("@/state/appearance"),
+    ]);
   useAppStore.setState(useAppStore.getInitialState(), true);
+  useAppearanceStore.setState(useAppearanceStore.getInitialState(), true);
   useRecordingStore.setState(useRecordingStore.getInitialState(), true);
   useTranscriptStore.setState(useTranscriptStore.getInitialState(), true);
 }
