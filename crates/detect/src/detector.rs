@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn matching_ignores_case() {
         let mut detector = Detector::new();
-        let running = [RunningProcess::new(7, "ZOOM.US")];
+        let running = [RunningProcess::new(7, name_of("Zoom").to_uppercase())];
         assert_eq!(
             detector.observe(&running, false, Instant::now()),
             [process(name_of("Zoom"))]
