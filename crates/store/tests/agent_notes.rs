@@ -762,7 +762,7 @@ fn assert_refused(name: &str, bad: &[u8]) -> Error {
         fs::read_to_string(dir.join(TRANSCRIPT_FILE)).unwrap(),
         TRANSCRIPT
     );
-    let meeting_md = fs::canonicalize(dir.join(MEETING_FILE)).unwrap();
+    let meeting_md = dunce::canonicalize(dir.join(MEETING_FILE)).unwrap();
     assert!(!writes.is_suppressed(&meeting_md, Instant::now()));
     error
 }
@@ -805,7 +805,7 @@ fn every_file_written_is_noted_as_a_self_write_and_nothing_else_is() {
         agent_notes::write(&root.path, STANDUP, &notes("standup"), &first(), &writes).unwrap();
 
     let now = Instant::now();
-    let canonical = |path: PathBuf| fs::canonicalize(path).unwrap();
+    let canonical = |path: PathBuf| dunce::canonicalize(path).unwrap();
     assert!(writes.is_suppressed(&canonical(dir.join(MEETING_FILE)), now));
     for id in &outcome.written {
         assert!(
@@ -822,7 +822,7 @@ fn a_ticket_removed_by_a_rerun_is_noted_as_a_self_write() {
     let root = Root::new("self-writes-removed");
     root.meeting(STANDUP);
     root.write(STANDUP, &notes("standup"), &first());
-    let tickets_dir = fs::canonicalize(root.path.join(STANDUP).join(TICKETS_DIR)).unwrap();
+    let tickets_dir = dunce::canonicalize(root.path.join(STANDUP).join(TICKETS_DIR)).unwrap();
     let writes = SelfWrites::default();
 
     let outcome = agent_notes::write(
@@ -946,7 +946,7 @@ fn a_meeting_marked_agent_notes_off_is_left_alone() {
         assert!(outcome.kept.is_empty() && outcome.removed.is_empty());
         assert_eq!(fs::read_to_string(dir.join(MEETING_FILE)).unwrap(), raw);
         assert!(!dir.join(TICKETS_DIR).exists());
-        let meeting_md = fs::canonicalize(dir.join(MEETING_FILE)).unwrap();
+        let meeting_md = dunce::canonicalize(dir.join(MEETING_FILE)).unwrap();
         assert!(!writes.is_suppressed(&meeting_md, Instant::now()));
     }
 }
@@ -1251,7 +1251,7 @@ fn a_tickets_folder_the_run_creates_is_noted_as_a_self_write() {
 
     agent_notes::write(&root.path, STANDUP, &notes("standup"), &first(), &writes).unwrap();
 
-    let tickets_dir = fs::canonicalize(dir.join(TICKETS_DIR)).unwrap();
+    let tickets_dir = dunce::canonicalize(dir.join(TICKETS_DIR)).unwrap();
     assert!(writes.is_suppressed(&tickets_dir, Instant::now()));
 }
 
