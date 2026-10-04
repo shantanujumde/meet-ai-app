@@ -483,6 +483,10 @@
   --transcript-row-gap:   var(--space-4);
   --transcript-row-radius: calc(var(--radius-panel) - var(--transcript-pad));
   --transcript-text:      var(--text-footnote);
+  /* TUR-103: the speaker column fits a dot and "Others", and keeps its width
+     on lines that hide the label so the text stays aligned. */
+  --transcript-speaker-w: 8ch;
+  --speaker-dot:          var(--space-4);
   --transcript-collapsed-h: var(--control-h-large);
   /* Volatile (not yet finalized) text is dimmer and never persisted */
   --transcript-volatile:  var(--text-tertiary);

@@ -68,6 +68,9 @@
 }
 
 .titlebar__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
   font-size: var(--text-body);
   font-weight: var(--weight-semibold);
   margin: 0;
@@ -374,7 +377,7 @@
 
 .transcript__line {
   display: grid;
-  grid-template-columns: 7ch auto 1fr;
+  grid-template-columns: 7ch var(--transcript-speaker-w) 1fr;
   gap: var(--space-5);
   align-items: baseline;
   font-size: var(--transcript-text);
@@ -485,7 +488,6 @@
   font-family: var(--font-ui);
   font-size: var(--notes-text);
   line-height: var(--notes-leading);
-  max-width: var(--notes-measure);
 }
 
 .notes__editor::placeholder {

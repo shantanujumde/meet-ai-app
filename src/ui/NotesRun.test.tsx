@@ -165,7 +165,7 @@ describe("NotesRun", () => {
     expect(onDone).toHaveBeenCalledTimes(1);
     expect(screen.getByText("We agreed to ship on Friday.")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Action Items" })).toBeTruthy();
-    expect(screen.getByText("Written by Claude Code into meeting.md")).toBeTruthy();
+    expect(screen.getByText("Written by Claude Code")).toBeTruthy();
     expect(screen.getByRole("status")).toHaveTextContent(
       "Notes written, with 2 tasks added to Tickets.",
     );

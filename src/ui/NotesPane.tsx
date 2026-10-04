@@ -104,7 +104,9 @@ export function NotesPane({
         <h2 className="section__title" id="notes-heading">
           Notes
         </h2>
-        <p className="section__hint">Saved to notes.md as you type</p>
+        <p className="section__hint" title="notes.md in the meeting folder">
+          Saved as you type
+        </p>
       </div>
 
       <textarea

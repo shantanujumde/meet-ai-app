@@ -28,6 +28,7 @@ import { openPermissionScreen } from "@/lib/permissionRoute";
 import { isOnboardingPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
+import appIcon from "../../design-system/meet-ai/brand/meet-ai-appicon-16-fullcolor.svg";
 import { Button, IconButton } from "./primitives";
 import { RecordControl } from "./RecordControl";
 import { Sidebar } from "./Sidebar";
@@ -80,6 +81,9 @@ export function Shell() {
           </span>
         ) : null}
         <h1 className="titlebar__title" data-tauri-drag-region>
+          {/* The 16px app icon, drawn for exactly this size (brand README §4).
+              Decorative: the word beside it is the name. */}
+          <img src={appIcon} alt="" width={16} height={16} draggable={false} />
           meet-ai
         </h1>
         <span className="titlebar__spacer" data-tauri-drag-region />

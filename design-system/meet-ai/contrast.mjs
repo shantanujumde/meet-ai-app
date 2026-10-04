@@ -242,8 +242,6 @@ const S = {
   "accent fill": ["var(--accent-fill)"],
   "accent hover": ["var(--accent-hover)"],
   "danger fill": ["var(--status-danger-fill)"],
-  "speaker 1": ["var(--speaker-1)"],
-  "speaker 2": ["var(--speaker-2)"],
 };
 
 const TEXT = ["primary", "secondary", "tertiary"].map((t) => `var(--text-${t})`);
@@ -256,7 +254,7 @@ const PAIRS = [
   ...Object.keys(S)
     .filter(
       (s) =>
-        !/fill|hover$|speaker|icon square/.test(s) ||
+        !/fill|hover$|icon square/.test(s) ||
         s === "sidebar row hover" ||
         s === "button hover on card",
     )
@@ -286,12 +284,9 @@ const PAIRS = [
   ]),
   ["var(--status-danger-text)", "danger icon square on card", 3, "error icon"],
   ["var(--status-warning-text)", "warning icon square on card", 3, "warning icon"],
-  ...["speaker 1", "speaker 2"].map((s) => [
-    "var(--text-on-accent)",
-    s,
-    3,
-    "speaker chip (aria-hidden)",
-  ]),
+  ...["card", "canvas"].flatMap((s) =>
+    ["var(--speaker-1)", "var(--speaker-2)"].map((t) => [t, s, 3, "speaker dot"]),
+  ),
 ];
 
 const ENVS = [

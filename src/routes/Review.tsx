@@ -214,7 +214,9 @@ function MeetingReview({ id }: { id: string }) {
             <h2 className="section__title" id="transcript-heading">
               Transcript
             </h2>
-            <p className="section__hint">Read-only. This is what transcript.md says</p>
+            <p className="section__hint" title="transcript.md in the meeting folder">
+              Read-only
+            </p>
           </div>
 
           {/* SPEC §7: the UI flags a file it could only partly read rather than
@@ -240,8 +242,12 @@ function MeetingReview({ id }: { id: string }) {
           ) : (
             <Card>
               <ol className="transcript">
-                {lines.map((line) => (
-                  <TranscriptRow key={line.seq} line={line} />
+                {lines.map((line, i) => (
+                  <TranscriptRow
+                    key={line.seq}
+                    line={line}
+                    showSpeaker={i === 0 || lines[i - 1]?.speaker !== line.speaker}
+                  />
                 ))}
               </ol>
             </Card>
@@ -267,11 +273,17 @@ function MeetingReview({ id }: { id: string }) {
  * event — including while a *different* meeting records — so without it each
  * event re-rendered every line of this one.
  */
-const TranscriptRow = memo(function TranscriptRow({ line }: { line: TranscriptLine }) {
+const TranscriptRow = memo(function TranscriptRow({
+  line,
+  showSpeaker,
+}: {
+  line: TranscriptLine;
+  showSpeaker: boolean;
+}) {
   return (
     <li className="transcript__line">
       <time className="transcript__time">{line.time}</time>
-      <SpeakerLabel speaker={line.speaker} />
+      <SpeakerLabel speaker={line.speaker} show={showSpeaker} />
       <span className="transcript__text">
         <span className="sr-only">{line.speaker}: </span>
         {line.text}

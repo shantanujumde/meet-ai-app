@@ -270,7 +270,8 @@ Glass, collapsible, floating over the notes pane at the right edge.
 - Width `--transcript-w` (320px), radius `--radius-panel`
 - Collapsed it is a 32px capsule showing the speaker count and a waveform
 - Expanded it uses `.glass` with `.scroll-edge`
-- Rows: speaker initial in a colored circle, then text, then timestamp
+- Rows: timestamp, then the speaker (a coloured dot and the word, shown only
+  when the speaker changes), then text
 - **Volatile versus final text is the important distinction.** Text still being
   revised by the recognizer renders at `--transcript-volatile` (tertiary). It
   never persists to disk, per SPEC. Finalized text steps up to
@@ -375,7 +376,7 @@ competes with transcription for GPU time.
 | 16px base text | macOS convention is 13px, and 16 looks inflated |
 | Emoji as icons | Font-dependent, unthemeable, inconsistent across systems |
 | Animating `backdrop-filter` | Full recomposite per frame, drops frames during transcription |
-| Color-only speaker labels | Fails colorblind users; pair color with an initial |
+| Color-only speaker labels | Fails colorblind users; pair color with the speaker's name |
 | A pulsing dot as the only recording signal | Reduce Motion kills the pulse; pair it with a timer |
 | Removing the focus ring | Breaks keyboard operation outright |
 
