@@ -35,6 +35,7 @@ pub mod actions;
 pub mod live;
 pub mod merge;
 pub mod notify;
+pub mod popup;
 pub mod reminder;
 pub mod settings;
 

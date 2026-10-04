@@ -96,6 +96,7 @@ pub fn run() {
         .manage(agent_run::AgentRuns::default())
         .manage(sync::SyncRuns::default())
         .manage(detection::Detection::default())
+        .manage(detection::popup::PromptPopup::default())
         .manage(calendar::CalendarState::default())
         // TUR-44: Google and Microsoft sign-in; TUR-47/48 read access tokens from it.
         .manage(calendar::signin::auth())

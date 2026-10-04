@@ -242,7 +242,11 @@ fn deliver(
         ?delivery,
         "a meeting looks like it started; asking whether to record"
     );
+    // TUR-59: on Windows and Linux the prompt is a popup window with the
+    // buttons on it; the notification is only the fallback when it can't show.
+    let in_popup = super::popup::enabled() && super::popup::show(app, &prompt);
     if delivery == Delivery::New
+        && !in_popup
         && let Err(error) = app
             .notification()
             .builder()
@@ -257,7 +261,8 @@ fn deliver(
         tracing::warn!(%error, "could not send the detection prompt to the window");
     }
     // TUR-76: the banner is in the window, which may be hidden in the menu bar.
-    if delivery == Delivery::New {
+    // The popup asks without bringing the window forward.
+    if delivery == Delivery::New && !in_popup {
         crate::lifecycle::reveal_for_prompt(app);
     }
 }
