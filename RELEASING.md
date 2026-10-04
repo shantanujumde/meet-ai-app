@@ -98,6 +98,15 @@ These are done once by the owner, on the Mac that holds the signing keychain.
    the built-in `GITHUB_TOKEN`, so without this token the release PR shows no
    `check` result. `check` still runs when the PR merges, and the build waits
    for it. If branch protection requires `check` on PRs, you need this token.
+5. Add the updater signing key (TUR-66): `TAURI_SIGNING_PRIVATE_KEY` (the
+   private key from the Paperclip secret `meet-ai/tauri-updater/private-key`,
+   the pair of the `pubkey` in `src-tauri/tauri.conf.json`) and
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Without them the build jobs stop at
+   "Updater archive and signature" / "Updater signature", naming the missing
+   secret. Those steps sign `meet-ai-X.Y.Z-macos-arm64.app.tar.gz`, the
+   Windows setup `.exe` and the AppImage (`.sig` beside each); `publish`
+   writes `latest.json` with `scripts/release/updater-json.py`. The updater
+   stays `active: false` until the owner turns it on.
 
 ### Cutting a release
 

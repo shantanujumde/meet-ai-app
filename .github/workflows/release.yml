@@ -280,6 +280,34 @@ jobs:
           rm -rf "$UNZIP"
           echo "OUT=$OUT" >> "$GITHUB_ENV"
 
+      # Updater archive (TUR-66). Made here from the re-signed app, not by
+      # Tauri's `createUpdaterArtifacts`, which would tar the .app before
+      # `just sign` re-signs it. COPYFILE_DISABLE keeps AppleDouble `._`
+      # files out: they would land inside the installed bundle and break its
+      # seal. The unpacked copy is verified like the zip.
+      - name: Updater archive and signature
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for s in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            if [[ -z "${!s}" ]]; then
+              echo "::error::secret $s is not set; the updater files cannot be signed (RELEASING.md, One-time setup)."
+              exit 1
+            fi
+          done
+          T="meet-ai-${VERSION}-macos-arm64.app.tar.gz"
+          (cd "$(dirname "$APP")" && COPYFILE_DISABLE=1 tar -czf "$OUT/$T" meet-ai.app)
+          UNTAR="$RUNNER_TEMP/untar-check"
+          mkdir -p "$UNTAR"
+          tar -xzf "$OUT/$T" -C "$UNTAR"
+          codesign --verify --deep --strict "$UNTAR/meet-ai.app"
+          rm -rf "$UNTAR"
+          pnpm tauri signer sign "$OUT/$T"
+          test -s "$OUT/$T.sig"
+          (cd "$OUT" && shasum -a 256 "$T" > "$T.sha256")
+
       - uses: actions/upload-artifact@v7
         with:
           name: release-files
@@ -508,6 +536,27 @@ jobs:
           (cd "$OUT" && sha256sum "$F" > "$F.sha256" && sha256sum -c "$F.sha256")
           echo "OUT=$OUT" >> "$GITHUB_ENV"
 
+      # Updater signature (TUR-66). tauri-plugin-updater 2.x installs the
+      # NSIS installer and replaces the AppImage as they are, so those files
+      # get a `.sig`. The .deb is not an update path yet: no signature.
+      - name: Updater signature
+        if: matrix.bundle == 'nsis' || matrix.bundle == 'appimage'
+        env:
+          ASSET: ${{ matrix.asset }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for s in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            if [[ -z "${!s}" ]]; then
+              echo "::error::secret $s is not set; the updater files cannot be signed (RELEASING.md, One-time setup)."
+              exit 1
+            fi
+          done
+          F="meet-ai-${VERSION}-${ASSET}"
+          pnpm tauri signer sign "$OUT/$F"
+          test -s "$OUT/$F.sig"
+
       - uses: actions/upload-artifact@v7
         with:
           name: release-files-${{ matrix.name }}
@@ -541,11 +590,33 @@ jobs:
           ls -l
           for f in \
             "meet-ai-${VERSION}-macos-arm64.zip" \
+            "meet-ai-${VERSION}-macos-arm64.app.tar.gz" \
             "meet-ai-${VERSION}-windows-x64-setup.exe" \
             "meet-ai-${VERSION}-linux-amd64.deb" \
             "meet-ai-${VERSION}-linux-x86_64.AppImage"; do
             shasum -a 256 -c "$f.sha256"
           done
+
+      # Only for scripts/release/updater-json.py; nothing from it is built.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+          persist-credentials: false
+          path: src
+
+      # The updater manifest (TUR-66), uploaded with the other files. The app
+      # reads it from releases/latest/download/latest.json. Fails, naming the
+      # file, if an updater artifact or its .sig is missing.
+      - name: latest.json
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 src/scripts/release/test_updater_json.py
+          python3 src/scripts/release/updater-json.py \
+            --version "$VERSION" --tag "$TAG" --repo "$REPO" \
+            --dir release-out --out release-out/latest.json
+          cat release-out/latest.json
 
       - name: Attach the files
         working-directory: release-out
