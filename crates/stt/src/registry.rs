@@ -50,7 +50,8 @@ pub struct Selection {
 /// The canonical engine names.
 ///
 /// Defined here rather than on the engine types because [`Kind`] has to name
-/// every engine on every platform, while `AppleEngine` only works on macOS. The engines reference these back, so there is still one source of
+/// every engine on every platform, while `AppleEngine` only works on macOS.
+/// The engines reference these back, so there is still one source of
 /// truth — see `AppleEngine::NAME` and `WhisperEngine::NAME`.
 pub const APPLE_SPEECH: &str = "apple-speech";
 pub const WHISPER: &str = "whisper";

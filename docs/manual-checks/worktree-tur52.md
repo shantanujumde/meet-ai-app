@@ -21,8 +21,8 @@ missing or garbage model). Nothing below was run.
    Intel or pre-Zen 4 AMD), transcribe as in 1.
    Expected: works. CI checks `GGML_NATIVE:BOOL=OFF` in whisper.cpp's
    CMakeCache.txt (step "whisper.cpp was built portably"), not the CPU itself.
-   Note: Meetily's include keeps the x64 baseline with AVX2, so a CPU without
-   AVX2 (pre-2013) may still fail; that is accepted for now.
+   Note: which ISA extensions ggml compiles in with GGML_NATIVE=OFF is ggml's
+   default (no GGML_AVX* flag is set); check a CPU without AVX2 too.
    Skipped: needs old hardware.
 
 3. **Linux transcribes.** As 1 with the `meet-ai-linux-deb` artifact on
