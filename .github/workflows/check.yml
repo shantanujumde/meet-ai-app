@@ -321,9 +321,13 @@ jobs:
           - name: windows
             os: windows-latest
             bundle: nsis
+            # The target folder, from the workspace. Windows: D:\t, see the
+            # step "Short target folder (Windows)".
+            target: ../../../t
           - name: linux
             os: ubuntu-24.04
             bundle: deb
+            target: target
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
     env:
@@ -457,10 +461,28 @@ jobs:
           root="$(pwd -W 2>/dev/null || pwd)"
           echo "CMAKE_PROJECT_INCLUDE=$root/crates/stt/cmake/force-portable-ggml.cmake" >> "$GITHUB_ENV"
 
+      # ggml-vulkan's shader generator is a cmake sub-build nested deep in
+      # whisper-rs-sys's OUT_DIR; under D:\a\meet-ai-app\meet-ai-app\target its
+      # MSBuild logs pass MAX_PATH (264 characters, run 37213471056), which
+      # long paths do not fix for MSBuild's file tracker. Cargo builds into a
+      # folder at the drive root instead, the same one matrix.target names
+      # for rust-cache (TUR-61).
+      - name: Short target folder (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          dir="$(cygpath -u "$GITHUB_WORKSPACE")/$TARGET"
+          mkdir -p "$dir"
+          dir="$(cygpath -m "$(realpath "$dir")")"
+          echo "Target folder: $dir"
+          echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
+        env:
+          TARGET: ${{ matrix.target }}
+
       # Dependencies only; per-OS key so the three OSes never share entries.
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ${{ matrix.name }}-native
+          workspaces: . -> ${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: taiki-e/install-action@v2
@@ -495,9 +517,10 @@ jobs:
       - name: whisper.cpp was built portably
         run: |
           shopt -s nullglob
-          caches=(target/debug/build/whisper-rs-sys-*/out/build/CMakeCache.txt)
+          target="$(cygpath -u "${CARGO_TARGET_DIR:-target}" 2>/dev/null || echo target)"
+          caches=("$target"/debug/build/whisper-rs-sys-*/out/build/CMakeCache.txt)
           if [ "${#caches[@]}" -eq 0 ]; then
-            echo "::error::no whisper.cpp CMakeCache.txt under target/debug/build"
+            echo "::error::no whisper.cpp CMakeCache.txt under $target/debug/build"
             exit 1
           fi
           for cache in "${caches[@]}"; do
@@ -510,13 +533,13 @@ jobs:
           # Vulkan: at least one build linked ggml-vulkan (a cache restored
           # from main may hold an older CPU-only build next to it).
           vulkan=0
-          for output in target/debug/build/whisper-rs-sys-*/output; do
+          for output in "$target"/debug/build/whisper-rs-sys-*/output; do
             dir="$(dirname "$output")"
             echo "$dir: $(grep -h '^GGML_VULKAN:' "$dir/out/build/CMakeCache.txt" 2>/dev/null || echo 'no CMakeCache'), $(grep -c 'ggml-vulkan' "$output" || true) ggml-vulkan link line(s)"
             if grep -q 'rustc-link-lib=static=ggml-vulkan' "$output"; then vulkan=1; fi
           done
           if [ "$vulkan" -eq 0 ]; then
-            echo "::error::no whisper.cpp build under target/debug/build linked ggml-vulkan"
+            echo "::error::no whisper.cpp build under $target/debug/build linked ggml-vulkan"
             exit 1
           fi
 
@@ -556,7 +579,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: meet-ai-${{ matrix.name }}-${{ matrix.bundle }}
-          path: target/release/bundle/${{ matrix.bundle }}/
+          path: ${{ env.CARGO_TARGET_DIR || 'target' }}/release/bundle/${{ matrix.bundle }}/
           if-no-files-found: error
           retention-days: 7
 

@@ -477,6 +477,20 @@ jobs:
           Copy-Item (Join-Path $out 'VulkanRT-1.4.309.0-Components/x64/vulkan-1.dll') src-tauri/vulkan/
           Get-Item src-tauri/vulkan/vulkan-1.dll | Format-List FullName, Length
 
+      # ggml-vulkan's nested cmake build passes MAX_PATH under the workspace's
+      # target/ (MSBuild's file tracker ignores long paths), so cargo builds
+      # into D:\t, as in check.yml. A junction keeps `target/` the path the
+      # steps below read (TUR-61).
+      - name: Short target folder (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          dir="$(cygpath -u "$GITHUB_WORKSPACE")/../../../t"
+          mkdir -p "$dir"
+          dir="$(realpath "$dir")"
+          echo "Target folder: $(cygpath -m "$dir")"
+          echo "CARGO_TARGET_DIR=$(cygpath -m "$dir")" >> "$GITHUB_ENV"
+          MSYS_NO_PATHCONV=1 cmd /c mklink /J target "$(cygpath -w "$dir")"
+
       # LunarG's list for this runner's Ubuntu release (jammy for the deb,
       # noble for the AppImage).
       # Adapted from github.com/cjpais/Handy/.github/workflows/build.yml @ 73ab851c2b6242283759a4c101b60f0ece132f08 (MIT)
@@ -502,6 +516,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-${{ matrix.name }}
+          workspaces: . -> ${{ runner.os == 'Windows' && '../../../t' || 'target' }}
           cache-on-failure: true
 
       - uses: pnpm/action-setup@v4
