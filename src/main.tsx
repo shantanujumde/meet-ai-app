@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { lockDocumentScroll } from "./lib/documentScroll";
 import "./index.css";
+import { applyOsAttribute } from "./lib/osAttribute";
 import { PromptPopup } from "./ui/PromptPopup";
 
 /** TUR-59: the "Record this meeting?" popup window (Windows, Linux) gets only its prompt. */
@@ -27,6 +28,9 @@ if (!container) {
 
 // TUR-15: only the panes scroll, never the page.
 lockDocumentScroll();
+
+// TUR-57: CSS keys the per-OS chrome off <html data-os>.
+applyOsAttribute();
 
 createRoot(container).render(<StrictMode>{isPromptWindow ? <PromptPopup /> : <App />}</StrictMode>);
 

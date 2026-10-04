@@ -19,6 +19,7 @@ import { hasBackend } from "@/ipc/client";
 import { NO_BACKEND } from "@/ipc/errors";
 import type { AgentChoice, AgentCli, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
+import { osText } from "@/lib/osText";
 import { Button, Row, RowLabel, RowValue, rowDetailVariants } from "@/ui/primitives";
 import { ErrorState } from "@/ui/states";
 import { defaultModelText, modelChoices, modelText } from "./agents";
@@ -181,8 +182,8 @@ export function PathField({
       </div>
       {cli?.state === "missing" ? (
         <p className={rowDetailVariants({ mono: false })}>
-          If {name} works in Terminal but meet-ai cannot find it, choose its file here. Apps opened
-          from the Dock do not see the same folders Terminal does.
+          If {name} works in {osText("terminal")} but meet-ai cannot find it, choose its file here.
+          Apps opened from the Dock do not see the same folders {osText("terminal")} does.
         </p>
       ) : null}
       {error ? <ErrorState error={error} /> : null}

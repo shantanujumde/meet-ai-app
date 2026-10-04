@@ -103,8 +103,8 @@
   /* --- Typography -----------------------------------------------------------
      Use the system font. A Mac app that ships a webfont reads as a website.
      -apple-system resolves to SF Pro and picks up optical sizing for free. */
-  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", Cantarell, "Noto Sans", Ubuntu, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
 
   /* macOS type scale in px. Base is 13, not 16. */
   --text-caption2:  10px;
@@ -351,4 +351,15 @@
   /* Focus ring — 2px outside the control, never removed */
   --focus-w:          2px;
   --focus-offset:     2px;
+}
+
+/* -----------------------------------------------------------------------------
+   Windows and Linux (TUR-57). The window has native decorations there, so no
+   traffic lights to clear and no vibrancy behind the sidebar. `data-os` is set
+   on <html> at startup (src/lib/osAttribute.ts); macOS keeps the rules above.
+   -------------------------------------------------------------------------- */
+
+:root:is([data-os="windows"], [data-os="linux"]) {
+  --titlebar-traffic-inset: var(--titlebar-pad-x);
+  --sidebar-fill: var(--surface-canvas);
 }

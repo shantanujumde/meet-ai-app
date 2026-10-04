@@ -25,11 +25,12 @@ import {
   INTERRUPTED_LABEL,
   timestampToMs,
 } from "@/lib/format";
+import { osText } from "@/lib/osText";
 import { Button, rowDetailVariants } from "./primitives";
 import { useElapsed } from "./RecordControl";
 import { ErrorState } from "./states";
 
-export const SHOW_IN_FINDER_LABEL = "Show in Finder";
+export const SHOW_IN_FILE_MANAGER_LABEL = `Show in ${osText("fileManager")}`;
 export const COPY_PATH_LABEL = "Copy folder path";
 
 /** What the meta line says while this meeting's recording is live. */
@@ -67,7 +68,7 @@ export function MeetingHeader({
           <MetaLine summary={summary} live={live} interrupted={interrupted} />
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <IconButton label={SHOW_IN_FINDER_LABEL} tooltip={path} onClick={onReveal}>
+          <IconButton label={SHOW_IN_FILE_MANAGER_LABEL} tooltip={path} onClick={onReveal}>
             <FolderIcon />
           </IconButton>
           <CopyPathButton path={path} onRefused={setCopyRefused} />

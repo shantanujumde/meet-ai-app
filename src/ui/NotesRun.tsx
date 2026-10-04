@@ -30,7 +30,7 @@ import type {
   NotesRunState,
   NotesSection,
 } from "@/ipc/types";
-import { terminalName } from "./agent/terminalName";
+import { osText } from "@/lib/osText";
 import { Button, ButtonRow, Card, Prose } from "./primitives";
 import { ErrorState } from "./states";
 
@@ -255,7 +255,7 @@ function Failed({
     >
       {failure.command ? (
         <span className="flex flex-wrap items-center gap-3 text-footnote text-fg-secondary">
-          Type this in {terminalName()}:
+          Type this in {osText("terminal")}:
           <code className="select-all rounded-chip bg-glass-sunken px-3 py-1 font-mono text-caption1 text-fg-primary">
             {failure.command}
           </code>

@@ -15,6 +15,9 @@ test("names each OS's own apps", () => {
   expect(osText("fileManager", "linux")).toBe("file manager");
   expect(osText("terminal", "windows")).toBe("PowerShell");
   expect(osText("terminal", "macos")).toBe("Terminal");
+  expect(osText("terminal", "linux")).toBe("Terminal");
+  expect(osText("settings", "linux")).toBe("Settings");
+  expect(osText("fileManager", "macos")).toBe("Finder");
 });
 
 test("reads the OS from the plugin", () => {

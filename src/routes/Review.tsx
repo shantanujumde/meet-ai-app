@@ -23,6 +23,7 @@ import { copyPromptFallback, readMeeting, revealMeeting, wrapUpPrompt } from "@/
 import type { MeetingDetail, TranscriptLine, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { showsCopyPrompt } from "@/lib/copyPrompt";
+import { osText } from "@/lib/osText";
 import { MEETINGS } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
@@ -218,8 +219,8 @@ function MeetingReview({ id }: { id: string }) {
           {unparsedLineCount > 0 ? (
             <p className="state__detail">
               {unparsedLineCount === 1
-                ? "1 line in this file is not in meet-ai's transcript format and is not shown below. Nothing has been changed — open the file in Finder to see it."
-                : `${unparsedLineCount} lines in this file are not in meet-ai's transcript format and are not shown below. Nothing has been changed — open the file in Finder to see them.`}
+                ? `1 line in this file is not in meet-ai's transcript format and is not shown below. Nothing has been changed — open the file in ${osText("fileManager")} to see it.`
+                : `${unparsedLineCount} lines in this file are not in meet-ai's transcript format and are not shown below. Nothing has been changed — open the file in ${osText("fileManager")} to see them.`}
             </p>
           ) : null}
 
