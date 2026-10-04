@@ -39,13 +39,15 @@ PC, no running app).
    "Recommended" with "has no graphics chip meet-ai can use", and a recording
    transcribes on the CPU.
    Why skipped: needs such a machine. Measure it.
-4. **No Vulkan loader on Windows** (`vulkan-1.dll` absent from System32, e.g. a
-   fresh VM). Expect, today: the app does not start ("vulkan-1.dll was not
-   found"), because whisper-rs-sys 0.15 links the loader at load time. GPU
-   drivers install the DLL, so this only hits PCs with no GPU driver at all.
-   Fix (follow-up, release packaging is TUR-39's): ship `vulkan-1.dll` beside
-   `meet-ai.exe` in the installer, as Meetily does, or move to transcribe-cpp's
-   dynamic backends. Why skipped: needs a Windows machine without the DLL.
+4. **No GPU driver on Windows** (`vulkan-1.dll` absent from System32: a VM
+   with the Microsoft Basic Display Adapter, or a fresh install). Install the
+   NSIS build. Expect: `vulkan-1.dll` sits next to `meet-ai.exe` in the
+   install folder, the app starts, the log shows `devices=[]`, and a
+   recording transcribes on the CPU. Without the shipped DLL the app would not
+   start at all, because whisper-rs-sys 0.15 links the loader at load time.
+   Why skipped: needs such a Windows machine. Also check that the SDK path
+   check.yml copies the DLL from (`Bin` or `runtime/x64`) is the one the CI
+   log names.
 5. **GPU crash fallback.** On a GPU machine, start a recording, and while
    whisper is loading or before the first line appears, kill the app hard
    (`taskkill /F /IM meet-ai.exe`, `kill -9`). Start it again and record.
@@ -58,9 +60,19 @@ PC, no running app).
    old marker is replaced and the GPU tried again (log: "a GPU crash marker
    from another app version").
    Why skipped: needs the running app on a GPU machine.
-6. **AppImage.** Check whether the AppImage (TUR-39) carries
-   `libvulkan.so.1` or needs the host's; on a distro without `libvulkan1` the
-   binary does not start. Why skipped: no AppImage is built in check.yml.
+6. **AppImage.** The AppImage (release.yml) leaves `libvulkan.so.1` to the
+   system (A1). On a distro without `libvulkan1` installed the binary does not
+   start; check whether linuxdeploy bundled it anyway. Why skipped: no
+   AppImage is built in check.yml, and no release run here.
+7. **Release run.** release.yml now installs the Vulkan SDK on all three
+   `build-other` legs (Windows: SDK + loader copy; deb on 22.04 and AppImage
+   on 24.04: LunarG's list for that Ubuntu release). Expect all three legs
+   green on the next release. Why skipped: a release run cannot be started
+   from a branch.
+8. **Windows developers.** `cargo build` of `src-tauri` on Windows now needs
+   `src-tauri/vulkan/vulkan-1.dll` (tauri-build copies every bundle resource
+   and fails on a missing one). Copy it from `%VULKAN_SDK%\Bin` (or
+   `runtime\x64`) once. Why skipped: no Windows machine here.
 
 ## Known limits
 

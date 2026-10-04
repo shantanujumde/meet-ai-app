@@ -174,9 +174,9 @@ SOFTWARE.
   - `src/lib/osText.ts` (`shortcutLabel`: OS-aware modifier key names)
     from `src/lib/utils/keyboard.ts`, at commit
     73ab851c2b6242283759a4c101b60f0ece132f08 (TUR-58)
-  - `.github/workflows/check.yml` (the "Install the Vulkan SDK (Windows)"
-    and "Install the Vulkan SDK (Linux)" steps of the `rust-native` job:
-    `humbletim/install-vulkan-sdk`, LunarG's apt list and
+  - `.github/workflows/check.yml` and `.github/workflows/release.yml` (the
+    "Install the Vulkan SDK (Windows)" and "Install the Vulkan SDK (Linux)"
+    steps: `humbletim/install-vulkan-sdk`, LunarG's apt list and
     `mesa-vulkan-drivers`) from `.github/workflows/build.yml`, at commit
     73ab851c2b6242283759a4c101b60f0ece132f08 (TUR-61)
 
@@ -295,9 +295,10 @@ SOFTWARE.
 - Files:
   - `crates/stt/cmake/force-portable-ggml.cmake` from
     `.github/force-portable-ggml.cmake`
-  - `.github/workflows/check.yml` (the "Vulkan loader for the test
-    binaries (Windows)" step: where to look for `vulkan-1.dll`) from
-    `.github/workflows/build-windows.yml` (TUR-61)
+  - `.github/workflows/check.yml` and `.github/workflows/release.yml` (the
+    "Vulkan loader" steps: where in the SDK to find `vulkan-1.dll`, and
+    copying it for the installer) from `.github/workflows/build-windows.yml`
+    (TUR-61)
 
 MIT License
 
@@ -441,8 +442,8 @@ shows the same credit (`stt::model::parakeet::CREDIT`).
 - Files:
   - `vulkan-1.dll`, unmodified, next to `meet-ai.exe` in the Windows
     installer (`bundle.resources` in `src-tauri/tauri.windows.conf.json`),
-    copied from the Vulkan SDK 1.4.309.0 by check.yml (TUR-61). Not in the
-    repository.
+    copied from the Vulkan SDK 1.4.309.0 by check.yml and release.yml
+    (TUR-61). Not in the repository.
 
 ## To confirm
 
