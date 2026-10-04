@@ -41,6 +41,7 @@
   --color-glass-regular: var(--surface-glass-regular);
   --color-glass-clear: var(--surface-glass-clear);
   --color-glass-raised: var(--surface-glass-raised);
+  --color-popup: var(--surface-popup);
   --color-glass-sunken: var(--surface-glass-sunken);
   --color-row-hover: var(--sidebar-row-hover);
 
