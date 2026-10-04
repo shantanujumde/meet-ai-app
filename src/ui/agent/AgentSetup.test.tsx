@@ -111,7 +111,7 @@ describe("AgentSetup", () => {
 
   test("picking None saves harness none, and the privacy sentence goes away", async () => {
     await renderSetup();
-    expect(screen.getByText(/sends the transcript — never the audio — to Anthropic/)).toBeTruthy();
+    expect(screen.getByText(/sends the transcript \(never the audio\) to Anthropic/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("radio", { name: /None, I'll copy the prompt/ }));
 
@@ -132,7 +132,7 @@ describe("AgentSetup", () => {
     await renderSetup();
     expect(
       screen.getByText(
-        "When a call ends, meet-ai sends the transcript — never the audio — to Anthropic through your own Claude Code account. You can turn this off for any meeting.",
+        "When a call ends, meet-ai sends the transcript (never the audio) to Anthropic through your own Claude Code account. You can turn this off for any meeting.",
       ),
     ).toBeInTheDocument();
   });

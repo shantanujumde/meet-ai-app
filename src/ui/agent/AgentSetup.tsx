@@ -135,7 +135,7 @@ function PickedAgent({
   return (
     <>
       <Prose>
-        When a call ends, meet-ai sends the transcript — never the audio — to {provider} through
+        When a call ends, meet-ai sends the transcript (never the audio) to {provider} through
         your own {name} account. You can turn this off for any meeting.
       </Prose>
       {/* Keyed by agent so a test result for one is never shown under another. */}
