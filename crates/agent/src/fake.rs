@@ -63,7 +63,7 @@ impl FakeHarness {
     /// The program's environment for this behavior: stdout, stderr, exit code
     /// and sleep time. The behaviors that never start a process return their
     /// error instead.
-    fn script_env(&self) -> Result<ScriptEnv, AgentError> {
+    fn program_env(&self) -> Result<FakeEnv, AgentError> {
         let (stdout, stderr, code, sleep) = match &self.behavior {
             FakeBehavior::Reply(value) => (value.to_string(), String::new(), 0, String::new()),
             FakeBehavior::Stdout(text) => (text.clone(), String::new(), 0, String::new()),
@@ -117,21 +117,21 @@ impl Harness for FakeHarness {
     }
 
     fn run(&self, job: &Job) -> Result<serde_json::Value, AgentError> {
-        let env = self.script_env()?;
+        let env = self.program_env()?;
         let check = OutputCheck::new(&job.schema)?;
-        let stdout = run_script(env, job)?;
+        let stdout = run_fake_cli(env, job)?;
         check.check(parse_json(&stdout)?)
     }
 }
 
-/// The program's environment, as [`FakeHarness::script_env`] builds it.
+/// The program's environment, as [`FakeHarness::program_env`] builds it.
 /// `fake-cli` reads the prompt to its end first (so a long prompt never
 /// blocks on a full pipe), then sleeps, prints and exits as these say.
-type ScriptEnv = [(&'static str, String); 4];
+type FakeEnv = [(&'static str, String); 4];
 
 /// Runs `fake-cli` with `env` in a fresh working folder, which is deleted
 /// before this returns, and hands back what it printed on stdout.
-fn run_script(env: ScriptEnv, job: &Job) -> Result<String, AgentError> {
+fn run_fake_cli(env: FakeEnv, job: &Job) -> Result<String, AgentError> {
     use crate::process;
 
     let dir = process::fresh_work_dir(job)?;
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn sleep_time_is_passed_in_fractional_seconds() {
         let env = FakeHarness::new(FakeBehavior::Sleep(Duration::from_millis(1500)))
-            .script_env()
+            .program_env()
             .unwrap();
         assert!(env.contains(&("FAKE_SLEEP", "1.500".to_owned())), "{env:?}");
         assert!(env.contains(&("FAKE_STDOUT", "{}".to_owned())), "{env:?}");
