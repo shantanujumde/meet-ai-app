@@ -501,7 +501,7 @@ bundle-signed: build sign
 #
 # Produces the three fixtures SPEC §6 names plus `room-tone-30s.wav`, which is
 # the silence case that actually catches a too-permissive VAD. The WAVs are
-# generated rather than committed — see generate.sh for why, and for the
-# reference text the accuracy test measures word error rate against.
+# committed (TUR-50), so this is only for changing them; see generate.sh, and
+# for the reference text the accuracy test measures word error rate against.
 fixtures:
     bash crates/audio/fixtures/generate.sh

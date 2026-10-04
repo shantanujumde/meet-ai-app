@@ -16,9 +16,9 @@
 //! needs a 190 MB download. `just check` runs the Apple half and the pure-VAD
 //! half, which need nothing.
 
-// macOS only: the fixture WAVs are made with macOS `say`
-// (crates/audio/fixtures/generate.sh). TUR-50 makes it portable.
-#![cfg(target_os = "macos")]
+// Every OS (TUR-50): the fixture WAVs are committed. The Apple tests skip
+// themselves, with a SKIPPED line, where the meet-stt sidecar is not built,
+// which is everywhere but a Mac.
 
 mod fixtures;
 
@@ -32,12 +32,10 @@ use stt::{Speaker, SttEngine};
 /// the gate is intact, and it is the layer the other two depend on.
 #[test]
 fn vad_finds_no_speech_in_either_silence_fixture() {
-    fixtures::ensure();
-
     for name in ["silence-30s.wav", "room-tone-30s.wav"] {
         let path = fixtures::path(name);
         let pcm = stt::read_wav_16k_mono(&path)
-            .unwrap_or_else(|e| panic!("{name}: {e} — run crates/audio/fixtures/generate.sh"));
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
 
         let mut vad = EarshotVad::new();
         let spans = detect_speech(&pcm, &mut vad, &SegmentConfig::default());
@@ -58,8 +56,6 @@ fn vad_finds_no_speech_in_either_silence_fixture() {
 /// speech fixture. Without this, the silence gate is trivially satisfiable.
 #[test]
 fn the_same_vad_does_find_speech_in_the_speech_fixture() {
-    fixtures::ensure();
-
     let pcm = stt::read_wav_16k_mono(&fixtures::path("two-speaker-60s/mic.wav")).unwrap();
     let mut vad = EarshotVad::new();
     let spans = detect_speech(&pcm, &mut vad, &SegmentConfig::default());
@@ -80,8 +76,6 @@ fn the_same_vad_does_find_speech_in_the_speech_fixture() {
 
 #[test]
 fn apple_engine_writes_nothing_for_silence() {
-    fixtures::ensure();
-
     let Some(binary) = fixtures::sidecar() else {
         eprintln!("SKIPPED: target/meet-stt is not built — run `just sidecar`");
         return;
@@ -117,8 +111,6 @@ fn apple_engine_writes_nothing_for_silence() {
 fn whisper_writes_nothing_for_silence() {
     use stt::whisper::{WhisperConfig, WhisperEngine};
 
-    fixtures::ensure();
-
     let Some(model) = fixtures::whisper_model() else {
         panic!(
             "whisper-model-tests is on but no model is present. Download one \
@@ -149,8 +141,6 @@ fn whisper_writes_nothing_for_silence() {
 /// has to be able to open it) or containing an invented line.
 #[test]
 fn a_silent_meeting_produces_an_empty_transcript_file() {
-    fixtures::ensure();
-
     let Some(binary) = fixtures::sidecar() else {
         eprintln!("SKIPPED: target/meet-stt is not built — run `just sidecar`");
         return;
