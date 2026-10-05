@@ -163,9 +163,9 @@ pub(crate) fn suggest(meeting: &mut Meeting, suggested: &str, default: &str) -> 
 /// read and write, like every other writer of `meeting.md`, so it cannot land
 /// in the middle of a notes run.
 ///
-/// The write is not recorded as this process's own ([`crate::watcher`]): the
-/// watcher is meant to see it, so the search index learns the new name, as it
-/// does for a calendar title.
+/// The write is not recorded as this process's own ([`crate::watcher`]), so
+/// the watcher still reports it. The app also refreshes the meeting in the
+/// search index itself ([`crate::index::Index::refresh_meeting`], TUR-107).
 ///
 /// # Errors
 ///

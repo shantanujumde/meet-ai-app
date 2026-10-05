@@ -558,6 +558,8 @@ A20 trusted `title_source` alone. Someone who edited `title` in `meeting.md` by 
 
 The calendar itself was already safe: it writes a title only while the meeting is untitled.
 
+**The search index follows every title at once.** The notes run's writes are the app's own, so the folder watcher skips them (§4), and the index (§3.6) kept the old title until the next rescan; the pre-meeting brief, which finds past meetings by title, missed them. The app now refreshes that one meeting in the index right after each of its three title writers (the agent, the calendar and a rename) has written `meeting.md`.
+
 ### A21 — 2026-10-05 · Updater keypair replaced before any build turned the updater on (amends §8.1's Updater keypair row; TUR-66)
 
 The private key that pairs with the original `pubkey` (key id 535773229A5E9BB3) could not be recovered from where it was filed, and the only key on the build Mac (D9B1DD52775015B0) never matched it. A new keypair (key id D339CC2690805357) replaces it: its public key is now in `src-tauri/tauri.conf.json`, and its private key and password live in the repo secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` plus the owner's password manager, never the repo.

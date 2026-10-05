@@ -20,8 +20,10 @@
 //! it, so nothing that already points at it breaks.
 //!
 //! The write is not recorded as this process's own ([`crate::watcher`]): the
-//! watcher is meant to see it, so the meeting list and the search index pick
-//! up the new title and attendees while the recording is still going.
+//! watcher is meant to see it, so the meeting list picks up the new title and
+//! attendees while the recording is still going. The app refreshes the
+//! meeting in the search index itself as well
+//! ([`crate::index::Index::refresh_meeting`], TUR-107).
 
 use std::io;
 use std::path::Path;

@@ -305,7 +305,15 @@ fn start(app: &AppHandle, root: PathBuf, meeting_id: &str) -> Result<Status, UiE
             notes::configured,
             cancel,
             &self_writes,
-            |write| crate::folder_move::writing_in_root(&save_app, write),
+            |write| {
+                let written = crate::folder_move::writing_in_root(&save_app, write);
+                // The run's writes are the app's own, so the watcher skips
+                // them; the index learns the agent's title here (TUR-107).
+                if written.is_ok() {
+                    crate::search::meeting_written(&save_app, &id);
+                }
+                written
+            },
         )
     });
     Ok(runs(app)?.start(meeting_id, work, sink))

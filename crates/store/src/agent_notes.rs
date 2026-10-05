@@ -49,7 +49,9 @@
 //!
 //! **These are self-writes.** Every path written or removed is noted in the
 //! [`SelfWrites`] passed in, as `notes.md` saves are, so the watcher does not
-//! echo them back as outside changes.
+//! echo them back as outside changes. So the caller refreshes the meeting in
+//! the search index itself ([`crate::index::Index::refresh_meeting`],
+//! TUR-107), or a new title stays unsearchable until the next rescan.
 //!
 //! `notes.md` and `transcript.md` are never opened for writing here.
 

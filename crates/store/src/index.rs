@@ -164,36 +164,30 @@ impl Index {
         let tx = self.conn.transaction().map_err(index_error)?;
         let mut changed = 0;
         for id in ids {
-            let dir = root.join(&id);
-            if !dir.is_dir() {
-                changed += usize::from(delete_meeting(&tx, &id)?);
-                continue;
-            }
-            let mtime = folder_mtime(&dir);
-            let known: Option<i64> = tx
-                .query_row("SELECT mtime FROM meetings WHERE id = ?1", [&id], |row| {
-                    row.get(0)
-                })
-                .optional()
-                .map_err(index_error)?;
-            if known == Some(mtime) {
-                continue;
-            }
-            // A folder that cannot be read right now (deleted mid-batch) is
-            // treated like a deleted one; the next event brings it back.
-            match folder::load(&dir) {
-                Ok(folder) => {
-                    delete_meeting(&tx, &id)?;
-                    insert_folder(&tx, &folder, mtime)?;
-                }
-                Err(_) => {
-                    delete_meeting(&tx, &id)?;
-                }
-            }
-            changed += 1;
+            changed += usize::from(reindex(&tx, root, &id, false)?);
         }
         tx.commit().map_err(index_error)?;
         Ok(changed)
+    }
+
+    /// Read meeting `meeting_id` again now, however its files' times compare
+    /// with the index's (TUR-107).
+    ///
+    /// For the app's own writes to `meeting.md`: the watcher skips those
+    /// ([`crate::watcher::SelfWrites`]), so without this a title the agent
+    /// wrote would not be searchable, nor found by the pre-meeting brief
+    /// ([`Index::meetings_titled`]), until the next rescan. A folder that is
+    /// gone is dropped from the index.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BadId`] for an id that is not a plain folder name, and
+    /// [`Error::Index`] when the database cannot be written.
+    pub fn refresh_meeting(&mut self, root: &Path, meeting_id: &str) -> Result<(), Error> {
+        folder::meeting_dir(root, meeting_id)?;
+        let tx = self.conn.transaction().map_err(index_error)?;
+        reindex(&tx, root, meeting_id, true)?;
+        tx.commit().map_err(index_error)
     }
 
     /// Find the transcript lines, notes, summaries and tickets matching every
@@ -270,6 +264,40 @@ fn meeting_id_of(root: &Path, path: &Path) -> Option<String> {
     };
     let id = first.to_str()?;
     is_plain_name(id).then(|| id.to_owned())
+}
+
+/// Read one meeting into the index again, or drop it when its folder is gone.
+/// Unless `force`, a meeting whose files are no newer than its row is left as
+/// it is. `true` when its rows changed.
+fn reindex(
+    tx: &rusqlite::Transaction<'_>,
+    root: &Path,
+    id: &str,
+    force: bool,
+) -> Result<bool, Error> {
+    let dir = root.join(id);
+    if !dir.is_dir() {
+        return delete_meeting(tx, id);
+    }
+    let mtime = folder_mtime(&dir);
+    if !force {
+        let known: Option<i64> = tx
+            .query_row("SELECT mtime FROM meetings WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(index_error)?;
+        if known == Some(mtime) {
+            return Ok(false);
+        }
+    }
+    delete_meeting(tx, id)?;
+    // A folder that cannot be read right now (deleted mid-batch) is treated
+    // like a deleted one; the next event brings it back.
+    if let Ok(folder) = folder::load(&dir) {
+        insert_folder(tx, &folder, mtime)?;
+    }
+    Ok(true)
 }
 
 /// Delete every row of one meeting. `true` if it had any.

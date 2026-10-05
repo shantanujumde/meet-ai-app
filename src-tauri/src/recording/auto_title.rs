@@ -99,9 +99,15 @@ pub(super) fn spawn(app: &AppHandle, meeting_id: &str, started: DateTime<Local>)
     tauri::async_runtime::spawn_blocking(move || {
         let min_attendees = crate::config::detection().min_attendees as usize;
         let write = |event: &FromCalendar<'_>| {
-            crate::folder_move::writing_in_root(&app, |root| {
+            let applied = crate::folder_move::writing_in_root(&app, |root| {
                 store::meeting_event::apply(root, &id, event).map_err(UiError::from)
-            })
+            })?;
+            // The watcher sees this write too, but the index should not wait
+            // for it (TUR-107).
+            if applied.any() {
+                crate::search::meeting_written(&app, &id);
+            }
+            Ok(applied)
         };
         let outcome = match &pinned {
             Some(event) => name_from(event, write),

@@ -75,14 +75,17 @@ pub async fn save_notes(app: AppHandle, id: String, body: String) -> Result<(), 
 /// characters. A blank title is refused.
 ///
 /// Through the [`FolderGate`], like [`save_notes`]. Not noted as our own
-/// write: the watcher is meant to see it, so the search index learns the new
-/// name, as it does for a title from the calendar.
+/// write, so the watcher still tells the window. The search index is updated
+/// here, as it is after the calendar's and the agent's titles (TUR-107).
 #[tauri::command]
 #[specta::specta]
 pub async fn rename_meeting(app: AppHandle, id: String, title: String) -> Result<String, UiError> {
     on_blocking_pool(move || {
-        app.state::<FolderGate>()
-            .writing(|| meetings::rename(&id, &title))
+        let saved = app
+            .state::<FolderGate>()
+            .writing(|| meetings::rename(&id, &title))?;
+        search::meeting_written(&app, &id);
+        Ok(saved)
     })
     .await?
 }
