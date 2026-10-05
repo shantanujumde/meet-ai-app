@@ -1396,6 +1396,71 @@ fn a_user_rename_survives_a_rerun_and_the_calendar() {
     assert_eq!(title_source(&meeting).as_deref(), Some("user"));
 }
 
+/// `title` edited in `meeting.md` by hand, `title_source` left as it was.
+fn edit_title_by_hand(root: &Root, meeting: &str, title: &str) {
+    let mut edited = root.read_meeting(meeting);
+    edited.frontmatter.set_str("title", Some(title));
+    edited
+        .write(&root.path.join(meeting).join(MEETING_FILE))
+        .unwrap();
+}
+
+#[test]
+fn a_calendar_title_edited_by_hand_survives_the_notes() {
+    let root = Root::new("title-calendar-edited");
+    root.meeting(STANDUP);
+    let event = store::meeting_event::FromCalendar {
+        event_id: "EVT-1",
+        title: "Sync",
+        attendees: &[],
+    };
+    store::meeting_event::apply(&root.path, STANDUP, &event).unwrap();
+    edit_title_by_hand(&root, STANDUP, "Budget review");
+
+    root.write(STANDUP, &notes("standup"), &first());
+
+    let meeting = root.read_meeting(STANDUP);
+    assert_eq!(meeting.title().as_deref(), Some("Budget review"));
+    assert_eq!(title_source(&meeting).as_deref(), Some("calendar"));
+}
+
+#[test]
+fn an_agent_title_edited_by_hand_survives_a_rerun() {
+    let root = Root::new("title-agent-edited");
+    root.meeting(STANDUP);
+    root.write(STANDUP, &notes("standup"), &first());
+    edit_title_by_hand(&root, STANDUP, "Budget review");
+
+    root.write(STANDUP, &notes("standup-rerun"), &second());
+
+    let meeting = root.read_meeting(STANDUP);
+    assert_eq!(meeting.title().as_deref(), Some("Budget review"));
+    // The sections still follow the rerun; only the title is kept.
+    assert_eq!(
+        meeting.frontmatter.get_str("analyzed_at").as_deref(),
+        Some(SECOND_AT)
+    );
+}
+
+/// A meeting the agent named before TUR-107 has no `title_hash`. Whether its
+/// title was edited since cannot be told, so a rerun keeps it.
+#[test]
+fn an_agent_title_from_before_title_hash_is_kept() {
+    let root = Root::new("title-agent-legacy");
+    root.meeting(STANDUP);
+    root.write(STANDUP, &notes("standup"), &first());
+    let mut legacy = root.read_meeting(STANDUP);
+    assert!(legacy.frontmatter.remove("title_hash").is_some());
+    legacy
+        .write(&root.path.join(STANDUP).join(MEETING_FILE))
+        .unwrap();
+
+    root.write(STANDUP, &notes("standup-rerun"), &second());
+
+    let meeting = root.read_meeting(STANDUP);
+    assert_eq!(meeting.title().as_deref(), Some("Redis session store plan"));
+}
+
 #[test]
 fn a_blank_agent_title_leaves_the_title_as_it_was() {
     let root = Root::new("title-blank");

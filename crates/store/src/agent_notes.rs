@@ -6,8 +6,8 @@
 //!
 //! * the four fixed `meeting.md` sections (§3.2), plus `analyzed_by`,
 //!   `analyzed_model` and `analyzed_at` in its frontmatter;
-//! * the agent's suggested `title`, unless the user named the meeting
-//!   ([`crate::meeting_title`], TUR-103);
+//! * the agent's suggested `title`, unless the user named the meeting or
+//!   edited its title by hand ([`crate::meeting_title`], TUR-103, TUR-107);
 //! * one `tickets/TICK-NNNN.md` per task (§3.3), `status: open`, `assignee`
 //!   from the task's owner, `transcript_ref` as given. §3.3 has no due date,
 //!   so it goes in the body (`Due: Friday.`).

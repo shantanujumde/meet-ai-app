@@ -10,7 +10,8 @@
 //! * `title` is set only while the meeting still has its default title, the
 //!   one [`Meeting::new`] gives a fresh file (the folder name). A title the
 //!   user typed is never replaced. When it is set, `title_source: calendar`
-//!   goes with it, so the agent's suggestion may replace it later
+//!   and its `title_hash` go with it, so the agent's suggestion may replace
+//!   it later, unless someone edits it in `meeting.md` first
 //!   ([`crate::meeting_title`]).
 //! * `attendees` is set only when the file names nobody yet.
 //! * `calendar_event_id` is set only when the file has none.
@@ -128,7 +129,7 @@ pub fn apply(root: &Path, meeting_id: &str, event: &FromCalendar<'_>) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use meeting_format::meeting_md::TITLE_SOURCE;
+    use meeting_format::meeting_md::{TITLE, TITLE_HASH, TITLE_SOURCE};
 
     use super::*;
 
@@ -172,6 +173,10 @@ mod tests {
             meeting.frontmatter.get_str(TITLE_SOURCE).as_deref(),
             Some("calendar")
         );
+        assert_eq!(
+            meeting.frontmatter.get_str(TITLE_HASH),
+            Some(meeting_title::title_hash("Platform Standup"))
+        );
         assert_eq!(meeting.attendees(), names);
         assert_eq!(
             meeting.frontmatter.get_str(CALENDAR_EVENT_ID).as_deref(),
@@ -195,6 +200,27 @@ mod tests {
         let meeting = read(root.path());
         assert_eq!(meeting.title().as_deref(), Some("Budget review"));
         assert_eq!(meeting.frontmatter.get_str(TITLE_SOURCE), None);
+    }
+
+    /// TUR-107: a calendar title edited in `meeting.md` is the user's now.
+    #[test]
+    fn a_calendar_title_edited_by_hand_is_kept() {
+        let root = root_with_meeting();
+        let path = root.path().join(ID).join(MEETING_FILE);
+        apply(root.path(), ID, &standup(&[])).unwrap();
+        let mut edited = read(root.path());
+        edited.frontmatter.set_str(TITLE, Some("Budget review"));
+        edited.write(&path).unwrap();
+
+        let other = FromCalendar {
+            event_id: "EVT-2",
+            title: "Design review",
+            attendees: &[],
+        };
+        assert!(!apply(root.path(), ID, &other).unwrap().title);
+        let meeting = read(root.path());
+        assert_eq!(meeting.title().as_deref(), Some("Budget review"));
+        assert!(!meeting_title::written_by_app(&meeting));
     }
 
     #[test]

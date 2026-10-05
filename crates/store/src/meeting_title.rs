@@ -18,6 +18,16 @@
 //! typed into `meeting.md` by hand, and is kept the same way a user's rename
 //! is. So is a `title_source` this code does not know.
 //!
+//! **A hand edit is the user's too (TUR-107).** With a calendar or agent title
+//! the app also writes `title_hash`, a short hash of the title as written
+//! ([`title_hash`]). The title counts as the app's only while it still matches
+//! that hash ([`written_by_app`]). Someone who edits `title` in `meeting.md`
+//! and leaves `title_source: agent` has changed the title, not the hash, so
+//! the agent's next suggestion leaves their title alone. A file from TUR-103,
+//! with `title_source: calendar` or `agent` and no `title_hash`, is read the
+//! same way: there is no telling an untouched title from an edited one, and
+//! keeping a name is the safe side of that guess.
+//!
 //! Every title is cleaned the same way before it is written ([`clean`]): one
 //! line, spaces collapsed, at most [`MAX_TITLE_CHARS`] characters. A title
 //! that is blank after that is not written at all.
@@ -25,7 +35,8 @@
 use std::io;
 use std::path::Path;
 
-use meeting_format::meeting_md::{TITLE, TITLE_SOURCE};
+use meeting_format::meeting_md::{TITLE, TITLE_HASH, TITLE_SOURCE};
+use sha2::{Digest, Sha256};
 
 use crate::agent_notes::{default_title, lock_meeting_writers};
 use crate::folder::meeting_dir;
@@ -75,6 +86,27 @@ pub fn clean(raw: &str) -> Option<String> {
     (!cut.is_empty()).then(|| cut.to_owned())
 }
 
+/// How many hex digits of the title's SHA-256 [`title_hash`] keeps. Enough
+/// that an edited title never matches by chance; short enough to read past.
+const TITLE_HASH_DIGITS: usize = 16;
+
+/// The `title_hash` written next to an app-written `title`.
+pub fn title_hash(title: &str) -> String {
+    let mut hex = format!("{:x}", Sha256::digest(title.as_bytes()));
+    hex.truncate(TITLE_HASH_DIGITS);
+    hex
+}
+
+/// The title is still exactly the one the calendar or the agent wrote: its
+/// `title_hash` is there and matches. `false` for a title edited by hand, and
+/// for a file written before TUR-107, which has no `title_hash`.
+pub fn written_by_app(meeting: &Meeting) -> bool {
+    match (meeting.title(), meeting.frontmatter.get_str(TITLE_HASH)) {
+        (Some(title), Some(hash)) => title_hash(&title) == hash,
+        _ => false,
+    }
+}
+
 /// The title is missing, blank, or still the folder-name default.
 pub(crate) fn is_untitled(meeting: &Meeting, default: &str) -> bool {
     meeting
@@ -83,17 +115,27 @@ pub(crate) fn is_untitled(meeting: &Meeting, default: &str) -> bool {
 }
 
 /// Write `title` (already [`clean`]ed) and `source` into `meeting`'s
-/// frontmatter. Changes nothing on disk.
+/// frontmatter, with its `title_hash` when the app chose it and without one
+/// when the user did. Changes nothing on disk.
 pub(crate) fn set(meeting: &mut Meeting, title: &str, source: TitleSource) {
     meeting.frontmatter.set_str(TITLE, Some(title));
     meeting
         .frontmatter
         .set_str(TITLE_SOURCE, Some(source.as_str()));
+    match source {
+        TitleSource::Calendar | TitleSource::Agent => meeting
+            .frontmatter
+            .set_str(TITLE_HASH, Some(&title_hash(title))),
+        TitleSource::User => {
+            meeting.frontmatter.remove(TITLE_HASH);
+        }
+    }
 }
 
 /// Give `meeting` the agent's suggested title, when the rules in the module
 /// docs let it: the meeting is untitled, or its title came from the calendar
-/// or from an earlier notes run. Returns whether the title was set.
+/// or from an earlier notes run and nobody has edited it since. Returns
+/// whether the title was set.
 ///
 /// `default` is the folder-name title ([`default_title`]).
 pub(crate) fn suggest(meeting: &mut Meeting, suggested: &str, default: &str) -> bool {
@@ -102,8 +144,10 @@ pub(crate) fn suggest(meeting: &mut Meeting, suggested: &str, default: &str) -> 
     };
     let replaceable = match TitleSource::of(meeting) {
         Some(TitleSource::User) => false,
-        Some(TitleSource::Calendar | TitleSource::Agent) => true,
-        None => is_untitled(meeting, default),
+        Some(TitleSource::Calendar | TitleSource::Agent) if written_by_app(meeting) => true,
+        // Edited by hand since the app wrote it, typed by hand, or a source
+        // this code does not know: only an untitled meeting is fair game.
+        _ => is_untitled(meeting, default),
     };
     if replaceable {
         set(meeting, &title, TitleSource::Agent);
@@ -168,7 +212,19 @@ mod tests {
 
     const ID: &str = "2026-10-05-1000-meeting";
 
+    /// A meeting as the app leaves it: an app-written title has its hash.
     fn meeting(title: &str, source: Option<&str>) -> Meeting {
+        let mut meeting = legacy(title, source);
+        if matches!(source, Some("calendar" | "agent")) {
+            meeting
+                .frontmatter
+                .set_str(TITLE_HASH, Some(&title_hash(title)));
+        }
+        meeting
+    }
+
+    /// A meeting as TUR-103 wrote it: `title_source` with no `title_hash`.
+    fn legacy(title: &str, source: Option<&str>) -> Meeting {
         let mut meeting = Meeting::new(ID, title);
         if let Some(source) = source {
             meeting.frontmatter.set_str(TITLE_SOURCE, Some(source));
@@ -185,12 +241,18 @@ mod tests {
         meeting.frontmatter.get_str(TITLE_SOURCE)
     }
 
+    fn hash(meeting: &Meeting) -> Option<String> {
+        meeting.frontmatter.get_str(TITLE_HASH)
+    }
+
     #[test]
     fn an_untitled_meeting_takes_the_agents_title() {
         let (set, meeting) = suggested(meeting(&default_title(ID), None), "Search launch plan");
         assert!(set);
         assert_eq!(meeting.title().as_deref(), Some("Search launch plan"));
         assert_eq!(source(&meeting).as_deref(), Some("agent"));
+        assert_eq!(hash(&meeting), Some(title_hash("Search launch plan")));
+        assert!(written_by_app(&meeting));
     }
 
     #[test]
@@ -215,6 +277,48 @@ mod tests {
             assert_eq!(meeting.title().as_deref(), Some("Budget review"), "{why}");
             assert_eq!(source(&meeting).as_deref(), from, "{why}");
         }
+    }
+
+    /// TUR-107: `title` edited in `meeting.md`, `title_source` left as it was.
+    #[test]
+    fn an_app_title_edited_by_hand_is_kept() {
+        for from in ["calendar", "agent"] {
+            let mut edited = meeting("Sync", Some(from));
+            edited.frontmatter.set_str(TITLE, Some("Budget review"));
+            assert!(!written_by_app(&edited), "{from}");
+
+            let (set, kept) = suggested(edited, "Search launch plan");
+            assert!(!set, "{from}");
+            assert_eq!(kept.title().as_deref(), Some("Budget review"), "{from}");
+            assert_eq!(source(&kept).as_deref(), Some(from), "{from}");
+        }
+    }
+
+    /// A TUR-103 file has no `title_hash`, so an untouched title cannot be
+    /// told from an edited one: it is kept, unless it is still untitled.
+    #[test]
+    fn an_app_title_from_before_title_hash_is_kept_unless_untitled() {
+        for from in ["calendar", "agent"] {
+            let (set, kept) = suggested(legacy("Sync", Some(from)), "Search launch plan");
+            assert!(!set, "{from}");
+            assert_eq!(kept.title().as_deref(), Some("Sync"), "{from}");
+
+            let untitled = legacy(&default_title(ID), Some(from));
+            let (set, named) = suggested(untitled, "Search launch plan");
+            assert!(set, "{from}");
+            assert_eq!(named.title().as_deref(), Some("Search launch plan"));
+        }
+    }
+
+    #[test]
+    fn the_title_hash_is_short_stable_and_follows_the_title() {
+        let hash = title_hash("Platform Standup");
+        assert_eq!(hash.len(), TITLE_HASH_DIGITS);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(hash, title_hash("Platform Standup"));
+        assert_ne!(hash, title_hash("Platform standup"));
+        // The example in SPEC §3.2 and meeting_format::meeting_md.
+        assert_eq!(hash, "06d2abde48536429");
     }
 
     #[test]
@@ -270,6 +374,7 @@ mod tests {
         let after = read(root.path());
         assert_eq!(after.title().as_deref(), Some("Budget review"));
         assert_eq!(source(&after).as_deref(), Some("user"));
+        assert_eq!(hash(&after), None, "a user's title carries no hash");
         assert_eq!(
             after.frontmatter.get_str("repo").as_deref(),
             Some("~/apps/api")
