@@ -12,8 +12,9 @@
  *
  * The header is the title, one meta line and the folder actions (TUR-81).
  * Renaming the meeting (TUR-103) updates the header and the list at once. A
- * notes run that names it re-reads only the header's summary, never the
- * notes, so nothing the user is typing is replaced.
+ * notes run that names it, or the calendar naming it while the page is open
+ * (TUR-107), re-reads only the header's summary, never the notes, so nothing
+ * the user is typing is replaced.
  * The "Make notes for this meeting" switch (TUR-12, SPEC A11) heads the
  * meeting-notes section, recording or not, so a private call can be switched
  * off before it ends. One {@link useNotesRun} serves the switch and the run.
@@ -29,7 +30,7 @@ import {
   revealMeeting,
   wrapUpPrompt,
 } from "@/ipc/client";
-import type { MeetingDetail, TranscriptLine, UiError } from "@/ipc/types";
+import type { MeetingDetail, MeetingList, TranscriptLine, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { showsCopyPrompt } from "@/lib/copyPrompt";
 import { osText } from "@/lib/osText";
@@ -126,10 +127,14 @@ function MeetingReview({ id }: { id: string }) {
   // Bumped by every rename, so a summary read that started before one does
   // not land after it and put the agent's title back over the user's.
   const renames = useRef(0);
+  // Renames still waiting for their answer. A read started while one is out
+  // could land after it with the old title, so none starts then (TUR-107).
+  const renamesOut = useRef(0);
 
   // Only the summary: replacing the whole detail would hand the notes pane
   // what is on disk while the user may still be typing.
   const refreshSummary = useCallback(async (meetingId: string) => {
+    if (renamesOut.current > 0) return;
     const before = renames.current;
     let summary: MeetingDetail["summary"];
     try {
@@ -144,7 +149,13 @@ function MeetingReview({ id }: { id: string }) {
   const rename = useCallback(
     async (title: string) => {
       renames.current += 1;
-      const saved = await renameMeeting(id, title);
+      renamesOut.current += 1;
+      let saved: string;
+      try {
+        saved = await renameMeeting(id, title);
+      } finally {
+        renamesOut.current -= 1;
+      }
       setDetail((current) =>
         current?.summary.id === id
           ? { ...current, summary: { ...current.summary, title: saved } }
@@ -154,6 +165,25 @@ function MeetingReview({ id }: { id: string }) {
     },
     [id, reloadMeetings],
   );
+
+  // The calendar can name this meeting while its page is open (TUR-107). The
+  // list learns of it from the folder watcher; the header follows when the
+  // list's title for this meeting changes and no longer matches the header.
+  // It re-reads the summary rather than copying the list's title, so the
+  // `renames` guards keep a rename in flight from being put back.
+  const shownTitle = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    shownTitle.current = detail?.summary.title;
+  }, [detail]);
+  useEffect(() => {
+    return useAppStore.subscribe((state, previous) => {
+      const listed = listedTitle(state.meetings, id);
+      if (listed === undefined || listed === listedTitle(previous.meetings, id)) return;
+      if (shownTitle.current !== undefined && listed !== shownTitle.current) {
+        void refreshSummary(id);
+      }
+    });
+  }, [id, refreshSummary]);
 
   const recording = useRecordingStore((state) => state.status);
   const live = useTranscriptStore((state) => state.live);
@@ -311,6 +341,11 @@ function MeetingReview({ id }: { id: string }) {
       />
     </div>
   );
+}
+
+/** Meeting `id`'s title in the meeting list, if the list has it. */
+function listedTitle(list: MeetingList | null, id: string): string | undefined {
+  return list?.meetings.find((meeting) => meeting.id === id)?.title;
 }
 
 /**

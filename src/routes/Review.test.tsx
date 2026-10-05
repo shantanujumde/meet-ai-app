@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { AGENT_RUN_STATUS_EVENT } from "@/ipc/client";
 import type { MeetingDetail, RecordingStatus } from "@/ipc/types";
 import { copyText } from "@/lib/clipboard";
+import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
 import { EMPTY_LIVE, useTranscriptStore } from "@/state/transcript";
-import { meetingDetail, transcriptLine } from "@/test/fixtures";
+import { meetingDetail, meetingSummary, transcriptLine } from "@/test/fixtures";
 import { emit, ipc } from "@/test/ipcMock";
 import { Review } from "./Review";
 
@@ -372,6 +373,56 @@ describe("Review's header", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Search release planning" }),
     ).toBeTruthy();
+  });
+
+  /** TUR-107: the list hears of a calendar title from the folder watcher. */
+  function listShows(title: string) {
+    act(() =>
+      useAppStore.setState({
+        meetings: { root: "/m", rootExists: true, meetings: [meetingSummary({ id: ID, title })] },
+      }),
+    );
+  }
+
+  test("the calendar naming the open meeting shows in the header", async () => {
+    readMeeting.mockResolvedValueOnce(
+      meetingDetail({ summary: { id: ID, title: "Meeting" }, lines: [transcriptLine()] }),
+    );
+    renderReview();
+    expect(await screen.findByRole("heading", { level: 1, name: "Meeting" })).toBeTruthy();
+
+    readMeeting.mockResolvedValueOnce(
+      meetingDetail({ summary: { id: ID, title: "Platform Standup" }, lines: [transcriptLine()] }),
+    );
+    listShows("Platform Standup");
+    expect(await screen.findByRole("heading", { level: 1, name: "Platform Standup" })).toBeTruthy();
+
+    // A list that agrees with the header reads nothing more.
+    listShows("Platform Standup");
+    expect(readMeeting).toHaveBeenCalledTimes(2);
+  });
+
+  test("a calendar title arriving during a rename does not replace the user's", async () => {
+    let answer: (saved: string) => void = () => {};
+    ipc.renameMeeting.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const field = await openRename();
+    fireEvent.change(field, { target: { value: "Budget review" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(ipc.renameMeeting).toHaveBeenCalledWith(ID, "Budget review"));
+
+    readMeeting.mockResolvedValue(
+      meetingDetail({ summary: { id: ID, title: "Platform Standup" }, lines: [transcriptLine()] }),
+    );
+    listShows("Platform Standup");
+    await act(async () => answer("Budget review"));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Budget review" })).toBeTruthy();
+    expect(readMeeting).toHaveBeenCalledTimes(1);
   });
 
   test("Show in Finder is an icon button with the path as its tooltip, and opens the folder", async () => {
