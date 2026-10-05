@@ -367,7 +367,7 @@ Three more things worth knowing:
   not `src-tauri/target/...` as `SETUP.md` step 6 says. Once the workspace
   `Cargo.toml` exists at the repo root, that is where cargo puts output.
 - **The updater keypair from `SETUP.md` step 1.2 has been generated.** The public
-  key is in `src-tauri/tauri.conf.json`. The private key was filed as a
-  Paperclip secret, `meet-ai/tauri-updater/private-key`, and exists nowhere in
-  this repo. The updater plugin is wired but `active: false`, per L17 and
+  key is in `src-tauri/tauri.conf.json`. The private key (key id D339CC2690805357,
+  replaced on 2026-10-05, SPEC A21) is in the owner's password manager and the
+  repo secret `TAURI_SIGNING_PRIVATE_KEY`, and exists nowhere in this repo. The updater plugin is wired but `active: false`, per L17 and
   SPEC §8.1.

@@ -547,6 +547,12 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 A13 is held by TUR-36 ([#83](https://github.com/shantanujumde/meet-ai-app/pull/83), Windows and Linux as targets), which is not merged yet; until it is, the numbers skip from A14 to A12.
 
+### A21 — 2026-10-05 · Updater keypair replaced before any build turned the updater on (amends §8.1's Updater keypair row; TUR-66)
+
+The private key that pairs with the original `pubkey` (key id 535773229A5E9BB3) could not be recovered from where it was filed, and the only key on the build Mac (D9B1DD52775015B0) never matched it. A new keypair (key id D339CC2690805357) replaces it: its public key is now in `src-tauri/tauri.conf.json`, and its private key and password live in the repo secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` plus the owner's password manager, never the repo.
+
+**Why this is safe now:** §8.1 locks the pubkey because a shipped build can only verify updates signed by the key compiled into it. Every build shipped so far has the updater `active: false`, so none of them will ever check for an update; nobody loses an update path. From the first release that turns the updater on, this key is locked as §8.1 says.
+
 ### A20 — 2026-10-04 · Meeting titles: calendar, then the agent's suggestion, and the user can rename; meeting.md gains title_source (amends §3.2 and A11's notes schema; TUR-103)
 
 Every meeting in the list was called "Meeting": the folder is `{stamp}-meeting`, and without a calendar event nothing ever gave it a better name. Three writers now name a meeting, and `meeting.md` records which one did in a new frontmatter key, `title_source` (`calendar` | `agent` | `user`):
