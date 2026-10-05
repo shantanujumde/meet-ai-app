@@ -330,7 +330,9 @@ jobs:
   # for bindgen, the Ubuntu apt list from TUR-36, GGML_NATIVE=OFF. Unsigned:
   # Windows signing is its own ticket. Each leg uploads its file and .sha256
   # as `release-files-<name>`; `publish` downloads every `release-files*`.
-  # deb builds on 22.04 so the package needs only that release's glibc.
+  # deb builds on 24.04: 22.04's libpipewire-0.3-dev (0.3.48) is too old
+  # for the libspa 0.10.1 that cpal's pipewire feature pins (TUR-38), so
+  # the .deb needs Ubuntu 24.04 or later, like the AppImage.
   # Matrix shape adapted from github.com/cjpais/Handy/.github/workflows/build.yml @ ffbc9504cbf004ce4819d2ca872fcea92be0fddf (MIT)
   build-other:
     needs: release-please
@@ -347,7 +349,7 @@ jobs:
             ext: exe
             asset: windows-x64-setup.exe
           - name: linux-deb
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             bundle: deb
             ext: deb
             asset: linux-amd64.deb
@@ -720,7 +722,7 @@ jobs:
 
           ### Linux (preview: can't record yet)
 
-          Debian or Ubuntu (22.04 or later): download \`$D\` and install it with \`sudo apt install ./$D\`.
+          Debian or Ubuntu (24.04 or later): download \`$D\` and install it with \`sudo apt install ./$D\`.
 
           Any other x86_64 distribution: download \`$A\`, then \`chmod +x $A\` and run it.
 
