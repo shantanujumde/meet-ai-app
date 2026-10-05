@@ -537,10 +537,12 @@ jobs:
       # AppImage: never bundle libpipewire/libspa (TUR-38). Nothing links
       # them yet; when Linux recording lands they must come from the user's
       # system, because a bundled copy can mismatch the running PipeWire
-      # daemon.
+      # daemon. linuxdeploy reads LINUXDEPLOY_EXCLUDED_LIBRARIES (src/core/
+      # appdir.cpp @ 07333c6) and skips these; cpal links libpipewire.
       - name: pnpm tauri build
         env:
           BUNDLE: ${{ matrix.bundle }}
+          LINUXDEPLOY_EXCLUDED_LIBRARIES: "libpipewire-0.3.so*;libspa*"
         run: |
           args=(--bundles "$BUNDLE")
           if [ "$RUNNER_OS" = Linux ]; then args+=(--no-sign); fi
