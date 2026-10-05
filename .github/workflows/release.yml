@@ -330,7 +330,9 @@ jobs:
   # for bindgen, the Ubuntu apt list from TUR-36, GGML_NATIVE=OFF. Unsigned:
   # Windows signing is its own ticket. Each leg uploads its file and .sha256
   # as `release-files-<name>`; `publish` downloads every `release-files*`.
-  # deb builds on 22.04 so the package needs only that release's glibc.
+  # deb builds on 24.04: 22.04's libpipewire-0.3-dev (0.3.48) is too old
+  # for the libspa 0.10.1 that cpal's pipewire feature pins (TUR-38), so
+  # the .deb needs Ubuntu 24.04 or later, like the AppImage.
   # Matrix shape adapted from github.com/cjpais/Handy/.github/workflows/build.yml @ ffbc9504cbf004ce4819d2ca872fcea92be0fddf (MIT)
   build-other:
     needs: release-please
@@ -347,7 +349,7 @@ jobs:
             ext: exe
             asset: windows-x64-setup.exe
           - name: linux-deb
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             bundle: deb
             ext: deb
             asset: linux-amd64.deb
@@ -437,6 +439,7 @@ jobs:
             libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
             libssl-dev libayatana-appindicator3-dev librsvg2-dev \
             libasound2-dev libpulse-dev patchelf \
+            libpipewire-0.3-dev \
             cmake clang libclang-dev
 
       - name: Point bindgen at libclang (Windows)
@@ -529,15 +532,29 @@ jobs:
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
+      # Tauri's mirrored linuxdeploy predates LINUXDEPLOY_EXCLUDED_LIBRARIES
+      # (linuxdeploy 98f393c, 2025-08), so seed Tauri's tool cache with a
+      # pinned upstream release that reads it.
+      - name: Pin linuxdeploy (AppImage)
+        if: matrix.bundle == 'appimage'
+        run: |
+          mkdir -p ~/.cache/tauri
+          f=~/.cache/tauri/linuxdeploy-x86_64.AppImage
+          curl -fsSL --retry 5 -o "$f" https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+          echo "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  $f" | sha256sum -c -
+          chmod +x "$f"
+
       # The Tauri CLI downloads NSIS / linuxdeploy tools from GitHub, so a
       # failed attempt is retried; a retry reuses the compiled crates.
       # AppImage: never bundle libpipewire/libspa (TUR-38). Nothing links
       # them yet; when Linux recording lands they must come from the user's
       # system, because a bundled copy can mismatch the running PipeWire
-      # daemon.
+      # daemon. linuxdeploy reads LINUXDEPLOY_EXCLUDED_LIBRARIES (src/core/
+      # appdir.cpp @ 07333c6) and skips these; cpal links libpipewire.
       - name: pnpm tauri build
         env:
           BUNDLE: ${{ matrix.bundle }}
+          LINUXDEPLOY_EXCLUDED_LIBRARIES: "libpipewire-0.3.so*;libspa*"
         run: |
           args=(--bundles "$BUNDLE")
           if [ "$RUNNER_OS" = Linux ]; then args+=(--no-sign); fi
@@ -719,7 +736,7 @@ jobs:
 
           ### Linux (preview: can't record yet)
 
-          Debian or Ubuntu (22.04 or later): download \`$D\` and install it with \`sudo apt install ./$D\`.
+          Debian or Ubuntu (24.04 or later): download \`$D\` and install it with \`sudo apt install ./$D\`.
 
           Any other x86_64 distribution: download \`$A\`, then \`chmod +x $A\` and run it.
 
