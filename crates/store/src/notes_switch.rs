@@ -17,7 +17,7 @@
 use std::io;
 use std::path::Path;
 
-use crate::agent_notes::{AGENT_NOTES_KEY, default_title, lock_ticket_numbers, notes_are_off};
+use crate::agent_notes::{AGENT_NOTES_KEY, default_title, lock_meeting_writers, notes_are_off};
 use crate::folder::meeting_dir;
 use crate::meeting::Meeting;
 use crate::watcher::SelfWrites;
@@ -36,7 +36,7 @@ pub(crate) const OFF: &str = "off";
 /// nothing is written. When the file already says what was asked, it is not
 /// touched.
 ///
-/// Holds [`lock_ticket_numbers`] for the whole read and write, so it cannot
+/// Holds [`lock_meeting_writers`] for the whole read and write, so it cannot
 /// land in the middle of a notes run writing the same file.
 ///
 /// # Errors
@@ -48,7 +48,7 @@ pub(crate) const OFF: &str = "off";
 ///   is left as it was.
 /// * [`Error::Io`] when the file cannot be read or written.
 pub fn set(root: &Path, meeting_id: &str, on: bool, self_writes: &SelfWrites) -> Result<(), Error> {
-    let _writers = lock_ticket_numbers();
+    let _writers = lock_meeting_writers();
 
     let dir = meeting_dir(root, meeting_id)?;
     if !dir.is_dir() {

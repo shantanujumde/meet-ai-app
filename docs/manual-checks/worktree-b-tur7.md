@@ -27,7 +27,7 @@ notes run that will (A11 "Call ends") is a later ticket.
 ## Choices made without a ruling
 
 - **"Store's existing lock".** `store` had no lock. `agent_notes` adds a
-  process-wide `Mutex`, public as `agent_notes::lock_ticket_numbers`, held
+  process-wide `Mutex`, public as `agent_notes::lock_meeting_writers`, held
   from the ticket-number scan to the last write, with
   `agent_notes::highest_ticket_number` beside it. **Follow-up (outside this
   ticket):** the hand-made ticket path (`src-tauri/src/tickets.rs`) takes

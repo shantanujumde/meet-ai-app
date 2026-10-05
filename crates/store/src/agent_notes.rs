@@ -25,9 +25,10 @@
 //!
 //! **Ticket numbers are the app's**, not the prompt's: the highest `TICK-NNNN`
 //! anywhere under the meetings root, plus one. [`write()`] holds
-//! [`lock_ticket_numbers`] from that scan until its last file lands, so two
+//! [`lock_meeting_writers`] from that scan until its last file lands, so two
 //! notes runs finishing together cannot hand out the same number. Anything
-//! else that numbers tickets should take the same lock.
+//! else that numbers tickets, or writes `meeting.md`'s title or notes, takes
+//! the same lock.
 //!
 //! **Re-running notes** replaces the four sections. A ticket from an earlier
 //! run is replaced only while the user has not touched it: still `open`, not
@@ -84,9 +85,9 @@ pub const AGENT_TICKETS_KEY: &str = "agent_tickets";
 /// transcript from being sent. `off` means no notes run.
 pub const AGENT_NOTES_KEY: &str = "agent_notes";
 
-/// Held from the ticket-number scan to the last write. Process-wide: the
+/// Held by every writer [`lock_meeting_writers`] lists. Process-wide: the
 /// meetings root is one per app, and only this process allocates numbers.
-static TICKET_NUMBERS: Mutex<()> = Mutex::new(());
+static MEETING_WRITERS: Mutex<()> = Mutex::new(());
 
 /// Which CLI produced the notes. Written as `analyzed_by`.
 ///
@@ -154,7 +155,7 @@ pub fn write(
     analysis: &Analysis,
     self_writes: &SelfWrites,
 ) -> Result<Outcome, Error> {
-    let _numbers = lock_ticket_numbers();
+    let _writers = lock_meeting_writers();
 
     let dir = meeting_dir(root, meeting_id)?;
     if !dir.is_dir() {
@@ -255,13 +256,20 @@ pub fn write(
     Ok(outcome)
 }
 
-/// The lock every writer of a new ticket number should hold from choosing the
-/// number until the file is on disk.
+/// The lock the app's writers of meeting files hold, so none lands in the
+/// middle of another:
+///
+/// * ticket numbering: a notes run or a hand-made ticket holds it from
+///   choosing the number until the file is on disk;
+/// * `meeting.md`'s title and notes: a notes run, the calendar's title
+///   ([`crate::meeting_event::apply`]), a rename
+///   ([`crate::meeting_title::set_by_user`]) and the notes switch
+///   ([`crate::notes_switch::set`]) hold it for the whole read and write.
 ///
 /// The guard protects no data, so a panic elsewhere leaves nothing torn and a
 /// poisoned lock is taken as is.
-pub fn lock_ticket_numbers() -> MutexGuard<'static, ()> {
-    TICKET_NUMBERS
+pub fn lock_meeting_writers() -> MutexGuard<'static, ()> {
+    MEETING_WRITERS
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }

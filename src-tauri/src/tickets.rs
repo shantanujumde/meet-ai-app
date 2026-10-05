@@ -137,7 +137,7 @@ fn create_in(root: &Path, title: &str, body: &str) -> Result<TicketSummary, UiEr
     }
     // Held until the file is on disk, as a notes run holds it while it writes
     // its tasks, so the two never hand out the same number (TUR-18).
-    let _numbers = agent_notes::lock_ticket_numbers();
+    let _numbers = agent_notes::lock_meeting_writers();
     let dir = tickets_dir(root);
     fs::create_dir_all(&dir)?;
 
@@ -335,7 +335,7 @@ mod tests {
         let (done, finished) = std::sync::mpsc::channel();
         std::thread::scope(|s| {
             // Taken in here so a failed assert lets go of it before the join.
-            let numbers = agent_notes::lock_ticket_numbers();
+            let numbers = agent_notes::lock_meeting_writers();
             s.spawn(|| {
                 let made = create_in(&root, "By hand", "");
                 done.send(made).ok();
