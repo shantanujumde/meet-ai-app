@@ -99,8 +99,8 @@ These are done once by the owner, on the Mac that holds the signing keychain.
    `check` result. `check` still runs when the PR merges, and the build waits
    for it. If branch protection requires `check` on PRs, you need this token.
 5. Add the updater signing key (TUR-66): `TAURI_SIGNING_PRIVATE_KEY` (the
-   private key from the Paperclip secret `meet-ai/tauri-updater/private-key`,
-   the pair of the `pubkey` in `src-tauri/tauri.conf.json`) and
+   private key from the owner's password manager, key id D339CC2690805357,
+   the pair of the `pubkey` in `src-tauri/tauri.conf.json`; SPEC A21) and
    `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Without them the build jobs stop at
    "Updater archive and signature" / "Updater signature", naming the missing
    secret. Those steps sign `meet-ai-X.Y.Z-macos-arm64.app.tar.gz`, the
