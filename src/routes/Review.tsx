@@ -316,7 +316,12 @@ function MeetingReview({ id }: { id: string }) {
               body="transcript.md is empty. Either nobody spoke, or this meeting was recorded before transcription was turned on. The audio, if it was kept, is still in the meeting folder."
             />
           ) : (
-            <Card>
+            <Card
+              className="relative max-h-[min(24rem,45vh)] overflow-y-auto"
+              tabIndex={0}
+              role="region"
+              aria-label="Transcript"
+            >
               <ol className="transcript">
                 {lines.map((line, i) => (
                   <TranscriptRow
