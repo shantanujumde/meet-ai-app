@@ -82,22 +82,36 @@ pub fn listed(harness: &str) -> Vec<Model> {
 /// the file where it has the name, the bare name otherwise. Duplicates and
 /// blank names are dropped.
 pub fn described(harness: &str, names: impl IntoIterator<Item = String>) -> Vec<Model> {
+    described_models(
+        harness,
+        names.into_iter().map(|name| Model {
+            label: name.clone(),
+            name,
+            note: None,
+        }),
+    )
+}
+
+/// [`described`] for models the CLI already labelled (Codex's
+/// `display_name` and `description`): the file's label and note win where it
+/// has them, the CLI's stand in where it does not.
+pub fn described_models(harness: &str, models: impl IntoIterator<Item = Model>) -> Vec<Model> {
     let known = catalog().get(harness);
     let mut out: Vec<Model> = Vec::new();
-    for name in names {
-        let name = name.trim().to_owned();
-        if name.is_empty() || out.iter().any(|model| model.name == name) {
+    for model in models {
+        let name = model.name.trim().to_owned();
+        if name.is_empty() || out.iter().any(|m| m.name == name) {
             continue;
         }
-        let model = known
-            .and_then(|list| list.iter().find(|model| model.name == name))
-            .cloned()
-            .unwrap_or_else(|| Model {
-                label: name.clone(),
-                name,
-                note: None,
-            });
-        out.push(model);
+        let listed = known.and_then(|list| list.iter().find(|m| m.name == name));
+        // A file entry without a label has its name as label; that is no label.
+        let label = listed
+            .map(|m| m.label.clone())
+            .filter(|label| *label != name)
+            .or_else(|| Some(model.label.trim().to_owned()).filter(|l| !l.is_empty()))
+            .unwrap_or_else(|| name.clone());
+        let note = listed.and_then(|m| m.note.clone()).or(model.note);
+        out.push(Model { name, label, note });
     }
     out
 }
@@ -109,7 +123,7 @@ pub fn described(harness: &str, names: impl IntoIterator<Item = String>) -> Vec<
 #[derive(Debug)]
 pub struct ListCache {
     ttl: Duration,
-    lists: Mutex<HashMap<PathBuf, (Instant, Vec<String>)>>,
+    lists: Mutex<HashMap<PathBuf, (Instant, Vec<Model>)>>,
 }
 
 impl ListCache {
@@ -123,7 +137,7 @@ impl ListCache {
     /// The list kept for `binary` if it is younger than the time limit,
     /// otherwise what `list` returns now. The lock is not held while `list`
     /// runs.
-    pub fn get_or_list(&self, binary: &Path, list: impl FnOnce() -> Vec<String>) -> Vec<String> {
+    pub fn get_or_list(&self, binary: &Path, list: impl FnOnce() -> Vec<Model>) -> Vec<Model> {
         {
             let lists = self.lists.lock().unwrap_or_else(PoisonError::into_inner);
             if let Some((at, models)) = lists.get(binary)
@@ -208,19 +222,45 @@ mod tests {
     }
 
     #[test]
+    fn the_file_s_label_and_note_win_over_the_cli_s() {
+        let cli = |name: &str, label: &str, note: Option<&str>| Model {
+            name: name.into(),
+            label: label.into(),
+            note: note.map(Into::into),
+        };
+        let models = described_models(
+            crate::claude::ID,
+            [
+                cli("haiku", "Claude Haiku", Some("from the CLI")),
+                cli("gpt-new", "GPT New", Some("Codex's note")),
+                cli("claude-opus-5-5", "Opus 5.5", None),
+                cli("bare", " ", None),
+            ],
+        );
+        assert_eq!(models[0], cli("haiku", "Haiku", Some("fastest, cheapest")));
+        assert_eq!(models[1], cli("gpt-new", "GPT New", Some("Codex's note")));
+        assert_eq!(models[2], cli("claude-opus-5-5", "Opus 5.5", None));
+        assert_eq!(models[3], cli("bare", "bare", None));
+    }
+
+    fn named(names: &[&str]) -> Vec<Model> {
+        described(crate::codex::ID, names.iter().map(|n| (*n).to_owned()))
+    }
+
+    #[test]
     fn the_cache_keeps_a_list_until_it_is_too_old() {
         let cache = ListCache::new(Duration::from_secs(60));
         let bin = Path::new("/bin/codex");
-        assert_eq!(cache.get_or_list(bin, || vec!["a".into()]), ["a"]);
-        assert_eq!(cache.get_or_list(bin, || vec!["b".into()]), ["a"]);
+        assert_eq!(cache.get_or_list(bin, || named(&["a"])), named(&["a"]));
+        assert_eq!(cache.get_or_list(bin, || named(&["b"])), named(&["a"]));
         assert_eq!(
-            cache.get_or_list(Path::new("/other"), || vec!["c".into()]),
-            ["c"]
+            cache.get_or_list(Path::new("/other"), || named(&["c"])),
+            named(&["c"])
         );
 
         let stale = ListCache::new(Duration::ZERO);
-        assert_eq!(stale.get_or_list(bin, || vec!["a".into()]), ["a"]);
-        assert_eq!(stale.get_or_list(bin, || vec!["b".into()]), ["b"]);
+        assert_eq!(stale.get_or_list(bin, || named(&["a"])), named(&["a"]));
+        assert_eq!(stale.get_or_list(bin, || named(&["b"])), named(&["b"]));
     }
 
     #[test]
@@ -228,6 +268,6 @@ mod tests {
         let cache = ListCache::new(Duration::from_secs(60));
         let bin = Path::new("/bin/codex");
         assert!(cache.get_or_list(bin, Vec::new).is_empty());
-        assert_eq!(cache.get_or_list(bin, || vec!["a".into()]), ["a"]);
+        assert_eq!(cache.get_or_list(bin, || named(&["a"])), named(&["a"]));
     }
 }
