@@ -19,6 +19,7 @@ src-tauri/gen/
 # The Vulkan loader shipped beside meet-ai.exe on Windows (TUR-61), fetched
 # from LunarG's Vulkan Runtime by check.yml and release.yml; never committed.
 src-tauri/vulkan/
+src-tauri/onnxruntime/
 
 # Signing keys. Never commit one — the updater private key lives in secure
 # custody, not in the repo (SETUP.md step 1.2).
