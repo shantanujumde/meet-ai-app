@@ -336,7 +336,7 @@ Timestamps derive from `segment.start_host_ns + frame_index / rate` — never fr
   "meetings_root": "~/Meetings",
   "transcription": {
     "model": "large-v3-turbo-q5_0",   // or "small.en-q5_1"
-    "language": "en",
+    "language": "auto",                // or "hinglish", or a whisper code, e.g. "mr" (A17)
     "live": true                       // false = transcribe on stop only
   },
   "audio": {
@@ -582,6 +582,17 @@ The window canvas, the sidebar and the cards are no longer plain grey or black: 
 Icons are Lucide (`lucide-react` 1.39.0, ISC), as §2 already listed: one family, 16 px, one stroke width (1.75), drawn only through `src/ui/icons.tsx`; every icon-only control has an `aria-label`.
 
 `config.jsonc` gains `appearance.theme` (`"system"` | `"light"` | `"dark"`, default `"system"`) and `appearance.glass` (default `true`). Off, the see-through sidebar and record prompt are solid; Reduce Transparency and Increase Contrast make them solid too. `design-system/meet-ai/contrast.mjs` checks every text colour on every surface in light, dark, Increase Contrast, Reduce Transparency and glass off, and `src/test/contrast.test.ts` runs it in CI.
+
+### A17 — 2026-10-06 · `transcription.language`: line by line, chosen in Settings, or Hinglish (amends §3.5, A16)
+
+A16's auto-detect asked whisper to guess the language of every utterance on its own. Utterances are a few seconds long, so a Marathi call came out as lines of Chinese, Tamil, Russian and Portuguese. Four changes:
+
+- **Auto keeps each line's language, with a fallback** (`crates/stt/src/spoken_language.rs`). A line of 2 s or more that whisper is at least 50% sure about is written in that language. A shorter or unsure line is written in the speaker's usual language (whisper's probabilities from every long line, weighted by length, per channel). Locking each speaker to one language was tried first and dropped: on a real Hindi and English call it settled on English after 20 s and translated every Hindi sentence.
+- **`transcription.language` is read**: `auto` (the default), `hinglish`, or a whisper code such as `mr`, with a "Spoken language" picker in Settings → Speech. It reaches a multilingual whisper model only. An English-only model still gets `en`, and Apple and Parakeet ignore it. An unknown value is read as auto and logged; Settings refuses to write one.
+- **`hinglish`** tells whisper English, with a few sentences of Hinglish written in English letters as the prompt (`languages::HINGLISH_PROMPT`). On that call, English alone translated the Hindi ("toh close kar do" became "close to go"), and Hindi wrote English words in Devanagari and often looped. With the prompt, Hindi came out as spoken ("ticket agar close kar diya to wo close ticket mein chala jata hai na") and the English lines were unchanged. The prompt is passed as tokens made once per engine, because whisper-rs leaks the C string of a text prompt on every call. A line that is only a piece of the prompt is dropped.
+- **Loops are cut** (`crates/stt/src/whisper_text.rs`, now also home to the layer-3 phrase list). A word repeated 4 times in a row, or a phrase of 2 to 10 words repeated 3 times, is kept once, along with a cut-off last copy. Told Hindi or Marathi, whisper looped on about one line in ten.
+
+Measured on the Marathi call: large-v3-turbo never put Marathi in its top four guesses, even for 10-second sentences (it said English or Hindi), and large-v3 did only sometimes. So auto cannot find Marathi, and picking it is the fix. Told `mr`, both models write Devanagari Marathi, rough and with Hindi mixed in. The §3.5 example's `"language": "en"` is now `"auto"`, since a file copied from it would force English onto a multilingual model.
 
 ### A16 — 2026-10-04 · Medium and Large whisper models; the language comes from the model (amends §2.4; TUR-94)
 

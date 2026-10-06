@@ -48,21 +48,33 @@ pub(crate) use onnx::ONNX_RUNTIME_LOADED_AT_RUN_TIME;
 pub(crate) use onnx::{onnx_runtime_missing, prepare_onnx_runtime};
 
 /// Load the whisper model at `model` — what [`crate::registry::select`] builds
-/// for the whisper choice. The language comes from the model (TUR-94): `en`
-/// for an English-only one, auto-detect for a multilingual one.
+/// for the whisper choice. An English-only model is told `en` (TUR-94); a
+/// multilingual one is told what `spoken` says (`transcription.language`), and
+/// works the language out line by line when that names none.
 pub(crate) fn load_whisper(
     model: &std::path::Path,
+    spoken: crate::languages::Spoken,
 ) -> Result<Box<dyn crate::SttEngine>, crate::Error> {
     Ok(Box::new(whisper::WhisperEngine::load(
         model,
-        recording_config(model),
+        recording_config(model, spoken),
     )?))
 }
 
 /// The config a real recording runs `model` with.
-pub(crate) fn recording_config(model: &std::path::Path) -> whisper::WhisperConfig {
+pub(crate) fn recording_config(
+    model: &std::path::Path,
+    spoken: crate::languages::Spoken,
+) -> whisper::WhisperConfig {
+    // The model's own `en` wins: an English-only model cannot write Marathi.
+    let own = crate::model::whisper_language_for_file(model);
     whisper::WhisperConfig {
-        language: crate::model::whisper_language_for_file(model).map(str::to_owned),
+        language: own.or(spoken.language).map(str::to_owned),
+        prompt: own
+            .is_none()
+            .then_some(spoken.prompt)
+            .flatten()
+            .map(str::to_owned),
         // A recording always arms the GPU crash marker (TUR-61).
         gpu_guard: crate::gpu_guard::dir_for_model(model),
         ..whisper::WhisperConfig::default()
@@ -73,10 +85,13 @@ pub(crate) fn recording_config(model: &std::path::Path) -> whisper::WhisperConfi
 mod tests {
     use std::path::Path;
 
+    use crate::languages::{Spoken, spoken};
+
     #[test]
     fn a_recording_tells_whisper_the_language_its_model_was_built_for() {
         for spec in crate::model::MODELS {
-            let config = super::recording_config(&Path::new("/m").join(spec.filename));
+            let config =
+                super::recording_config(&Path::new("/m").join(spec.filename), Spoken::default());
             assert_eq!(
                 config.language.as_deref(),
                 spec.whisper_language(),
@@ -84,8 +99,42 @@ mod tests {
                 spec.id
             );
         }
-        let turbo = super::recording_config(Path::new("/m/ggml-large-v3-turbo-q5_0.bin"));
+        let turbo = super::recording_config(
+            Path::new("/m/ggml-large-v3-turbo-q5_0.bin"),
+            Spoken::default(),
+        );
         assert_eq!(turbo.language, None);
+    }
+
+    #[test]
+    fn hinglish_is_english_with_a_prompt_on_a_multilingual_model_only() {
+        let turbo = super::recording_config(
+            Path::new("/m/ggml-large-v3-turbo-q5_0.bin"),
+            spoken("hinglish"),
+        );
+        assert_eq!(turbo.language.as_deref(), Some("en"));
+        assert!(turbo.prompt.is_some());
+        let small_en =
+            super::recording_config(Path::new("/m/ggml-small.en-q5_1.bin"), spoken("hinglish"));
+        assert_eq!(small_en.prompt, None);
+    }
+
+    #[test]
+    fn the_language_setting_reaches_a_multilingual_model_only() {
+        let turbo = Path::new("/m/ggml-large-v3-turbo-q5_0.bin");
+        let small_en = Path::new("/m/ggml-small.en-q5_1.bin");
+        assert_eq!(
+            super::recording_config(turbo, spoken("mr"))
+                .language
+                .as_deref(),
+            Some("mr")
+        );
+        assert_eq!(
+            super::recording_config(small_en, spoken("mr"))
+                .language
+                .as_deref(),
+            Some("en")
+        );
     }
 }
 

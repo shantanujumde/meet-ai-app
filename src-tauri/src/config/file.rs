@@ -80,6 +80,15 @@ pub fn set_transcription(engine: Preference, model: &str) -> Result<(), ConfigEr
     write_in(&app_dir()?, |raw| with_transcription(raw, engine, model))
 }
 
+/// Save `transcription.language` (`auto` or a whisper code such as `mr`) into
+/// `~/Meetings/.app/config.jsonc`, keeping everything else. Read again by the
+/// next recording.
+pub fn set_transcription_language(language: &str) -> Result<(), ConfigError> {
+    write_in(&app_dir()?, |raw| {
+        with_section(raw, "transcription", vec![("language", language.into())])
+    })
+}
+
 /// `raw` with `transcription.engine` and `transcription.model` set.
 pub fn with_transcription(
     raw: &str,

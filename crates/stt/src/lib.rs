@@ -44,8 +44,12 @@ pub mod segments;
 pub mod session;
 pub mod sink;
 mod span_assembler;
+/// The language each speaker talks, learned over a meeting on whisper.
+mod spoken_language;
 mod transcribe;
 pub mod vad;
+/// Repairs for whisper's looping and prompt-echoing text.
+mod whisper_text;
 
 /// The OS seam (SPEC §8.2): the only module that names an operating system.
 mod platform;

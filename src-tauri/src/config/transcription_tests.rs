@@ -42,6 +42,7 @@ fn writing_both_keys_keeps_comments_other_keys_and_other_sections() {
         Transcription {
             engine: Preference::Whisper,
             model: "small.en-q5_1".into(),
+            language: "en".into(),
         }
     );
     assert!(written.contains("// How speech becomes text. I set this by hand once."));

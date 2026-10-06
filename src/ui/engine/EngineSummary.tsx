@@ -21,6 +21,7 @@ import { SettingsSection } from "@/ui/settings/SettingsSection";
 import { ErrorState } from "@/ui/states";
 import { EnginePicker } from "./EnginePicker";
 import { ModelList } from "./ModelList";
+import { SpokenLanguagePicker } from "./SpokenLanguagePicker";
 import { useSpeech } from "./useSpeech";
 
 export const NEXT_RECORDING_NOTE =
@@ -77,6 +78,10 @@ export function EngineSummary() {
         onDownloadParakeet={() => {
           if (choices) void speech.download(choices.parakeetModel.id);
         }}
+      />
+      <SpokenLanguagePicker
+        choices={choices}
+        onPick={(language) => void speech.pickLanguage(language)}
       />
     </SettingsSection>
   );

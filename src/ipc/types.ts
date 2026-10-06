@@ -184,6 +184,18 @@ export type EngineChoices = {
   parakeetModel: ParakeetModelView;
   /** Locales Apple's engine has installed, as BCP 47 ids. */
   languages: string[];
+  /** `transcription.language`: "auto", "hinglish", or the whisper code people speak (e.g. "mr"). */
+  spokenLanguage: string;
+  /** What the spoken-language picker offers besides "auto", in order: Hinglish, then by name. */
+  spokenLanguages: SpokenLanguageOption[];
+};
+
+/** One language whisper can be told the audio is in. */
+export type SpokenLanguageOption = {
+  /** The whisper code, such as "mr". */
+  code: string;
+  /** The English name, such as "Marathi". */
+  name: string;
 };
 
 /** The Parakeet model (TUR-62): one download of several files. */

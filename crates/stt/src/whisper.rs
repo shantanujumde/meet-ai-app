@@ -30,6 +30,7 @@ use std::sync::{Arc, Once};
 
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
+    WhisperTokenId,
 };
 
 /// whisper.cpp installs its log callback globally, so this must happen once
@@ -48,93 +49,25 @@ use crate::session::{
     LiveEmitter, LiveListener, SessionOptions, SessionOutcome, SpanAssembler, SttSession,
 };
 use crate::sink::TranscriptSink;
+use crate::spoken_language::SpokenLanguage;
 use crate::vad::{EarshotVad, SAMPLE_RATE, SegmentConfig, Vad, detect_speech};
+use crate::whisper_text::{collapse_repeats, echoes_prompt, prompt_tokens};
 use crate::{Error, Speaker, Utterance, collapse_whitespace};
 
-/// Phrases whisper invents over quiet audio.
-///
-/// Compared case-insensitively against the whole trimmed segment, with
-/// punctuation stripped. A segment equal to one of these and nothing else is
-/// dropped. Sourced from the widely reported whisper.cpp hallucination set —
-/// these are subtitle-corpus artefacts, not English that shows up alone in a
-/// meeting.
-const HALLUCINATION_PHRASES: &[&str] = &[
-    "thank you",
-    "thanks for watching",
-    "thank you for watching",
-    "thanks for watching!",
-    "you",
-    "bye",
-    "bye bye",
-    "thank you very much",
-    "please subscribe",
-    "subscribe to my channel",
-    "blank_audio",
-    "silence",
-    "music",
-    "applause",
-    "inaudible",
-    "beep",
-    "so",
-    "okay",
-    "oh",
-    "hmm",
-];
-
-/// Is this segment nothing but a known hallucination?
-///
-/// Two rules, in order:
-///
-/// 1. **Shape.** A segment that is entirely wrapped in `[...]`, `(...)` or
-///    `*...*` is a sound annotation, not speech — `[BLANK_AUDIO]`,
-///    `[no speech detected]`, `(water rushing)`, `*door closes*`. This rule is
-///    the important one because it is structural: it catches annotations
-///    nobody has seen yet, which an enumerated list by definition cannot.
-///    Measured against this repo's fixtures, ungated whisper emitted
-///    `[BLANK_AUDIO]`, `[no speech detected]` and `(water rushing)` over
-///    silence and pink noise — only the first was on the list below.
-/// 2. **A phrase list**, for bare-text hallucinations that carry no brackets.
-///
-/// Public so the test suite can assert the rule directly, and so a future
-/// Silero swap can reuse it unchanged.
-pub fn is_hallucination(text: &str) -> bool {
-    let trimmed = text.trim();
-
-    // Rule 1. Checked before punctuation is stripped, because the brackets
-    // are the entire signal.
-    let wrapped = [('[', ']'), ('(', ')'), ('*', '*'), ('<', '>'), ('{', '}')]
-        .iter()
-        .any(|(open, close)| {
-            trimmed.starts_with(*open)
-                && trimmed.ends_with(*close)
-                && trimmed.chars().count() >= 2
-                // Only if there is exactly one bracketed run, so a real
-                // sentence like "(see the ticket) and then we ship" is kept.
-                && !trimmed[1..trimmed.len() - close.len_utf8()].contains(*close)
-        });
-    if wrapped {
-        return true;
-    }
-
-    let normalized: String = text
-        .trim()
-        .to_lowercase()
-        .chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '_')
-        .collect();
-    let normalized = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
-
-    if normalized.is_empty() {
-        return true;
-    }
-    HALLUCINATION_PHRASES.contains(&normalized.as_str())
-}
+/// Layer 3 lives with whisper's other text repairs; it stays public here.
+pub use crate::whisper_text::is_hallucination;
 
 /// Tunables for the whisper path.
 #[derive(Debug, Clone)]
 pub struct WhisperConfig {
-    /// `en` for the English-only models; `None` asks whisper to auto-detect.
+    /// `en` for the English-only models. `None` means auto-detect, learned
+    /// per speaker over the meeting ([`SpokenLanguage`]) rather than guessed
+    /// afresh for every utterance.
     pub language: Option<String>,
+    /// Text whisper is told it has already heard, to steer how it writes:
+    /// Hinglish's example sentences make it write Hindi in English letters
+    /// instead of translating it. `None` for no prompt.
+    pub prompt: Option<String>,
     /// Inference threads. Defaults to the physical core count.
     pub threads: i32,
     /// Drop any segment whose no-speech probability exceeds this.
@@ -175,6 +108,7 @@ impl Default for WhisperConfig {
     fn default() -> Self {
         Self {
             language: Some("en".into()),
+            prompt: None,
             threads: std::thread::available_parallelism()
                 .map(|n| n.get() as i32)
                 .unwrap_or(4),
@@ -193,6 +127,8 @@ pub struct WhisperEngine {
     vad: Box<dyn Vad>,
     config: WhisperConfig,
     model_path: PathBuf,
+    /// [`WhisperConfig::prompt`] as tokens, made once.
+    prompt: Vec<WhisperTokenId>,
     /// The armed GPU crash marker, cleared by the first decode that works.
     gpu: Option<Arc<GpuGuard>>,
 }
@@ -236,9 +172,11 @@ impl WhisperEngine {
             .map_err(|e| Error::Engine(format!("could not load {}: {e}", model_path.display())))?;
         // A load that fails returns here and drops `gpu`, which clears the
         // marker: an error is not a crash.
+        let prompt = prompt_tokens(&context, config.prompt.as_deref())?;
 
         Ok(Self {
             context,
+            prompt,
             vad: Box::new(EarshotVad::new()),
             config,
             model_path: model_path.to_path_buf(),
@@ -263,13 +201,18 @@ impl WhisperEngine {
     }
 }
 
-fn params(config: &WhisperConfig) -> FullParams<'_, '_> {
+fn params<'a>(
+    config: &WhisperConfig,
+    language: Option<&'a str>,
+    prompt: &'a [WhisperTokenId],
+) -> FullParams<'a, 'a> {
     // Greedy with no beam search: this is the fallback engine, and the
     // accuracy gain from beams costs more time than the whole Apple path
     // takes end to end.
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     params.set_n_threads(config.threads);
-    params.set_language(config.language.as_deref());
+    params.set_language(language);
+    params.set_tokens(prompt);
     params.set_translate(false);
 
     // Quiet. whisper.cpp prints to stdout by default, which would corrupt
@@ -315,20 +258,22 @@ fn to_whisper_audio(samples: &[i16], audio: &mut Vec<f32>) {
 /// one. If the two filtered differently, a meeting would read one way on
 /// screen and another way in `transcript.md`.
 ///
-/// `span_start_sec` positions the result on the recording's timeline: whisper
-/// reports centiseconds relative to the clip it was handed.
+/// `audio` comes from [`to_whisper_audio`]; `language` is what to tell
+/// whisper, `None` to let it guess, and `prompt` is [`WhisperConfig::prompt`]
+/// as tokens. `span_start_sec` positions the result on
+/// the recording's timeline: whisper reports centiseconds relative to the clip
+/// it was handed.
 fn decode(
     state: &mut WhisperState,
     config: &WhisperConfig,
-    samples: &[i16],
+    audio: &[f32],
+    language: Option<&str>,
+    prompt: &[WhisperTokenId],
     span_start_sec: f64,
-    audio: &mut Vec<f32>,
     gpu: Option<&GpuGuard>,
 ) -> Result<Vec<(f64, String)>, Error> {
-    to_whisper_audio(samples, audio);
-
     state
-        .full(params(config), audio)
+        .full(params(config, language, prompt), audio)
         .map_err(|e| Error::Engine(format!("whisper inference failed: {e}")))?;
     // The first decode that came back is the GPU working: clear the marker.
     if let Some(gpu) = gpu {
@@ -357,9 +302,17 @@ fn decode(
             continue;
         }
 
-        let Some(text) = collapse_whitespace(&raw) else {
+        let Some(text) = collapse_whitespace(&collapse_repeats(&raw)) else {
             continue;
         };
+        if config
+            .prompt
+            .as_deref()
+            .is_some_and(|prompt| echoes_prompt(&text, prompt))
+        {
+            tracing::debug!(text = %text, "dropped: the prompt written back");
+            continue;
+        }
 
         let within_span = segment.start_timestamp() as f64 / 100.0;
         lines.push(((span_start_sec + within_span).max(0.0), text));
@@ -397,14 +350,25 @@ impl crate::SttEngine for WhisperEngine {
 
         let mut state = self.new_state()?;
         let mut audio = Vec::new();
+        // One file is one speaker, so it learns its own language.
+        let mut heard = SpokenLanguage::new();
 
         for span in spans {
+            let samples = span.samples(&pcm);
+            to_whisper_audio(samples, &mut audio);
+            let span_sec = samples.len() as f64 / SAMPLE_RATE as f64;
+            let language = self
+                .config
+                .language
+                .as_deref()
+                .or_else(|| heard.learn(&mut state, self.config.threads, &audio, span_sec));
             for (start_sec, text) in decode(
                 &mut state,
                 &self.config,
-                span.samples(&pcm),
+                &audio,
+                language,
+                &self.prompt,
                 span.start_sec(),
-                &mut audio,
                 self.gpu.as_deref(),
             )? {
                 sink.write(&Utterance {
@@ -435,6 +399,8 @@ impl crate::SttEngine for WhisperEngine {
             emitter: LiveEmitter::new(&options, listener),
             sink,
             audio: Vec::new(),
+            heard: SpokenLanguage::new(),
+            prompt: self.prompt.clone(),
             gpu: self.gpu.clone(),
         }))
     }
@@ -459,6 +425,10 @@ pub struct WhisperSession {
     sink: Box<dyn TranscriptSink + Send>,
     /// Scratch for the `f32` copy whisper takes, reused by every decode.
     audio: Vec<f32>,
+    /// This session's speaker's languages, when the config names none.
+    heard: SpokenLanguage,
+    /// [`WhisperConfig::prompt`] as tokens, from the engine.
+    prompt: Vec<WhisperTokenId>,
     /// The engine's GPU crash marker, cleared by the first decode that works.
     gpu: Option<Arc<GpuGuard>>,
 }
@@ -466,12 +436,19 @@ pub struct WhisperSession {
 impl WhisperSession {
     /// Settle a span into transcript lines.
     fn settle(&mut self, span: &crate::session::ReadySpan) -> Result<(), Error> {
+        to_whisper_audio(&span.samples, &mut self.audio);
+        let span_sec = span.samples.len() as f64 / SAMPLE_RATE as f64;
+        let language = self.config.language.as_deref().or_else(|| {
+            self.heard
+                .learn(&mut self.state, self.config.threads, &self.audio, span_sec)
+        });
         for (start_sec, text) in decode(
             &mut self.state,
             &self.config,
-            &span.samples,
+            &self.audio,
+            language,
+            &self.prompt,
             span.start_sec,
-            &mut self.audio,
             self.gpu.as_deref(),
         )? {
             self.emitter
@@ -492,12 +469,20 @@ impl WhisperSession {
             return Ok(());
         }
 
+        // A guess is thrown away, so it does not teach the language anything.
+        to_whisper_audio(samples, &mut self.audio);
+        let language = self
+            .config
+            .language
+            .as_deref()
+            .or_else(|| self.heard.usual_code());
         let guessed = decode(
             &mut self.state,
             &self.config,
-            samples,
+            &self.audio,
+            language,
+            &self.prompt,
             0.0,
-            &mut self.audio,
             self.gpu.as_deref(),
         )?;
         // One tail per speaker, so several segments over one open span are one

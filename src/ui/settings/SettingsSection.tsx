@@ -51,6 +51,10 @@ export function SettingsSection({
   );
 }
 
+/** A `<select>` in a settings row's control slot. */
+export const SETTINGS_SELECT =
+  "rounded-control border-[0.5px] border-separator bg-glass-sunken px-3 py-2 text-footnote text-fg-primary disabled:cursor-not-allowed disabled:opacity-40";
+
 export function SettingsRow({
   icon,
   name,

@@ -331,6 +331,21 @@ pub async fn set_transcription(
     .await?
 }
 
+/// Save `transcription.language` into config.jsonc: `auto`, or the whisper
+/// code people speak, such as `mr`. Takes effect on the next recording.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_spoken_language(
+    app: AppHandle,
+    language: String,
+) -> Result<engine::EngineChoices, UiError> {
+    on_blocking_pool(move || {
+        app.state::<FolderGate>()
+            .writing(|| engine::save_language(&language))
+    })
+    .await?
+}
+
 // --- recording ------------------------------------------------------------
 
 #[tauri::command]

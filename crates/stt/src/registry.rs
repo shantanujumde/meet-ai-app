@@ -102,6 +102,9 @@ pub struct Environment {
     pub installed_whisper_models: Vec<String>,
     /// The Parakeet model folder, when every file in it is downloaded.
     pub parakeet_model: Option<PathBuf>,
+    /// What to tell a multilingual whisper model about the language
+    /// (`transcription.language`, read by [`crate::languages::spoken`]).
+    pub spoken: crate::languages::Spoken,
 }
 
 impl Environment {
@@ -148,6 +151,7 @@ impl Environment {
             whisper_model_id: model_id.to_string(),
             installed_whisper_models,
             parakeet_model,
+            spoken: Default::default(),
         }
     }
 
@@ -360,7 +364,7 @@ pub fn select(
                 .clone()
                 .ok_or_else(|| Error::EngineUnavailable("no whisper model is downloaded".into()))?;
 
-            crate::platform::load_whisper(&model)?
+            crate::platform::load_whisper(&model, environment.spoken)?
         }
         Kind::Parakeet => {
             let model = environment.parakeet_model.clone().ok_or_else(|| {
@@ -388,6 +392,7 @@ mod tests {
             whisper_model_id: "large-v3-turbo-q5_0".into(),
             installed_whisper_models: Vec::new(),
             parakeet_model: None,
+            spoken: Default::default(),
         }
     }
 
