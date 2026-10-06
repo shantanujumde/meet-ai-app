@@ -231,6 +231,37 @@ test("only system audio off keeps Record enabled and says it records the microph
   expect(screen.queryByRole("button", { name: /recording is unavailable because/i })).toBeNull();
 });
 
+test("system audio found off during a recording says the recording goes on with the microphone", async () => {
+  // TUR-136: the system-audio check runs while the recording runs, and a
+  // denial drops the system track instead of stopping anything.
+  onboardingState.mockResolvedValue({ completedAt: "2026-09-27T13:00:00+05:30" });
+  render(<App />);
+  await screen.findByRole("heading", { name: /no meetings yet/i });
+  await waitFor(() => expect(listening(PERMISSION_STATUS_EVENT)).toBe(true));
+  await waitFor(() => expect(listening(RECORDING_STATE_EVENT)).toBe(true));
+
+  act(() => {
+    emit(RECORDING_STATE_EVENT, {
+      phase: "recording",
+      meetingId: "2026-10-07-0930-meeting",
+      startedAtMs: 0,
+      error: null,
+    } satisfies RecordingStatus);
+    emit(PERMISSION_STATUS_EVENT, {
+      state: "denied",
+      measured: true,
+      detail: "microphone: the microphone is recording. system audio: zeros",
+      denied: ["audio-capture"],
+    } satisfies PermissionStatus);
+  });
+
+  // The recording's own status line is a `status` too, so find the banner by its words.
+  expect(
+    await screen.findByText(/this recording goes on with your microphone only/),
+  ).toHaveTextContent(/^System audio is off: /);
+  expect(screen.getByRole("button", { name: /stop recording/i })).toBeEnabled();
+});
+
 test("a ⌘⇧R press that is refused says why in the window", async () => {
   // The shortcut runs in Rust with no button to put an error next to. Its only
   // report used to be a system notification, which is silent when meet-ai may

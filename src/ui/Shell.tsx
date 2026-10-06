@@ -25,6 +25,7 @@ import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 import type { PrivacyPane } from "@/ipc/types";
 import { osText } from "@/lib/osText";
 import { openPermissionScreen } from "@/lib/permissionRoute";
+import { systemAudioOffText } from "@/lib/recordingPermission";
 import { isOnboardingPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
@@ -121,7 +122,9 @@ export function Shell() {
 
         {!focused && permission?.state === "denied" ? (
           <div className="banner" role="status">
-            <p className="banner__text">{deniedBannerText(permission.denied)}</p>
+            <p className="banner__text">
+              {deniedBannerText(permission.denied, status.phase === "recording")}
+            </p>
             <Button size="small" onClick={() => openPermissionScreen(navigate)}>
               Fix this
             </Button>
@@ -144,11 +147,11 @@ const PANE_LABEL: Record<PrivacyPane, string> = {
 };
 
 /** Name the switch that is off, so the banner says where to go. */
-function deniedBannerText(denied: PrivacyPane[]): string {
+function deniedBannerText(denied: PrivacyPane[], recording: boolean): string {
   const names = denied.map((pane) => PANE_LABEL[pane]);
   // TUR-87: only system audio off still records the microphone.
   if (denied.length === 1 && denied[0] === "audio-capture") {
-    return `System audio is off: System Audio Recording is turned off for meet-ai in ${osText("settings")}, so recordings capture only your microphone.`;
+    return systemAudioOffText(recording);
   }
   if (names.length === 0) {
     return `meet-ai cannot record ${osText("thisComputer")}'s audio yet, so recording is off.`;

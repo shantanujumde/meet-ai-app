@@ -1,6 +1,11 @@
 import { expect, test } from "vitest";
 import type { PermissionStatus, PrivacyPane } from "@/ipc/types";
-import { permissionStepShown, recordingBlocked, systemAudioOnlyOff } from "./recordingPermission";
+import {
+  permissionStepShown,
+  recordingBlocked,
+  systemAudioOffText,
+  systemAudioOnlyOff,
+} from "./recordingPermission";
 
 function status(state: PermissionStatus["state"], denied: PrivacyPane[]): PermissionStatus {
   return { state, measured: true, detail: "test", denied };
@@ -34,4 +39,15 @@ test("the permission step is shown per OS", () => {
   expect(permissionStepShown("windows", status("granted", []))).toBe(false);
   expect(permissionStepShown("windows", null)).toBe(false);
   expect(permissionStepShown("linux", micDenied)).toBe(false);
+});
+
+test("system audio off says what the live recording does, in plain words", () => {
+  // TUR-136: the check that finds it runs during the recording, which goes
+  // on with the microphone; between recordings it says what the next records.
+  const live = systemAudioOffText(true);
+  expect(live).toMatch(/^System audio is off: /);
+  expect(live).toContain("in System Settings");
+  expect(live).toContain("this recording goes on with your microphone only.");
+  expect(systemAudioOffText(false)).toContain("recordings capture only your microphone.");
+  for (const text of [live, systemAudioOffText(false)]) expect(text).not.toContain("\u2014");
 });

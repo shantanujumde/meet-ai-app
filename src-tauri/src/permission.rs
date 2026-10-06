@@ -61,22 +61,11 @@ impl Status {
         self.state == State::Denied && !self.system_audio_off()
     }
 
-    /// Whether system audio, and only system audio, is denied: the
-    /// recording then starts microphone-only and the window shows the
-    /// "System audio is off" banner.
+    /// Whether system audio, and only system audio, is denied: a recording
+    /// that finds this drops its system track and goes on microphone-only
+    /// (TUR-136), and the window shows the "System audio is off" banner.
     pub fn system_audio_off(&self) -> bool {
         self.state == State::Denied && self.denied == [Pane::AudioCapture]
-    }
-
-    /// The system-audio source a recording under this answer should use:
-    /// none when system audio is denied (a tap would only deliver zeros),
-    /// otherwise the platform's default.
-    pub fn system_source(&self) -> Option<Box<dyn audio::AudioSource>> {
-        if self.system_audio_off() {
-            tracing::warn!("system audio is denied; recording the microphone only");
-            return None;
-        }
-        audio::session::default_system_source()
     }
 
     /// Why a recording was refused, naming the switch that is off.
@@ -154,16 +143,21 @@ pub fn measure() -> Status {
     )
 }
 
-/// [`measure`], then the start sound when it allows a recording (TUR-51).
-///
-/// On macOS the check's chime is the start sound, so nothing more plays.
-/// Elsewhere no check made a sound, so the same chime plays once now.
-pub fn measure_before_recording() -> Status {
-    let status = measure();
-    if !status.blocks_recording() {
-        permission_check::start_sound();
+/// The answer once a running recording has checked its system audio
+/// (TUR-136, `recording::start_check`). The microphone half is the recording
+/// itself: it is capturing, so it is allowed. `system` is
+/// [`audio::permission_check::during_recording::check`]'s verdict.
+pub fn during_recording(system: ChannelResult) -> Status {
+    #[cfg(debug_assertions)]
+    if let Some(forced) = forced_status() {
+        return forced;
     }
-    status
+
+    let mic = ChannelResult {
+        state: ChannelState::Granted,
+        detail: "the microphone is recording".into(),
+    };
+    combine(mic, system)
 }
 
 /// What can be known without making a sound: the microphone's stored decision.
@@ -172,7 +166,11 @@ pub fn measure_before_recording() -> Status {
 /// beep on every launch — TUR-24 and SPEC A7 keep the chime to setup and the
 /// start of a recording. It only ever answers `Denied` or `Unknown`: system
 /// audio has no silent answer, so a switched-off system-audio grant is caught
-/// by the next Record press, which runs [`measure`] and refuses.
+/// by the next recording's own check, which drops the system track (TUR-136).
+///
+/// It is also the only check before a recording starts (TUR-136,
+/// `recording::start_check`): instant and silent, and a stored microphone
+/// denial is the one answer that refuses a recording.
 pub fn quick() -> Status {
     #[cfg(debug_assertions)]
     if let Some(forced) = forced_status() {
@@ -419,7 +417,6 @@ mod tests {
         assert_eq!(system_only.state, State::Denied, "the screen still says so");
         assert!(system_only.system_audio_off());
         assert!(!system_only.blocks_recording());
-        assert!(system_only.system_source().is_none(), "mic-only recording");
 
         let mic_only = combine(
             reading(ChannelState::Denied),
