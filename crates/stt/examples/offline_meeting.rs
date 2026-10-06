@@ -19,10 +19,16 @@
 //!
 //! stdout is the resulting `transcript.md` path and nothing else, so it can be
 //! captured straight into a shell variable for diffing two runs.
+//!
+//! `--meeting` may be a real meeting folder (audio in `audio/`) or a flat
+//! folder with `mic.wav` beside `system.wav` and `segments.json`, like the
+//! fixtures. If `mic.wav` is in neither place the run fails with a message
+//! naming both.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use meeting_format::{Channel, layout};
 use stt::registry::{self, Preference};
 
 const USAGE: &str = "\
@@ -31,6 +37,24 @@ usage:
   offline_meeting transcribe --engine apple|whisper --meeting DIR --scratch DIR
       [--locale LOCALE] [--model-id ID]
 ";
+
+/// The folder that holds the meeting's audio: `audio/` in a real meeting, or
+/// the folder itself when it is flat.
+fn audio_source(meeting: &Path) -> Result<PathBuf, String> {
+    let mic = Channel::Mic.wav_filename();
+    let nested = layout::audio_dir(meeting);
+    if nested.join(mic).is_file() {
+        Ok(nested)
+    } else if meeting.join(mic).is_file() {
+        Ok(meeting.to_path_buf())
+    } else {
+        Err(format!(
+            "no {mic} in {} or {}",
+            meeting.display(),
+            nested.display()
+        ))
+    }
+}
 
 fn arg_value(args: &[String], flag: &str) -> Option<String> {
     args.iter()
@@ -116,8 +140,19 @@ fn run_transcribe(args: &[String]) -> ExitCode {
         eprintln!("could not create {}: {error}", scratch.display());
         return ExitCode::FAILURE;
     }
-    for name in ["mic.wav", "system.wav", "segments.json"] {
-        let from = meeting.join(name);
+    let source = match audio_source(&meeting) {
+        Ok(dir) => dir,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    for name in [
+        Channel::Mic.wav_filename(),
+        Channel::System.wav_filename(),
+        layout::SEGMENTS_FILE,
+    ] {
+        let from = source.join(name);
         if from.is_file()
             && let Err(error) = std::fs::copy(&from, scratch.join("audio").join(name))
         {
@@ -156,5 +191,39 @@ fn run_transcribe(args: &[String]) -> ExitCode {
             eprintln!("transcription failed: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn touch(path: &Path) {
+        std::fs::create_dir_all(path.parent().expect("has parent")).expect("mkdir");
+        std::fs::write(path, b"").expect("write");
+    }
+
+    #[test]
+    fn flat_folder_is_used_as_is() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        touch(&dir.path().join("mic.wav"));
+        assert_eq!(audio_source(dir.path()), Ok(dir.path().to_path_buf()));
+    }
+
+    #[test]
+    fn audio_subfolder_wins() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        touch(&dir.path().join("mic.wav"));
+        touch(&layout::audio_dir(dir.path()).join("mic.wav"));
+        assert_eq!(audio_source(dir.path()), Ok(layout::audio_dir(dir.path())));
+    }
+
+    #[test]
+    fn empty_folder_is_an_error_naming_both_places() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let error = audio_source(dir.path()).expect_err("no audio");
+        assert!(error.starts_with("no mic.wav in "), "{error}");
+        assert!(error.contains(&dir.path().display().to_string()));
+        assert!(error.contains("audio"));
     }
 }
