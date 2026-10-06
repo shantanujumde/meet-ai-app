@@ -112,19 +112,47 @@ pub fn set_crash_fallback<R: Runtime>(app: &AppHandle<R>) {
     let _ = CRASH_FALLBACK.set(dir);
 }
 
-/// Install the panic hook and the native crash handler, writing into `dir`.
+/// Set once the crash handlers are in, so a second call adds no second hook
+/// (two hooks would write every panic twice).
+static CRASH_HANDLERS: OnceLock<()> = OnceLock::new();
+
+/// Install the crash handlers at the very top of `run()`, before Tauri or the
+/// log plugin exist, so a crash during startup still leaves a crash file
+/// (TUR-125). Logs nothing: there is no logger yet.
+///
+/// Only called once onboarding is done. Before that there is no logs folder
+/// to write into, so a crash before `setup` relies on the OS crash report.
+pub fn install_early(dir: PathBuf) {
+    install_once(&CRASH_HANDLERS, || install_handlers(&dir));
+}
+
+/// Install the panic hook and the native crash handler, writing into `dir`,
+/// unless [`install_early`] already did.
 ///
 /// Called once from `setup`, after the log plugin, so the one line saying
 /// where crash files go lands in the log itself.
 pub fn install_crash_handlers(dir: PathBuf) {
-    if let Err(error) = std::fs::create_dir_all(&dir) {
+    install_once(&CRASH_HANDLERS, || install_handlers(&dir));
+    tracing::info!(dir = %dir.display(), "logs and crash files go here");
+}
+
+/// Run `install` only the first time `flag` is seen.
+fn install_once(flag: &OnceLock<()>, install: impl FnOnce()) {
+    let mut first = false;
+    flag.get_or_init(|| first = true);
+    if first {
+        install();
+    }
+}
+
+fn install_handlers(dir: &std::path::Path) {
+    if let Err(error) = std::fs::create_dir_all(dir) {
         tracing::warn!(%error, dir = %dir.display(), "could not create the logs folder");
     }
-    crash::prune(&dir, MAX_CRASH_FILES);
-    install_panic_hook(dir.clone(), || CRASH_FALLBACK.get().cloned());
+    crash::prune(dir, MAX_CRASH_FILES);
+    install_panic_hook(dir.to_path_buf(), || CRASH_FALLBACK.get().cloned());
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    platform::attach(&dir);
-    tracing::info!(dir = %dir.display(), "logs and crash files go here");
+    platform::attach(dir);
 }
 
 /// Open the logs folder in Finder (Explorer, the file manager on Linux), so

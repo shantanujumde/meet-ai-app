@@ -252,3 +252,37 @@ fn the_stack_string_refuses_to_overflow() {
     assert!(text.write_str("e").is_err());
     assert_eq!(text.as_str(), "abcd");
 }
+
+#[test]
+fn installing_twice_writes_one_crash_report_per_panic() {
+    // TUR-125: `run()` installs early and `setup` installs again; the second
+    // call must not add a second hook.
+    let _serial = PANIC_HOOK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = tempfile::tempdir().unwrap();
+    let flag = OnceLock::new();
+    for _ in 0..2 {
+        let path = dir.path().to_path_buf();
+        install_once(&flag, move || install_panic_hook(path, || None));
+    }
+
+    let joined = std::thread::Builder::new()
+        .name("tur125-forced-panic".into())
+        .spawn(|| panic!("TUR-125 forced panic"))
+        .unwrap()
+        .join();
+    drop(std::panic::take_hook());
+    assert!(joined.is_err());
+
+    let reports: usize = crash_files(dir.path())
+        .into_iter()
+        .map(|name| {
+            std::fs::read_to_string(dir.path().join(name))
+                .unwrap()
+                .matches("message: TUR-125 forced panic\n")
+                .count()
+        })
+        .sum();
+    assert_eq!(reports, 1);
+}

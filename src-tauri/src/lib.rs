@@ -75,6 +75,11 @@ pub fn run() {
     // TUR-46: where the log and crash files go this launch; `None` before
     // onboarding, which keeps them in the OS log folder.
     let logs_dir = logs::meetings_logs_dir();
+    // TUR-125: crash handlers first, so a crash before `setup` leaves a file.
+    // Before onboarding (`None`) such a crash only gets the OS crash report.
+    if let Some(dir) = logs_dir.clone() {
+        logs::install_early(dir);
+    }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
