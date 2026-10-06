@@ -569,6 +569,12 @@ The calendar itself was already safe: it writes a title only while the meeting i
 
 **The search index follows every title at once.** The notes run's writes are the app's own, so the folder watcher skips them (§4), and the index (§3.6) kept the old title until the next rescan; the pre-meeting brief, which finds past meetings by title, missed them. The app now refreshes that one meeting in the index right after each of its three title writers (the agent, the calendar and a rename) has written `meeting.md`.
 
+### A22 — 2026-10-06 · Meeting reminders show as a compact card window on every OS, macOS included (amends the TUR-27/TUR-78 notification-plus-banner flow and TUR-59's popup; TUR-108)
+
+A calendar reminder now shows as a small card window of meet-ai's own, top-right of the primary monitor's work area (on macOS just under the menu bar), on macOS as well as Windows and Linux: a thin accent bar (no calendar colour is stored), the meeting's title over its time range ("9:00 AM to 9:30 AM"), and one split button. The main part is **Join Meet & record** (Zoom, Teams, or plain **Join** for another service, from `calendar::join_url::join_service`) when the event has a safe meeting link, **Record** when it has none; its chevron opens a native menu with Join only, Record only, Open brief and Dismiss. The window is 380×72 logical px, transparent around a rounded card, always on top, with no focus taken and no Dock or taskbar entry. Detection prompts use the same card on Windows and Linux (the reason as its title, **Record**, Dismiss in the menu); on macOS they keep the notification and in-window banner. `detection::popup::uses_popup` is the one switch.
+
+Unchanged: nothing records without a click (L15), one card at a time, it hides itself after `popup::AUTO_HIDE`, it closes when a recording starts some other way, and the OS notification is the fallback whenever the card window cannot be shown.
+
 ### A21 — 2026-10-05 · Updater keypair replaced before any build turned the updater on (amends §8.1's Updater keypair row; TUR-66)
 
 The private key that pairs with the original `pubkey` (key id 535773229A5E9BB3) could not be recovered from where it was filed, and the only key on the build Mac (D9B1DD52775015B0) never matched it. A new keypair (key id D339CC2690805357) replaces it: its public key is now in `src-tauri/tauri.conf.json`, and its private key and password live in the repo secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` plus the owner's password manager, never the repo.

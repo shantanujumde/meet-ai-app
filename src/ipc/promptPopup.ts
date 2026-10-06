@@ -1,5 +1,5 @@
 /**
- * The prompt popup window's IPC (TUR-59, Windows and Linux): its prompt, its
+ * The prompt card window's IPC (TUR-59, TUR-108): its prompt, its
  * answers, and the event that brings a new prompt. Its own file so
  * `client.ts` stays under the size limit; same rules as there: without a
  * backend, reads return nothing and writes reject with `no-backend`.

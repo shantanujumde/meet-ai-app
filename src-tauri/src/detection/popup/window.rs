@@ -1,5 +1,9 @@
 //! The popup's Tauri window: made once, then shown and hidden (TUR-59).
 //!
+//! The work area is the monitor less the taskbar, the Dock and, on macOS,
+//! the menu bar (`NSScreen.visibleFrame` in tauri-runtime-wry), so the card
+//! sits just under the menu bar there, as a reminder should (TUR-108).
+//!
 //! On Wayland a client cannot place its own window or keep it on top without
 //! layer-shell, so there the compositor decides where it goes (see
 //! docs/manual-checks/worktree-tur59.md). Nothing here needs a library the
@@ -12,9 +16,9 @@ use tauri::{
 
 /// The popup window's label; `capabilities/prompt.json` names it.
 pub const LABEL: &str = "prompt";
-/// Its size, in logical pixels.
-pub const WIDTH: f64 = 360.0;
-pub const HEIGHT: f64 = 132.0;
+/// Its size, in logical pixels: the compact card (TUR-108).
+pub const WIDTH: f64 = 380.0;
+pub const HEIGHT: f64 = 72.0;
 /// Its gap from the work area's top and right edges, in logical pixels.
 pub const MARGIN: f64 = 16.0;
 
@@ -67,6 +71,10 @@ fn build(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .maximizable(false)
         .minimizable(false)
         .decorations(false)
+        // TUR-108: only the rounded card paints; its corners show what is
+        // behind the window. Whether each OS honours this is a manual check.
+        .transparent(true)
+        .shadow(super::platform::SHADOW)
         .always_on_top(true)
         .skip_taskbar(true)
         .focused(false)

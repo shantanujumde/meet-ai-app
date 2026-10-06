@@ -9,7 +9,7 @@ import { applyOsAttribute } from "./lib/osAttribute";
 import { watchAppearance } from "./state/appearance";
 import { PromptPopup } from "./ui/PromptPopup";
 
-/** TUR-59: the "Record this meeting?" popup window (Windows, Linux) gets only its prompt. */
+/** TUR-59, TUR-108: the "Record this meeting?" card window gets only its prompt. */
 const PROMPT_WINDOW = "prompt";
 
 function windowLabel(): string | null {

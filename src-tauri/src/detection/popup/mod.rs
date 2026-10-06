@@ -1,16 +1,19 @@
-//! The "Record this meeting?" popup window (TUR-59).
+//! The "Record this meeting?" card window (TUR-59, restyled in TUR-108).
 //!
 //! The notification plugin's action buttons work on mobile only, and on
 //! Windows a toast from an app without an installed AppUserModelID is signed
-//! "PowerShell". So on Windows and Linux a prompt shows in a small window of
-//! our own: always on top, no taskbar entry, no focus taken, top-right of the
-//! primary monitor's work area ([`window`]). It holds the reason and
-//! **Record** / **Dismiss** (and **Join and record** / **Join** for a
-//! reminder with a meeting link, as TUR-78's banner), and hides itself after
+//! "PowerShell". So a prompt shows in a small window of our own: always on
+//! top, no taskbar entry, no focus taken, transparent around a rounded card,
+//! top-right of the primary monitor's work area (under the macOS menu bar;
+//! [`window`]). The card holds the meeting's title and time (or the reason,
+//! for a detection prompt) and one split button: **Join Meet & record** for
+//! a reminder with a meeting link, **Record** otherwise, and a chevron menu
+//! with Join only, Record only, Open brief and Dismiss. It hides itself after
 //! [`AUTO_HIDE`].
 //!
-//! Whether a platform uses it is decided in one place, [`platform::USE_POPUP`]:
-//! macOS keeps its notification and in-window banner unchanged.
+//! Which prompts use it is decided in one place, [`uses_popup`]: a reminder
+//! on every OS, a detection prompt only where [`platform`] says (not macOS,
+//! which keeps its notification and in-window banner for those).
 //!
 //! One popup at a time ([`Slot`]): a new prompt replaces the one on screen,
 //! and every prompt has its own id, so a click or a timer for an older one does
@@ -21,12 +24,14 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
+use detect::Signal;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter as _, Manager as _};
 
 use super::notify::Prompt;
 use crate::error::UiError;
 use crate::events::PROMPT_POPUP_EVENT;
+use crate::lifecycle::NavigateTo;
 use crate::lock::lock_or_recover;
 
 mod platform;
@@ -54,6 +59,8 @@ pub enum PopupAnswer {
     Record,
     JoinAndRecord,
     Join,
+    // The chevron menu's **Open brief** (TUR-108).
+    OpenBrief,
     Dismiss,
 }
 
@@ -70,6 +77,9 @@ pub enum Action {
     },
     /// Open the reminded meeting's link; the popup stays up.
     Join { event_id: String },
+    /// Bring the main window forward on the brief for the meeting called
+    /// `title`; record nothing.
+    OpenBrief { title: String },
 }
 
 /// The one prompt on screen, if any.
@@ -152,6 +162,12 @@ pub fn action_for(prompt: &Prompt, answer: PopupAnswer) -> Action {
             _ => Action::Nothing,
         },
         PopupAnswer::JoinAndRecord => Action::Nothing,
+        PopupAnswer::OpenBrief => match (&prompt.signal, &prompt.title) {
+            (Signal::Calendar { .. }, Some(title)) => Action::OpenBrief {
+                title: title.clone(),
+            },
+            _ => Action::Nothing,
+        },
     }
 }
 
@@ -165,9 +181,20 @@ impl PromptPopup {
     }
 }
 
-/// Does this platform show prompts in the popup? The one switch.
-pub fn enabled() -> bool {
-    platform::USE_POPUP
+/// Does the card show `signal`'s prompt on this platform? A calendar
+/// reminder always does (TUR-108); a detection prompt only where
+/// [`platform::DETECTION_IN_POPUP`] says so.
+pub fn uses_popup(signal: &Signal) -> bool {
+    popup_for(signal, platform::DETECTION_IN_POPUP)
+}
+
+/// [`uses_popup`] with the platform's switch passed in, so every OS's
+/// answer is tested on every OS.
+pub fn popup_for(signal: &Signal, detection_in_popup: bool) -> bool {
+    match signal {
+        Signal::Calendar { .. } => true,
+        Signal::Process { .. } | Signal::AudioActivity => detection_in_popup,
+    }
 }
 
 /// Show `prompt` in the popup. `true` when the popup took it (shown, or an
@@ -242,6 +269,10 @@ pub async fn answer_prompt_popup(
 async fn run(app: &AppHandle, action: Action) -> Result<(), UiError> {
     match action {
         Action::Nothing => Ok(()),
+        Action::OpenBrief { title } => {
+            crate::lifecycle::navigate(app, NavigateTo::Brief { title });
+            Ok(())
+        }
         Action::Join { event_id } => {
             super::actions::join_reminded_meeting(app.clone(), event_id).await
         }
