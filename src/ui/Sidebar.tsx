@@ -175,7 +175,7 @@ function SidebarGroup({
         onClick={() => setOpen((was) => !was)}
         className={cn(
           "flex cursor-default items-center gap-2 border-0 bg-transparent px-2 py-1 text-left",
-          "text-caption1 font-semibold text-fg-secondary",
+          "text-footnote font-semibold text-fg-secondary",
         )}
       >
         <Icon

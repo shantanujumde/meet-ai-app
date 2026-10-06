@@ -16,7 +16,7 @@ use crate::{Error, MEETING_FILE, folder, ticket};
 /// a deleted top ticket does not come back under its old name. A writer that
 /// numbers tickets for the whole root, such as a hand-made ticket, takes the
 /// larger of this and [`super::highest_ticket_number`], under
-/// [`super::lock_ticket_numbers`], to keep the same rule.
+/// [`super::lock_meeting_writers`], to keep the same rule.
 ///
 /// A `meeting.md` that cannot be read is logged and skipped, as an unlistable
 /// `tickets/` is in [`super::highest_ticket_number`].

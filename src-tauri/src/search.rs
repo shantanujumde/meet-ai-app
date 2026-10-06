@@ -8,6 +8,12 @@
 //! The index is opened lazily, on the first search or the first folder change
 //! the watcher reports, and also once at launch ([`SearchIndex::warm`]) so the
 //! first search is not the one that pays for a full rescan.
+//!
+//! The watcher skips the app's own writes, so code that changes a meeting's
+//! `meeting.md` itself calls [`meeting_written`] (TUR-107): the agent's notes
+//! and title, the calendar's title and a rename. Otherwise the pre-meeting
+//! brief, which finds past meetings by title, would not know the new name
+//! until the next rescan.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -44,6 +50,19 @@ impl SearchIndex {
         });
         if let Err(error) = result {
             tracing::warn!(message = %error.message, "could not update the search index");
+        }
+    }
+
+    /// Re-read one meeting that the app just wrote, whatever the watcher
+    /// makes of it. See [`meeting_written`].
+    pub fn refresh_meeting(&self, meeting_id: &str) {
+        let result = self.with_index(|root, index| {
+            index
+                .refresh_meeting(root, meeting_id)
+                .map_err(|error| UiError::app("search-index", error.to_string()))
+        });
+        if let Err(error) = result {
+            tracing::warn!(meeting_id, message = %error.message, "could not update the search index");
         }
     }
 
@@ -104,6 +123,15 @@ impl SearchIndex {
 /// The app's [`SearchIndex`], from managed state.
 pub fn state(app: &AppHandle) -> tauri::State<'_, SearchIndex> {
     app.state::<SearchIndex>()
+}
+
+/// The app just wrote meeting `meeting_id`'s `meeting.md` (TUR-107): bring its
+/// row in the index up to date now. Call it after the write, outside any lock
+/// on the meeting. Does nothing when the index is not managed (unit tests).
+pub fn meeting_written(app: &AppHandle, meeting_id: &str) {
+    if let Some(index) = app.try_state::<SearchIndex>() {
+        index.refresh_meeting(meeting_id);
+    }
 }
 
 /// Search every meeting's transcript, notes, summary and tickets.

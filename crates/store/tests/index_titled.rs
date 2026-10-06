@@ -56,3 +56,55 @@ fn same_title_any_case_newest_first_and_nothing_else() {
     assert!(index.meetings_titled("Standup").unwrap().is_empty());
     assert!(index.meetings_titled("   ").unwrap().is_empty());
 }
+
+/// TUR-107: the app's own `meeting.md` writes are skipped by the watcher, so
+/// the app refreshes the meeting in the index itself. A rename, the calendar
+/// and the agent all go through this.
+#[test]
+fn a_refreshed_meeting_is_found_under_its_new_title() {
+    let root = tempfile::tempdir().unwrap();
+    let id = "2026-10-05-1000-meeting";
+    meeting(root.path(), id, "Meeting", "2026-10-05T10:00:00+05:30");
+    let mut index = Index::open(root.path()).unwrap();
+
+    store::meeting_title::set_by_user(root.path(), id, "Platform Standup").unwrap();
+    assert!(
+        index
+            .meetings_titled("Platform Standup")
+            .unwrap()
+            .is_empty(),
+        "nothing has told the index yet"
+    );
+
+    index.refresh_meeting(root.path(), id).unwrap();
+    let found = index.meetings_titled("Platform Standup").unwrap();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].id, id);
+    assert!(index.meetings_titled("Meeting").unwrap().is_empty());
+    let hits = index.search("platform").unwrap();
+    assert!(hits.iter().any(|hit| hit.meeting_id == id), "{hits:?}");
+}
+
+#[test]
+fn refreshing_a_deleted_meeting_drops_it_and_a_bad_id_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let id = "2026-10-05-1000-meeting";
+    meeting(
+        root.path(),
+        id,
+        "Platform Standup",
+        "2026-10-05T10:00:00+05:30",
+    );
+    let mut index = Index::open(root.path()).unwrap();
+
+    fs::remove_dir_all(root.path().join(id)).unwrap();
+    index.refresh_meeting(root.path(), id).unwrap();
+    assert!(
+        index
+            .meetings_titled("Platform Standup")
+            .unwrap()
+            .is_empty()
+    );
+
+    assert!(index.refresh_meeting(root.path(), "../escape").is_err());
+}

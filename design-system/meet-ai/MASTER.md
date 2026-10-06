@@ -189,8 +189,8 @@ Contrast, and on Windows and Linux, where no material sits behind it.
 
 - Width `--sidebar-w` (240px), padding `--sidebar-pad`
 - A rounded find box at the top (capsule, `--surface-control`, search icon)
-- Pages grouped under small grey headings (11px semibold, secondary) that fold
-  shut: a button with a chevron and `aria-expanded`
+- Pages grouped under small grey headings (12px `--text-footnote`, semibold,
+  secondary) that fold shut: a button with a chevron and `aria-expanded`
 - Every row is a 16px accent line icon (`--accent-text`) and a name. Height
   `--sidebar-row-h` (30px), radius `--sidebar-row-radius`, hover
   `--sidebar-row-hover`

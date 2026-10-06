@@ -10,7 +10,8 @@
 //! * `title` is set only while the meeting still has its default title, the
 //!   one [`Meeting::new`] gives a fresh file (the folder name). A title the
 //!   user typed is never replaced. When it is set, `title_source: calendar`
-//!   goes with it, so the agent's suggestion may replace it later
+//!   and its `title_hash` go with it, so the agent's suggestion may replace
+//!   it later, unless someone edits it in `meeting.md` first
 //!   ([`crate::meeting_title`]).
 //! * `attendees` is set only when the file names nobody yet.
 //! * `calendar_event_id` is set only when the file has none.
@@ -19,8 +20,10 @@
 //! it, so nothing that already points at it breaks.
 //!
 //! The write is not recorded as this process's own ([`crate::watcher`]): the
-//! watcher is meant to see it, so the meeting list and the search index pick
-//! up the new title and attendees while the recording is still going.
+//! watcher is meant to see it, so the meeting list picks up the new title and
+//! attendees while the recording is still going. The app refreshes the
+//! meeting in the search index itself as well
+//! ([`crate::index::Index::refresh_meeting`], TUR-107).
 
 use std::io;
 use std::path::Path;
@@ -28,7 +31,7 @@ use std::path::Path;
 use meeting_format::meeting_md::{ATTENDEES, CALENDAR_EVENT_ID};
 use yaml_rust2::Yaml;
 
-use crate::agent_notes::{default_title, lock_ticket_numbers};
+use crate::agent_notes::{default_title, lock_meeting_writers};
 use crate::folder::meeting_dir;
 use crate::meeting::Meeting;
 use crate::meeting_title::{self, TitleSource, is_untitled};
@@ -68,7 +71,7 @@ impl Applied {
 /// sections empty) when the meeting has none yet, which is the normal case
 /// for a recording that has just started.
 ///
-/// Holds [`lock_ticket_numbers`] for the whole read and write, so it cannot
+/// Holds [`lock_meeting_writers`] for the whole read and write, so it cannot
 /// land in the middle of a notes run or the notes switch writing the same
 /// file.
 ///
@@ -81,7 +84,7 @@ impl Applied {
 ///   is left as it was.
 /// * [`Error::Io`] when the file cannot be read or written.
 pub fn apply(root: &Path, meeting_id: &str, event: &FromCalendar<'_>) -> Result<Applied, Error> {
-    let _writers = lock_ticket_numbers();
+    let _writers = lock_meeting_writers();
 
     let dir = meeting_dir(root, meeting_id)?;
     if !dir.is_dir() {
@@ -128,7 +131,7 @@ pub fn apply(root: &Path, meeting_id: &str, event: &FromCalendar<'_>) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use meeting_format::meeting_md::TITLE_SOURCE;
+    use meeting_format::meeting_md::{TITLE, TITLE_HASH, TITLE_SOURCE};
 
     use super::*;
 
@@ -172,6 +175,10 @@ mod tests {
             meeting.frontmatter.get_str(TITLE_SOURCE).as_deref(),
             Some("calendar")
         );
+        assert_eq!(
+            meeting.frontmatter.get_str(TITLE_HASH),
+            Some(meeting_title::title_hash("Platform Standup"))
+        );
         assert_eq!(meeting.attendees(), names);
         assert_eq!(
             meeting.frontmatter.get_str(CALENDAR_EVENT_ID).as_deref(),
@@ -195,6 +202,27 @@ mod tests {
         let meeting = read(root.path());
         assert_eq!(meeting.title().as_deref(), Some("Budget review"));
         assert_eq!(meeting.frontmatter.get_str(TITLE_SOURCE), None);
+    }
+
+    /// TUR-107: a calendar title edited in `meeting.md` is the user's now.
+    #[test]
+    fn a_calendar_title_edited_by_hand_is_kept() {
+        let root = root_with_meeting();
+        let path = root.path().join(ID).join(MEETING_FILE);
+        apply(root.path(), ID, &standup(&[])).unwrap();
+        let mut edited = read(root.path());
+        edited.frontmatter.set_str(TITLE, Some("Budget review"));
+        edited.write(&path).unwrap();
+
+        let other = FromCalendar {
+            event_id: "EVT-2",
+            title: "Design review",
+            attendees: &[],
+        };
+        assert!(!apply(root.path(), ID, &other).unwrap().title);
+        let meeting = read(root.path());
+        assert_eq!(meeting.title().as_deref(), Some("Budget review"));
+        assert!(!meeting_title::written_by_app(&meeting));
     }
 
     #[test]

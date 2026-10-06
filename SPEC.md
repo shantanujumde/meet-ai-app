@@ -259,6 +259,7 @@ One silent fix-up runs at launch, before the record shortcut exists: a WAV whose
 id: 2026-09-01-1430-standup
 title: Platform Standup
 title_source: calendar                   # optional; who wrote the title: calendar | agent | user (A20)
+title_hash: 06d2abde48536429             # with a calendar or agent title: hash of it as written; a title that differs was edited by hand (A22)
 date: 2026-09-01T14:30:00+05:30
 duration_sec: 2714
 attendees: [Shantanu, Priya, Dev]        # from EventKit when available
@@ -555,6 +556,18 @@ A16's auto-detect asked whisper to guess the language of every utterance on its 
 - **Loops are cut** (`crates/stt/src/whisper_text.rs`, now also home to the layer-3 phrase list). A word repeated 4 times in a row, or a phrase of 2 to 10 words repeated 3 times, is kept once, along with a cut-off last copy. Told Hindi or Marathi, whisper looped on about one line in ten.
 
 Measured on the Marathi call: large-v3-turbo never put Marathi in its top four guesses, even for 10-second sentences (it said English or Hindi), and large-v3 did only sometimes. So auto cannot find Marathi, and picking it is the fix. Told `mr`, both models write Devanagari Marathi, rough and with Hindi mixed in. The §3.5 example's `"language": "en"` is now `"auto"`, since a file copied from it would force English onto a multilingual model.
+
+### A22 — 2026-10-05 · A meeting title edited by hand counts as the user's; meeting.md gains title_hash (amends A20; TUR-107)
+
+A20 trusted `title_source` alone. Someone who edited `title` in `meeting.md` by hand and left `title_source: calendar` or `agent` lost the edit to the next notes run, which replaces calendar and agent titles.
+
+**Change:** whenever the calendar or the agent writes a title, it also writes `title_hash`: the first 16 hex digits of the SHA-256 of the title exactly as written. A calendar or agent title counts as the app's only while it still matches that hash; any other title is the user's and nothing replaces it, the same as a rename. A user's rename writes no `title_hash` and removes an old one. The hash is in the file rather than a copy of the title so a person editing `meeting.md` has one title to change, not two that must agree. Editing the title back to exactly what the app wrote makes it the app's again, which is harmless.
+
+**Files from A20** (TUR-103) have `title_source: calendar` or `agent` and no `title_hash`. An untouched title cannot be told from an edited one there, so the app takes the safe side and keeps it: the agent replaces it only while it is still untitled (blank or the folder-name default). The cost is that a meeting named by the calendar before this change keeps the calendar's name instead of taking the agent's; renaming it from its page is still one click.
+
+The calendar itself was already safe: it writes a title only while the meeting is untitled.
+
+**The search index follows every title at once.** The notes run's writes are the app's own, so the folder watcher skips them (§4), and the index (§3.6) kept the old title until the next rescan; the pre-meeting brief, which finds past meetings by title, missed them. The app now refreshes that one meeting in the index right after each of its three title writers (the agent, the calendar and a rename) has written `meeting.md`.
 
 ### A21 — 2026-10-05 · Updater keypair replaced before any build turned the updater on (amends §8.1's Updater keypair row; TUR-66)
 
