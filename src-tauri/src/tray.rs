@@ -30,6 +30,7 @@ pub use today::{redraw_soon, reread_soon};
 
 pub use icons::TrayOs;
 use icons::{TrayArt, pick};
+pub use menu_model::Clock;
 
 /// Every menu-bar item's id starts with this, `today.rs`'s too. Menu events
 /// reach every handler, so the app menu's own items (`app-quit`, Edit's
@@ -65,6 +66,7 @@ fn build(app: &AppHandle) -> tauri::Result<()> {
         &chrono::Local::now(),
         0,
         false,
+        crate::platform::clock(),
     );
     let menu = today::menu(app, &first, &fixed)?;
 

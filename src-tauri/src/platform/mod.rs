@@ -5,8 +5,8 @@
 //! desktop-vs-mobile plugin gates in `lib.rs` and `notify.rs` are not OS
 //! ports and stay where they are.
 //!
-//! Small enough today to be this one file. When a port needs more, it becomes
-//! `macos.rs` / `windows.rs` / `linux.rs` beside it, the way the crates do it.
+//! OS calls that need more than a few lines live in `macos.rs` /
+//! `windows.rs` beside it, the way the crates do it.
 //!
 //! TUR-76 added the app-lifecycle seams: the macOS Dock icon, the macOS app
 //! menu's Quit, the Dock-click reopen event, and whether there is a tray to
@@ -20,6 +20,8 @@ use stt::SttEngine;
 
 use tauri::{AppHandle, RunEvent};
 
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
 
@@ -45,6 +47,24 @@ pub fn taskbar_is_light() -> bool {
     #[cfg(not(windows))]
     {
         false
+    }
+}
+
+/// The system's 12/24-hour clock, for the tray's Today times (TUR-129).
+/// Read on every redraw, so a change in Settings shows within a minute.
+/// Linux has no one setting every desktop shares: 24-hour there.
+pub fn clock() -> crate::tray::Clock {
+    #[cfg(target_os = "macos")]
+    {
+        macos::clock()
+    }
+    #[cfg(windows)]
+    {
+        windows::clock()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        crate::tray::Clock::H24
     }
 }
 

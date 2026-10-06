@@ -3668,6 +3668,7 @@ dependencies = [
  "meeting-format",
  "modelfetch",
  "oauth2",
+ "objc2-foundation",
  "prompts",
  "reqwest 0.12.28",
  "serde",

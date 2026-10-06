@@ -15,3 +15,17 @@ pub fn taskbar_is_light() -> bool {
         .map(|light| light != 0)
         .unwrap_or(false)
 }
+
+/// The user's 12/24-hour clock (TUR-129): the `sShortTime` pattern under
+/// `HKCU\\Control Panel\\International`, like `HH:mm` or `h:mm tt`. A missing
+/// value means 24-hour. Verify on a real Windows machine (manual checks).
+pub fn clock() -> crate::tray::Clock {
+    use winreg::RegKey;
+    use winreg::enums::HKEY_CURRENT_USER;
+
+    RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Control Panel\\International")
+        .and_then(|key| key.get_value::<String, _>("sShortTime"))
+        .map(|pattern| crate::tray::Clock::from_windows_short_time(&pattern))
+        .unwrap_or(crate::tray::Clock::H24)
+}
