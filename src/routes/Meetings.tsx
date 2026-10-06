@@ -126,7 +126,7 @@ export function Meetings() {
             <button
               key={meeting.id}
               type="button"
-              className={cn(rowVariants({ divided: false }), "w-full")}
+              className={cn(rowVariants({ divided: false }), "w-full text-start")}
               onClick={() => navigate(meetingPath(meeting.id))}
             >
               <RowLabel
