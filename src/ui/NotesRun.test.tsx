@@ -87,6 +87,18 @@ async function loaded() {
 }
 
 describe("NotesRun", () => {
+  test("waiting for the transcript: says Finishing the transcript… with no button (TUR-133)", async () => {
+    given({ state: "waiting-for-transcript" });
+    renderRun({ withSwitch: true });
+
+    expect(await screen.findByText("Finishing the transcript…")).toBeTruthy();
+    const card = screen.getByText("Notes start on their own once the last lines are written.");
+    expect(screen.getAllByRole("status").some((s) => s.contains(card))).toBe(true);
+    expect(screen.queryByRole("button", { name: "Make notes now" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Write notes" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  });
+
   test("running: says Writing notes… and Cancel cancels this meeting's run", async () => {
     given({ state: "running" });
     renderRun();

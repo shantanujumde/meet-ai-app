@@ -116,6 +116,12 @@ impl AgentRuns {
     /// Ignored while a run is going for that meeting, and once the app is
     /// quitting.
     pub fn fail(&self, meeting_id: &str, failure: Failure, sink: &dyn Sink) {
+        self.set_unless_running(meeting_id, State::Failed { failure }, sink);
+    }
+
+    /// Record `state` for `meeting_id` and tell the sink, unless a run is
+    /// going for that meeting or the app is quitting.
+    fn set_unless_running(&self, meeting_id: &str, state: State, sink: &dyn Sink) {
         let mut inner = self.shared.lock();
         let busy = inner
             .runs
@@ -124,7 +130,6 @@ impl AgentRuns {
         if inner.closed || busy {
             return;
         }
-        let state = State::Failed { failure };
         inner.runs.insert(
             meeting_id.to_owned(),
             Entry {
@@ -136,6 +141,29 @@ impl AgentRuns {
             meeting_id: meeting_id.to_owned(),
             state,
         });
+    }
+
+    /// Stop has been pressed and `meeting_id`'s transcript is still being
+    /// written: say so, so the meeting view shows *Finishing the
+    /// transcript…* until the run starts or fails. Ignored while a run is
+    /// going for that meeting, and once the app is quitting.
+    pub fn wait_for_transcript(&self, meeting_id: &str, sink: &dyn Sink) {
+        self.set_unless_running(meeting_id, State::WaitingForTranscript, sink);
+    }
+
+    /// The wait for the transcript ended with no run to follow (notes were
+    /// switched off, say): back to idle, but only if still waiting.
+    pub fn stop_waiting(&self, meeting_id: &str, sink: &dyn Sink) {
+        let mut inner = self.shared.lock();
+        let waiting = inner
+            .runs
+            .get(meeting_id)
+            .is_some_and(|entry| entry.state == State::WaitingForTranscript);
+        if inner.closed || !waiting {
+            return;
+        }
+        inner.runs.remove(meeting_id);
+        sink.status(&status_in(&inner, meeting_id));
     }
 
     /// Cancel `meeting_id`'s run, if one is going. The run then ends as

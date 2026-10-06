@@ -192,7 +192,7 @@ impl Recorded {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if let Some(last) = self.states().last()
-                && *last != State::Running
+                && !matches!(last, State::Running | State::WaitingForTranscript)
             {
                 return last.clone();
             }
@@ -804,7 +804,9 @@ fn a_slow_transcript_save_makes_the_run_wait_for_the_last_line() {
         STANDUP,
         &auto_run_on(),
         |_| {
-            // The engine is still saving: its last line lands, then it is done.
+            // The engine is still saving: the view says so meanwhile.
+            assert_eq!(runs.status(STANDUP).state, State::WaitingForTranscript);
+            // Its last line lands, then it is done.
             std::thread::sleep(Duration::from_millis(200));
             let mut text = fs::read_to_string(&transcript).unwrap();
             text.push_str(last_line);
@@ -833,6 +835,12 @@ fn a_slow_transcript_save_makes_the_run_wait_for_the_last_line() {
         "the run started before the last line: {seen}"
     );
     assert_eq!(sink.wait_for_end(), State::Done { tasks: 2 });
+    let states = sink.states();
+    assert_eq!(
+        states[..2],
+        [State::WaitingForTranscript, State::Running],
+        "{states:?}"
+    );
 }
 
 #[test]
@@ -862,13 +870,18 @@ fn a_transcript_that_never_becomes_final_starts_no_run_and_offers_retry() {
         "no run on half a transcript"
     );
     let states = sink.states();
-    assert_eq!(states.len(), 1, "one status, no Writing notes…: {states:?}");
-    assert!(failed(FailureKind::CouldNotStart)(&states[0]), "{states:?}");
-    let State::Failed { failure } = &states[0] else {
+    assert_eq!(
+        states.len(),
+        2,
+        "waiting, then failed, no Writing notes…: {states:?}"
+    );
+    assert_eq!(states[0], State::WaitingForTranscript);
+    assert!(failed(FailureKind::CouldNotStart)(&states[1]), "{states:?}");
+    let State::Failed { failure } = &states[1] else {
         unreachable!()
     };
     assert!(failure.message.contains("Retry"), "{}", failure.message);
-    assert_eq!(runs.status(STANDUP).state, states[0]);
+    assert_eq!(runs.status(STANDUP).state, states[1]);
     assert_eq!(snapshot(&dir), before, "nothing written");
 
     // Retry, once the transcript is there, runs as usual.
@@ -927,7 +940,12 @@ fn notes_switched_off_while_the_transcript_saves_creates_no_run() {
     );
 
     assert!(!started.load(Ordering::SeqCst));
-    assert!(sink.states().is_empty(), "not even the not-final failure");
+    assert_eq!(
+        sink.states(),
+        [State::WaitingForTranscript, State::Idle],
+        "back to idle, not even the not-final failure"
+    );
+    assert_eq!(runs.status(STANDUP).state, State::Idle);
 }
 
 #[test]

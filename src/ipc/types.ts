@@ -428,6 +428,8 @@ export type NotesRunFailure = {
  */
 export type NotesRunState =
   | { state: "idle" }
+  /** Stop was pressed; the last transcript lines are still being written. */
+  | { state: "waiting-for-transcript" }
   | { state: "running" }
   /** `tasks` is how many tickets were written. */
   | { state: "done"; tasks: number }

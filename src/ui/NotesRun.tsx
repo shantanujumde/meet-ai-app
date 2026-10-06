@@ -3,6 +3,7 @@
  * (TUR-10).
  *
  * Rust starts the run on its own when a recording stops. This shows, in turn:
+ * *Finishing the transcript…* while its last lines are written (TUR-133);
  * *Writing notes…* with Cancel; then either the notes, or why there are none
  * in plain words with Retry. A meeting with no run since launch (the app was
  * quit mid-run, say) shows what is on disk, and offers to start one when
@@ -165,6 +166,18 @@ function runPanel({
   cancel: () => void;
 }): ReactNode {
   switch (state.state) {
+    case "waiting-for-transcript":
+      return (
+        <RunCard
+          status={
+            <span className="checking">
+              <span className="checking__dot" aria-hidden="true" />
+              Finishing the transcript…
+            </span>
+          }
+          body="Notes start on their own once the last lines are written."
+        />
+      );
     case "running":
       return (
         <RunCard
