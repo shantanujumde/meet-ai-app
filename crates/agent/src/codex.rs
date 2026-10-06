@@ -56,9 +56,23 @@ const MODELS_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Codex features a sync run turns off (`--disable <feature>`): ChatGPT
 /// connectors ("apps") and plugins, which bring tools of their own that are
-/// not in the MCP server list. A tracker reachable only through a plugin is
-/// therefore "not synced".
-const SYNC_FEATURES_OFF: [&str; 2] = ["apps", "plugins"];
+/// not in the MCP server list, and Codex's built-in tools (shell, image,
+/// sub-agents, browser, computer use). A tracker reachable only through a
+/// plugin is therefore "not synced". `unified_exec` stays on even with
+/// `--disable`, so it is not listed.
+const SYNC_FEATURES_OFF: [&str; 8] = [
+    "apps",
+    "plugins",
+    "shell_tool",
+    "image_generation",
+    "view_image",
+    "multi_agent",
+    "browser_use",
+    "computer_use",
+];
+
+/// The `-c` setting that keeps the skills list out of a sync run's prompt.
+const SKILLS_OFF_SETTING: &str = "skills.include_instructions=false";
 
 /// Runs the user's Codex CLI.
 #[derive(Debug, Clone, Default)]
@@ -115,6 +129,8 @@ impl CodexHarness {
             args.push("-c".into());
             args.push(setting.into());
         }
+        args.push("-c".into());
+        args.push(SKILLS_OFF_SETTING.into());
         Ok(args)
     }
 
@@ -548,11 +564,17 @@ mod tests {
     }
 
     #[test]
-    fn a_sync_run_turns_off_connectors_and_plugins() {
-        assert_eq!(
-            disabled_features(),
-            ["--disable", "apps", "--disable", "plugins"].map(OsString::from)
-        );
+    fn a_sync_run_turns_off_connectors_plugins_and_built_in_tools() {
+        let args = disabled_features();
+        assert_eq!(args.len(), 2 * SYNC_FEATURES_OFF.len());
+        for feature in SYNC_FEATURES_OFF {
+            assert!(
+                args.windows(2)
+                    .any(|w| w[0] == "--disable" && w[1] == feature),
+                "{feature}"
+            );
+        }
+        assert!(!args.iter().any(|a| a == "unified_exec"));
     }
 
     #[test]
