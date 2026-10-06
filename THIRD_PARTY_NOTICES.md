@@ -447,6 +447,47 @@ shows the same credit (`stt::model::parakeet::CREDIT`).
   `decoder_joint-model.int8.onnx` and `vocab.txt`, pinned by SHA-256 in
   `crates/stt/src/model/parakeet.rs`. meet-ai does not change them.
 
+## ONNX Runtime
+
+- URL: https://github.com/microsoft/onnxruntime
+- Licence: MIT
+- Copyright: Copyright (c) Microsoft Corporation
+- Commit: 0d68ff6b3b72b04aac578decd6c4c45d322bb962 (the `v1.28.3` tag; the
+  binary is Microsoft's official CPU release build of it)
+- Files:
+  - `onnxruntime.dll` (x64, CPU build, no DirectML), unmodified, next to
+    `meet-ai.exe` in the Windows installer (`bundle.resources` in
+    `src-tauri/tauri.windows.conf.json`), from
+    `onnxruntime-win-x64-1.28.3/lib/onnxruntime.dll` in
+    https://github.com/microsoft/onnxruntime/releases/download/v1.28.3/onnxruntime-win-x64-1.28.3.zip
+    (SHA-256 pinned in check.yml and release.yml) (TUR-104). Not in the
+    repository. macOS and Linux link ONNX Runtime 1.28.0 statically
+    through ort-sys's `download-binaries`; same project, same licence.
+
+```
+MIT License
+
+Copyright (c) Microsoft Corporation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Vulkan Loader
 
 - URL: https://github.com/KhronosGroup/Vulkan-Loader

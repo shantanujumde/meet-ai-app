@@ -24,8 +24,9 @@ pub struct ParakeetModelView {
     #[specta(type = specta_typescript::Number)]
     pub bytes: u64,
     pub installed: bool,
-    /// ONNX Runtime is here to run it. False on a Windows build without
-    /// `onnxruntime.dll`, where a download would not help, so none is offered.
+    /// ONNX Runtime is here to run it. The Windows installer ships
+    /// `onnxruntime.dll` (TUR-104); false only if that file is missing, where
+    /// a download would not help, so none is offered.
     pub runtime_ready: bool,
     /// English names, in the model card's order, for the (i) button.
     pub languages: Vec<&'static str>,

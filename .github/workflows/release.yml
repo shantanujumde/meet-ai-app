@@ -480,6 +480,32 @@ jobs:
           Copy-Item (Join-Path $out 'VulkanRT-1.4.309.0-Components/x64/vulkan-1.dll') src-tauri/vulkan/
           Get-Item src-tauri/vulkan/vulkan-1.dll | Format-List FullName, Length
 
+      # ONNX Runtime for Parakeet (TUR-104). `ort` loads onnxruntime.dll at
+      # run time on Windows (load-dynamic, crates/stt), so take Microsoft's
+      # official CPU build (no DirectML: it crashes on old CPUs) matching
+      # ort-sys's api-28, pinned by SHA-256, into src-tauri/onnxruntime/,
+      # which tauri.windows.conf.json bundles beside meet-ai.exe (tauri-build
+      # needs it there before any build).
+      - name: ONNX Runtime for the installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          ORT_URL: https://github.com/microsoft/onnxruntime/releases/download/v1.28.3/onnxruntime-win-x64-1.28.3.zip
+          ORT_SHA256: 1d6fab48e85f948436af7c8c971d2c145cf224e2c444755dec894f8b0de11a83
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'onnxruntime.zip'
+          Invoke-WebRequest -Uri $env:ORT_URL -OutFile $zip -MaximumRetryCount 5 -RetryIntervalSec 5
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:ORT_SHA256) {
+            Write-Error "ONNX Runtime zip has SHA-256 $hash, expected $env:ORT_SHA256"
+            exit 1
+          }
+          $out = Join-Path $env:RUNNER_TEMP 'onnxruntime'
+          Expand-Archive $zip -DestinationPath $out -Force
+          New-Item -ItemType Directory -Force src-tauri/onnxruntime | Out-Null
+          Copy-Item (Join-Path $out 'onnxruntime-win-x64-1.28.3/lib/onnxruntime.dll') src-tauri/onnxruntime/
+          Get-Item src-tauri/onnxruntime/onnxruntime.dll | Format-List FullName, Length
+
       # ggml-vulkan's nested cmake build passes MAX_PATH under the workspace's
       # target/ (MSBuild's file tracker ignores long paths), so cargo builds
       # into D:\t, as in check.yml. A junction keeps `target/` the path the
@@ -564,6 +590,21 @@ jobs:
             sleep 15
           done
           exit 1
+
+      # The NSIS installer must carry onnxruntime.dll next to meet-ai.exe
+      # (TUR-104). 7-Zip (on the Windows image) lists an NSIS installer.
+      - name: Installer carries onnxruntime.dll (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $exe) { Write-Error 'no NSIS installer under target/release/bundle/nsis'; exit 1 }
+          $list = & 7z l $exe.FullName
+          $list
+          if (-not ($list | Select-String -SimpleMatch 'onnxruntime.dll')) {
+            Write-Error "$($exe.Name) does not contain onnxruntime.dll (TUR-104)"
+            exit 1
+          }
 
       - name: whisper.cpp was built portably
         run: |

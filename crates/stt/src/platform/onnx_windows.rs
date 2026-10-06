@@ -7,8 +7,9 @@
 //! load can pick that one up and crash. Left to itself, `ort` would load by
 //! bare name and panic if that failed, which is why this runs first.
 //!
-//! Shipping the DLL beside the app is the installer's job (a follow-up to the
-//! release workflow); until then a missing DLL is a typed error that says so.
+//! The Windows installer ships the DLL beside the app (TUR-104: release.yml
+//! and `bundle.resources` in tauri.windows.conf.json). The file check stays
+//! as a guard: a missing or deleted DLL is a typed error that says so.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
