@@ -156,7 +156,7 @@ struct Track<'a> {
 /// Run engine code, turning a panic into an error. A bug in an engine is
 /// still only a transcription failure, and it has to be reported while the
 /// meeting is on — not discovered when Stop joins a dead thread.
-fn guarded<T>(work: impl FnOnce() -> Result<T, stt::Error>) -> Result<T, stt::Error> {
+pub(super) fn guarded<T>(work: impl FnOnce() -> Result<T, stt::Error>) -> Result<T, stt::Error> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|payload| {
         let what = payload
             .downcast_ref::<&str>()

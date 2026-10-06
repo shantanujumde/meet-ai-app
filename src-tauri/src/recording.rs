@@ -315,7 +315,7 @@ impl Recorder {
                     Arc::new(app.clone()),
                     layout::transcript_path(&meeting_dir),
                     tracks,
-                    Box::new(live_transcript::open_configured_engine),
+                    live_transcript::Plan::configured(),
                 );
                 self.enter_recording(app, &id, started, session, transcription)
                     .inspect(|_| auto_title::spawn(app, &id, started))
