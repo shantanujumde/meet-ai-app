@@ -116,6 +116,15 @@ tauri-plugin-updater.workspace = true
 crash-handler.workspace = true
 
 # The taskbar theme the tray icon follows (TUR-58, `platform/windows.rs`).
+# The 12/24-hour clock the tray's times follow (TUR-129, `platform/macos.rs`).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { workspace = true, features = [
+    "NSDateFormatter",
+    "NSFormatter",
+    "NSLocale",
+    "NSString",
+] }
+
 [target.'cfg(windows)'.dependencies]
 winreg.workspace = true
 

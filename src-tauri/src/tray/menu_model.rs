@@ -45,9 +45,61 @@ const MENU_TITLE_CHARS: usize = 40;
 /// app's items.
 const COUNTDOWN_TITLE_CHARS: usize = 24;
 
-/// How the time column is written: `chrono` pattern, 24-hour. The system's
-/// 12/24-hour preference is a follow-up (see the manual-checks file).
-const TIME_FORMAT: &str = "%H:%M";
+/// The system's 12/24-hour clock (TUR-129), read by `platform::clock`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clock {
+    /// `2:30 PM`.
+    H12,
+    /// `14:30`.
+    H24,
+}
+
+impl Clock {
+    /// The `chrono` pattern for the time column.
+    fn format(self) -> &'static str {
+        match self {
+            Clock::H12 => "%-I:%M %p",
+            Clock::H24 => "%H:%M",
+        }
+    }
+
+    /// From a Unicode (ICU) date pattern, like macOS's answer for the `j`
+    /// template: an `a` (AM/PM) outside quoted text means 12-hour.
+    #[cfg_attr(not(test), allow(dead_code, reason = "macOS reads it"))]
+    pub fn from_icu_pattern(pattern: &str) -> Clock {
+        if unquoted(pattern).contains('a') {
+            Clock::H12
+        } else {
+            Clock::H24
+        }
+    }
+
+    /// From Windows' `sShortTime` pattern (`HH:mm`, `h:mm tt`): an `H`
+    /// outside quoted text means 24-hour.
+    #[cfg_attr(not(test), allow(dead_code, reason = "Windows reads it"))]
+    pub fn from_windows_short_time(pattern: &str) -> Clock {
+        if unquoted(pattern).contains('H') {
+            Clock::H24
+        } else {
+            Clock::H12
+        }
+    }
+}
+
+/// `pattern` without its `'quoted'` literal text.
+fn unquoted(pattern: &str) -> String {
+    let mut inside = false;
+    pattern
+        .chars()
+        .filter(|&c| {
+            if c == '\'' {
+                inside = !inside;
+                return false;
+            }
+            !inside
+        })
+        .collect()
+}
 
 /// What the last calendar read said.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +156,7 @@ pub fn build_menu_model<Tz: TimeZone>(
     now: &DateTime<Tz>,
     min_attendees: usize,
     recording: bool,
+    clock: Clock,
 ) -> Vec<MenuEntry>
 where
     Tz::Offset: std::fmt::Display,
@@ -125,12 +178,9 @@ where
         entries.push(MenuEntry::Note(NO_MORE_MEETINGS));
         return entries;
     }
-    entries.extend(
-        upcoming
-            .into_iter()
-            .take(MAX_MEETINGS)
-            .map(|event| MenuEntry::Meeting(meeting_entry(event, now, min_attendees, recording))),
-    );
+    entries.extend(upcoming.into_iter().take(MAX_MEETINGS).map(|event| {
+        MenuEntry::Meeting(meeting_entry(event, now, min_attendees, recording, clock))
+    }));
     entries
 }
 
@@ -176,6 +226,7 @@ fn meeting_entry<Tz: TimeZone>(
     now: &DateTime<Tz>,
     min_attendees: usize,
     recording: bool,
+    clock: Clock,
 ) -> MeetingEntry
 where
     Tz::Offset: std::fmt::Display,
@@ -187,7 +238,7 @@ where
         event
             .start
             .with_timezone(&now.timezone())
-            .format(TIME_FORMAT)
+            .format(clock.format())
             .to_string()
     };
     MeetingEntry {
@@ -264,8 +315,8 @@ mod tests {
     #[test]
     fn record_is_offered_only_while_idle() {
         let read = CalendarRead::Events(vec![event("a", at(11, 0), 30, 3)]);
-        let idle = build_menu_model(&read, &at(10, 0), 2, false);
-        let busy = build_menu_model(&read, &at(10, 0), 2, true);
+        let idle = build_menu_model(&read, &at(10, 0), 2, false, Clock::H24);
+        let busy = build_menu_model(&read, &at(10, 0), 2, true, Clock::H24);
         assert!(meetings(&idle)[0].can_record);
         assert!(!meetings(&busy)[0].can_record);
     }
@@ -278,7 +329,7 @@ mod tests {
             event("b", at(11, 0), 30, 3),
             event("a", at(11, 0), 15, 3),
         ]);
-        let entries = build_menu_model(&read, &at(10, 0), 2, false);
+        let entries = build_menu_model(&read, &at(10, 0), 2, false, Clock::H24);
         assert_eq!(entries[0], MenuEntry::Heading(TODAY_HEADING));
         assert_eq!(
             ids(&entries),
@@ -295,7 +346,7 @@ mod tests {
                 .map(|i| event(&format!("m{i}"), at(11 + i, 0), 30, 2))
                 .collect(),
         );
-        let entries = build_menu_model(&read, &at(10, 0), 2, false);
+        let entries = build_menu_model(&read, &at(10, 0), 2, false, Clock::H24);
         assert_eq!(ids(&entries), vec!["m0", "m1", "m2", "m3", "m4"]);
     }
 
@@ -305,7 +356,7 @@ mod tests {
             event("focus", at(11, 0), 60, 1),
             event("sync", at(12, 0), 30, 2),
         ]);
-        let entries = build_menu_model(&read, &at(10, 0), 2, false);
+        let entries = build_menu_model(&read, &at(10, 0), 2, false, Clock::H24);
         let listed = meetings(&entries);
         assert!(listed[0].solo, "fewer than min_attendees");
         assert!(!listed[1].solo);
@@ -317,7 +368,7 @@ mod tests {
             event("now", at(9, 45), 30, 2),
             event("next", at(10, 30), 30, 2),
         ]);
-        let entries = build_menu_model(&read, &at(10, 0), 2, false);
+        let entries = build_menu_model(&read, &at(10, 0), 2, false, Clock::H24);
         let listed = meetings(&entries);
         assert!(listed[0].now);
         assert_eq!(listed[0].label, "Now  Meeting now");
@@ -329,7 +380,7 @@ mod tests {
     fn a_meeting_that_just_ended_is_gone() {
         let read = CalendarRead::Events(vec![event("done", at(9, 30), 30, 2)]);
         assert_eq!(
-            build_menu_model(&read, &at(10, 0), 2, false),
+            build_menu_model(&read, &at(10, 0), 2, false, Clock::H24),
             vec![
                 MenuEntry::Heading(TODAY_HEADING),
                 MenuEntry::Note(NO_MORE_MEETINGS)
@@ -340,7 +391,13 @@ mod tests {
     #[test]
     fn an_empty_day_says_so() {
         assert_eq!(
-            build_menu_model(&CalendarRead::Events(vec![]), &at(10, 0), 2, false),
+            build_menu_model(
+                &CalendarRead::Events(vec![]),
+                &at(10, 0),
+                2,
+                false,
+                Clock::H24
+            ),
             vec![
                 MenuEntry::Heading(TODAY_HEADING),
                 MenuEntry::Note(NO_MORE_MEETINGS)
@@ -351,7 +408,13 @@ mod tests {
     #[test]
     fn a_denied_calendar_offers_to_connect() {
         assert_eq!(
-            build_menu_model(&CalendarRead::NotConnected, &at(10, 0), 2, false),
+            build_menu_model(
+                &CalendarRead::NotConnected,
+                &at(10, 0),
+                2,
+                false,
+                Clock::H24
+            ),
             vec![
                 MenuEntry::Heading(TODAY_HEADING),
                 MenuEntry::ConnectCalendar(NOT_CONNECTED)
@@ -362,7 +425,7 @@ mod tests {
     #[test]
     fn before_the_first_read_it_says_it_is_reading() {
         assert_eq!(
-            build_menu_model(&CalendarRead::Pending, &at(10, 0), 2, false),
+            build_menu_model(&CalendarRead::Pending, &at(10, 0), 2, false, Clock::H24),
             vec![MenuEntry::Heading(TODAY_HEADING), MenuEntry::Note(READING)]
         );
     }
@@ -372,7 +435,7 @@ mod tests {
         let mut zoom = event("zoom", at(11, 0), 30, 2);
         zoom.join_url = Some("https://zoom.us/j/1".into());
         let read = CalendarRead::Events(vec![zoom, event("room", at(12, 0), 30, 2)]);
-        let entries = build_menu_model(&read, &at(10, 0), 2, false);
+        let entries = build_menu_model(&read, &at(10, 0), 2, false, Clock::H24);
         let listed = meetings(&entries);
         assert_eq!(listed[0].join_url.as_deref(), Some("https://zoom.us/j/1"));
         assert_eq!(listed[1].join_url, None);
@@ -385,7 +448,7 @@ mod tests {
         let mut userinfo = event("userinfo", at(12, 0), 30, 2);
         userinfo.join_url = Some("https://meet.google.com@evil.example/abc".into());
         let read = CalendarRead::Events(vec![phish, userinfo]);
-        let entries = build_menu_model(&read, &at(10, 0), 2, false);
+        let entries = build_menu_model(&read, &at(10, 0), 2, false, Clock::H24);
         assert!(meetings(&entries).iter().all(|m| m.join_url.is_none()));
     }
 
@@ -393,7 +456,7 @@ mod tests {
     fn times_are_written_in_the_local_zone() {
         let ist = FixedOffset::east_opt(5 * 3600 + 1800).expect("a valid offset");
         let read = CalendarRead::Events(vec![event("a", at(11, 0), 30, 2)]);
-        let entries = build_menu_model(&read, &at(10, 0).with_timezone(&ist), 2, false);
+        let entries = build_menu_model(&read, &at(10, 0).with_timezone(&ist), 2, false, Clock::H24);
         assert_eq!(meetings(&entries)[0].label, "16:30  Meeting a");
     }
 
@@ -408,6 +471,7 @@ mod tests {
             &at(10, 0),
             2,
             false,
+            Clock::H24,
         );
         let listed = meetings(&entries);
         assert_eq!(listed[0].label, format!("11:00  {}…", "A".repeat(39)));
@@ -454,5 +518,33 @@ mod tests {
             countdown_title(&CalendarRead::NotConnected, &at(10, 0), 2),
             None
         );
+    }
+
+    #[test]
+    fn twelve_hour_clock_writes_am_pm() {
+        let read = CalendarRead::Events(vec![
+            event("a", at(14, 5), 30, 2),
+            event("b", at(9, 30), 30, 2),
+        ]);
+        let entries = build_menu_model(&read, &at(9, 0), 2, false, Clock::H12);
+        let listed = meetings(&entries);
+        assert_eq!(listed[0].label, "9:30 AM  Meeting b");
+        assert_eq!(listed[1].label, "2:05 PM  Meeting a");
+        let entries = build_menu_model(&read, &at(9, 0), 2, false, Clock::H24);
+        assert_eq!(meetings(&entries)[1].label, "14:05  Meeting a");
+    }
+
+    #[test]
+    fn clock_from_system_patterns() {
+        assert_eq!(Clock::from_icu_pattern("h a"), Clock::H12);
+        assert_eq!(Clock::from_icu_pattern("HH"), Clock::H24);
+        assert_eq!(
+            Clock::from_icu_pattern("HH 'at' mm"),
+            Clock::H24,
+            "quoted a"
+        );
+        assert_eq!(Clock::from_windows_short_time("h:mm tt"), Clock::H12);
+        assert_eq!(Clock::from_windows_short_time("HH:mm"), Clock::H24);
+        assert_eq!(Clock::from_windows_short_time("h:mm 'H'"), Clock::H12);
     }
 }

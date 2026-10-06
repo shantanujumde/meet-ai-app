@@ -243,7 +243,13 @@ fn run(app: &AppHandle, tray_id: &str, fixed: &Fixed, rx: &mpsc::Receiver<Nudge>
             let recording = app
                 .try_state::<crate::recording::Recorder>()
                 .is_some_and(|r| r.status().phase != crate::recording::Phase::Idle);
-            let entries = menu_model::build_menu_model(&read, &now, min_attendees, recording);
+            let entries = menu_model::build_menu_model(
+                &read,
+                &now,
+                min_attendees,
+                recording,
+                crate::platform::clock(),
+            );
             let title = config::app()
                 .menu_bar_countdown
                 .then(|| menu_model::countdown_title(&read, &now, min_attendees))
