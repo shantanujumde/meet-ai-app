@@ -66,8 +66,15 @@ const SLACK_HUDDLE: &[Pattern] = &[Pattern {
     path: "/huddle/",
 }];
 
-/// Every service, in the order a link is checked against them.
-const SERVICES: &[&[Pattern]] = &[ZOOM, GOOGLE_MEET, TEAMS, WEBEX, SLACK_HUDDLE];
+/// Every service, in the order a link is checked against them, with the
+/// name [`join_service`] gives it.
+const SERVICES: &[(&str, &[Pattern])] = &[
+    ("zoom", ZOOM),
+    ("meet", GOOGLE_MEET),
+    ("teams", TEAMS),
+    ("other", WEBEX),
+    ("other", SLACK_HUDDLE),
+];
 
 /// Characters that end a link in free text: whitespace is handled apart,
 /// these are the brackets and quotes notes wrap links in
@@ -119,27 +126,43 @@ fn first_link_in(text: &str) -> Option<String> {
 ///   WHATWG reads it as `/`, other parsers (macOS `NSURL`, Windows
 ///   `ShellExecute`) may not, so the two could disagree on the host.
 pub fn is_safe_join_url(link: &str) -> bool {
+    safe_service(link).is_some()
+}
+
+/// Which video service `link` joins (TUR-108), for the reminder card's
+/// "Join Meet": `"meet"`, `"zoom"`, `"teams"`, or `"other"` for the rest of
+/// [`SERVICES`]. `None` when `link` is not a safe join link at all
+/// ([`is_safe_join_url`]).
+pub fn join_service(link: &str) -> Option<&'static str> {
+    safe_service(link)
+}
+
+/// The name in [`SERVICES`] of the service a safe join link belongs to;
+/// `None` when `link` fails any of [`is_safe_join_url`]'s checks.
+fn safe_service(link: &str) -> Option<&'static str> {
     let link = link.trim();
     if backslash_before_path(link) {
-        return false;
+        return None;
     }
-    let Ok(parsed) = url::Url::parse(link) else {
-        return false;
-    };
+    let parsed = url::Url::parse(link).ok()?;
     if !matches!(parsed.scheme(), "https" | "http")
         || !parsed.username().is_empty()
         || parsed.password().is_some()
     {
-        return false;
+        return None;
     }
-    let Some(host) = parsed.host_str() else {
-        return false;
-    };
-    let host = host.to_ascii_lowercase();
+    let host = parsed.host_str()?.to_ascii_lowercase();
     let path = parsed.path().to_ascii_lowercase();
-    SERVICES.iter().flat_map(|service| service.iter()).any(|p| {
-        host_matches(&host, p.host) && path.len() > p.path.len() && path.starts_with(p.path)
-    })
+    SERVICES
+        .iter()
+        .find(|(_, patterns)| {
+            patterns.iter().any(|p| {
+                host_matches(&host, p.host)
+                    && path.len() > p.path.len()
+                    && path.starts_with(p.path)
+            })
+        })
+        .map(|(name, _)| *name)
 }
 
 /// A `\` anywhere before the path starts: in the scheme's slashes or the
@@ -288,6 +311,38 @@ mod tests {
             "not a link",
             "",
         ] {
+            assert!(!is_safe_join_url(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn join_service_names_the_service_behind_a_safe_link() {
+        assert_eq!(
+            join_service("https://meet.google.com/abc-defg-hij"),
+            Some("meet")
+        );
+        assert_eq!(join_service("https://acme.zoom.us/j/1?pwd=x"), Some("zoom"));
+        assert_eq!(
+            join_service("https://teams.microsoft.com/l/meetup-join/19%3ax/0"),
+            Some("teams")
+        );
+        assert_eq!(join_service("https://teams.live.com/meet/123"), Some("teams"));
+        assert_eq!(
+            join_service("https://acme.webex.com/meet/priya"),
+            Some("other")
+        );
+        assert_eq!(
+            join_service("https://app.slack.com/huddle/T0123/C0456"),
+            Some("other")
+        );
+        // Not a safe join link: no service, the same verdict as the safe check.
+        for bad in [
+            "https://meet.google.com@evil.example/abc",
+            "https://evil.example\\@meet.google.com/abc-defg-hij",
+            "https://example.com/meeting",
+            "",
+        ] {
+            assert_eq!(join_service(bad), None, "{bad}");
             assert!(!is_safe_join_url(bad), "{bad}");
         }
     }
