@@ -53,3 +53,7 @@ pub const HOOK_FAILED_EVENT: &str = "hook://failed";
 /// `headphone_warning::HeadphoneWarning`. Sent when a recording starts, when
 /// the output changes between speakers and headphones, and when it stops.
 pub const HEADPHONE_WARNING_EVENT: &str = "headphones://warning";
+
+/// The meetings folder cannot be watched, or can be again (TUR-134):
+/// `watch::WatchProblem`. The Meetings page shows a note while it is set.
+pub const MEETINGS_WATCH_PROBLEM_EVENT: &str = "meetings-watch://problem";
