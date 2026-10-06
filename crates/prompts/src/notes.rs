@@ -77,7 +77,7 @@ pub const NOTES_SCHEMA: &str = r#"{
           },
           "details": {
             "type": "string",
-            "description": "What has to be done and any context from the meeting that helps do it."
+            "description": "What to do and why, in 1 to 3 sentences, from the meeting. Never empty: it is the ticket's description."
           },
           "owner": {
             "type": ["string", "null"],

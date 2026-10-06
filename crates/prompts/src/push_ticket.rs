@@ -31,8 +31,9 @@ pub const DEFAULT_PUSH_TICKET: &str = include_str!("../templates/push-ticket.md"
 
 /// The sync run's output schema, as pretty-printed text.
 ///
-/// Strict form, so Codex accepts it too: both keys required, no extra keys,
-/// `null` when the run made no issue.
+/// Strict form, so Codex accepts it too: every key required, no extra keys,
+/// `null` when the run made no issue. `refused_reason` is optional in the
+/// sense that matters: `null` unless the tracker said no (TUR-113).
 pub const SYNC_SCHEMA: &str = r#"{
   "type": "object",
   "description": "The issue this run created in the tracker, or both null if it created none.",
@@ -44,9 +45,13 @@ pub const SYNC_SCHEMA: &str = r#"{
     "external_url": {
       "type": ["string", "null"],
       "description": "The new issue's web address, starting with https://. null if no issue was created."
+    },
+    "refused_reason": {
+      "type": ["string", "null"],
+      "description": "When the tracker itself refused the issue (no permission, project not found), its reason in a few plain words. null otherwise, including when the tracker could not be reached."
     }
   },
-  "required": ["external_id", "external_url"],
+  "required": ["external_id", "external_url", "refused_reason"],
   "additionalProperties": false
 }"#;
 
@@ -55,6 +60,10 @@ pub const MAX_EXTERNAL_ID_CHARS: usize = 100;
 
 /// The longest issue web address [`parse_sync_reply`] accepts, in characters.
 pub const MAX_EXTERNAL_URL_CHARS: usize = 2048;
+
+/// The longest `refused_reason` [`refused_reason`] passes on, in characters.
+/// A longer one is cut, with an ellipsis.
+pub const MAX_REFUSED_REASON_CHARS: usize = 200;
 
 /// Values a model writes when it has no key, which must never count as one.
 /// Compared after trimming, ignoring case.
@@ -209,6 +218,8 @@ pub struct Synced {
 ///
 /// Anything else is `None`: a run that could not create the issue must never
 /// be counted as synced.
+///
+/// A reply that is `None` here may still say why: [`refused_reason`].
 pub fn parse_sync_reply(reply: &Value) -> Option<Synced> {
     let external_id = reply.get("external_id")?.as_str()?.trim();
     let external_url = reply.get("external_url")?.as_str()?.trim();
@@ -216,6 +227,34 @@ pub fn parse_sync_reply(reply: &Value) -> Option<Synced> {
         external_id: external_id.to_owned(),
         external_url: external_url.to_owned(),
     })
+}
+
+/// Why the tracker refused the issue, from a reply [`parse_sync_reply`] read
+/// as not synced. `None` when the reply gives no reason (`null`, blank or a
+/// stand-in such as `N/A`): then the tracker was most likely not reached.
+///
+/// The reason is shown in the window, so it is folded onto one line, control
+/// characters dropped, and cut at [`MAX_REFUSED_REASON_CHARS`].
+pub fn refused_reason(reply: &Value) -> Option<String> {
+    let raw = reply.get("refused_reason")?.as_str()?;
+    let folded = raw
+        .split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let reason = folded.trim_end_matches('.');
+    if reason.is_empty()
+        || PLACEHOLDERS
+            .iter()
+            .any(|placeholder| reason.eq_ignore_ascii_case(placeholder))
+    {
+        return None;
+    }
+    if reason.chars().count() <= MAX_REFUSED_REASON_CHARS {
+        return Some(reason.to_owned());
+    }
+    let cut: String = reason.chars().take(MAX_REFUSED_REASON_CHARS - 1).collect();
+    Some(format!("{}…", cut.trim_end()))
 }
 
 /// True for text with no whitespace or control characters in it.
@@ -292,7 +331,51 @@ mod tests {
     }
 
     fn reply(id: Value, url: Value) -> Value {
-        json!({ "external_id": id, "external_url": url })
+        json!({ "external_id": id, "external_url": url, "refused_reason": null })
+    }
+
+    fn refusal(reason: Value) -> Value {
+        json!({ "external_id": null, "external_url": null, "refused_reason": reason })
+    }
+
+    #[test]
+    fn a_refused_reason_is_read_folded_and_cut() {
+        assert_eq!(
+            refused_reason(&refusal(json!("  Project  \"Web\"\nnot found. "))).as_deref(),
+            Some("Project \"Web\" not found")
+        );
+        for none in [
+            json!(null),
+            json!(""),
+            json!("  "),
+            json!("N/A"),
+            json!("none."),
+            json!(7),
+        ] {
+            assert_eq!(refused_reason(&refusal(none.clone())), None, "{none}");
+        }
+        assert_eq!(refused_reason(&json!({ "external_id": null })), None);
+        let long = "no ".repeat(MAX_REFUSED_REASON_CHARS);
+        let cut = refused_reason(&refusal(json!(long))).unwrap();
+        assert!(cut.chars().count() <= MAX_REFUSED_REASON_CHARS, "{cut}");
+        assert!(cut.ends_with('…'), "{cut}");
+        assert_eq!(
+            refused_reason(&refusal(json!("no\u{0}access"))).as_deref(),
+            Some("no access")
+        );
+    }
+
+    #[test]
+    fn the_details_go_in_the_issue_body() {
+        let out = render_push_ticket(DEFAULT_PUSH_TICKET, &full()).unwrap();
+        assert!(
+            out.contains("Description (the issue's body): the task's details"),
+            "{out}"
+        );
+        assert!(out.contains("Search box on the dashboard"), "{out}");
+        assert!(out.contains("\"refused_reason\""), "{out}");
+        let bare = render_push_ticket(DEFAULT_PUSH_TICKET, &bare()).unwrap();
+        assert!(bare.contains("has no details yet"), "{bare}");
     }
 
     #[test]
@@ -418,17 +501,24 @@ mod tests {
         let parsed: Value = serde_json::from_str(SYNC_SCHEMA).unwrap();
         assert_eq!(parsed, sync_schema());
         assert_eq!(parsed["additionalProperties"], json!(false));
-        assert_eq!(parsed["required"], json!(["external_id", "external_url"]));
+        assert_eq!(
+            parsed["required"],
+            json!(["external_id", "external_url", "refused_reason"])
+        );
         let validator = jsonschema::draft202012::new(&parsed).unwrap();
         assert!(validator.is_valid(&reply(Value::Null, Value::Null)));
         assert!(validator.is_valid(&reply(
             json!("ENG-42"),
             json!("https://linear.app/acme/issue/ENG-42")
         )));
+        let mut refused = reply(Value::Null, Value::Null);
+        refused["refused_reason"] = json!("project not found");
+        assert!(validator.is_valid(&refused));
         let mut extra = reply(Value::Null, Value::Null);
         extra["note"] = json!("could not sign in");
         assert!(!validator.is_valid(&extra));
         assert!(!validator.is_valid(&json!({ "external_id": null })));
+        assert!(!validator.is_valid(&json!({ "external_id": null, "external_url": null })));
         assert!(!validator.is_valid(&reply(json!(42), Value::Null)));
     }
 
