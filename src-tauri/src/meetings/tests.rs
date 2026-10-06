@@ -50,15 +50,17 @@ fn a_meeting_id_cannot_escape_the_meetings_root() {
 /// A meeting folder under a scratch root, loaded the way `list` and
 /// `detail` load one.
 fn load_fixture(name: &str, files: &[(&str, &[u8])]) -> store::folder::MeetingFolder {
-    let dir = scratch(name).join("2026-09-01-1430-platform-standup");
-    fs::remove_dir_all(&dir).ok();
+    let tmp = tempfile::Builder::new()
+        .prefix(&format!("meet-ai-move-{name}-"))
+        .tempdir()
+        .unwrap();
+    let dir = tmp.path().join("2026-09-01-1430-platform-standup");
     fs::create_dir_all(&dir).unwrap();
     for (file, body) in files {
         fs::write(dir.join(file), body).unwrap();
     }
-    let folder = store::folder::load(&dir).expect("the folder itself is readable");
-    fs::remove_dir_all(dir.parent().unwrap()).ok();
-    folder
+
+    store::folder::load(&dir).expect("the folder itself is readable")
 }
 
 #[test]
@@ -137,20 +139,20 @@ fn an_empty_folder_is_a_meeting_with_nothing_in_it_yet() {
 
 #[test]
 fn a_rename_reaches_the_list_row_and_a_blank_one_is_refused() {
-    let root = meetings_root("rename");
+    let root_dir = meetings_root("rename");
+    let root = root_dir.path();
     let id = "2026-09-01-1430-meeting";
-    meeting(&root, id);
+    meeting(root, id);
 
-    let blank = rename_in(&root, id, "  ").unwrap_err();
+    let blank = rename_in(root, id, "  ").unwrap_err();
     assert_eq!((blank.domain, blank.kind), ("app", "blank-title"));
-    assert_eq!(summary_of(&root, id, Live::Nothing).title, "Meeting");
+    assert_eq!(summary_of(root, id, Live::Nothing).title, "Meeting");
 
     assert_eq!(
-        rename_in(&root, id, " Budget review ").unwrap(),
+        rename_in(root, id, " Budget review ").unwrap(),
         "Budget review"
     );
-    assert_eq!(summary_of(&root, id, Live::Nothing).title, "Budget review");
-    fs::remove_dir_all(&root).ok();
+    assert_eq!(summary_of(root, id, Live::Nothing).title, "Budget review");
 }
 
 #[test]
@@ -160,11 +162,6 @@ fn store_errors_keep_the_kinds_the_ui_already_branches_on() {
     let io: UiError = store::Error::Io(std::io::Error::other("disk gone")).into();
     assert_eq!((io.domain, io.kind), ("app", "io"));
     assert!(io.message.contains("disk gone"), "{}", io.message);
-}
-
-/// A scratch folder unique to this test run, cleaned up by the caller.
-fn scratch(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("meet-ai-move-{name}-{}", std::process::id()))
 }
 
 #[test]
@@ -180,10 +177,9 @@ fn the_root_pointer_round_trips_through_the_file_format() {
 
 #[test]
 fn moving_into_a_folder_that_does_not_exist_yet_takes_everything_with_it() {
-    let old_root = scratch("plain-old");
-    let new_root = scratch("plain-new");
-    fs::remove_dir_all(&old_root).ok();
-    fs::remove_dir_all(&new_root).ok();
+    let tmp = tempfile::tempdir().unwrap();
+    let old_root = tmp.path().join("old");
+    let new_root = tmp.path().join("new");
 
     fs::create_dir_all(old_root.join("2026-09-01-1430-standup")).unwrap();
     fs::write(
@@ -203,16 +199,13 @@ fn moving_into_a_folder_that_does_not_exist_yet_takes_everything_with_it() {
             .join("transcript.md")
             .is_file()
     );
-
-    fs::remove_dir_all(&new_root).ok();
 }
 
 #[test]
 fn moving_into_an_occupied_folder_merges_rather_than_clobbers() {
-    let old_root = scratch("merge-old");
-    let new_root = scratch("merge-new");
-    fs::remove_dir_all(&old_root).ok();
-    fs::remove_dir_all(&new_root).ok();
+    let tmp = tempfile::tempdir().unwrap();
+    let old_root = tmp.path().join("old");
+    let new_root = tmp.path().join("new");
 
     fs::create_dir_all(old_root.join("2026-09-01-1430-standup")).unwrap();
     fs::create_dir_all(new_root.join("2026-08-01-0900-retro")).unwrap();
@@ -225,16 +218,13 @@ fn moving_into_an_occupied_folder_merges_rather_than_clobbers() {
         new_root.join("2026-08-01-0900-retro").is_dir(),
         "what was already at the destination must survive the merge"
     );
-
-    fs::remove_dir_all(&new_root).ok();
 }
 
 #[test]
 fn a_name_collision_refuses_the_whole_move_rather_than_guessing_which_copy_wins() {
-    let old_root = scratch("conflict-old");
-    let new_root = scratch("conflict-new");
-    fs::remove_dir_all(&old_root).ok();
-    fs::remove_dir_all(&new_root).ok();
+    let tmp = tempfile::tempdir().unwrap();
+    let old_root = tmp.path().join("old");
+    let new_root = tmp.path().join("new");
 
     fs::create_dir_all(old_root.join("2026-09-01-1430-standup")).unwrap();
     fs::write(
@@ -260,9 +250,6 @@ fn a_name_collision_refuses_the_whole_move_rather_than_guessing_which_copy_wins(
             .join("notes.md")
             .exists()
     );
-
-    fs::remove_dir_all(&old_root).ok();
-    fs::remove_dir_all(&new_root).ok();
 }
 
 // --- TUR-97: finished vs interrupted, and the launch-time header fix ---
@@ -279,11 +266,11 @@ use audio::wav_writer::WavWriter;
 const SECOND: u64 = 16_000;
 
 /// A fresh, empty meetings root unique to this test.
-fn meetings_root(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("meet-ai-state-{name}-{}", std::process::id()));
-    fs::remove_dir_all(&root).ok();
-    fs::create_dir_all(&root).unwrap();
-    root
+fn meetings_root(name: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("meet-ai-state-{name}-"))
+        .tempdir()
+        .unwrap()
 }
 
 /// A meeting folder the way `recording::create_meeting_folder` makes one.
@@ -355,15 +342,16 @@ fn header_frames(audio_dir: &Path, channel: Channel) -> u64 {
 
 #[test]
 fn a_recording_stopped_with_the_stop_button_is_finished() {
-    let root = meetings_root("clean");
-    let audio = meeting(&root, "2026-09-30-1129-meeting");
+    let root_dir = meetings_root("clean");
+    let root = root_dir.path();
+    let audio = meeting(root, "2026-09-30-1129-meeting");
     // `RecordingSession::stop`: both headers finalised to every sample,
     // then `segments.json` with the same totals — A5's equality.
     track(&audio, Channel::Mic, 10 * SECOND, 0);
     track(&audio, Channel::System, 10 * SECOND + 32, 0);
     segments_json(&audio, 10 * SECOND, Some(10 * SECOND + 32));
 
-    let summary = summary_of(&root, "2026-09-30-1129-meeting", Live::Nothing);
+    let summary = summary_of(root, "2026-09-30-1129-meeting", Live::Nothing);
 
     assert_eq!(summary.recording_state, RecordingState::Finished);
     assert_eq!(
@@ -371,7 +359,6 @@ fn a_recording_stopped_with_the_stop_button_is_finished() {
         Some(10_002),
         "the longer track, from its header"
     );
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -379,12 +366,13 @@ fn a_v0_3_0_kill_with_zero_byte_headers_and_no_segments_json_is_interrupted() {
     // The shape on disk at ~/Meetings/2026-09-30-1140-meeting: v0.3.0
     // never checkpointed, so a kill leaves headers still declaring 0
     // bytes over the real samples, and no `segments.json` at all.
-    let root = meetings_root("prefix-kill");
-    let audio = meeting(&root, "2026-09-30-1140-meeting");
+    let root_dir = meetings_root("prefix-kill");
+    let root = root_dir.path();
+    let audio = meeting(root, "2026-09-30-1140-meeting");
     track(&audio, Channel::Mic, 0, 16 * SECOND);
     track(&audio, Channel::System, 0, 16 * SECOND);
 
-    let summary = summary_of(&root, "2026-09-30-1140-meeting", Live::Nothing);
+    let summary = summary_of(root, "2026-09-30-1140-meeting", Live::Nothing);
 
     assert_eq!(summary.recording_state, RecordingState::Interrupted);
     assert_eq!(
@@ -392,24 +380,23 @@ fn a_v0_3_0_kill_with_zero_byte_headers_and_no_segments_json_is_interrupted() {
         Some(0),
         "no player can reach audio the header hides"
     );
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn a_kill_between_checkpoints_is_interrupted() {
     // With 5 s checkpoints: header and segments agree at the last one,
     // and up to one checkpoint of samples sits past the header.
-    let root = meetings_root("checkpointed-kill");
-    let audio = meeting(&root, "2026-09-30-1200-meeting");
+    let root_dir = meetings_root("checkpointed-kill");
+    let root = root_dir.path();
+    let audio = meeting(root, "2026-09-30-1200-meeting");
     track(&audio, Channel::Mic, 60 * SECOND, 3 * SECOND);
     track(&audio, Channel::System, 60 * SECOND, 3 * SECOND);
     segments_json(&audio, 60 * SECOND, Some(60 * SECOND));
 
-    let summary = summary_of(&root, "2026-09-30-1200-meeting", Live::Nothing);
+    let summary = summary_of(root, "2026-09-30-1200-meeting", Live::Nothing);
 
     assert_eq!(summary.recording_state, RecordingState::Interrupted);
     assert_eq!(summary.audio_ms, Some(60_000));
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -418,43 +405,43 @@ fn a_kill_between_the_segments_json_rename_and_the_header_patch_is_interrupted()
     // headers never got to declare. File length alone misses this one
     // when nothing was appended after the sync — the segment totals do
     // not.
-    let root = meetings_root("window-kill");
-    let audio = meeting(&root, "2026-09-30-1210-meeting");
+    let root_dir = meetings_root("window-kill");
+    let root = root_dir.path();
+    let audio = meeting(root, "2026-09-30-1210-meeting");
     track(&audio, Channel::Mic, 55 * SECOND, 0);
     track(&audio, Channel::System, 55 * SECOND, 0);
     segments_json(&audio, 60 * SECOND, Some(60 * SECOND));
 
-    let summary = summary_of(&root, "2026-09-30-1210-meeting", Live::Nothing);
+    let summary = summary_of(root, "2026-09-30-1210-meeting", Live::Nothing);
 
     assert_eq!(summary.recording_state, RecordingState::Interrupted);
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn the_meeting_being_recorded_is_never_labelled_interrupted() {
-    let root = meetings_root("live");
-    let older = meeting(&root, "2026-09-30-1140-meeting");
+    let root_dir = meetings_root("live");
+    let root = root_dir.path();
+    let older = meeting(root, "2026-09-30-1140-meeting");
     track(&older, Channel::Mic, 0, SECOND);
-    let live = meeting(&root, "2026-09-30-1300-meeting");
+    let live = meeting(root, "2026-09-30-1300-meeting");
     track(&live, Channel::Mic, 0, SECOND);
     let live_id = "2026-09-30-1300-meeting";
 
     assert_eq!(
-        summary_of(&root, live_id, Live::Meeting(live_id)).recording_state,
+        summary_of(root, live_id, Live::Meeting(live_id)).recording_state,
         RecordingState::Recording
     );
     // Being live covers one meeting, not every meeting.
     assert_eq!(
-        summary_of(&root, "2026-09-30-1140-meeting", Live::Meeting(live_id)).recording_state,
+        summary_of(root, "2026-09-30-1140-meeting", Live::Meeting(live_id)).recording_state,
         RecordingState::Interrupted
     );
     // And once nobody is recording into them, the same files are what
     // they look like.
     assert_eq!(
-        summary_of(&root, live_id, Live::Nothing).recording_state,
+        summary_of(root, live_id, Live::Nothing).recording_state,
         RecordingState::Interrupted
     );
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
@@ -484,13 +471,14 @@ fn the_recorder_status_maps_onto_the_meeting_being_written() {
 
 #[test]
 fn a_folder_with_no_audio_is_finished_not_interrupted() {
-    let root = meetings_root("no-audio");
+    let root_dir = meetings_root("no-audio");
+    let root = root_dir.path();
     // No `audio/` at all — the Phase 2a folders on disk look like this.
     fs::create_dir_all(root.join("2026-09-28-1216-meeting")).unwrap();
     // An empty `audio/`, and one where retention (L16) deleted the WAVs
     // but left `segments.json`.
-    meeting(&root, "2026-09-28-1225-meeting");
-    let retained = meeting(&root, "2026-09-28-1235-meeting");
+    meeting(root, "2026-09-28-1225-meeting");
+    let retained = meeting(root, "2026-09-28-1235-meeting");
     segments_json(&retained, 60 * SECOND, Some(60 * SECOND));
 
     for id in [
@@ -498,63 +486,63 @@ fn a_folder_with_no_audio_is_finished_not_interrupted() {
         "2026-09-28-1225-meeting",
         "2026-09-28-1235-meeting",
     ] {
-        let summary = summary_of(&root, id, Live::Nothing);
+        let summary = summary_of(root, id, Live::Nothing);
         assert_eq!(summary.recording_state, RecordingState::Finished, "{id}");
         assert_eq!(summary.audio_ms, None, "{id}");
     }
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn a_clean_stop_with_no_system_audio_is_still_finished() {
     // SPEC §3.4: a tap that never started still gets a `segments.json`,
     // with `sys_rate` 0 — and there is no `system.wav` to compare.
-    let root = meetings_root("mic-only");
-    let audio = meeting(&root, "2026-09-30-1400-meeting");
+    let root_dir = meetings_root("mic-only");
+    let root = root_dir.path();
+    let audio = meeting(root, "2026-09-30-1400-meeting");
     track(&audio, Channel::Mic, 30 * SECOND, 0);
     segments_json(&audio, 30 * SECOND, None);
 
     assert_eq!(
-        summary_of(&root, "2026-09-30-1400-meeting", Live::Nothing).recording_state,
+        summary_of(root, "2026-09-30-1400-meeting", Live::Nothing).recording_state,
         RecordingState::Finished
     );
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn one_odd_folder_never_fails_the_list() {
-    let root = meetings_root("odd");
-    let fine = meeting(&root, "2026-09-30-1129-meeting");
+    let root_dir = meetings_root("odd");
+    let root = root_dir.path();
+    let fine = meeting(root, "2026-09-30-1129-meeting");
     track(&fine, Channel::Mic, SECOND, 0);
     track(&fine, Channel::System, SECOND, 0);
     segments_json(&fine, SECOND, Some(SECOND));
 
     // Not a WAV header at all, and a `segments.json` that is not JSON.
-    let odd = meeting(&root, "2026-09-30-1500-meeting");
+    let odd = meeting(root, "2026-09-30-1500-meeting");
     fs::write(odd.join("mic.wav"), b"RIF").unwrap();
     fs::write(odd.join(SEGMENTS), "{ not json").unwrap();
     // A stray file beside the meetings.
     fs::write(root.join("stray.txt"), "hi").unwrap();
 
-    let list = list_in(&root, Live::Nothing).expect("one odd folder must not fail the list");
+    let list = list_in(root, Live::Nothing).expect("one odd folder must not fail the list");
 
     assert_eq!(list.meetings.len(), 2);
     assert_eq!(
-        summary_of(&root, "2026-09-30-1500-meeting", Live::Nothing).recording_state,
+        summary_of(root, "2026-09-30-1500-meeting", Live::Nothing).recording_state,
         RecordingState::Interrupted,
         "a meeting the app cannot show was stopped must not claim it was"
     );
     assert_eq!(
-        summary_of(&root, "2026-09-30-1129-meeting", Live::Nothing).recording_state,
+        summary_of(root, "2026-09-30-1129-meeting", Live::Nothing).recording_state,
         RecordingState::Finished
     );
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn launch_recovery_makes_a_v0_3_0_kill_playable_without_moving_a_sample() {
-    let root = meetings_root("recover");
-    let audio = meeting(&root, "2026-09-30-1140-meeting");
+    let root_dir = meetings_root("recover");
+    let root = root_dir.path();
+    let audio = meeting(root, "2026-09-30-1140-meeting");
     track(&audio, Channel::Mic, 0, 16 * SECOND);
     track(&audio, Channel::System, 0, 15 * SECOND);
     // A trailing half-frame: a kill can land mid-sample.
@@ -568,7 +556,7 @@ fn launch_recovery_makes_a_v0_3_0_kill_playable_without_moving_a_sample() {
     let mic_before = fs::read(&mic_path).unwrap();
     let sys_before = fs::read(audio.join("system.wav")).unwrap();
 
-    assert_eq!(recover_in(&root, Live::Nothing), 2);
+    assert_eq!(recover_in(root, Live::Nothing), 2);
 
     assert_eq!(header_frames(&audio, Channel::Mic), 16 * SECOND);
     assert_eq!(header_frames(&audio, Channel::System), 15 * SECOND);
@@ -585,36 +573,36 @@ fn launch_recovery_makes_a_v0_3_0_kill_playable_without_moving_a_sample() {
     assert_eq!(u64::from(riff), 36 + 16 * SECOND * 2);
 
     // Still honest about what happened, and now says how much it kept.
-    let summary = summary_of(&root, "2026-09-30-1140-meeting", Live::Nothing);
+    let summary = summary_of(root, "2026-09-30-1140-meeting", Live::Nothing);
     assert_eq!(summary.recording_state, RecordingState::Interrupted);
     assert_eq!(summary.audio_ms, Some(16_000));
 
     // Idempotent: nothing left to do, nothing touched.
-    assert_eq!(recover_in(&root, Live::Nothing), 0);
+    assert_eq!(recover_in(root, Live::Nothing), 0);
     assert_eq!(fs::read(&mic_path).unwrap(), mic_after);
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn launch_recovery_leaves_everything_else_exactly_as_it_was() {
-    let root = meetings_root("recover-scope");
+    let root_dir = meetings_root("recover-scope");
+    let root = root_dir.path();
     // A finished meeting.
-    let finished = meeting(&root, "2026-09-30-1129-meeting");
+    let finished = meeting(root, "2026-09-30-1129-meeting");
     track(&finished, Channel::Mic, 5 * SECOND, 0);
     segments_json(&finished, 5 * SECOND, None);
     // A checkpointed kill: its excess samples were never in any
     // `segments.json`, and `WavWriter::open_append` discards exactly
     // those — this must not resurrect them.
-    let checkpointed = meeting(&root, "2026-09-30-1200-meeting");
+    let checkpointed = meeting(root, "2026-09-30-1200-meeting");
     track(&checkpointed, Channel::Mic, 60 * SECOND, 3 * SECOND);
     segments_json(&checkpointed, 60 * SECOND, None);
     // A file whose header this app did not write.
-    let foreign = meeting(&root, "2026-09-30-1210-meeting");
+    let foreign = meeting(root, "2026-09-30-1210-meeting");
     let mut junk = vec![0u8; 44];
     junk.extend_from_slice(&[1u8; 4000]);
     fs::write(foreign.join("mic.wav"), &junk).unwrap();
     // The meeting being recorded right now, newest.
-    let live = meeting(&root, "2026-09-30-1300-meeting");
+    let live = meeting(root, "2026-09-30-1300-meeting");
     track(&live, Channel::Mic, 0, 4 * SECOND);
 
     let dirs = [&finished, &checkpointed, &foreign, &live];
@@ -626,34 +614,33 @@ fn launch_recovery_leaves_everything_else_exactly_as_it_was() {
     let before = snapshot();
 
     assert_eq!(
-        recover_in(&root, Live::Meeting("2026-09-30-1300-meeting")),
+        recover_in(root, Live::Meeting("2026-09-30-1300-meeting")),
         0
     );
 
     assert_eq!(before, snapshot());
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]
 fn a_meeting_with_notes_switched_off_is_marked_and_not_wrapped_up() {
     // SPEC A11, TUR-12: off writes a meeting.md holding only the switch.
     // That is not a wrapped-up meeting.
-    let root = meetings_root("notes-off");
+    let root_dir = meetings_root("notes-off");
+    let root = root_dir.path();
     let id = "2026-09-30-1129-private";
-    meeting(&root, id);
+    meeting(root, id);
     let writes = store::watcher::SelfWrites::default();
 
-    store::notes_switch::set(&root, id, false, &writes).unwrap();
-    let off = summary_of(&root, id, Live::Nothing);
+    store::notes_switch::set(root, id, false, &writes).unwrap();
+    let off = summary_of(root, id, Live::Nothing);
     assert!(off.notes_off);
     assert!(!off.has_analysis);
     assert_eq!(off.title, "Private");
 
-    store::notes_switch::set(&root, id, true, &writes).unwrap();
-    let on = summary_of(&root, id, Live::Nothing);
+    store::notes_switch::set(root, id, true, &writes).unwrap();
+    let on = summary_of(root, id, Live::Nothing);
     assert!(!on.notes_off);
     assert!(!on.has_analysis);
-    fs::remove_dir_all(&root).ok();
 }
 
 #[test]

@@ -117,7 +117,8 @@ fn the_snapshot_payload_has_the_agreed_shape() {
 
 #[test]
 fn finals_reach_transcript_md_in_the_spec_format_and_the_window_sees_everything() {
-    let path = temp_transcript("happy");
+    let path_dir = temp_transcript("happy");
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let (mic_tee, mic_feed) = audio::tee::tee();
@@ -189,7 +190,8 @@ fn finals_reach_transcript_md_in_the_spec_format_and_the_window_sees_everything(
 
 #[test]
 fn an_engine_that_will_not_start_fails_transcription_and_nothing_else() {
-    let path = temp_transcript("no-engine");
+    let path_dir = temp_transcript("no-engine");
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let (mic_tee, mic_feed) = audio::tee::tee();
@@ -230,7 +232,8 @@ fn an_engine_that_will_not_start_fails_transcription_and_nothing_else() {
 
 #[test]
 fn a_mid_meeting_failure_stops_both_tracks_and_keeps_what_settled() {
-    let path = temp_transcript("mid-failure");
+    let path_dir = temp_transcript("mid-failure");
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let (mic_tee, mic_feed) = audio::tee::tee();
@@ -274,7 +277,8 @@ fn a_mid_meeting_failure_stops_both_tracks_and_keeps_what_settled() {
 
 #[test]
 fn a_wedged_engine_cannot_hold_stop_hostage_or_touch_the_next_meeting() {
-    let path = temp_transcript("wedged");
+    let path_dir = temp_transcript("wedged");
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let (mic_tee, mic_feed) = audio::tee::tee();
@@ -303,10 +307,11 @@ fn a_wedged_engine_cannot_hold_stop_hostage_or_touch_the_next_meeting() {
     );
 
     // The next meeting starts while the old engine thread is still stuck.
+    let next_dir = temp_transcript("wedged-next");
     let (_tee, feed) = audio::tee::tee();
     let next = live.start(
         notify.clone(),
-        temp_transcript("wedged-next"),
+        next_dir.path.clone(),
         vec![(Speaker::You, feed)],
         Box::new(|| Err("not this time".to_string())),
     );
@@ -389,7 +394,8 @@ fn finals_of(updates: &[LiveUpdate]) -> impl Iterator<Item = u64> + '_ {
 
 #[test]
 fn an_engine_that_panics_mid_meeting_is_reported_while_the_meeting_is_still_on() {
-    let path = temp_transcript("panic");
+    let path_dir = temp_transcript("panic");
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let (mic_tee, mic_feed) = audio::tee::tee();
@@ -427,7 +433,8 @@ fn an_engine_that_panics_mid_meeting_is_reported_while_the_meeting_is_still_on()
 
 #[test]
 fn a_track_whose_session_will_not_open_fails_without_leaving_the_other_running() {
-    let path = temp_transcript("no-session");
+    let path_dir = temp_transcript("no-session");
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let (mic_tee, mic_feed) = audio::tee::tee();
@@ -469,7 +476,8 @@ fn a_track_whose_session_will_not_open_fails_without_leaving_the_other_running()
 
 #[test]
 fn a_microphone_only_meeting_transcribes_the_microphone() {
-    let path = temp_transcript("mic-only");
+    let path_dir = temp_transcript("mic-only");
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let (mic_tee, mic_feed) = audio::tee::tee();
@@ -492,7 +500,8 @@ fn a_microphone_only_meeting_transcribes_the_microphone() {
 
 #[test]
 fn stop_before_the_engine_has_loaded_still_transcribes_what_was_recorded() {
-    let path = temp_transcript("slow-load");
+    let path_dir = temp_transcript("slow-load");
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let (mic_tee, mic_feed) = audio::tee::tee();
@@ -529,7 +538,8 @@ fn stop_before_the_engine_has_loaded_still_transcribes_what_was_recorded() {
 
 #[test]
 fn an_engine_that_comes_back_after_stop_gave_up_cannot_reach_the_next_meeting() {
-    let first_path = temp_transcript("late-first");
+    let first_path_dir = temp_transcript("late-first");
+    let first_path = first_path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let gate = Gate::default();
@@ -553,7 +563,8 @@ fn an_engine_that_comes_back_after_stop_gave_up_cannot_reach_the_next_meeting() 
     );
 
     // The next meeting is running when the first one's engine wakes up.
-    let second_path = temp_transcript("late-second");
+    let second_path_dir = temp_transcript("late-second");
+    let second_path = second_path_dir.path.clone();
     let (mic_tee, mic_feed) = audio::tee::tee();
     let second = live.start(
         notify.clone(),
@@ -602,7 +613,8 @@ fn an_engine_that_comes_back_after_stop_gave_up_cannot_reach_the_next_meeting() 
 fn rapid_start_stop_cycles_keep_every_meeting_to_itself() {
     let live = LiveTranscript::default();
     for round in 0..25 {
-        let path = temp_transcript(&format!("rapid-{round}"));
+        let path_dir = temp_transcript(&format!("rapid-{round}"));
+        let path = path_dir.path.clone();
         let notify = Arc::new(CollectingNotify::default());
         let (mic_tee, mic_feed) = audio::tee::tee();
         let (sys_tee, sys_feed) = audio::tee::tee();
@@ -637,7 +649,8 @@ fn rapid_start_stop_cycles_keep_every_meeting_to_itself() {
 
 #[test]
 fn a_snapshot_taken_mid_stream_plus_the_events_after_it_is_every_line_once() {
-    let path = temp_transcript("snapshot-race");
+    let path_dir = temp_transcript("snapshot-race");
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let (mic_tee, mic_feed) = audio::tee::tee();
@@ -686,7 +699,8 @@ fn a_snapshot_taken_mid_stream_plus_the_events_after_it_is_every_line_once() {
 fn a_long_meeting_keeps_every_line_and_nothing_else() {
     // A few hours' worth of lines. The board grows by lines, never by
     // audio, and the pane and the file end up agreeing on all of them.
-    let path = temp_transcript("long");
+    let path_dir = temp_transcript("long");
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let (mic_tee, mic_feed) = audio::tee::tee();
@@ -717,7 +731,8 @@ fn a_guess_that_is_never_settled_or_withdrawn_does_not_stay_on_screen() {
     // Apple's model does this over room tone: one "I", then nothing. It
     // must not sit in the pane as someone "still speaking" for the rest
     // of a quiet stretch — the live form of the hallucination bug.
-    let path = temp_transcript("stale-guess");
+    let path_dir = temp_transcript("stale-guess");
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let feeds = Feeds::default();
@@ -777,7 +792,8 @@ fn a_guess_that_is_never_settled_or_withdrawn_does_not_stay_on_screen() {
 fn a_guess_the_engine_keeps_updating_is_never_withdrawn() {
     // A long monologue: the guess changes with every chunk, so however
     // long it runs it is live, not stale.
-    let path = temp_transcript("fresh-guess");
+    let path_dir = temp_transcript("fresh-guess");
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let notify = Arc::new(CollectingNotify::default());
     let (mic_tee, mic_feed) = audio::tee::tee();
@@ -888,8 +904,9 @@ fn stop_a_late_line_meeting(
     name: &str,
     hold: Hold,
     timeout: Duration,
-) -> (PathBuf, Status, TranscriptFinal) {
-    let path = temp_transcript(name);
+) -> (TempTranscript, Status, TranscriptFinal) {
+    let path_dir = temp_transcript(name);
+    let path = path_dir.path.clone();
     let live = LiveTranscript::default();
     let (mic_tee, mic_feed) = audio::tee::tee();
     let transcription = live.start(
@@ -900,7 +917,7 @@ fn stop_a_late_line_meeting(
     );
     drop(mic_tee);
     let (status, transcript_final) = transcription.finish_final(timeout);
-    (path, status, transcript_final)
+    (path_dir, status, transcript_final)
 }
 
 const LAST_LINE: &str = "[00:00:01] You: The last line.";
@@ -950,7 +967,8 @@ fn an_engine_slower_than_stop_makes_transcript_md_final_only_once_it_ends() {
 fn transcript_md_is_in_time_order_by_the_time_it_is_final() {
     // A line from the other track that started later but settled first, as
     // happens when one engine runs ahead of the other (SPEC A19).
-    let path = temp_transcript("sorted-at-stop");
+    let path_dir = temp_transcript("sorted-at-stop");
+    let path = path_dir.path.clone();
     std::fs::write(&path, "[00:00:09] Others: Said later, settled first.\n").unwrap();
     let live = LiveTranscript::default();
     let (mic_tee, mic_feed) = audio::tee::tee();

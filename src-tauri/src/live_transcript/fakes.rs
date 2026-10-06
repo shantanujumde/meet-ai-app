@@ -224,14 +224,26 @@ pub(super) fn fake(mode: Mode) -> OpenEngine {
     Box::new(move || Ok(Box::new(FakeEngine(mode)) as Box<dyn SttEngine>))
 }
 
-pub(super) fn temp_transcript(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "meet-ai-live-transcript-{name}-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir.join("transcript.md")
+/// A transcript path in a fresh folder that is removed when this is dropped.
+pub(super) struct TempTranscript {
+    _dir: tempfile::TempDir,
+    pub(super) path: PathBuf,
+}
+
+impl std::ops::Deref for TempTranscript {
+    type Target = PathBuf;
+    fn deref(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
+pub(super) fn temp_transcript(name: &str) -> TempTranscript {
+    let dir = tempfile::Builder::new()
+        .prefix(&format!("meet-ai-live-transcript-{name}-"))
+        .tempdir()
+        .unwrap();
+    let path = dir.path().join("transcript.md");
+    TempTranscript { _dir: dir, path }
 }
 
 pub(super) fn wait_for(what: &str, condition: impl Fn() -> bool) {

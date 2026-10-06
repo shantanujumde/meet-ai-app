@@ -105,11 +105,10 @@ mod tests {
     /// app restart actually depends on to see a finished setup stay finished.
     #[test]
     fn completing_onboarding_survives_a_fresh_read_through_the_real_root() {
-        let dir = std::env::temp_dir().join(format!("meet-ai-ob-roundtrip-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
         // SAFETY: this test does not run other tests concurrently that read
         // `MEET_AI_MEETINGS_ROOT`, and it is restored before returning.
-        unsafe { std::env::set_var("MEET_AI_MEETINGS_ROOT", &dir) };
+        unsafe { std::env::set_var("MEET_AI_MEETINGS_ROOT", dir.path()) };
 
         assert!(state().unwrap().completed_at.is_none());
         let written = complete().unwrap();
@@ -119,7 +118,6 @@ mod tests {
         assert_eq!(state().unwrap().completed_at, written.completed_at);
 
         unsafe { std::env::remove_var("MEET_AI_MEETINGS_ROOT") };
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

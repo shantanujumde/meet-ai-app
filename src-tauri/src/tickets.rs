@@ -173,31 +173,26 @@ fn create_in(root: &Path, title: &str, body: &str) -> Result<TicketSummary, UiEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
 
-    fn temp_root(name: &str) -> PathBuf {
-        static N: AtomicU32 = AtomicU32::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "meet-ai-tickets-{name}-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::remove_dir_all(&dir).ok();
-        fs::create_dir_all(&dir).expect("create temp root");
-        dir
+    fn temp_root(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("meet-ai-tickets-{name}-"))
+            .tempdir()
+            .expect("create temp root")
     }
 
     #[test]
     fn a_missing_tickets_folder_lists_nothing() {
-        let root = temp_root("empty");
-        assert!(list_in(&root).expect("list").is_empty());
-        fs::remove_dir_all(&root).ok();
+        let root_dir = temp_root("empty");
+        let root = root_dir.path();
+        assert!(list_in(root).expect("list").is_empty());
     }
 
     #[test]
     fn create_then_list_round_trips() {
-        let root = temp_root("roundtrip");
-        let made = create_in(&root, "  Fix the thing  ", "Some notes").expect("create");
+        let root_dir = temp_root("roundtrip");
+        let root = root_dir.path();
+        let made = create_in(root, "  Fix the thing  ", "Some notes").expect("create");
         assert_eq!(made.id, "TICK-0001");
         assert_eq!(made.title, "Fix the thing");
         assert_eq!(made.status.as_deref(), Some("open"));
@@ -205,43 +200,43 @@ mod tests {
         assert_eq!(made.body, "Some notes\n");
         assert!(!made.has_problems);
 
-        let listed = list_in(&root).expect("list");
+        let listed = list_in(root).expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, "TICK-0001");
         assert_eq!(listed[0].title, "Fix the thing");
         assert_eq!(listed[0].meeting, None);
         assert!(!listed[0].has_problems);
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn ids_increment_and_the_newest_is_first() {
-        let root = temp_root("ids");
-        let a = create_in(&root, "one", "").expect("a");
-        let b = create_in(&root, "two", "").expect("b");
+        let root_dir = temp_root("ids");
+        let root = root_dir.path();
+        let a = create_in(root, "one", "").expect("a");
+        let b = create_in(root, "two", "").expect("b");
         assert_eq!((a.id.as_str(), b.id.as_str()), ("TICK-0001", "TICK-0002"));
-        let ids: Vec<_> = list_in(&root)
+        let ids: Vec<_> = list_in(root)
             .expect("list")
             .into_iter()
             .map(|t| t.id)
             .collect();
         assert_eq!(ids, ["TICK-0002", "TICK-0001"]);
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn an_empty_title_is_rejected() {
-        let root = temp_root("blank");
-        let error = create_in(&root, "   ", "body").expect_err("rejected");
+        let root_dir = temp_root("blank");
+        let root = root_dir.path();
+        let error = create_in(root, "   ", "body").expect_err("rejected");
         assert_eq!(error.kind, "ticket-title-empty");
-        assert!(list_in(&root).expect("list").is_empty());
-        fs::remove_dir_all(&root).ok();
+        assert!(list_in(root).expect("list").is_empty());
     }
 
     #[test]
     fn a_broken_ticket_is_listed_with_a_problem_flag() {
-        let root = temp_root("broken");
-        let dir = tickets_dir(&root);
+        let root_dir = temp_root("broken");
+        let root = root_dir.path();
+        let dir = tickets_dir(root);
         fs::create_dir_all(&dir).expect("dir");
         fs::write(
             dir.join("TICK-0007.md"),
@@ -249,17 +244,13 @@ mod tests {
         )
         .expect("write");
         fs::write(dir.join("notes.txt"), "not a ticket").expect("write");
-        let listed = list_in(&root).expect("list");
+        let listed = list_in(root).expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, "TICK-0007");
         assert_eq!(listed[0].title, "TICK-0007");
         assert!(listed[0].has_problems);
         // The next id still moves past a broken file.
-        assert_eq!(
-            create_in(&root, "next", "").expect("create").id,
-            "TICK-0008"
-        );
-        fs::remove_dir_all(&root).ok();
+        assert_eq!(create_in(root, "next", "").expect("create").id, "TICK-0008");
     }
 
     const MEETING: &str = "2026-09-01-1430-standup";
@@ -302,17 +293,18 @@ mod tests {
     #[test]
     fn a_hand_made_ticket_and_a_notes_run_at_the_same_time_get_different_numbers() {
         for round in 0..10 {
-            let root = temp_root("race");
-            meeting_folder(&root);
+            let root_dir = temp_root("race");
+            let root = root_dir.path();
+            meeting_folder(root);
             let start = std::sync::Barrier::new(2);
             let (agent, by_hand) = std::thread::scope(|s| {
                 let agent = s.spawn(|| {
                     start.wait();
-                    write_notes(&root, &["Load test", "Move sessions to Redis"])
+                    write_notes(root, &["Load test", "Move sessions to Redis"])
                 });
                 let by_hand = s.spawn(|| {
                     start.wait();
-                    create_in(&root, "By hand", "").expect("create")
+                    create_in(root, "By hand", "").expect("create")
                 });
                 (
                     agent.join().expect("agent thread"),
@@ -324,20 +316,20 @@ mod tests {
             ids.sort();
             ids.dedup();
             assert_eq!(ids.len(), 3, "round {round}: {agent:?} and {}", by_hand.id);
-            fs::remove_dir_all(&root).ok();
         }
     }
 
     #[test]
     fn a_hand_made_ticket_waits_for_the_ticket_number_lock() {
-        let root = temp_root("lock");
-        meeting_folder(&root);
+        let root_dir = temp_root("lock");
+        let root = root_dir.path();
+        meeting_folder(root);
         let (done, finished) = std::sync::mpsc::channel();
         std::thread::scope(|s| {
             // Taken in here so a failed assert lets go of it before the join.
             let numbers = agent_notes::lock_meeting_writers();
             s.spawn(|| {
-                let made = create_in(&root, "By hand", "");
+                let made = create_in(root, "By hand", "");
                 done.send(made).ok();
             });
             assert!(
@@ -356,14 +348,14 @@ mod tests {
             let made = finished.recv().expect("sent").expect("create");
             assert_eq!(made.id, "TICK-0002");
         });
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn a_number_a_notes_run_retired_is_not_handed_out_by_hand() {
-        let root = temp_root("retired");
-        meeting_folder(&root);
-        assert_eq!(write_notes(&root, &["Load test"]), ["TICK-0001"]);
+        let root_dir = temp_root("retired");
+        let root = root_dir.path();
+        meeting_folder(root);
+        assert_eq!(write_notes(root, &["Load test"]), ["TICK-0001"]);
         // The user deleted the agent's ticket; its number stays retired.
         fs::remove_file(
             root.join(MEETING)
@@ -372,9 +364,8 @@ mod tests {
         )
         .expect("delete");
         assert_eq!(
-            create_in(&root, "By hand", "").expect("create").id,
+            create_in(root, "By hand", "").expect("create").id,
             "TICK-0002"
         );
-        fs::remove_dir_all(&root).ok();
     }
 }
