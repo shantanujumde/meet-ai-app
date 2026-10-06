@@ -22,6 +22,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
+import { useCliFound } from "@/hooks/useCliFound";
 import { useNotesRun } from "@/hooks/useNotesRun";
 import {
   copyPromptFallback,
@@ -103,9 +104,9 @@ function MeetingReview({ id }: { id: string }) {
       current = false;
     };
   }, []);
-  // `cliFound` stays at its default until agent CLI detection (TUR-6, TUR-10)
-  // can say whether the chosen agent is installed.
-  const copyPrompt = showsCopyPrompt({ harnessIsNone: harnessIsNone === true });
+  // With an agent set up, Copy prompt also stands in when its CLI is missing.
+  const cliFound = useCliFound(harnessIsNone === false);
+  const copyPrompt = showsCopyPrompt({ harnessIsNone: harnessIsNone === true, cliFound });
 
   const load = useCallback(async (meetingId: string) => {
     setLoading(true);
