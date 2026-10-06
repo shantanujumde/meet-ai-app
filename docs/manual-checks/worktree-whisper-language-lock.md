@@ -1,6 +1,6 @@
 # Manual checks: whisper-language-lock
 
-Owner's spoken-language work (SPEC A17, `transcription.language`): auto keeps
+Owner's spoken-language work (SPEC A22, `transcription.language`): auto keeps
 each line's language with a per-speaker fallback, a "Spoken language" picker in
 Settings → Speech, Hinglish via a prompt, and loop cutting. The pure logic
 (`spoken_language.rs`, `whisper_text.rs`, config parsing, the picker) is
@@ -34,4 +34,4 @@ file, a real meeting or the signed app.
 
 ## Known
 
-- SPEC has two "A17" amendments (TUR-102's and this one); known, renumbered by D25.
+- SPEC had two "A17" amendments; this one is now A22 (D25).
