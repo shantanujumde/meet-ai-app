@@ -263,7 +263,8 @@ fn apple() -> OpenEngine {
 // --- one meeting ---------------------------------------------------------------
 
 struct Meeting {
-    dir: PathBuf,
+    /// Keeps the meeting folder alive; removed when the meeting is dropped.
+    _dir: tempfile::TempDir,
     transcript: String,
     status: Status,
     snapshot: Snapshot,
@@ -309,8 +310,11 @@ fn guess_lifetimes(updates: &[LiveUpdate], arrived: &[Instant], stop: Instant) -
 
 /// Record `mic` and `system` as one meeting, transcribing live with `open`.
 fn record(name: &str, mic: Vec<i16>, system: Vec<i16>, open: OpenEngine) -> Meeting {
-    let dir = std::env::temp_dir().join(format!("meet-ai-e2e-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let temp = tempfile::Builder::new()
+        .prefix(&format!("meet-ai-e2e-{name}-"))
+        .tempdir()
+        .unwrap();
+    let dir = temp.path().to_path_buf();
     std::fs::create_dir_all(dir.join("audio")).unwrap();
     // The recorder creates it empty up front (`create_meeting_folder`).
     std::fs::write(dir.join("transcript.md"), "").unwrap();
@@ -377,7 +381,7 @@ fn record(name: &str, mic: Vec<i16>, system: Vec<i16>, open: OpenEngine) -> Meet
         longest_guess,
         guess_showing_at_stop,
         transcript: std::fs::read_to_string(dir.join("transcript.md")).unwrap(),
-        dir,
+        _dir: temp,
         status,
         snapshot: live.snapshot(),
         updates,
@@ -629,7 +633,6 @@ fn speech_gate(engine: &str, open: OpenEngine) {
             );
         }
     }
-    let _ = std::fs::remove_dir_all(&meeting.dir);
 }
 
 /// Quiet on both tracks: nothing written, nothing guessed (TUR-67, live).
@@ -673,7 +676,6 @@ fn silence_gate(engine: &str, open: impl Fn() -> OpenEngine) {
                 meeting.updates
             );
         }
-        let _ = std::fs::remove_dir_all(&meeting.dir);
     }
 }
 

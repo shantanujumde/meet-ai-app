@@ -478,21 +478,11 @@ mod tests {
 
     /// A scratch directory removed on drop, so a failed assertion does not
     /// leave it behind.
-    struct Scratch(PathBuf);
-
-    impl Scratch {
-        fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("meet-ai-{name}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            Self(dir)
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
+    fn scratch(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("meet-ai-{name}-"))
+            .tempdir()
+            .unwrap()
     }
 
     fn install(dir: &Path, spec: &ModelSpec) {
@@ -504,9 +494,9 @@ mod tests {
     fn a_model_stranded_in_the_old_default_folder_is_still_found() {
         // Moved the meetings folder, then downloaded — before models followed
         // the root, the download landed in `~/Meetings/.app/models`.
-        let scratch = Scratch::new("engine-stranded");
-        let primary = scratch.0.join("chosen/.app/models");
-        let stranded = scratch.0.join("home/Meetings/.app/models");
+        let scratch = scratch("engine-stranded");
+        let primary = scratch.path().join("chosen/.app/models");
+        let stranded = scratch.path().join("home/Meetings/.app/models");
         let spec = stt::model::find("small.en-q5_1").unwrap();
         install(&stranded, spec);
 
@@ -536,9 +526,9 @@ mod tests {
         // TUR-23: the app's discovery replaces the stt crate's model lookup, so
         // it must also fill the installed list, or a missing-model error would
         // say "none installed" next to a small.en the app can see.
-        let scratch = Scratch::new("engine-installed-list");
-        let primary = scratch.0.join("chosen/.app/models");
-        let stranded = scratch.0.join("home/Meetings/.app/models");
+        let scratch = scratch("engine-installed-list");
+        let primary = scratch.path().join("chosen/.app/models");
+        let stranded = scratch.path().join("home/Meetings/.app/models");
         install(&stranded, stt::model::find("small.en-q5_1").unwrap());
         let dirs = ModelDirs {
             primary: Some(primary),
@@ -552,9 +542,9 @@ mod tests {
 
     #[test]
     fn the_chosen_root_wins_over_a_stranded_copy() {
-        let scratch = Scratch::new("engine-primary-wins");
-        let primary = scratch.0.join("chosen/.app/models");
-        let stranded = scratch.0.join("home/Meetings/.app/models");
+        let scratch = scratch("engine-primary-wins");
+        let primary = scratch.path().join("chosen/.app/models");
+        let stranded = scratch.path().join("home/Meetings/.app/models");
         let spec = stt::model::find("small.en-q5_1").unwrap();
         install(&primary, spec);
         install(&stranded, spec);
@@ -569,8 +559,8 @@ mod tests {
     fn a_partial_download_is_not_a_stranded_model() {
         // Only the finished name counts: that is the file `ensure` renames into
         // place after the digest matches.
-        let scratch = Scratch::new("engine-stranded-part");
-        let stranded = scratch.0.join("home/Meetings/.app/models");
+        let scratch = scratch("engine-stranded-part");
+        let stranded = scratch.path().join("home/Meetings/.app/models");
         let spec = stt::model::find("small.en-q5_1").unwrap();
         std::fs::create_dir_all(&stranded).unwrap();
         std::fs::write(
@@ -580,7 +570,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            locate(spec, Some(&scratch.0.join("chosen")), Some(&stranded)),
+            locate(spec, Some(&scratch.path().join("chosen")), Some(&stranded)),
             None
         );
     }
@@ -624,8 +614,8 @@ mod tests {
 
     #[test]
     fn discovery_finds_a_downloaded_parakeet_folder_for_the_registry() {
-        let scratch = Scratch::new("engine-parakeet");
-        let primary = scratch.0.join("chosen/.app/models");
+        let scratch = scratch("engine-parakeet");
+        let primary = scratch.path().join("chosen/.app/models");
         let model = &stt::model::parakeet::PARAKEET_V3;
         let dirs = ModelDirs {
             primary: Some(primary.clone()),

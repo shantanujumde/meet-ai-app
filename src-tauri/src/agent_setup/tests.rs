@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use agent::fake::{FakeBehavior, FakeHarness};
@@ -27,16 +26,11 @@ fn install(path: &str, signed_in: bool) -> Install {
     }
 }
 
-fn temp_root(name: &str) -> PathBuf {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "meet-ai-agent-setup-{name}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::remove_dir_all(&dir).ok();
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn temp_root(name: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("meet-ai-agent-setup-{name}-"))
+        .tempdir()
+        .unwrap()
 }
 
 fn good_notes() -> serde_json::Value {
@@ -473,22 +467,22 @@ fn the_sample_prompt_carries_the_three_lines() {
 
 #[test]
 fn the_sample_prompt_uses_the_user_s_own_template() {
-    let root = temp_root("template");
+    let root_dir = temp_root("template");
+    let root = root_dir.path();
     let prompts = root.join(".app").join("prompts");
     std::fs::create_dir_all(&prompts).unwrap();
     std::fs::write(prompts.join("wrap-up.md"), "MINE {{ transcript }}").unwrap();
 
-    let prompt = sample_prompt(Some(&root)).unwrap();
+    let prompt = sample_prompt(Some(root)).unwrap();
     assert!(prompt.starts_with("MINE [00:00:01] Ana:"), "{prompt}");
 
     // No saved template under the root: the built-in one.
-    let empty = temp_root("no-template");
+    let empty_dir = temp_root("no-template");
+    let empty = empty_dir.path();
     assert_eq!(
-        sample_prompt(Some(&empty)).unwrap().lines().next(),
+        sample_prompt(Some(empty)).unwrap().lines().next(),
         sample_prompt(None).unwrap().lines().next()
     );
-    std::fs::remove_dir_all(root).ok();
-    std::fs::remove_dir_all(empty).ok();
 }
 
 #[test]

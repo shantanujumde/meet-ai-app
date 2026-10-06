@@ -678,11 +678,11 @@ mod tests {
 
     #[test]
     fn a_second_recording_in_the_same_minute_gets_its_own_folder() {
-        let root = std::env::temp_dir().join(format!("meet-ai-same-minute-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
         let base = "2026-09-01-1430-meeting";
 
-        let first = create_meeting_folder(&root, base, |_| {}).unwrap();
+        let first = create_meeting_folder(root, base, |_| {}).unwrap();
         assert_eq!(first, base);
         // The first meeting has content by the time the second starts.
         std::fs::write(
@@ -691,8 +691,8 @@ mod tests {
         )
         .unwrap();
 
-        let second = create_meeting_folder(&root, base, |_| {}).unwrap();
-        let third = create_meeting_folder(&root, base, |_| {}).unwrap();
+        let second = create_meeting_folder(root, base, |_| {}).unwrap();
+        let third = create_meeting_folder(root, base, |_| {}).unwrap();
         assert_eq!(second, "2026-09-01-1430-meeting-2");
         assert_eq!(third, "2026-09-01-1430-meeting-3");
 
@@ -714,7 +714,6 @@ mod tests {
             assert_eq!(time.as_deref(), Some("14:30"));
             assert!(slug.unwrap().starts_with("meeting-"));
         }
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

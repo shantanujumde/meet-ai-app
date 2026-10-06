@@ -1,6 +1,6 @@
 //! Round trips for the `agent` and `tickets` sections (TUR-3).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::FILE;
 use super::agent_section::{
@@ -262,37 +262,9 @@ fn a_file_that_does_not_parse_is_refused_not_overwritten() {
     }
 }
 
-/// A fresh folder under the system temp dir, removed on drop.
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(name: &str) -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "meet-ai-config-{name}-{}-{nanos}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        Self(dir)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 #[test]
 fn saving_to_disk_round_trips_and_writes_the_schema_beside_it() {
-    let temp = TempDir::new("disk");
+    let temp = tempfile::tempdir().unwrap();
     let dir = temp.path().join(".app");
     assert_eq!(
         super::file::read_in(&dir).unwrap(),
@@ -321,7 +293,7 @@ fn saving_to_disk_round_trips_and_writes_the_schema_beside_it() {
 
 #[test]
 fn a_refused_write_leaves_the_file_alone() {
-    let temp = TempDir::new("refused");
+    let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join(FILE);
     std::fs::write(&path, "{ not json").unwrap();
     let result = super::file::write_in(temp.path(), |raw| with_agent(raw, &every_field_set()));
