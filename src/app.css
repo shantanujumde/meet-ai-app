@@ -90,6 +90,7 @@
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
+  overflow-x: clip;
   background: var(--surface-canvas);
 }
 
@@ -377,7 +378,7 @@
 
 .transcript__line {
   display: grid;
-  grid-template-columns: 7ch var(--transcript-speaker-w) 1fr;
+  grid-template-columns: 7ch var(--transcript-speaker-w) minmax(0, 1fr);
   gap: var(--space-5);
   align-items: baseline;
   font-size: var(--transcript-text);
@@ -393,6 +394,7 @@
 
 .transcript__text {
   color: var(--transcript-final);
+  overflow-wrap: anywhere;
 }
 
 /* -----------------------------------------------------------------------------

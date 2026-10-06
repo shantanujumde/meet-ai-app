@@ -289,7 +289,9 @@ function Sections({ sections }: { sections: NotesSection[] }) {
       {sections.map((section) => (
         <article key={section.heading} className="flex flex-col gap-2">
           <h3 className="m-0 text-headline font-semibold">{section.heading}</h3>
-          <Prose className="m-0 whitespace-pre-wrap text-fg-primary">{section.body}</Prose>
+          <Prose className="m-0 whitespace-pre-wrap wrap-anywhere text-fg-primary">
+            {section.body}
+          </Prose>
         </article>
       ))}
     </div>
