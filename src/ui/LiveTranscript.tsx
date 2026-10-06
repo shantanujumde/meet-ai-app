@@ -97,7 +97,7 @@ export function LiveTranscript({ live }: { live: LiveState }) {
       {live.status.state === "failed" ? <FailedNotice detail={live.status.detail} /> : null}
 
       <div className="live">
-        <div className="live__scroller" ref={scroller} onScroll={handleScroll}>
+        <div className="live__scroller relative" ref={scroller} onScroll={handleScroll}>
           {empty ? <p className="live__empty">{emptyCopyFor(live.status)}</p> : null}
 
           {/* Only settled lines are announced. A guess is rewritten several
