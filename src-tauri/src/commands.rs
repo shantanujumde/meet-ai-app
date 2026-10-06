@@ -36,6 +36,9 @@ use crate::watch;
 #[specta::specta]
 pub async fn list_meetings(app: AppHandle) -> Result<MeetingList, UiError> {
     on_blocking_pool(move || {
+        // The folder may have appeared since launch (first recording): start
+        // watching it now (TUR-122).
+        watch::state(&app).ensure_running(&app);
         let status = app.state::<Recorder>().status();
         meetings::list(Live::from_status(&status))
     })
