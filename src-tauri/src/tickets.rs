@@ -629,10 +629,11 @@ mod tests {
 
     /// A meeting titled "Platform standup" whose notes run suggested the
     /// three tasks, TICK-0001 to TICK-0003.
-    fn with_suggestions(name: &str) -> PathBuf {
-        let root = temp_root(name);
-        meeting_folder(&root);
-        write_notes(&root, &["Load test", "Move sessions to Redis", "Runbook"]);
+    fn with_suggestions(name: &str) -> tempfile::TempDir {
+        let root_dir = temp_root(name);
+        let root = root_dir.path();
+        meeting_folder(root);
+        write_notes(root, &["Load test", "Move sessions to Redis", "Runbook"]);
         let meeting_md = root.join(MEETING).join(store::MEETING_FILE);
         let mut meeting = Meeting::read(&meeting_md)
             .expect("read")
@@ -641,7 +642,7 @@ mod tests {
             .frontmatter
             .set_str("title", Some("Platform standup"));
         meeting.write(&meeting_md).expect("retitle");
-        root
+        root_dir
     }
 
     fn suggestion(root: &Path, id: &str) -> PathBuf {
@@ -652,14 +653,15 @@ mod tests {
 
     #[test]
     fn approve_moves_a_suggestion_to_tickets_labelled_with_its_meeting() {
-        let root = with_suggestions("approve");
+        let root_dir = with_suggestions("approve");
+        let root = root_dir.path();
         let writes = SelfWrites::default();
         assert!(
-            list_in(&root).expect("list").is_empty(),
+            list_in(root).expect("list").is_empty(),
             "suggestions are not in Tickets"
         );
 
-        let approved = approve_in(&root, MEETING, "TICK-0002", &writes).expect("approve");
+        let approved = approve_in(root, MEETING, "TICK-0002", &writes).expect("approve");
 
         assert_eq!(approved.id, "TICK-0002");
         assert_eq!(approved.title, "Move sessions to Redis");
@@ -672,15 +674,15 @@ mod tests {
             "{}",
             approved.body
         );
-        assert!(!suggestion(&root, "TICK-0002").exists());
+        assert!(!suggestion(root, "TICK-0002").exists());
 
-        let listed = list_in(&root).expect("list");
+        let listed = list_in(root).expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, "TICK-0002");
         assert_eq!(listed[0].meeting_title.as_deref(), Some("Platform standup"));
 
         // Still the meeting's task, no longer a suggestion.
-        let tasks = meeting_tasks_in(&root, MEETING).expect("tasks");
+        let tasks = meeting_tasks_in(root, MEETING).expect("tasks");
         let rows: Vec<(&str, bool)> = tasks.iter().map(|t| (t.id.as_str(), t.suggested)).collect();
         assert_eq!(
             rows,
@@ -690,115 +692,115 @@ mod tests {
                 ("TICK-0003", true)
             ]
         );
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn approving_twice_or_a_bad_id_says_so() {
-        let root = with_suggestions("approve-twice");
+        let root_dir = with_suggestions("approve-twice");
+        let root = root_dir.path();
         let writes = SelfWrites::default();
-        approve_in(&root, MEETING, "TICK-0001", &writes).expect("approve");
-        let again = approve_in(&root, MEETING, "TICK-0001", &writes).expect_err("gone");
+        approve_in(root, MEETING, "TICK-0001", &writes).expect("approve");
+        let again = approve_in(root, MEETING, "TICK-0001", &writes).expect_err("gone");
         assert_eq!(again.kind, TICKET_MISSING);
-        let bad = approve_in(&root, MEETING, "../TICK-0001", &writes).expect_err("bad");
+        let bad = approve_in(root, MEETING, "../TICK-0001", &writes).expect_err("bad");
         assert_eq!(bad.kind, "bad-ticket-id");
         assert_eq!(
-            discard_in(&root, MEETING, "notes", &writes)
+            discard_in(root, MEETING, "notes", &writes)
                 .expect_err("bad")
                 .kind,
             "bad-ticket-id"
         );
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn approve_never_overwrites_a_ticket_already_in_tickets() {
-        let root = with_suggestions("approve-taken");
-        fs::create_dir_all(tickets_dir(&root)).expect("dir");
-        fs::write(tickets_dir(&root).join("TICK-0001.md"), "theirs").expect("write");
+        let root_dir = with_suggestions("approve-taken");
+        let root = root_dir.path();
+        fs::create_dir_all(tickets_dir(root)).expect("dir");
+        fs::write(tickets_dir(root).join("TICK-0001.md"), "theirs").expect("write");
         let error =
-            approve_in(&root, MEETING, "TICK-0001", &SelfWrites::default()).expect_err("taken");
+            approve_in(root, MEETING, "TICK-0001", &SelfWrites::default()).expect_err("taken");
         assert_eq!(error.kind, "ticket-already-in-tickets");
-        assert!(suggestion(&root, "TICK-0001").exists());
-        fs::remove_dir_all(&root).ok();
+        assert!(suggestion(root, "TICK-0001").exists());
     }
 
     #[test]
     fn approve_all_moves_the_rest_and_returns_the_meetings_tasks() {
-        let root = with_suggestions("approve-all");
+        let root_dir = with_suggestions("approve-all");
+        let root = root_dir.path();
         let writes = SelfWrites::default();
-        discard_in(&root, MEETING, "TICK-0002", &writes).expect("discard");
+        discard_in(root, MEETING, "TICK-0002", &writes).expect("discard");
 
-        let tasks = approve_all_in(&root, MEETING, &writes).expect("approve all");
+        let tasks = approve_all_in(root, MEETING, &writes).expect("approve all");
 
         let rows: Vec<(&str, bool)> = tasks.iter().map(|t| (t.id.as_str(), t.suggested)).collect();
         assert_eq!(rows, [("TICK-0001", false), ("TICK-0003", false)]);
-        let ids: Vec<String> = list_in(&root)
+        let ids: Vec<String> = list_in(root)
             .expect("list")
             .into_iter()
             .map(|t| t.id)
             .collect();
         assert_eq!(ids, ["TICK-0003", "TICK-0001"]);
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn discarding_the_highest_task_keeps_its_number_from_a_hand_made_ticket() {
-        let root = with_suggestions("discard");
-        discard_in(&root, MEETING, "TICK-0003", &SelfWrites::default()).expect("discard");
+        let root_dir = with_suggestions("discard");
+        let root = root_dir.path();
+        discard_in(root, MEETING, "TICK-0003", &SelfWrites::default()).expect("discard");
 
-        assert!(!suggestion(&root, "TICK-0003").exists());
-        let ids: Vec<String> = meeting_tasks_in(&root, MEETING)
+        assert!(!suggestion(root, "TICK-0003").exists());
+        let ids: Vec<String> = meeting_tasks_in(root, MEETING)
             .expect("tasks")
             .into_iter()
             .map(|t| t.id)
             .collect();
         assert_eq!(ids, ["TICK-0001", "TICK-0002"]);
         assert_eq!(
-            create_in(&root, "By hand", "").expect("create").id,
+            create_in(root, "By hand", "").expect("create").id,
             "TICK-0004"
         );
         // A notes re-run does not bring it back, nor take its number.
-        let written = write_notes(&root, &["Load test", "Move sessions to Redis", "Runbook"]);
+        let written = write_notes(root, &["Load test", "Move sessions to Redis", "Runbook"]);
         assert!(!written.contains(&"TICK-0003".to_owned()), "{written:?}");
-        assert!(!suggestion(&root, "TICK-0003").exists());
+        assert!(!suggestion(root, "TICK-0003").exists());
 
-        let gone = discard_in(&root, MEETING, "TICK-0003", &SelfWrites::default())
+        let gone = discard_in(root, MEETING, "TICK-0003", &SelfWrites::default())
             .expect_err("already gone");
         assert_eq!(gone.kind, TICKET_MISSING);
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn the_update_step_moves_synced_tickets_once() {
-        let root = with_suggestions("migrate");
-        let path = suggestion(&root, "TICK-0002");
+        let root_dir = with_suggestions("migrate");
+        let root = root_dir.path();
+        let path = suggestion(root, "TICK-0002");
         let mut synced = Ticket::read(&path).expect("read");
         synced.frontmatter.set_str("synced_to", Some("linear"));
         synced.frontmatter.set_str("external_id", Some("ENG-42"));
         synced.write(&path).expect("write");
 
-        let moved = migrate_synced(&root, &SelfWrites::default()).expect("migrate");
+        let moved = migrate_synced(root, &SelfWrites::default()).expect("migrate");
 
         assert_eq!(moved.len(), 1);
         assert_eq!(moved[0].ticket_id, "TICK-0002");
         assert_eq!(moved[0].meeting_id, MEETING);
-        let listed = list_in(&root).expect("list");
+        let listed = list_in(root).expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].external_id.as_deref(), Some("ENG-42"));
         assert_eq!(listed[0].meeting.as_deref(), Some(MEETING));
-        assert!(suggestion(&root, "TICK-0001").exists());
-        assert!(suggestion(&root, "TICK-0003").exists());
+        assert!(suggestion(root, "TICK-0001").exists());
+        assert!(suggestion(root, "TICK-0003").exists());
 
-        let again = migrate_synced(&root, &SelfWrites::default()).expect("again");
+        let again = migrate_synced(root, &SelfWrites::default()).expect("again");
         assert!(again.is_empty(), "{again:?}");
-        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn a_ticket_lists_its_owner_and_due_date() {
-        let root = temp_root("owner-due");
-        meeting_folder(&root);
+        let root_dir = temp_root("owner-due");
+        let root = root_dir.path();
+        meeting_folder(root);
         let mut notes = notes_with(&["Ship it"]);
         notes.tasks[0].owner = Some("Priya".to_owned());
         notes.tasks[0].due = Some("Friday".to_owned());
@@ -807,19 +809,18 @@ mod tests {
             model: "sonnet".to_owned(),
             at: "2026-09-01T15:32:00+05:30".to_owned(),
         };
-        agent_notes::write(&root, MEETING, &notes, &analysis, &SelfWrites::default())
+        agent_notes::write(root, MEETING, &notes, &analysis, &SelfWrites::default())
             .expect("notes");
-        let tasks = meeting_tasks_in(&root, MEETING).expect("tasks");
+        let tasks = meeting_tasks_in(root, MEETING).expect("tasks");
         assert_eq!(tasks[0].owner.as_deref(), Some("Priya"));
         assert_eq!(tasks[0].due.as_deref(), Some("Friday"));
         assert!(tasks[0].suggested);
         // The title a fresh meeting.md gets: the folder name, made readable.
         assert_eq!(tasks[0].meeting_title.as_deref(), Some("Standup"));
-        let made = create_in(&root, "By hand", "").expect("create");
+        let made = create_in(root, "By hand", "").expect("create");
         assert_eq!(
             (made.owner, made.due, made.meeting_title),
             (None, None, None)
         );
-        fs::remove_dir_all(&root).ok();
     }
 }
