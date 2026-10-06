@@ -120,6 +120,10 @@ rusqlite = "=0.40.2"
 serde = "=1.0.229"
 serde_json = "=1.0.151"
 yaml-rust2 = "=0.12.0"
+# Delete a meeting by moving its folder to the system Trash / Recycle Bin
+# (TUR-116). MIT. On macOS it pulls the same objc2 0.6 / objc2-foundation 0.3
+# lines as the audio crates; on Windows the same `windows` 0.62.
+trash = "=5.2.9"
 
 # --- runtime, logging, errors, testing (SETUP.md §2.6) ---
 anyhow = "=1.0.104"

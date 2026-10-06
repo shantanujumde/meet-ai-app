@@ -157,6 +157,7 @@ Features confirmed present on 0.16.0: `metal`, `coreml`, `cuda`, `vulkan`, `hipb
 | `jsonschema` | **0.58.4** | notes-schema check (SPEC A11). `default-features = false`: the defaults pull `reqwest` for remote `$ref`s |
 | `dirs` | **6.0.0** | ⛔ every path via this — Windows seam |
 | `chrono` | **0.4.45** | |
+| `trash` | **5.2.9** | MIT. Delete moves a meeting folder to the Trash / Recycle Bin (TUR-116). On macOS through `NSFileManager`, not Finder over Apple Events, so no Automation prompt |
 
 ### 2.5 Calendar & auth (Phase 5)
 
@@ -280,6 +281,7 @@ Real-account checks are in `docs/manual-checks/worktree-tur48.md`.
 | `react-markdown` | **10.1.0** | |
 | `remark-gfm` | **4.0.1** | |
 | `sonner` | **2.0.8** | |
+| `@radix-ui/react-dropdown-menu` / `@radix-ui/react-context-menu` | **2.1.24** / **2.3.7** | MIT. The meeting row ⋯ menu and right-click menu (`src/ui/menu.tsx`, TUR-116). Both on `@radix-ui/react-menu` 2.1.24; move them together |
 | `lucide-react` | **1.39.0** 🆕 | v1. LLMs know `0.4xx` |
 | `clsx` / `tailwind-merge` / `class-variance-authority` | **2.1.1** / **3.6.0** / **0.7.1** | shadcn/ui prerequisites |
 | `@biomejs/biome` | **2.5.11** | replaces eslint + prettier |

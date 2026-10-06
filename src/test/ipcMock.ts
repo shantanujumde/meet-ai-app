@@ -159,6 +159,8 @@ export const ipc = {
   ),
   saveNotes: vi.fn<typeof Client.saveNotes>(async () => {}),
   renameMeeting: vi.fn<typeof Client.renameMeeting>(async (_id, title) => title.trim()),
+  // TUR-116: the folder went to the Trash.
+  deleteMeeting: vi.fn<typeof Client.deleteMeeting>(async () => {}),
   changeMeetingsFolder: vi.fn<typeof Client.changeMeetingsFolder>(async (root) => ({
     ...EMPTY_LIST,
     root,
