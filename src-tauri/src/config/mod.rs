@@ -3,8 +3,9 @@
 //!
 //! This is deliberately not a config system. Phase 6 (SPEC §5) owns the rest of
 //! §3.5 — `audio`, `calendar`, `detection`, `repos`, and even
-//! `transcription.language`/`transcription.live` — plus the settings UI to edit
-//! it. (A11's `agent` and `tickets`, and `config.schema.json`, came early; see
+//! `transcription.live` — plus the settings UI to edit it.
+//! (`transcription.language` is read already, see `stt::languages`.)
+//! (A11's `agent` and `tickets`, and `config.schema.json`, came early; see
 //! below.) This module exists only to make the Phase 1 exit
 //! gate true: **"engine switch is a config change only."** Before this,
 //! `src-tauri/src/engine.rs` hardcoded the engine to
