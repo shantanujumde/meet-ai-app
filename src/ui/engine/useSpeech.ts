@@ -18,6 +18,7 @@ import {
   engineSelection,
   modelCatalogue,
   onModelProgress,
+  setSpokenLanguage,
   setTranscription,
 } from "@/ipc/client";
 import type { EngineChoice, EngineChoices, EnvironmentView, ModelView, UiError } from "@/ipc/types";
@@ -142,6 +143,23 @@ export function useSpeech() {
     [choices, save],
   );
 
+  /** Same as a pick: shown at once, saved behind it, put back if refused. */
+  const pickLanguage = useCallback(
+    async (language: string) => {
+      if (!choices) return;
+      const before = choices;
+      setChoices({ ...choices, spokenLanguage: language });
+      setSaveError(null);
+      try {
+        setChoices(await setSpokenLanguage(language));
+      } catch (thrown) {
+        setChoices(before);
+        setSaveError(toUiError(thrown));
+      }
+    },
+    [choices],
+  );
+
   const download = useCallback(
     async (id: string) => {
       setDownloads((previous) => ({ ...previous, [id]: { busy: true } }));
@@ -176,6 +194,7 @@ export function useSpeech() {
     refreshModels,
     pickEngine,
     pickModel,
+    pickLanguage,
     download,
   };
 }

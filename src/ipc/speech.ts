@@ -29,6 +29,15 @@ export function setTranscription(engine: EngineChoice, model: string): Promise<E
 }
 
 /**
+ * Save `transcription.language` into config.jsonc: "auto", "hinglish", or the
+ * whisper code people speak, such as "mr". Used from the next recording on. Resolves to the
+ * picker as saved.
+ */
+export function setSpokenLanguage(language: string): Promise<EngineChoices> {
+  return call(() => commands.setSpokenLanguage(language));
+}
+
+/**
  * The model licences to credit in Settings, About (TUR-62: Parakeet's
  * CC-BY-4.0). Constant data from Rust; none without the app behind the window.
  */

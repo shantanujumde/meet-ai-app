@@ -17,7 +17,7 @@ vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
 );
 
-const { engineChoices, modelCatalogue, setTranscription } = ipc;
+const { engineChoices, modelCatalogue, setSpokenLanguage, setTranscription } = ipc;
 
 function choices(overrides: Partial<EngineChoices> = {}): EngineChoices {
   return {
@@ -37,6 +37,13 @@ function choices(overrides: Partial<EngineChoices> = {}): EngineChoices {
       languages: ["English", "German"],
     },
     languages: ["en-US"],
+    spokenLanguage: "auto",
+    spokenLanguages: [
+      { code: "hinglish", name: "Hinglish (Hindi and English)" },
+      { code: "en", name: "English" },
+      { code: "hi", name: "Hindi" },
+      { code: "mr", name: "Marathi" },
+    ],
     ...overrides,
   };
 }
@@ -91,6 +98,67 @@ function modelRow(name: string): HTMLElement {
   if (!(row instanceof HTMLElement)) throw new Error(`no row for ${name}`);
   return row;
 }
+
+describe("EngineSummary: the spoken-language picker", () => {
+  function picker(): HTMLSelectElement {
+    const select = screen.getByRole("combobox", { name: "Spoken language" });
+    if (!(select instanceof HTMLSelectElement)) throw new Error("not a select");
+    return select;
+  }
+
+  test("starts on Automatic and lists Hinglish, then the languages, in Rust's order", async () => {
+    engineChoices.mockResolvedValue(choices());
+    await renderCard();
+
+    expect(picker()).toHaveValue("auto");
+    expect(picker()).toBeEnabled();
+    const names = within(picker())
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(names).toEqual([
+      "Automatic",
+      "Hinglish (Hindi and English)",
+      "English",
+      "Hindi",
+      "Marathi",
+    ]);
+  });
+
+  test("shows the saved language", async () => {
+    engineChoices.mockResolvedValue(choices({ spokenLanguage: "mr" }));
+    await renderCard();
+    expect(picker()).toHaveValue("mr");
+  });
+
+  test("picking Hinglish saves it", async () => {
+    engineChoices.mockResolvedValue(choices());
+    await renderCard();
+
+    await userEvent.selectOptions(picker(), "Hinglish (Hindi and English)");
+    expect(setSpokenLanguage).toHaveBeenCalledWith("hinglish");
+  });
+
+  test("picking Marathi saves its whisper code", async () => {
+    engineChoices.mockResolvedValue(choices());
+    await renderCard();
+
+    await userEvent.selectOptions(picker(), "Marathi");
+    expect(setSpokenLanguage).toHaveBeenCalledWith("mr");
+    expect(picker()).toHaveValue("mr");
+  });
+
+  test("a refused save puts the old language back and says why", async () => {
+    engineChoices.mockResolvedValue(choices());
+    setSpokenLanguage.mockRejectedValueOnce({
+      kind: "config",
+      message: "The settings file could not be saved.",
+    });
+    await renderCard();
+
+    await userEvent.selectOptions(picker(), "Marathi");
+    await waitFor(() => expect(picker()).toHaveValue("auto"));
+  });
+});
 
 describe("EngineSummary: the engine picker", () => {
   test("draws the three choices at once and holds them until the probe answers", async () => {

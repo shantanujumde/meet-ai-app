@@ -85,6 +85,13 @@ const APPLE_READY: EngineChoices = {
     languages: ["English", "German"],
   },
   languages: ["en-US"],
+  spokenLanguage: "auto",
+  spokenLanguages: [
+    { code: "hinglish", name: "Hinglish (Hindi and English)" },
+    { code: "en", name: "English" },
+    { code: "hi", name: "Hindi" },
+    { code: "mr", name: "Marathi" },
+  ],
 };
 
 const CANCELLED: NotesRunFailure = {
@@ -264,6 +271,10 @@ export const ipc = {
       url: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
     },
   ]),
+  setSpokenLanguage: vi.fn<typeof Client.setSpokenLanguage>(async (spokenLanguage) => ({
+    ...APPLE_READY,
+    spokenLanguage,
+  })),
   setTranscription: vi.fn<typeof Client.setTranscription>(async (engine, model) => ({
     ...APPLE_READY,
     engine,

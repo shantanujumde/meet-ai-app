@@ -43,7 +43,7 @@ import { osText } from "@/lib/osText";
 import type { LucideIcon } from "./icons";
 import { Button } from "./primitives";
 import { Switch } from "./SettingSwitch";
-import { SettingsRow, SettingsSection } from "./settings/SettingsSection";
+import { SETTINGS_SELECT, SettingsRow, SettingsSection } from "./settings/SettingsSection";
 import { ErrorState } from "./states";
 
 export const REMIND_LABEL = "Remind me before meetings";
@@ -62,9 +62,6 @@ export function leadLabel(minutes: number): string {
   if (minutes === 0) return "At the start";
   return `${minutes} ${minutes === 1 ? "minute" : "minutes"} before`;
 }
-
-const SELECT =
-  "rounded-control border-[0.5px] border-separator bg-glass-sunken px-3 py-2 text-footnote text-fg-primary disabled:cursor-not-allowed disabled:opacity-40";
 
 export function NotificationSettings() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -249,7 +246,7 @@ function SelectRow({
       control={
         <select
           id={id}
-          className={SELECT}
+          className={SETTINGS_SELECT}
           value={value}
           disabled={disabled}
           onChange={(event) => onChange(Number(event.target.value))}

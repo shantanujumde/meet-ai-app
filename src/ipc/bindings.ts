@@ -133,6 +133,11 @@ export const commands = {
 	 *  under the meetings root, so through the [`FolderGate`].
 	 */
 	setTranscription: (engine: meet_ai_lib_engine_choices_EngineChoice, model: string) => typedError<meet_ai_lib_engine_choices_EngineChoices, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_transcription", { engine, model })),
+	/**
+	 *  Save `transcription.language` into config.jsonc: `auto`, or the whisper
+	 *  code people speak, such as `mr`. Takes effect on the next recording.
+	 */
+	setSpokenLanguage: (language: string) => typedError<meet_ai_lib_engine_choices_EngineChoices, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_spoken_language", { language })),
 	recordingStatus: () => __TAURI_INVOKE<meet_ai_lib_recording_Status>("recording_status"),
 	/**
 	 *  Starting or stopping blocks on real wall-clock time — SPEC §8.1's
@@ -656,6 +661,13 @@ export type meet_ai_lib_engine_choices_EngineChoices = {
 	parakeetModel: meet_ai_lib_engine_parakeet_ParakeetModelView,
 	/**  The locales Apple's engine has installed, e.g. `en-US`. */
 	languages: string[],
+	/**  `transcription.language`: `auto`, or the whisper code people speak. */
+	spokenLanguage: string,
+	/**
+	 *  What the spoken-language picker offers besides `auto`, in its order:
+	 *  Hinglish, then every language whisper has a token for, by name.
+	 */
+	spokenLanguages: meet_ai_lib_engine_choices_SpokenLanguageOption[],
 };
 
 /**  What the filesystem says, with no subprocess involved. */
@@ -1176,6 +1188,14 @@ export type meeting_format_Speaker =
 "you" | 
 /**  The system-audio channel — everyone else on the call. */
 "others";
+
+/**  One language the spoken-language picker offers. */
+export type meet_ai_lib_engine_choices_SpokenLanguageOption = {
+	/**  The whisper code, such as `mr`. */
+	code: string,
+	/**  The English name, such as `Marathi`. */
+	name: string,
+};
 
 /**
  *  The run's state. `idle` means no run for this meeting since launch: the
