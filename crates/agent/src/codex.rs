@@ -566,14 +566,20 @@ mod tests {
     #[test]
     fn a_sync_run_turns_off_connectors_plugins_and_built_in_tools() {
         let args = disabled_features();
-        assert_eq!(args.len(), 2 * SYNC_FEATURES_OFF.len());
-        for feature in SYNC_FEATURES_OFF {
-            assert!(
-                args.windows(2)
-                    .any(|w| w[0] == "--disable" && w[1] == feature),
-                "{feature}"
-            );
-        }
+        let expected: Vec<std::ffi::OsString> = [
+            "apps",
+            "plugins",
+            "shell_tool",
+            "image_generation",
+            "view_image",
+            "multi_agent",
+            "browser_use",
+            "computer_use",
+        ]
+        .iter()
+        .flat_map(|f| ["--disable".into(), (*f).into()])
+        .collect();
+        assert_eq!(args, expected);
         assert!(!args.iter().any(|a| a == "unified_exec"));
     }
 
