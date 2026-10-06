@@ -259,11 +259,11 @@
     },
     "repos": {
       "type": "object",
-      "description": "Code repositories that tasks relate to. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
+      "description": "Code repositories that tasks relate to. Only `default` is read.",
       "properties": {
         "default": {
           "type": "string",
-          "description": "Repository folder used for Start Work when a task names no other. A leading ~ means your home folder.",
+          "description": "Repository folder the Start Work prompt names when the ticket's meeting names no other. The meeting brief also reads its recent commits. A leading ~ means your home folder. Leave it unset or empty to name none.",
           "examples": ["~/apps/api"]
         }
       }

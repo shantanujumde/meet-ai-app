@@ -156,3 +156,17 @@ fn saving_to_disk_round_trips() {
     assert_eq!(parse(&raw).engine, Preference::Whisper);
     assert!(raw.contains("/* Notes */"));
 }
+
+#[test]
+fn the_schema_says_repos_default_is_read() {
+    let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+    let repos = &schema["properties"]["repos"];
+    let key = &repos["properties"]["default"];
+    assert_eq!(key["type"], "string");
+    for text in [&repos["description"], &key["description"]] {
+        let text = text.as_str().unwrap();
+        assert!(!text.contains("Not read by the app"), "{text}");
+        assert!(!text.contains("no effect"), "{text}");
+    }
+    assert!(key["description"].as_str().unwrap().contains("Start Work"));
+}

@@ -1,13 +1,12 @@
 //! Reading `transcription.engine` and `transcription.model` from
 //! `~/Meetings/.app/config.jsonc`.
 //!
-//! This is deliberately not a config system. Phase 6 (SPEC §5) owns the rest of
-//! §3.5 — `audio`, `calendar`, `detection`, `repos`, and even
-//! `transcription.live` — plus the settings UI to edit it.
-//! (`transcription.language` is read already, see `stt::languages`.)
-//! (A11's `agent` and `tickets`, and `config.schema.json`, came early; see
-//! below.) This module exists only to make the Phase 1 exit
-//! gate true: **"engine switch is a config change only."** Before this,
+//! This is deliberately not a config system; it is the hub of the section
+//! readers. Phase 6 (SPEC §5) owns the settings UI to edit the rest of §3.5.
+//! What is still unread is `transcription.live`. (`transcription.language` is
+//! read, see `stt::languages`; `repos.default` is read by
+//! [`default_repo`].) The Phase 1 exit gate, **"engine switch is a config
+//! change only"**, is what this module first made true: before it,
 //! `src-tauri/src/engine.rs` hardcoded the engine to
 //! [`stt::registry::Preference::Auto`][crate::engine], so trying whisper meant
 //! rebuilding, not editing a file.
@@ -18,8 +17,8 @@
 //! finding the root has to work *before* `config.jsonc` can be located, since
 //! that file is itself under the root.
 //!
-//! When Phase 6 lands, delete this file and fold [`Transcription`] into
-//! whatever struct replaces it — do not build a second reader beside it.
+//! Add a new section's reader here beside the others; do not build a second
+//! reader beside this one.
 //!
 //! A11 added the `agent` and `tickets` sections ([`agent_section`]) ahead of
 //! Phase 6 too, because the Setup screens and the notes run need them now.
