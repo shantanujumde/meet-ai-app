@@ -13,6 +13,8 @@
 //! * [`ticket`] — `tickets/TICK-NNNN.md` (§3.3).
 //! * [`agent_notes`] — `meeting.md` sections and tickets written from the
 //!   agent's notes JSON (SPEC A11).
+//! * [`suggested`] — approving a meeting's suggested tasks into Tickets, or
+//!   discarding them (SPEC A25).
 //! * [`notes_switch`] — the per-meeting `agent_notes: off` switch (SPEC A11).
 //! * [`meeting_event`] — `meeting.md`'s title, attendees and event id, from
 //!   the calendar event the meeting was recorded during (TUR-29).
@@ -75,6 +77,7 @@ pub fn create_app_dir(app_dir: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 pub mod retention;
+pub mod suggested;
 pub mod ticket;
 pub mod transcript;
 pub mod transcript_order;
