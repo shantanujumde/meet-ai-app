@@ -16,7 +16,7 @@ import type { TicketSummary, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { IconSquare } from "./icons";
 import { Button, Card, Row } from "./primitives";
-import { SyncControls } from "./SyncButton";
+import { SyncControls, SyncErrors } from "./SyncButton";
 import { InlineError } from "./states";
 import { useCanSync, useTicketSync } from "./useTicketSync";
 
@@ -105,11 +105,15 @@ export function MeetingTasks({ meetingId }: { meetingId: string }) {
           {tasks.map((task) => (
             <li key={task.id} className="[&+&]:border-t-[0.5px] [&+&]:border-separator">
               <Row divided={false} className="gap-4">
-                <span className="flex min-w-0 items-center gap-5">
+                <span className="flex min-w-0 flex-1 items-center gap-5">
                   <IconSquare icon={ListTodo} />
                   <span className="flex min-w-0 flex-col gap-1">
-                    <span className="text-body font-semibold text-fg-primary">{task.title}</span>
-                    <span className="font-mono text-caption1 text-fg-secondary">{task.id}</span>
+                    <span className="wrap-anywhere text-body font-semibold text-fg-primary">
+                      {task.title}
+                    </span>
+                    <span className="wrap-anywhere font-mono text-caption1 text-fg-secondary">
+                      {task.id}
+                    </span>
                   </span>
                 </span>
                 <SyncControls
@@ -124,6 +128,11 @@ export function MeetingTasks({ meetingId }: { meetingId: string }) {
                   onDismiss={() => void dismiss(task.id, meetingId)}
                 />
               </Row>
+              {/* TUR-112: the error sits under the row at full width, so a
+                  long message wraps in the card and leaves the title alone. */}
+              {task.syncedTo === null && canSync === true ? (
+                <SyncErrors state={stateOf(task.id)} className="pb-(--row-pad-y)" />
+              ) : null}
             </li>
           ))}
         </ul>
