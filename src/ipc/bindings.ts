@@ -1202,6 +1202,11 @@ export type meet_ai_lib_engine_choices_SpokenLanguageOption = {
  *  view then goes by what is on disk (notes there or not).
  */
 export type meet_ai_lib_agent_run_State = { state: "idle" } | 
+/**
+ *  Stop was pressed and the last transcript lines are still being
+ *  written; the run starts on its own once they are (TUR-133).
+ */
+{ state: "waiting-for-transcript" } | 
 /**  *Writing notes…*, with Cancel. */
 { state: "running" } | 
 /**

@@ -53,6 +53,9 @@ pub struct Status {
 #[serde(tag = "state", rename_all = "kebab-case")]
 pub enum State {
     Idle,
+    /// Stop was pressed and the last transcript lines are still being
+    /// written; the run starts on its own once they are (TUR-133).
+    WaitingForTranscript,
     /// *Writing notes…*, with Cancel.
     Running,
     /// The notes and tasks are on disk. `tasks` is how many tickets were
@@ -263,9 +266,11 @@ fn after_stop(
     if !auto_runs(settings) || skipped() {
         return;
     }
+    agent_runs.wait_for_transcript(meeting_id, sink);
     let transcript_final = wait_final(FINAL_WAIT);
     // Notes may have been switched off, or the app told to quit, meanwhile.
     if skipped() {
+        agent_runs.stop_waiting(meeting_id, sink);
         return;
     }
     if transcript_final {
