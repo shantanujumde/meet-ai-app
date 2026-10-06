@@ -511,8 +511,9 @@ export type meet_ai_lib_agent_setup_AgentCli = {
 	models: meet_ai_lib_agent_setup_AgentModel[],
 	/**
 	 *  The model the CLI runs when meet-ai passes none, when its own settings
-	 *  say which (Claude Code's `~/.claude/settings.json`). `null` when they
-	 *  do not; the CLI then uses its built-in default.
+	 *  say which (Claude Code's `~/.claude/settings.json`, Codex's
+	 *  `config.toml`). `null` when they do not; the CLI then uses its
+	 *  built-in default.
 	 */
 	cliDefault: string | null,
 	/**  Whether the Test button can run. False only when the CLI is missing. */

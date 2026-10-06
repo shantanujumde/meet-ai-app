@@ -30,7 +30,11 @@ use std::time::Duration;
 
 use crate::mcp::{self, McpServer, McpStatus};
 use crate::process::{self, MAX_STDOUT_BYTES, could_not_start, reply_too_big};
-use crate::{AgentError, Harness, Install, Job, JobKind, OutputCheck, parse_json};
+use crate::{AgentError, Harness, Install, Job, JobKind, Model, OutputCheck, Reply, parse_json};
+
+mod settings;
+
+pub use settings::{codex_home, settings_model, settings_model_in};
 
 /// The harness id, as written to `agent.harness` and `analyzed_by`.
 pub const ID: &str = "codex";
@@ -79,6 +83,9 @@ const SKILLS_OFF_SETTING: &str = "skills.include_instructions=false";
 pub struct CodexHarness {
     /// `agent.binary_path` from the config. `None` runs `codex` from `PATH`.
     binary_path: Option<PathBuf>,
+    /// Where Codex's `config.toml` is read for the model it picks on
+    /// Default. `None` is [`codex_home`]; tests point it elsewhere.
+    config_home: Option<PathBuf>,
 }
 
 impl CodexHarness {
@@ -91,12 +98,39 @@ impl CodexHarness {
     pub fn with_binary(path: impl Into<PathBuf>) -> Self {
         Self {
             binary_path: Some(path.into()),
+            config_home: None,
         }
+    }
+
+    /// Reads the Default model from `dir/config.toml` instead of Codex's
+    /// home folder.
+    pub fn with_config_home(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.config_home = Some(dir.into());
+        self
+    }
+
+    /// The model Codex picks when the job names none: the top-level
+    /// `model` in its config ([`settings_model`]).
+    fn default_model(&self) -> Option<String> {
+        match &self.config_home {
+            Some(dir) => settings_model_in(dir),
+            None => settings_model(),
+        }
+    }
+
+    /// Codex's own list with its labels and notes, from `codex debug
+    /// models`, in Codex's order. Blocks like [`Harness::models`]. Empty when
+    /// Codex cannot be asked.
+    pub fn model_list(&self) -> Vec<Model> {
+        self.list_models().unwrap_or_else(|e| {
+            tracing::debug!("could not list Codex's models: {e}");
+            Vec::new()
+        })
     }
 
     /// Asks Codex for its model list, with the same time limit, kill and
     /// clean-up as a real run.
-    fn list_models(&self) -> Result<Vec<String>, AgentError> {
+    fn list_models(&self) -> Result<Vec<Model>, AgentError> {
         let mut command = self.command();
         command.args(["debug", "models"]);
         let out = process::run_probe(DISPLAY_NAME, command, MODELS_TIMEOUT, &std::env::temp_dir())?;
@@ -159,16 +193,23 @@ impl Harness for CodexHarness {
     /// Starts Codex and blocks until it answers, for up to 15 s (it makes no
     /// model call); call it off the UI thread. Empty when Codex cannot be
     /// asked; the setup picker then offers Codex's entries in `models.json`
-    /// ([`crate::models`]). When [`Job::model`] is `None`, Codex picks its own
-    /// default: on 2026-10-01 that was `gpt-5.6-terra` (Codex 0.152.1).
+    /// ([`crate::models`]). When [`Job::model`] is `None`, the run passes
+    /// the `model` from Codex's config, if it has one; otherwise Codex picks
+    /// its built-in default (2026-10-01: `gpt-5.6-terra`, Codex 0.152.1).
     fn models(&self) -> Vec<String> {
-        self.list_models().unwrap_or_else(|e| {
-            tracing::debug!("could not list Codex's models: {e}");
-            Vec::new()
-        })
+        self.model_list().into_iter().map(|m| m.name).collect()
     }
 
     fn run(&self, job: &Job) -> Result<serde_json::Value, AgentError> {
+        self.run_reply(job).map(|reply| reply.value)
+    }
+
+    /// The reply, and the model passed as `--model`: the job's, or on
+    /// Default the one Codex's config names. `None` when neither says.
+    fn run_reply(&self, job: &Job) -> Result<Reply, AgentError> {
+        let model = picked_model(job)
+            .map(str::to_owned)
+            .or_else(|| self.default_model());
         let check = OutputCheck::new(&job.schema)?;
         let sync_args = match job.kind {
             JobKind::Sync => self.sync_args(job)?,
@@ -180,7 +221,13 @@ impl Harness for CodexHarness {
         let reply = io.path().join(REPLY_FILE);
 
         let mut command = self.command();
-        command.args(exec_args(job, &sync_args, &schema, &reply));
+        command.args(exec_args(
+            job,
+            model.as_deref(),
+            &sync_args,
+            &schema,
+            &reply,
+        ));
         // Stdout is Codex's progress; the reply is the `-o` file.
         process::run_cli(DISPLAY_NAME, command, job, work.path()).map_err(|e| match e {
             AgentError::CliFailed { status, stderr } => AgentError::CliFailed {
@@ -191,7 +238,10 @@ impl Harness for CodexHarness {
         })?;
 
         let text = read_reply(&reply)?;
-        check.check(parse_json(&text)?)
+        Ok(Reply {
+            value: check.check(parse_json(&text)?)?,
+            model,
+        })
     }
 }
 
@@ -212,12 +262,25 @@ fn reply_dir(job: &Job, work: &Path) -> Result<tempfile::TempDir, AgentError> {
     Ok(dir)
 }
 
+/// The job's model, unless it is blank.
+fn picked_model(job: &Job) -> Option<&str> {
+    job.model.as_deref().filter(|m| !m.trim().is_empty())
+}
+
 /// The arguments for `codex exec`. `sync_args` is what
-/// [`CodexHarness::sync_args`] gave; a notes run ignores it.
+/// [`CodexHarness::sync_args`] gave; a notes run ignores it. `default` is
+/// the model passed when the job names none (Codex's config `model`); a
+/// notes run needs it spelled out, since it ignores that config.
 ///
 /// The prompt is never one of them (arguments show up in `ps`); the trailing
 /// `-` makes Codex read it from stdin, which [`process::run_cli`] writes.
-fn exec_args(job: &Job, sync_args: &[OsString], schema: &Path, reply: &Path) -> Vec<OsString> {
+fn exec_args(
+    job: &Job,
+    default: Option<&str>,
+    sync_args: &[OsString],
+    schema: &Path,
+    reply: &Path,
+) -> Vec<OsString> {
     let mut args: Vec<OsString> = ["exec", "--ephemeral", "--skip-git-repo-check"]
         .map(OsString::from)
         .into();
@@ -230,7 +293,7 @@ fn exec_args(job: &Job, sync_args: &[OsString], schema: &Path, reply: &Path) -> 
     if job.kind == JobKind::Sync {
         args.extend(sync_args.iter().cloned());
     }
-    if let Some(model) = job.model.as_deref().filter(|m| !m.trim().is_empty()) {
+    if let Some(model) = picked_model(job).or(default.filter(|m| !m.trim().is_empty())) {
         args.push("--model".into());
         args.push(model.into());
     }
@@ -425,6 +488,10 @@ struct ModelList {
 struct ModelEntry {
     slug: String,
     #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
     visibility: Option<String>,
     #[serde(default)]
     priority: Option<i64>,
@@ -433,8 +500,9 @@ struct ModelEntry {
 /// The models `codex debug models` lists for people to pick (`"visibility":
 /// "list"`), by `priority` from low to high, those without one last. Hidden
 /// models are left out, and so is each repeat of a slug. Empty when `json` is
-/// not that shape.
-fn listed_models(json: &str) -> Vec<String> {
+/// not that shape. Label and note are Codex's `display_name` and
+/// `description` (without a trailing "."); `models.json` overrides them.
+fn listed_models(json: &str) -> Vec<Model> {
     let list: ModelList = match serde_json::from_str(json.trim()) {
         Ok(list) => list,
         Err(e) => {
@@ -448,13 +516,23 @@ fn listed_models(json: &str) -> Vec<String> {
         .filter(|m| m.visibility.as_deref() == Some("list"))
         .collect();
     listed.sort_by_key(|m| (m.priority.is_none(), m.priority));
-    let mut slugs: Vec<String> = Vec::with_capacity(listed.len());
-    for model in listed {
-        if !slugs.contains(&model.slug) {
-            slugs.push(model.slug);
+    let mut out: Vec<Model> = Vec::with_capacity(listed.len());
+    for entry in listed {
+        if out.iter().any(|m| m.name == entry.slug) {
+            continue;
         }
+        let text = |field: Option<String>| {
+            field
+                .map(|t| t.trim().trim_end_matches('.').trim_end().to_owned())
+                .filter(|t| !t.is_empty())
+        };
+        out.push(Model {
+            label: text(entry.display_name).unwrap_or_else(|| entry.slug.clone()),
+            note: text(entry.description),
+            name: entry.slug,
+        });
     }
-    slugs
+    out
 }
 
 #[cfg(test)]
@@ -470,6 +548,7 @@ mod tests {
         let sync_args: Vec<OsString> = sync_args.iter().map(OsString::from).collect();
         exec_args(
             job,
+            None,
             &sync_args,
             Path::new("/io/schema.json"),
             Path::new("/io/reply.json"),
@@ -721,10 +800,52 @@ mod tests {
     #[test]
     fn the_model_list_keeps_listed_slugs_in_priority_order() {
         let json = r#"{"models":[{"slug":"gpt-5.6-sol","visibility":"list","priority":1},{"slug":"gpt-5.6-terra","visibility":"list","priority":2},{"slug":"gpt-daybreak-blue-latest","visibility":"hide","priority":3},{"slug":"gpt-5.5","visibility":"list","priority":7}]}"#;
+        assert_eq!(slugs(json), ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.5"]);
+    }
+
+    fn slugs(json: &str) -> Vec<String> {
+        listed_models(json).into_iter().map(|m| m.name).collect()
+    }
+
+    #[test]
+    fn the_model_list_keeps_codex_s_names_and_descriptions() {
+        let json = json!({ "models": [
+            { "slug": "gpt-5.6-sol", "display_name": "GPT-5.6 Sol", "description": "Frontier model for hard work.", "visibility": "list", "priority": 1 },
+            { "slug": "plain", "display_name": " ", "description": "", "visibility": "list", "priority": 2 },
+        ]})
+        .to_string();
+        let models = listed_models(&json);
+        assert_eq!(models[0].label, "GPT-5.6 Sol");
         assert_eq!(
-            listed_models(json),
-            ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.5"]
+            models[0].note.as_deref(),
+            Some("Frontier model for hard work")
         );
+        assert_eq!(models[1].label, "plain");
+        assert_eq!(models[1].note, None);
+    }
+
+    #[test]
+    fn the_config_model_is_passed_only_on_default() {
+        let schema = Path::new("/io/schema.json");
+        let reply = Path::new("/io/reply.json");
+        let args = |job: &Job, default| -> Vec<String> {
+            exec_args(job, default, &[], schema, reply)
+                .into_iter()
+                .map(|a| a.into_string().unwrap())
+                .collect()
+        };
+        let mut job = Job::notes("", json!({}));
+        let on_default = args(&job, Some("gpt-5.6-sol"));
+        let at = on_default.iter().position(|a| a == "--model").unwrap();
+        assert_eq!(on_default[at + 1], "gpt-5.6-sol");
+        assert!(!args(&job, None).contains(&"--model".to_owned()));
+        assert!(!args(&job, Some(" ")).contains(&"--model".to_owned()));
+
+        job.model = Some("gpt-5.5".into());
+        let picked = args(&job, Some("gpt-5.6-sol"));
+        assert_eq!(picked.iter().filter(|a| *a == "--model").count(), 1);
+        assert!(picked.contains(&"gpt-5.5".to_owned()));
+        assert!(!picked.contains(&"gpt-5.6-sol".to_owned()));
     }
 
     #[test]
@@ -738,7 +859,7 @@ mod tests {
             { "slug": "no-visibility", "priority": 0 },
         ]})
         .to_string();
-        assert_eq!(listed_models(&json), ["first", "b", "a", "no-priority"]);
+        assert_eq!(slugs(&json), ["first", "b", "a", "no-priority"]);
     }
 
     #[test]

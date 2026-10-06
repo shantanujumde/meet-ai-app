@@ -97,7 +97,8 @@ impl Fake {
     }
 
     fn harness(&self) -> Box<dyn Harness> {
-        Box::new(CodexHarness::with_binary(self.cli.path()))
+        // An empty Codex home: no config `model`, whatever this Mac has.
+        Box::new(CodexHarness::with_binary(self.cli.path()).with_config_home(self.root.path()))
     }
 
     /// The exit code of `codex exec` and `codex debug models`.
@@ -277,6 +278,28 @@ fn a_notes_run_passes_the_model_only_when_one_is_set() {
         fake.args()
     );
     assert_empty(fake.root.path());
+}
+
+#[test]
+fn a_default_run_passes_and_reports_the_model_in_codex_s_config() {
+    let fake = Fake::new();
+    fake.reply(&good_notes().to_string());
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("config.toml"), "model = \"gpt-5.6-sol\"\n").unwrap();
+    let codex = CodexHarness::with_binary(fake.cli.path()).with_config_home(home.path());
+
+    let reply = codex.run_reply(&fake.notes_job()).unwrap();
+    assert_eq!(value_after(&fake.args(), "--model"), "gpt-5.6-sol");
+    assert_eq!(reply.model.as_deref(), Some("gpt-5.6-sol"));
+
+    let mut job = fake.notes_job();
+    job.model = Some("gpt-5.5".into());
+    let reply = codex.run_reply(&job).unwrap();
+    assert_eq!(value_after(&fake.args(), "--model"), "gpt-5.5");
+    assert_eq!(reply.model.as_deref(), Some("gpt-5.5"));
+
+    let reply = fake.harness().run_reply(&fake.notes_job()).unwrap();
+    assert_eq!(reply.model, None);
 }
 
 /// What `codex mcp list --json` prints for the sync tests: the tracker, one

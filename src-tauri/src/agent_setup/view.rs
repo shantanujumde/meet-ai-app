@@ -10,7 +10,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-use agent::{ClaudeHarness, CodexHarness, Harness as _, Install, ListCache};
+use agent::{ClaudeHarness, CodexHarness, Harness as _, Install, ListCache, Model};
 
 use super::{AgentChoice, AgentCli, AgentCliId, AgentCliState, AgentHarness, AgentModel};
 use crate::error::UiError;
@@ -104,32 +104,46 @@ fn detect_claude(binary_path: Option<&Path>) -> AgentCli {
 /// Codex, plus its own model list when it can be asked for one: found and
 /// signed in. Asking runs `codex debug models`, up to 15 s, kept for
 /// [`agent::models::LIST_CACHE_TTL`]. When Codex cannot be asked, the list
-/// in `models.json`.
+/// in `models.json`. Default is the `model` in Codex's `config.toml`, which
+/// meet-ai then passes as `--model` (TUR-131).
 fn detect_codex(binary_path: Option<&Path>) -> AgentCli {
     let install = agent::detect::codex(binary_path);
     let listed = match &install {
         Some(install) if install.signed_in => CODEX_MODELS.get_or_list(&install.path, || {
-            CodexHarness::with_binary(&install.path).models()
+            CodexHarness::with_binary(&install.path).model_list()
         }),
         _ => Vec::new(),
     };
-    cli_view(AgentCliId::Codex, install, codex_models(listed))
+    let mut cli = cli_view_of(AgentCliId::Codex, install, codex_models(listed));
+    cli.cli_default = agent::codex::settings_model();
+    cli
 }
 
 /// What Codex listed, or meet-ai's own list when it listed nothing.
-pub(super) fn codex_models(listed: Vec<String>) -> Vec<String> {
+pub(super) fn codex_models(listed: Vec<Model>) -> Vec<Model> {
     if !listed.is_empty() {
         return listed;
     }
     agent::models::listed(agent::codex::ID)
-        .into_iter()
-        .map(|model| model.name)
-        .collect()
 }
 
 /// The Setup screen's row for `id`, from what detection found. `models` are
 /// names in the CLI's order; labels and notes come from `models.json`.
 pub(super) fn cli_view(id: AgentCliId, install: Option<Install>, models: Vec<String>) -> AgentCli {
+    let models = models
+        .into_iter()
+        .map(|name| Model {
+            label: name.clone(),
+            name,
+            note: None,
+        })
+        .collect();
+    cli_view_of(id, install, models)
+}
+
+/// [`cli_view`] for models the CLI may have labelled itself; `models.json`
+/// still wins where it has a label or note.
+fn cli_view_of(id: AgentCliId, install: Option<Install>, models: Vec<Model>) -> AgentCli {
     let state = match &install {
         None => AgentCliState::Missing,
         Some(install) if install.signed_in => AgentCliState::Ready,
@@ -144,7 +158,7 @@ pub(super) fn cli_view(id: AgentCliId, install: Option<Install>, models: Vec<Str
         path: path.map(|path| path.display().to_string()),
         version: install.as_ref().and_then(|install| install.version.clone()),
         sign_in_command: sign_in_command(id, path),
-        models: agent::models::described(id.harness_id(), models)
+        models: agent::models::described_models(id.harness_id(), models)
             .into_iter()
             .map(AgentModel::from)
             .collect(),

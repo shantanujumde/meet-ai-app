@@ -153,11 +153,18 @@ fn a_signed_in_claude_code_is_ready() {
 
 #[test]
 fn codex_s_own_list_wins_and_meet_ai_s_list_stands_in_when_it_is_empty() {
-    let own = super::view::codex_models(vec!["gpt-new".into(), "gpt-5.6-terra".into()]);
-    assert_eq!(own, ["gpt-new", "gpt-5.6-terra"]);
+    let model = |name: &str| agent::Model {
+        name: name.into(),
+        label: name.into(),
+        note: None,
+    };
+    let names =
+        |models: Vec<agent::Model>| -> Vec<String> { models.into_iter().map(|m| m.name).collect() };
+    let own = super::view::codex_models(vec![model("gpt-new"), model("gpt-5.6-terra")]);
+    assert_eq!(names(own), ["gpt-new", "gpt-5.6-terra"]);
     let fallback = super::view::codex_models(Vec::new());
     assert_eq!(
-        fallback,
+        names(fallback),
         [
             "gpt-5.6-sol",
             "gpt-5.6-terra",
