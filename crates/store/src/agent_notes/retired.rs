@@ -11,7 +11,7 @@ use crate::meeting::Meeting;
 use crate::{Error, MEETING_FILE, folder, ticket};
 
 /// The `meeting.md` frontmatter key listing the ticket ids the user discarded
-/// from this meeting's suggested tasks (SPEC A25). A list of ids; no writer
+/// from this meeting's suggested tasks (SPEC A26). A list of ids; no writer
 /// hands any of them out again.
 pub const RETIRED_TICKETS_KEY: &str = "retired_tickets";
 

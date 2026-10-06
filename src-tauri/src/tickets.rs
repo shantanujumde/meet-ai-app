@@ -9,7 +9,7 @@
 //!
 //! The Tickets screen lists `<root>/tickets/`: the hand-made tickets, and the
 //! suggested tasks the user approved from a meeting, labelled with that
-//! meeting's title (SPEC A25). The suggestions themselves stay in their
+//! meeting's title (SPEC A26). The suggestions themselves stay in their
 //! meeting's own `tickets/` folder until approved or discarded.
 //!
 //! As everywhere else, a broken ticket file is a badge, not an error (SPEC §7).
@@ -55,7 +55,7 @@ pub struct TicketSummary {
     /// The issue's web address.
     pub external_url: Option<String>,
     /// Still a suggestion in its meeting's own `tickets/` folder, waiting to
-    /// be approved or discarded (SPEC A25). `false` for a ticket in Tickets.
+    /// be approved or discarded (SPEC A26). `false` for a ticket in Tickets.
     pub suggested: bool,
     /// Who it is for (the file's `assignee`).
     pub owner: Option<String>,

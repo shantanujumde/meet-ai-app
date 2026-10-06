@@ -1,5 +1,5 @@
 //! The Action Items section [`super::write()`] fills: every task of the
-//! meeting, suggested or approved (SPEC A25, TUR-113).
+//! meeting, suggested or approved (SPEC A26, TUR-113).
 
 use std::path::{Path, PathBuf};
 

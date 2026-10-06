@@ -265,7 +265,7 @@ duration_sec: 2714
 attendees: [Shantanu, Priya, Dev]        # from EventKit when available
 calendar_event_id: "ABC123"              # optional
 agent_notes: off                          # optional; user turned notes off for this meeting (A11)
-retired_tickets: [TICK-0003]              # optional; suggested tasks the user discarded, numbers never reused (A25)
+retired_tickets: [TICK-0003]              # optional; suggested tasks the user discarded, numbers never reused (A26)
 repo: ~/apps/api                          # optional link
 analyzed_by: claude-code                  # which agent: claude-code | codex | clipboard (A11)
 analyzed_model: opus                      # model the agent ran (A11)

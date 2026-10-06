@@ -1,5 +1,5 @@
 //! Suggested tasks: the tickets a notes run finds in a meeting, which the user
-//! approves into Tickets or discards (SPEC A25, TUR-113).
+//! approves into Tickets or discards (SPEC A26, TUR-113).
 //!
 //! * **Suggested** is a file in the meeting's own `tickets/` folder, where
 //!   [`crate::agent_notes::write()`] puts it.
@@ -153,7 +153,7 @@ pub fn discard(
     Ok(())
 }
 
-/// The update step for tickets from before suggestions (SPEC A25): every
+/// The update step for tickets from before suggestions (SPEC A26): every
 /// ticket in a meeting's folder that was already synced to a tracker counts
 /// as approved, so it moves to the root's `tickets/`. The rest stay
 /// suggestions. Running it again finds nothing more to move.

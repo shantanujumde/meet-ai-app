@@ -1389,7 +1389,7 @@ export type meet_ai_lib_tickets_TicketSummary = {
 	externalUrl: string | null,
 	/**
 	 *  Still a suggestion in its meeting's own `tickets/` folder, waiting to
-	 *  be approved or discarded (SPEC A25). `false` for a ticket in Tickets.
+	 *  be approved or discarded (SPEC A26). `false` for a ticket in Tickets.
 	 */
 	suggested: boolean,
 	/**  Who it is for (the file's `assignee`). */

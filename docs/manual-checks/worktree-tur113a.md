@@ -3,7 +3,7 @@
 TUR-113a: the Rust half of "approve tasks from a meeting into Tickets". A
 meeting's tasks are suggestions in `<meeting>/tickets/`; Approve moves one to
 `<root>/tickets/`, Discard deletes it and retires its number, and at launch the
-tickets that were already synced move to Tickets (SPEC A25). Sync errors now
+tickets that were already synced move to Tickets (SPEC A26). Sync errors now
 have one kind per cause (`sync-unreachable`, `sync-refused`, the `agent-*`
 kinds with new words). New commands: `approve_task`, `approve_all_tasks`,
 `discard_task`; `TicketSummary` gains `suggested`, `owner`, `due`,

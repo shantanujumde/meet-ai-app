@@ -14,7 +14,7 @@
 //! * [`agent_notes`] — `meeting.md` sections and tickets written from the
 //!   agent's notes JSON (SPEC A11).
 //! * [`suggested`] — approving a meeting's suggested tasks into Tickets, or
-//!   discarding them (SPEC A25).
+//!   discarding them (SPEC A26).
 //! * [`notes_switch`] — the per-meeting `agent_notes: off` switch (SPEC A11).
 //! * [`meeting_event`] — `meeting.md`'s title, attendees and event id, from
 //!   the calendar event the meeting was recorded during (TUR-29).
