@@ -30,6 +30,10 @@ use crate::meetings;
 mod choices;
 pub use choices::{EngineChoice, EngineChoices, choices, save_choice, save_language};
 
+// Deleting a downloaded whisper model (TUR-132).
+mod delete;
+pub use delete::delete;
+
 // The Parakeet model folder: found, shown and downloaded (TUR-62).
 mod parakeet;
 pub use parakeet::{ModelCredit, ParakeetModelView, credits};

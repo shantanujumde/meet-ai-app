@@ -53,6 +53,7 @@ export function ModelList({ speech }: { speech: Speech }) {
                 inUse={picked && whisperRuns && model.installed}
                 onPick={() => speech.pickModel(model.id)}
                 onDownload={() => void speech.download(model.id)}
+                onDelete={() => void speech.remove(model.id)}
               />
             );
           })}

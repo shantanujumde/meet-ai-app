@@ -6,6 +6,9 @@
  * The main line is plain words from the Rust catalogue. The size and the full
  * id (`small.en-q5_1`) go in the muted detail line, for anyone matching it to
  * `config.jsonc`.
+ *
+ * A model that is here and not picked gets a quiet Delete, confirmed inline
+ * with its size before anything goes (TUR-132).
  */
 
 import { useCallback, useId, useRef, useState } from "react";
@@ -33,6 +36,7 @@ export function ModelRow({
   inUse,
   onPick,
   onDownload,
+  onDelete,
 }: {
   /** The model radios' shared `name`. */
   group: string;
@@ -44,6 +48,7 @@ export function ModelRow({
   inUse: boolean;
   onPick: () => void;
   onDownload: () => void;
+  onDelete: () => void;
 }) {
   const { progress, error, busy } = state;
   const downloading = Boolean(busy) && !model.installed;
@@ -52,6 +57,8 @@ export function ModelRow({
   const languagesId = useId();
   const languagesButton = useRef<HTMLButtonElement>(null);
   const languagesPanel = useRef<HTMLElement>(null);
+  const [confirming, setConfirming] = useState(false);
+  const deletable = model.installed && !picked;
 
   return (
     <Row stacked>
@@ -87,7 +94,19 @@ export function ModelRow({
         <div className="flex shrink-0 flex-col items-end gap-2">
           {inUse ? <Pill tone="ok">In use</Pill> : null}
           {model.installed ? (
-            <Pill>On this Mac</Pill>
+            <>
+              <Pill>On this Mac</Pill>
+              {deletable && !confirming ? (
+                <Button
+                  size="small"
+                  tone="quiet"
+                  disabled={busy}
+                  onClick={() => setConfirming(true)}
+                >
+                  Delete
+                </Button>
+              ) : null}
+            </>
           ) : (
             <Button size="small" disabled={downloading} onClick={onDownload}>
               {downloading ? "Downloading…" : "Download"}
@@ -95,6 +114,26 @@ export function ModelRow({
           )}
         </div>
       </div>
+
+      {deletable && confirming ? (
+        <div className="flex items-center justify-end gap-2">
+          <span className="text-footnote text-fg-secondary contrast-more:text-fg-primary">
+            Delete {formatBytes(model.bytes)}?
+          </span>
+          <Button
+            size="small"
+            onClick={() => {
+              setConfirming(false);
+              onDelete();
+            }}
+          >
+            Delete
+          </Button>
+          <Button size="small" tone="quiet" onClick={() => setConfirming(false)}>
+            Keep
+          </Button>
+        </div>
+      ) : null}
 
       {languagesOpen ? (
         <LanguagesPanel

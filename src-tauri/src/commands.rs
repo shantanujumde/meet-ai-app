@@ -304,6 +304,14 @@ pub async fn download_model(app: AppHandle, id: String) -> Result<String, UiErro
     engine::download(app, id).await
 }
 
+/// Delete a downloaded whisper model that is not picked and not in use
+/// (TUR-132). Refuses with `model-in-use` otherwise.
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_model(app: AppHandle, id: String) -> Result<(), UiError> {
+    on_blocking_pool(move || engine::delete(&app, &id)).await?
+}
+
 /// The Settings engine picker (TUR-75): the saved choice, what "Automatic"
 /// lands on, and which choices this Mac can run. Runs the ~160 ms probe.
 #[tauri::command]

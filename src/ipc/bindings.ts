@@ -118,6 +118,11 @@ export const commands = {
 	 */
 	downloadModel: (id: string) => typedError<string, meet_ai_lib_error_UiError>(__TAURI_INVOKE("download_model", { id })),
 	/**
+	 *  Delete a downloaded whisper model that is not picked and not in use
+	 *  (TUR-132). Refuses with `model-in-use` otherwise.
+	 */
+	deleteModel: (id: string) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("delete_model", { id })),
+	/**
 	 *  The Settings engine picker (TUR-75): the saved choice, what "Automatic"
 	 *  lands on, and which choices this Mac can run. Runs the ~160 ms probe.
 	 */
