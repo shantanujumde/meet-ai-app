@@ -112,6 +112,9 @@ impl MeetingsWatch {
     pub fn ensure_running(&self, app: &AppHandle) {
         let mut guard = self.lock();
         let is_dir = meetings::root().is_ok_and(|root| root.is_dir());
+        if let Attempt::Failed(reason) = &*guard {
+            tracing::trace!(%reason, "meetings folder watch failed earlier; not retrying");
+        }
         if next(&guard, is_dir) == Action::Start {
             self.start_into(app, &mut guard);
         }
