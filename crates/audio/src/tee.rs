@@ -26,11 +26,17 @@
 //! tee is always sample N of the WAV. The speech side hears a gap of silence
 //! where it fell behind — which its VAD already treats as nothing — rather
 //! than a timeline that has quietly drifted.
+//!
+//! TUR-136 added two things a recording's tee can carry, both opt-in: a
+//! [`Tee::fan_out`] that feeds a second consumer (the system-audio check
+//! that runs during the recording) the same frames, and a [`Hush`] that
+//! turns this copy's frames into silence of the same length while the
+//! check's chime plays, so the chime never reaches the transcript.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How many chunks the queue holds before it starts dropping.
 ///
@@ -74,6 +80,53 @@ pub struct Tee {
     owed: Arc<AtomicU64>,
     /// Every frame ever dropped, for the log line at the end of a meeting.
     dropped: Arc<AtomicU64>,
+    /// While held, this copy gets silence in place of the frames (TUR-136:
+    /// the permission chime must not reach the live transcript).
+    hush: Option<Hush>,
+    /// A second consumer fed the same frames (TUR-136: the system-audio
+    /// check). Never hushed by this tee's [`Hush`].
+    also: Option<Box<Tee>>,
+}
+
+/// A shared "silence this copy for a while" switch (TUR-136).
+///
+/// The system-audio check plays its chime while the recording runs, so the
+/// chime reaches the tap and, through the speakers, the microphone. Each
+/// play holds the hush for the chime's listen window, and a hushed [`Tee`]
+/// delivers that many zeros instead of the frames: the live transcript never
+/// hears the chime, and its timeline stays sample-for-sample with the WAV.
+/// The WAVs are untouched. Lock-free, because [`Tee::offer`] reads it on
+/// every chunk.
+#[derive(Debug, Clone)]
+pub struct Hush {
+    since: Instant,
+    /// Nanoseconds after `since` until which the hush holds.
+    until_ns: Arc<AtomicU64>,
+}
+
+impl Default for Hush {
+    fn default() -> Self {
+        Self {
+            since: Instant::now(),
+            until_ns: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+impl Hush {
+    /// Hold the hush for `window` from now. Never shortens a hold already
+    /// running past that.
+    pub fn hold_for(&self, window: Duration) {
+        let until = self.since.elapsed().saturating_add(window).as_nanos();
+        let until = u64::try_from(until).unwrap_or(u64::MAX);
+        self.until_ns.fetch_max(until, Ordering::AcqRel);
+    }
+
+    /// Whether the hush is held right now.
+    pub fn is_held(&self) -> bool {
+        let now = u64::try_from(self.since.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        now < self.until_ns.load(Ordering::Acquire)
+    }
 }
 
 /// The receiving half. Owned by whatever feeds a speech session.
@@ -98,12 +151,30 @@ pub fn tee_with_capacity(chunks: usize) -> (Tee, TeeFeed) {
             tx,
             owed: Arc::new(AtomicU64::new(0)),
             dropped: Arc::clone(&dropped),
+            hush: None,
+            also: None,
         },
         TeeFeed { rx, dropped },
     )
 }
 
 impl Tee {
+    /// This tee, silenced while `hush` is held (TUR-136).
+    pub fn with_hush(mut self, hush: Hush) -> Self {
+        self.hush = Some(hush);
+        self
+    }
+
+    /// This tee, also feeding `second` every frame it is offered: the fan-out
+    /// that gives the system-audio check its own copy of a running
+    /// recording's stream (TUR-136). `second` never sees this tee's hush,
+    /// and a full or gone `second` costs this copy nothing, the same as
+    /// for any tee.
+    pub fn fan_out(mut self, second: Tee) -> Self {
+        self.also = Some(Box::new(second));
+        self
+    }
+
     /// Hand over a copy of `frames`. Never blocks.
     ///
     /// Allocates one `Vec` per call, which is fine where this is called from —
@@ -113,7 +184,15 @@ impl Tee {
         if frames.is_empty() {
             return;
         }
-        self.send(frames.to_vec(), 0);
+        if self.hush.as_ref().is_some_and(Hush::is_held) {
+            // Silence of the same length, so the timeline does not slide.
+            self.send(Vec::new(), frames.len() as u64);
+        } else {
+            self.send(frames.to_vec(), 0);
+        }
+        if let Some(also) = &self.also {
+            also.offer(frames);
+        }
     }
 
     /// Hand over `frames` of silence — the tee's half of
@@ -129,6 +208,9 @@ impl Tee {
             return;
         }
         self.send(Vec::new(), frames);
+        if let Some(also) = &self.also {
+            also.offer_silence(frames);
+        }
     }
 
     /// `silence` is extra gap on top of whatever is already owed.
@@ -339,5 +421,93 @@ mod tests {
             feed.recv_timeout(Duration::ZERO),
             Err(RecvTimeoutError::Disconnected)
         ));
+    }
+
+    #[test]
+    fn a_fan_out_hands_the_second_feed_the_same_frames_and_silence() {
+        let (check, check_feed) = tee();
+        let (transcript, transcript_feed) = tee();
+        let tee = transcript.fan_out(check);
+        tee.offer(&[1, 2, 3]);
+        tee.offer_silence(2);
+        tee.offer(&[4]);
+        for feed in [&transcript_feed, &check_feed] {
+            assert_eq!(feed.try_recv().unwrap(), [1, 2, 3]);
+            assert_eq!(feed.try_recv().unwrap(), [0, 0]);
+            assert_eq!(feed.try_recv().unwrap(), [4]);
+        }
+    }
+
+    #[test]
+    fn a_fan_out_whose_second_feed_is_gone_or_full_leaves_the_first_untouched() {
+        // The check's copy finishing (or wedging) must never reach the
+        // live transcript's copy.
+        let (check, check_feed) = tee_with_capacity(1);
+        let (transcript, transcript_feed) = tee();
+        let tee = transcript.fan_out(check);
+        tee.offer(&[1]);
+        tee.offer(&[2]); // the check's queue is full now
+        drop(check_feed);
+        tee.offer(&[3]);
+        assert_eq!(transcript_feed.try_recv().unwrap(), [1]);
+        assert_eq!(transcript_feed.try_recv().unwrap(), [2]);
+        assert_eq!(transcript_feed.try_recv().unwrap(), [3]);
+        assert_eq!(transcript_feed.dropped_frames(), 0);
+    }
+
+    #[test]
+    fn a_held_hush_delivers_zeros_of_the_same_length_to_this_copy_only() {
+        let hush = Hush::default();
+        let (check, check_feed) = tee();
+        let (transcript, transcript_feed) = tee();
+        let tee = transcript.with_hush(hush.clone()).fan_out(check);
+
+        tee.offer(&[5, 5]);
+        hush.hold_for(Duration::from_secs(3600));
+        assert!(hush.is_held());
+        tee.offer(&[7, 7, 7]);
+
+        assert_eq!(transcript_feed.try_recv().unwrap(), [5, 5]);
+        assert_eq!(
+            transcript_feed.try_recv().unwrap(),
+            [0, 0, 0],
+            "hushed: silence in place of the frames, so the timeline keeps its length"
+        );
+        assert_eq!(check_feed.try_recv().unwrap(), [5, 5]);
+        assert_eq!(
+            check_feed.try_recv().unwrap(),
+            [7, 7, 7],
+            "the check's copy hears the chime"
+        );
+        assert_eq!(transcript_feed.dropped_frames(), 0, "hushed is not dropped");
+    }
+
+    #[test]
+    fn a_hush_ends_when_its_window_has_passed_and_never_shrinks() {
+        let hush = Hush::default();
+        assert!(!hush.is_held(), "a fresh hush is not held");
+        hush.hold_for(Duration::ZERO);
+        assert!(!hush.is_held());
+
+        hush.hold_for(Duration::from_secs(3600));
+        hush.hold_for(Duration::ZERO);
+        assert!(
+            hush.is_held(),
+            "a shorter hold never cuts a longer one short"
+        );
+
+        let brief = Hush::default();
+        brief.hold_for(Duration::from_millis(20));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while brief.is_held() {
+            assert!(Instant::now() < deadline, "the hush never let go");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+
+        // A clone is the same switch, which is how the check reaches tees it
+        // handed to the recording.
+        let shared = Hush::default();
+        shared.clone().hold_for(Duration::from_secs(3600));
+        assert!(shared.is_held());
     }
 }

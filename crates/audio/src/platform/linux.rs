@@ -23,7 +23,7 @@ mod loopback;
 #[cfg(test)]
 pub(crate) use super::other::F32_GOLDEN_HASHES;
 pub(crate) use super::other::input_devices;
-pub(crate) use super::other::{mic_source, start_sound};
+pub(crate) use super::other::{SILENT_SYSTEM_DENIAL, mic_source, start_sound};
 // TUR-51: this OS's own permission checks.
 pub(crate) use super::linux_permission::{check_mic, check_system, stored_mic_denial};
 pub(crate) use activity::device_activity;

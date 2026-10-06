@@ -22,6 +22,8 @@ mod render_in_use;
 #[cfg(test)]
 pub(crate) use super::other::F32_GOLDEN_HASHES;
 pub(crate) use super::other::input_devices;
+// TUR-136: loopback needs no permission, so it has no silent denial.
+pub(crate) use super::other::SILENT_SYSTEM_DENIAL;
 // TUR-37: system audio, the host clock and the device watch. The `cpal`
 // microphone and start sound are `other.rs`'s, with COM kept loaded (TUR-95).
 pub(crate) use super::windows_devices::{

@@ -109,10 +109,14 @@ pub(crate) use os::input_callback_ns;
 
 // Capture and permission checks: the real OS, or no-ops under `stub-audio`.
 #[cfg(not(feature = "stub-audio"))]
+pub(crate) use os::SILENT_SYSTEM_DENIAL;
+#[cfg(not(feature = "stub-audio"))]
 pub(crate) use os::start_sound;
 #[cfg(not(feature = "stub-audio"))]
 pub(crate) use os::{check_mic, check_system, mic_source, stored_mic_denial, system_source};
 
+#[cfg(feature = "stub-audio")]
+pub(crate) use stub::SILENT_SYSTEM_DENIAL;
 #[cfg(feature = "stub-audio")]
 pub(crate) use stub::start_sound;
 #[cfg(feature = "stub-audio")]

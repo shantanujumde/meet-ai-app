@@ -121,3 +121,8 @@ pub(crate) fn start_sound() {
         tracing::warn!(%error, "could not play the start sound");
     }
 }
+
+/// No system-audio grant here that fails silently: the check that runs
+/// during a recording plays the start sound and asks [`check_system`]
+/// instead of listening for the chime (TUR-136).
+pub(crate) const SILENT_SYSTEM_DENIAL: bool = false;
