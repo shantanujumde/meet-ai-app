@@ -123,3 +123,8 @@ pub(crate) fn check_system() -> ChannelResult {
 
 /// The chime already sounded as [`check_system`]'s positive control.
 pub(crate) fn start_sound() {}
+
+/// A denied process tap delivers bit-exact zeros (FINDINGS §10.1), so only
+/// the chime can tell a denial from a quiet Mac, and the check that runs
+/// during a recording listens for it (TUR-136).
+pub(crate) const SILENT_SYSTEM_DENIAL: bool = true;

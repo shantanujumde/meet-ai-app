@@ -22,8 +22,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 mod segment;
+mod system_drop;
 
 use self::segment::{Paths, align_and_pad, reopen_segment, segment_open};
+pub use self::system_drop::SystemDrop;
 use crate::segments::{self, Anchor, CHECKPOINT_INTERVAL_S, SegmentsWriter};
 use crate::tee::Tee;
 use crate::{AudioSource, Channel, Error as AudioError};
@@ -202,7 +204,10 @@ pub struct RecordingSession {
     last_input_device: Option<crate::platform::DeviceId>,
     /// Whether the caller asked for a system-audio source at start, kept
     /// even after the tap drops so the next reopen rebuilds it (TUR-121).
+    /// Cleared by [`RecordingSession::drop_system`] (TUR-136).
     want_system: bool,
+    /// Where another thread asks for [`RecordingSession::drop_system`].
+    drop_request: SystemDrop,
 }
 
 impl RecordingSession {
@@ -319,11 +324,22 @@ impl RecordingSession {
             last_output_device,
             last_input_device,
             want_system,
+            drop_request: SystemDrop::default(),
         })
     }
 
     /// [`reopen_segment`] onto the platform's default devices.
     fn reopen(&mut self, reason: &str) -> Result<(), String> {
+        self.reopen_with(reason, default_mic_source, default_system_source)
+    }
+
+    /// [`reopen_segment`] onto the sources `new_mic` and `new_sys` build.
+    fn reopen_with(
+        &mut self,
+        reason: &str,
+        new_mic: impl FnOnce() -> Box<dyn AudioSource>,
+        new_sys: impl FnOnce() -> Option<Box<dyn AudioSource>>,
+    ) -> Result<(), String> {
         let paths = Paths {
             segments: &self.segments_path,
             mic: &self.mic_path,
@@ -337,9 +353,61 @@ impl RecordingSession {
             reason,
             &self.tees,
             self.want_system,
-            default_mic_source,
-            default_system_source,
+            new_mic,
+            new_sys,
         )
+    }
+
+    /// A handle another thread can use to ask for [`Self::drop_system`] at
+    /// the next [`Self::tick`] (TUR-136: the system-audio check runs on its
+    /// own thread while the ticker owns the session).
+    pub fn system_drop(&self) -> SystemDrop {
+        self.drop_request.clone()
+    }
+
+    /// Stop recording system audio and go on with the microphone only
+    /// (TUR-136). The current segment closes and the next one opens with
+    /// `reason` and no system track (`sys_rate` 0, contract §9), the same
+    /// boundary a device change makes, so the microphone restarts once. The
+    /// session no longer wants system audio, so a later device change does
+    /// not bring back a tap the check found denied.
+    ///
+    /// Only the microphone can fail this, as for any reopen.
+    pub fn drop_system(&mut self, reason: &str) -> Result<(), String> {
+        self.drop_system_with(reason, default_mic_source)
+    }
+
+    /// [`Self::drop_system`], rebuilding the microphone with `new_mic`.
+    fn drop_system_with(
+        &mut self,
+        reason: &str,
+        new_mic: impl FnOnce() -> Box<dyn AudioSource>,
+    ) -> Result<(), String> {
+        self.want_system = false;
+        if self.sys.is_none() {
+            tracing::info!(reason, "no system track to drop; already microphone-only");
+            return Ok(());
+        }
+        tracing::warn!(
+            reason,
+            "dropping the system-audio track; recording the microphone only"
+        );
+        self.reopen_with(reason, new_mic, || None)?;
+        self.last_output_device = crate::platform::default_output_device().ok();
+        self.last_input_device = crate::platform::default_input_device().ok();
+        self.last_checkpoint = Instant::now();
+        Ok(())
+    }
+
+    /// Carry out a pending [`SystemDrop`] request, if there is one.
+    fn apply_drop_request(
+        &mut self,
+        new_mic: impl FnOnce() -> Box<dyn AudioSource>,
+    ) -> Result<(), String> {
+        match self.drop_request.take() {
+            Some(reason) => self.drop_system_with(&reason, new_mic),
+            None => Ok(()),
+        }
     }
 
     /// Whether a system-audio source was requested at start. Unlike
@@ -363,6 +431,8 @@ impl RecordingSession {
     /// one, run an ordinary checkpoint. The caller decides how often to call
     /// this; nothing here sleeps or blocks on a timer of its own.
     pub fn tick(&mut self) -> Result<(), String> {
+        // TUR-136: a drop the system-audio check asked for, first.
+        self.apply_drop_request(default_mic_source)?;
         // The device reads fail on a platform without a device watch yet
         // (`crate::platform`), so nothing below runs there.
         {

@@ -695,3 +695,115 @@ fn a_session_without_system_audio_never_builds_one() {
     assert!(!built);
     assert!(r.sys.is_none());
 }
+
+fn stub(channel: Channel) -> Box<dyn AudioSource> {
+    Box::new(StubSource::new(channel))
+}
+
+/// TUR-136: the system-audio check found the tap denied mid-recording. The
+/// segment closes with `system_audio_denied`, the next one has no system
+/// track, and the microphone records on into a complete, readable file.
+#[test]
+fn dropping_the_system_track_closes_the_segment_and_records_the_microphone_on() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut session = RecordingSession::start(
+        tmp.path().to_path_buf(),
+        stub(Channel::Mic),
+        Some(stub(Channel::System)),
+    )
+    .expect("session starts cleanly");
+    assert!(session.status().has_system_audio);
+
+    // Asked from another thread, carried out by the next tick.
+    let asker = session.system_drop();
+    asker.request(segments::reason::SYSTEM_AUDIO_DENIED);
+    session
+        .apply_drop_request(|| stub(Channel::Mic))
+        .expect("the drop never fails while the mic restarts");
+
+    assert!(!session.status().has_system_audio, "mic-only from here on");
+    assert!(
+        !session.wants_system_audio(),
+        "a denied tap is not wanted back"
+    );
+
+    // A later device change must not rebuild the tap the check found denied.
+    let mut rebuilt = false;
+    session
+        .reopen_with(
+            segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED,
+            || stub(Channel::Mic),
+            || {
+                rebuilt = true;
+                Some(stub(Channel::System))
+            },
+        )
+        .unwrap();
+    assert!(!rebuilt && !session.status().has_system_audio);
+
+    let report = session.stop().expect("the recording still stops cleanly");
+    assert!(!report.has_system_audio);
+    let written = read_segments(&report.segments_path);
+    let reasons: Vec<&str> = written.segments.iter().map(|s| s.reason.as_str()).collect();
+    assert_eq!(
+        reasons,
+        [
+            segments::reason::START,
+            segments::reason::SYSTEM_AUDIO_DENIED,
+            segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED,
+        ]
+    );
+    let sys_rates: Vec<u32> = written.segments.iter().map(|s| s.sys_rate).collect();
+    assert_eq!(
+        sys_rates,
+        [crate::segments::SAMPLE_RATE_HZ, 0, 0],
+        "absent track, contract §9"
+    );
+
+    let mic_frames = crate::wav_writer::read_header_frames(&report.mic_path).unwrap();
+    let sys_frames = crate::wav_writer::read_header_frames(&report.sys_path).unwrap();
+    assert!(written.segments.iter().all(|s| s.mic_frames > 0));
+    written
+        .check_wav_header(Channel::Mic, mic_frames)
+        .expect("segments.json accounts for every mic frame");
+    written
+        .check_wav_header(Channel::System, sys_frames)
+        .expect("and for the system frames before the drop");
+}
+
+#[test]
+fn a_session_with_no_drop_request_ticks_on_unchanged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut session = RecordingSession::start(
+        tmp.path().to_path_buf(),
+        stub(Channel::Mic),
+        Some(stub(Channel::System)),
+    )
+    .unwrap();
+    let mut built = false;
+    session
+        .apply_drop_request(|| {
+            built = true;
+            stub(Channel::Mic)
+        })
+        .unwrap();
+    assert!(!built, "nothing restarts without a request");
+    assert!(session.status().has_system_audio && session.wants_system_audio());
+    let report = session.stop().unwrap();
+    assert_eq!(read_segments(&report.segments_path).segments.len(), 1);
+}
+
+#[test]
+fn dropping_a_system_track_that_is_already_gone_only_stops_wanting_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut session =
+        RecordingSession::start(tmp.path().to_path_buf(), stub(Channel::Mic), None).unwrap();
+    session
+        .drop_system_with(segments::reason::SYSTEM_AUDIO_DENIED, || {
+            panic!("no segment to close, so the mic is not restarted")
+        })
+        .unwrap();
+    assert!(!session.wants_system_audio());
+    let report = session.stop().unwrap();
+    assert_eq!(read_segments(&report.segments_path).segments.len(), 1);
+}

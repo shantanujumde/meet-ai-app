@@ -9,7 +9,20 @@
  */
 
 import type { PermissionStatus } from "@/ipc/types";
-import type { Os } from "./osText";
+import { type Os, osText } from "./osText";
+
+/**
+ * The banner line when only System Audio Recording is off. During a
+ * recording the check has just found it (TUR-136) and the recording has
+ * dropped its system track, so the line says this recording goes on with
+ * the microphone; otherwise it says what the next recording will capture.
+ */
+export function systemAudioOffText(recording: boolean): string {
+  const lead = `System audio is off: System Audio Recording is turned off for meet-ai in ${osText("settings")}`;
+  return recording
+    ? `${lead}, so this recording goes on with your microphone only.`
+    : `${lead}, so recordings capture only your microphone.`;
+}
 
 /** Whether this answer only has System Audio Recording switched off. */
 export function systemAudioOnlyOff(permission: PermissionStatus | null): boolean {

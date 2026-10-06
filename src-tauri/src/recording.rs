@@ -6,9 +6,9 @@
 //! both cleanly and leaves `mic.wav`, `system.wav` and `segments.json` complete,
 //! with no later repair step needed.
 //!
-//! Starting and stopping both take real wall-clock time — SPEC §8.1's
-//! positive-control permission measurement, then Core Audio warming up each
-//! channel — so every entry point here is meant to be called off a thread that
+//! Starting and stopping both take real wall-clock time (Core Audio warming
+//! up each channel; the permission chime runs during the recording, TUR-136)
+//! so every entry point here is meant to be called off a thread that
 //! must stay responsive. `commands::toggle_recording`/`stop_recording` run this
 //! on a blocking thread the same way `commands::measure_permission` does; the
 //! ⌘⇧R handler in `lib.rs` gives it a worker thread of its own so the shortcut
@@ -42,12 +42,13 @@
 
 pub(crate) mod auto_title;
 mod phase;
+mod start_check;
 mod ticker;
 
 use std::sync::{Arc, Mutex};
 
 use audio::AudioSource;
-use audio::session::{RecordingSession, Tees};
+use audio::session::RecordingSession;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter as _, Manager as _};
 use {meeting_format::layout, stt::Speaker};
@@ -57,10 +58,9 @@ use self::ticker::Ticker;
 use store::folder_name::create_meeting_folder;
 
 use crate::error::UiError;
-use crate::events::{PERMISSION_STATUS_EVENT, RECORDING_STATE_EVENT};
+use crate::events::RECORDING_STATE_EVENT;
 use crate::live_transcript::{self, LiveTranscript, Transcription};
 use crate::lock::lock_or_recover;
-use crate::permission;
 
 /// The ticker thread's name, so it is identifiable in a sample or a crash
 /// report next to `meet-ai-record-shortcut`.
@@ -239,29 +239,12 @@ impl Recorder {
             return Ok(status);
         }
 
-        // SPEC §8.1: a denied tap returns `noErr` and delivers bit-exact
-        // zeros, so a return code cannot tell us anything — only the positive
-        // control (a tone played and listened for) can. The UI already keeps
-        // the controls disabled while permission is absent; this measurement
-        // is the backstop for the one path that has no button to disable, the
-        // global shortcut firing with the window unfocused or hidden.
-        let permission = permission::measure_before_recording();
-        tracing::info!(
-            state = ?permission.state,
-            detail = %permission.detail,
-            "permission check before recording"
-        );
-        // The window mirrors this answer (Record disabled, "Fix this" shown), so
-        // a refusal here and a grant restored in Settings both reach it.
-        if let Err(error) = app.emit(PERMISSION_STATUS_EVENT, &permission) {
-            tracing::warn!(%error, "could not tell the window about the permission check");
-        }
-        if permission.blocks_recording() {
-            return Err(self.fail_start(
-                app,
-                None,
-                UiError::app("permission-denied", permission.refusal_message()),
-            ));
+        // TUR-136: only the silent microphone decision runs before the start.
+        // SPEC §8.1's positive control for system audio (the chime) runs
+        // during the recording, `start_check`, and never stops it. This is
+        // still the backstop for ⌘⇧R, which has no button to disable.
+        if let Err(error) = start_check::before_start(app) {
+            return Err(self.fail_start(app, None, error));
         }
 
         let started = chrono::Local::now();
@@ -290,20 +273,17 @@ impl Recorder {
         };
 
         let mic: Box<dyn AudioSource> = Box::new(audio::mic::MicSource::new());
-        let sys = permission.system_source();
+        let sys = audio::session::default_system_source();
 
         // One tee per channel (TUR-31). A tee costs capture nothing if nobody
         // ends up reading it, so they are handed out before knowing whether
-        // the speech engine will start.
-        let (mic_tee, mic_feed) = audio::tee::tee();
-        let (sys_tee, sys_feed) = audio::tee::tee();
-        let tees = Tees {
-            mic: Some(mic_tee),
-            sys: Some(sys_tee),
-        };
+        // the speech engine will start. The system one also feeds the
+        // permission check, and both are hushed for its chime (TUR-136).
+        let (tees, mic_feed, sys_feed, check) = start_check::tees();
 
         match RecordingSession::start_with_tees(layout::audio_dir(&meeting_dir), mic, sys, tees) {
             Ok(session) => {
+                let check = check.attach(&session);
                 // Mic is `You`, system audio is `Others` (L5). A requested
                 // system track keeps its session even if it is down now: the
                 // next device change rebuilds the tap (TUR-121).
@@ -319,6 +299,7 @@ impl Recorder {
                 );
                 self.enter_recording(app, &id, started, session, transcription)
                     .inspect(|_| auto_title::spawn(app, &id, started))
+                    .inspect(|_| check.spawn(app))
                     .map_err(|error| self.fail_start(app, Some(&id), error))
             }
             Err(message) => {

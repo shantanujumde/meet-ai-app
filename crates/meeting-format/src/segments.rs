@@ -68,6 +68,10 @@ pub mod reason {
     pub const SYSTEM_WAKE: &str = "system_wake";
     /// An IO proc stopped without a device change — restarted in place.
     pub const STREAM_RESTART: &str = "stream_restart";
+    /// The system-audio check that runs during a recording found the tap
+    /// delivering only zeros (permission off), so the system track was
+    /// dropped and the recording goes on microphone-only (TUR-136).
+    pub const SYSTEM_AUDIO_DENIED: &str = "system_audio_denied";
 }
 
 /// `segments.json` in full.

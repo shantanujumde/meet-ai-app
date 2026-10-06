@@ -81,6 +81,9 @@ pub(crate) fn check_system() -> ChannelResult {
 /// Silent: the stub touches no device.
 pub(crate) fn start_sound() {}
 
+/// Nothing to listen for: the stub has no tap.
+pub(crate) const SILENT_SYSTEM_DENIAL: bool = false;
+
 #[cfg(test)]
 mod tests {
     use super::*;

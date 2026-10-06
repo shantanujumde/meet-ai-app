@@ -36,6 +36,10 @@
 //!   if it is not heard does it play again, and never more than
 //!   [`crate::chime::MAX_PLAYS`] times in all.
 //!
+//! A recording runs the same system-audio closed loop on its own tap, while
+//! it records, through [`during_recording`] (TUR-136): Record no longer
+//! waits for [`check_system`], which onboarding still uses.
+//!
 //! Both functions are on-demand and take real wall-clock time (system audio:
 //! the chime starts ~[`crate::chime::SETTLE_MILLIS`] (1.2 s) after the tap on
 //! a normal start, and the whole check is bounded by about
@@ -44,13 +48,11 @@
 //! `src-tauri/src/commands.rs`'s `permission_status`.
 
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::{AudioSource, Error, chime, platform};
 
+mod chime_output;
+pub mod during_recording;
 pub mod start_sound;
 pub mod verdict;
 
@@ -193,24 +195,16 @@ pub fn start_sound() {
 /// [`check_system`]'s closed loop against `system`, a system-audio source
 /// that has not been started. The platform seam calls this with its tap.
 pub fn check_system_with(mut system: Box<dyn AudioSource>) -> ChannelResult {
-    let host = cpal::default_host();
-    let Some(output) = host.default_output_device() else {
-        return ChannelResult {
-            state: ChannelState::Unmeasurable,
-            detail: "this Mac has no default output device to play the check tone through".into(),
-        };
-    };
-    let output_config = match output.default_output_config() {
-        Ok(config) => config.config(),
-        Err(error) => {
+    // Opened first, so a machine with no output device never starts a tap.
+    let output = match chime_output::ChimeOutput::open() {
+        Ok(output) => output,
+        Err(detail) => {
             return ChannelResult {
                 state: ChannelState::Unmeasurable,
-                detail: format!("the default output device has no usable config: {error}"),
+                detail,
             };
         }
     };
-    let output_rate = output_config.sample_rate;
-    let output_channels = (output_config.channels as usize).max(1);
 
     let (dir, dest) = match scratch_dir("system") {
         Ok(paths) => paths,
@@ -234,64 +228,19 @@ pub fn check_system_with(mut system: Box<dyn AudioSource>) -> ChannelResult {
         };
     }
 
-    // The chime, rendered once at the output device's rate. The output
-    // callback plays it from the top each time `play` asks, then falls silent
-    // until asked again — one chime per play, never a loop.
-    let mono = chime::samples(output_rate);
-    let restart = Arc::new(AtomicBool::new(false));
-    let callback_restart = Arc::clone(&restart);
-    // Start past the end: silence until the first play request.
-    let mut position = mono.len();
-
-    let output_stream = output.build_output_stream(
-        output_config,
-        move |data: &mut [f32], _| {
-            // `swap` reads and clears the request in one step, so a play asked
-            // for mid-buffer starts on the next buffer, exactly once.
-            if callback_restart.swap(false, Ordering::AcqRel) {
-                position = 0;
-            }
-            let frames = data.len() / output_channels;
-            for (i, frame) in data.chunks_mut(output_channels).enumerate() {
-                let sample = mono.get(position + i).copied().unwrap_or(0.0);
-                for s in frame {
-                    *s = sample;
-                }
-            }
-            position = position.saturating_add(frames);
-        },
-        |error| tracing::warn!(%error, "permission-check output stream error"),
-        None,
-    );
-    let output_stream = match output_stream {
-        Ok(stream) => stream,
-        Err(error) => {
-            let _ = system.stop();
-            cleanup(&dir, &dest);
-            return ChannelResult {
-                state: ChannelState::Unmeasurable,
-                detail: format!("could not build the check-tone output stream: {error}"),
-            };
-        }
-    };
-    if let Err(error) = output_stream.play() {
-        let _ = system.stop();
-        cleanup(&dir, &dest);
-        return ChannelResult {
-            state: ChannelState::Unmeasurable,
-            detail: format!("could not start playback of the check tone: {error}"),
-        };
-    }
-
     // Listen to the tap live instead of sleeping and reading the WAV back.
     // `play_until_heard` keeps time by captured samples; `listen_live` adds
     // the wall-clock safety net, counted from the tap's first frame so a
     // slow start cannot eat the listen time (TUR-72).
     let clock = chime::WallClock::start();
-    let play = || restart.store(true, Ordering::Release);
-    let listened = chime::listen_live(verdict::RATE, &clock, play, |left| feed.recv_timeout(left));
+    let listened = chime::listen_live(
+        verdict::RATE,
+        &clock,
+        || output.play(),
+        |left| feed.recv_timeout(left),
+    );
 
-    drop(output_stream);
+    drop(output);
     let rates = system.rate_report();
     let _ = system.stop();
 

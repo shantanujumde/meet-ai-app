@@ -1016,8 +1016,8 @@ export type meet_ai_lib_engine_parakeet_ParakeetModelView = {
 /**
  *  Where the recorder is right now.
  * 
- *  `Starting` and `Stopping` are not decoration: opening the tap (and, on
- *  start, the SPEC §8.1 permission measurement ahead of it) and flushing the
+ *  `Starting` and `Stopping` are not decoration: opening the tap (the
+ *  permission chime now runs after it, TUR-136) and flushing the
  *  last WAV header both take long enough to see, and a shortcut pressed twice
  *  in that window must be ignored rather than queued.
  */
