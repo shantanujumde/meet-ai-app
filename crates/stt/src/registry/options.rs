@@ -127,6 +127,7 @@ mod tests {
             whisper_model_id: "large-v3-turbo-q5_0".into(),
             installed_whisper_models: Vec::new(),
             parakeet_model: None,
+            spoken: Default::default(),
         }
     }
 

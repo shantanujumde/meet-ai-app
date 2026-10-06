@@ -46,6 +46,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             commands::engine_choices,
             commands::model_credits,
             commands::set_transcription,
+            commands::set_spoken_language,
             commands::recording_status,
             commands::toggle_recording,
             commands::stop_recording,

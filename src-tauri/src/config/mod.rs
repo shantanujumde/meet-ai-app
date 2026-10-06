@@ -90,9 +90,9 @@ pub use detection_section::{DEFAULT_REMIND_BEFORE_MINUTES, DetectionConfig, set_
 #[allow(unused_imports)]
 pub use agent_section::{AgentConfig, Harness, TicketsConfig};
 pub use file::default_repo;
-pub use file::set_transcription;
 #[allow(unused_imports)] // TUR-9, same
 pub use file::{agent, set_agent, set_tickets, tickets};
+pub use file::{set_transcription, set_transcription_language};
 // TUR-90: the Setup screen's save merges under the config write lock.
 pub use file::update_agent;
 // TUR-101: the agent setup tests write and read `agent` back as text.
@@ -101,7 +101,7 @@ pub(crate) use {agent_section::parse_agent, file::with_agent};
 
 const FILE: &str = "config.jsonc";
 
-/// The two `transcription` keys this phase reads.
+/// The `transcription` keys this phase reads.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Transcription {
@@ -109,6 +109,12 @@ pub struct Transcription {
     pub engine: Preference,
     #[serde(default = "default_model")]
     pub model: String,
+    /// The language people speak, for a multilingual whisper model: `auto`,
+    /// `hinglish`, or a whisper code such as `mr`. Read with
+    /// [`stt::languages::spoken`], so a value it does not know is auto, not a
+    /// reason to drop the engine and model beside it.
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 impl Default for Transcription {
@@ -116,8 +122,13 @@ impl Default for Transcription {
         Self {
             engine: Preference::default(),
             model: default_model(),
+            language: default_language(),
         }
     }
+}
+
+fn default_language() -> String {
+    stt::languages::AUTO.to_string()
 }
 
 fn default_model() -> String {
@@ -242,6 +253,14 @@ mod tests {
         let transcription = parse(r#"{ "transcription": { "model": "small.en-q5_1" } }"#);
         assert_eq!(transcription.engine, Preference::Auto);
         assert_eq!(transcription.model, "small.en-q5_1");
+    }
+
+    #[test]
+    fn the_language_defaults_to_auto_and_round_trips() {
+        assert_eq!(Transcription::default().language, "auto");
+        let transcription = parse(r#"{ "transcription": { "language": "mr" } }"#);
+        assert_eq!(transcription.language, "mr");
+        assert_eq!(transcription.engine, Preference::Auto);
     }
 
     #[test]

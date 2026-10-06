@@ -33,6 +33,67 @@ impl LanguageSet {
     }
 }
 
+/// `transcription.language`'s value for "work it out line by line".
+pub const AUTO: &str = "auto";
+
+/// `transcription.language`'s value for Hindi and English mixed, written in
+/// English letters. Not a whisper language: whisper is told English, with
+/// [`HINGLISH_PROMPT`] as text it has already heard. Told Hindi instead, it
+/// wrote English words in Devanagari and often looped; told English alone, it
+/// translated the Hindi. Measured on a real Hindi and English call.
+pub const HINGLISH: &str = "hinglish";
+
+/// What whisper is told it has already heard, for [`HINGLISH`]. Ordinary
+/// meeting talk, so it steers the spelling without leaking into the words.
+pub const HINGLISH_PROMPT: &str = "Haan bhai, kal ki meeting mein kya decide hua tha? Mujhe lagta \
+     hai ye feature next week tak ship ho jayega. Main doc share kar deta hoon, tum ek baar check \
+     kar lena.";
+
+/// What a `transcription.language` setting tells whisper.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Spoken {
+    /// The language code, or `None` to work it out line by line.
+    pub language: Option<&'static str>,
+    /// Text whisper is told it has already heard, or `None`.
+    pub prompt: Option<&'static str>,
+}
+
+/// Read a `transcription.language` setting: [`AUTO`], [`HINGLISH`], or a
+/// whisper code (see [`whisper_code`]).
+pub fn spoken(setting: &str) -> Spoken {
+    if setting.trim().eq_ignore_ascii_case(HINGLISH) {
+        return Spoken {
+            language: Some("en"),
+            prompt: Some(HINGLISH_PROMPT),
+        };
+    }
+    Spoken {
+        language: whisper_code(setting),
+        prompt: None,
+    }
+}
+
+/// The whisper code a `transcription.language` setting asks for: `None` for
+/// [`AUTO`] (or empty), or for a value whisper has no token for, which is
+/// logged and read as auto rather than failing a recording.
+pub fn whisper_code(setting: &str) -> Option<&'static str> {
+    let setting = setting.trim();
+    if setting.is_empty() || setting.eq_ignore_ascii_case(AUTO) {
+        return None;
+    }
+    let found = WHISPER_LANGUAGES
+        .iter()
+        .find(|(code, _)| code.eq_ignore_ascii_case(setting))
+        .map(|(code, _)| *code);
+    if found.is_none() {
+        tracing::warn!(
+            setting,
+            "transcription.language is not a whisper language; using auto"
+        );
+    }
+    found
+}
+
 // Source: openai/whisper whisper/tokenizer.py @ 86098128c0b4f24f0e2aa2994de830614b474227 (MIT)
 // Adapted from github.com/openai/whisper/whisper/tokenizer.py @ 86098128c0b4f24f0e2aa2994de830614b474227 (MIT)
 // Copyright (c) 2022 OpenAI. The `LANGUAGES` table, names title-cased.
@@ -151,6 +212,34 @@ mod tests {
         assert_eq!(WHISPER_LANGUAGES[0], ("en", "English"));
         assert_eq!(WHISPER_LANGUAGES[99], ("yue", "Cantonese"));
         assert!(WHISPER_LANGUAGES.contains(&("hi", "Hindi")));
+    }
+
+    #[test]
+    fn a_language_setting_becomes_a_whisper_code_or_auto() {
+        assert_eq!(whisper_code("mr"), Some("mr"));
+        assert_eq!(whisper_code(" MR "), Some("mr"));
+        assert_eq!(whisper_code("auto"), None);
+        assert_eq!(whisper_code(""), None);
+        assert_eq!(whisper_code("marathi"), None);
+    }
+
+    #[test]
+    fn hinglish_is_english_with_a_prompt() {
+        let hinglish = spoken("Hinglish");
+        assert_eq!(hinglish.language, Some("en"));
+        assert!(
+            hinglish
+                .prompt
+                .is_some_and(|prompt| prompt.contains("kya decide hua"))
+        );
+        assert_eq!(
+            spoken("mr"),
+            Spoken {
+                language: Some("mr"),
+                prompt: None
+            }
+        );
+        assert_eq!(spoken("auto"), Spoken::default());
     }
 
     #[test]

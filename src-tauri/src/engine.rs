@@ -28,7 +28,7 @@ use crate::meetings;
 
 // The Settings engine picker: what each choice would do, and saving one (TUR-75).
 mod choices;
-pub use choices::{EngineChoice, EngineChoices, choices, save_choice};
+pub use choices::{EngineChoice, EngineChoices, choices, save_choice, save_language};
 
 // The Parakeet model folder: found, shown and downloaded (TUR-62).
 mod parakeet;

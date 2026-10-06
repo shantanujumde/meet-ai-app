@@ -74,6 +74,7 @@ mod tests {
             whisper_model_id: "large-v3-turbo-q5_0".into(),
             installed_whisper_models: Vec::new(),
             parakeet_model: model.then(|| PathBuf::from("/tmp/parakeet-tdt-0.6b-v3-int8")),
+            spoken: Default::default(),
         }
     }
 

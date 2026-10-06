@@ -104,7 +104,38 @@ pub struct EngineChoices {
     pub parakeet_model: super::ParakeetModelView,
     /// The locales Apple's engine has installed, e.g. `en-US`.
     pub languages: Vec<String>,
+    /// `transcription.language`: `auto`, or the whisper code people speak.
+    pub spoken_language: String,
+    /// What the spoken-language picker offers besides `auto`, in its order:
+    /// Hinglish, then every language whisper has a token for, by name.
+    pub spoken_languages: Vec<SpokenLanguageOption>,
 }
+
+/// One language the spoken-language picker offers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SpokenLanguageOption {
+    /// The whisper code, such as `mr`.
+    pub code: String,
+    /// The English name, such as `Marathi`.
+    pub name: String,
+}
+
+/// Hinglish first, since it is not one of whisper's own, then whisper's
+/// languages by name.
+fn spoken_languages() -> Vec<SpokenLanguageOption> {
+    let mut languages: Vec<_> = stt::languages::WHISPER_LANGUAGES.to_vec();
+    languages.sort_by_key(|(_, name)| *name);
+    std::iter::once((stt::languages::HINGLISH, HINGLISH_NAME))
+        .chain(languages)
+        .map(|(code, name)| SpokenLanguageOption {
+            code: code.to_string(),
+            name: name.to_string(),
+        })
+        .collect()
+}
+
+const HINGLISH_NAME: &str = "Hinglish (Hindi and English)";
 
 /// The picker as it stands. Runs the ~160 ms probe; call it off the render path.
 pub fn choices() -> EngineChoices {
@@ -124,6 +155,8 @@ fn view(transcription: &Transcription, options: registry::EngineOptions) -> Engi
         parakeet: options.parakeet.into(),
         parakeet_model,
         languages: options.installed_locales,
+        spoken_language: transcription.language.clone(),
+        spoken_languages: spoken_languages(),
     }
 }
 
@@ -137,8 +170,26 @@ pub fn save_choice(engine: EngineChoice, model: &str) -> Result<EngineChoices, U
     let saved = Transcription {
         engine: engine.into(),
         model: model.to_string(),
+        ..config::transcription()
     };
     Ok(view(&saved, options))
+}
+
+/// Save `transcription.language`: `auto` or a whisper code. Anything else is
+/// refused rather than written, since the reader would quietly treat it as
+/// auto. Returns the picker as saved.
+pub fn save_language(language: &str) -> Result<EngineChoices, UiError> {
+    let language = language.trim();
+    let known = language == stt::languages::AUTO
+        || language == stt::languages::HINGLISH
+        || stt::languages::whisper_code(language).is_some();
+    if !known {
+        return Err(UiError::from(config::ConfigError::Invalid(format!(
+            "transcription.language {language:?} is not a language whisper knows"
+        ))));
+    }
+    config::set_transcription_language(language)?;
+    Ok(choices())
 }
 
 /// The same rules the picker draws, enforced again here: a disabled radio is
@@ -223,6 +274,7 @@ mod tests {
                 .map(|_| vec!["small.en-q5_1".into()])
                 .unwrap_or_default(),
             parakeet_model: None,
+            spoken: Default::default(),
         }
     }
 
@@ -260,8 +312,13 @@ mod tests {
         let transcription = Transcription {
             engine: Preference::Whisper,
             model: "small.en-q5_1".into(),
+            language: "auto".into(),
         };
         let view = view(&transcription, options(true, false));
+        assert_eq!(view.spoken_language, "auto");
+        assert_eq!(view.spoken_languages.len(), 101);
+        assert_eq!(view.spoken_languages[0].code, "hinglish");
+        assert_eq!(view.spoken_languages[1].name, "Afrikaans");
         assert_eq!(view.engine, EngineChoice::Whisper);
         assert_eq!(view.model, "small.en-q5_1");
         assert_eq!(view.auto, Some(ResolvedEngine::AppleSpeech));
@@ -361,10 +418,18 @@ mod tests {
     }
 
     #[test]
+    fn a_language_whisper_does_not_know_is_refused_not_written() {
+        for bad in ["marathi", "xx", "en-US"] {
+            assert!(save_language(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
     fn the_view_carries_parakeet_and_its_row() {
         let transcription = Transcription {
             engine: Preference::Parakeet,
             model: "small.en-q5_1".into(),
+            language: "auto".into(),
         };
         let view = view(&transcription, options(true, true));
         assert_eq!(view.engine, EngineChoice::Parakeet);

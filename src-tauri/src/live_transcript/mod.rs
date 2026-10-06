@@ -161,12 +161,15 @@ pub fn open_configured_engine() -> Result<Box<dyn SttEngine>, String> {
     // `engine::discover`, not `Environment::discover`: the model lives under the
     // meetings root the user chose, and Settings looks there too — the two must
     // never disagree about whether a model is installed.
-    let environment = crate::engine::discover(crate::engine::DEFAULT_LOCALE, &transcription.model);
+    let mut environment =
+        crate::engine::discover(crate::engine::DEFAULT_LOCALE, &transcription.model);
+    environment.spoken = stt::languages::spoken(&transcription.language);
     let (selection, engine) =
         registry::select(transcription.engine, &environment).map_err(|error| error.to_string())?;
     tracing::info!(
         engine = selection.engine.name(),
         reason = %selection.reason,
+        language = %transcription.language,
         "opening live transcription"
     );
     Ok(engine)
