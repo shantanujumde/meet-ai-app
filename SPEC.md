@@ -259,7 +259,7 @@ One silent fix-up runs at launch, before the record shortcut exists: a WAV whose
 id: 2026-09-01-1430-standup
 title: Platform Standup
 title_source: calendar                   # optional; who wrote the title: calendar | agent | user (A20)
-title_hash: 06d2abde48536429             # with a calendar or agent title: hash of it as written; a title that differs was edited by hand (A22)
+title_hash: 06d2abde48536429             # with a calendar or agent title: hash of it as written; a title that differs was edited by hand (A23)
 date: 2026-09-01T14:30:00+05:30
 duration_sec: 2714
 attendees: [Shantanu, Priya, Dev]        # from EventKit when available
@@ -546,18 +546,13 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
-### A22 — 2026-10-06 · `transcription.language`: line by line, chosen in Settings, or Hinglish (amends §3.5, A16)
+### A24 — 2026-10-06 · Meeting reminders show as a compact card window on every OS, macOS included (amends the TUR-27/TUR-78 notification-plus-banner flow and TUR-59's popup; TUR-108)
 
-A16's auto-detect asked whisper to guess the language of every utterance on its own. Utterances are a few seconds long, so a Marathi call came out as lines of Chinese, Tamil, Russian and Portuguese. Four changes:
+A calendar reminder now shows as a small card window of meet-ai's own, top-right of the primary monitor's work area (on macOS just under the menu bar), on macOS as well as Windows and Linux: a thin accent bar (no calendar colour is stored), the meeting's title over its time range ("9:00 AM to 9:30 AM"), and one split button. The main part is **Join Meet & record** (Zoom, Teams, or plain **Join** for another service, from `calendar::join_url::join_service`) when the event has a safe meeting link, **Record** when it has none; its chevron opens a native menu with Join only, Record only, Open brief and Dismiss. The window is 380×72 logical px, transparent around a rounded card, always on top, with no focus taken and no Dock or taskbar entry. Detection prompts use the same card on Windows and Linux (the reason as its title, **Record**, Dismiss in the menu); on macOS they keep the notification and in-window banner. `detection::popup::uses_popup` is the one switch.
 
-- **Auto keeps each line's language, with a fallback** (`crates/stt/src/spoken_language.rs`). A line of 2 s or more that whisper is at least 50% sure about is written in that language. A shorter or unsure line is written in the speaker's usual language (whisper's probabilities from every long line, weighted by length, per channel). Locking each speaker to one language was tried first and dropped: on a real Hindi and English call it settled on English after 20 s and translated every Hindi sentence.
-- **`transcription.language` is read**: `auto` (the default), `hinglish`, or a whisper code such as `mr`, with a "Spoken language" picker in Settings → Speech. It reaches a multilingual whisper model only. An English-only model still gets `en`, and Apple and Parakeet ignore it. An unknown value is read as auto and logged; Settings refuses to write one.
-- **`hinglish`** tells whisper English, with a few sentences of Hinglish written in English letters as the prompt (`languages::HINGLISH_PROMPT`). On that call, English alone translated the Hindi ("toh close kar do" became "close to go"), and Hindi wrote English words in Devanagari and often looped. With the prompt, Hindi came out as spoken ("ticket agar close kar diya to wo close ticket mein chala jata hai na") and the English lines were unchanged. The prompt is passed as tokens made once per engine, because whisper-rs leaks the C string of a text prompt on every call. A line that is only a piece of the prompt is dropped.
-- **Loops are cut** (`crates/stt/src/whisper_text.rs`, now also home to the layer-3 phrase list). A word repeated 4 times in a row, or a phrase of 2 to 10 words repeated 3 times, is kept once, along with a cut-off last copy. Told Hindi or Marathi, whisper looped on about one line in ten.
+Unchanged: nothing records without a click (L15), one card at a time, it hides itself after `popup::AUTO_HIDE`, it closes when a recording starts some other way, and the OS notification is the fallback whenever the card window cannot be shown.
 
-Measured on the Marathi call: large-v3-turbo never put Marathi in its top four guesses, even for 10-second sentences (it said English or Hindi), and large-v3 did only sometimes. So auto cannot find Marathi, and picking it is the fix. Told `mr`, both models write Devanagari Marathi, rough and with Hindi mixed in. The §3.5 example's `"language": "en"` is now `"auto"`, since a file copied from it would force English onto a multilingual model.
-
-### A22 — 2026-10-05 · A meeting title edited by hand counts as the user's; meeting.md gains title_hash (amends A20; TUR-107)
+### A23 — 2026-10-05 · A meeting title edited by hand counts as the user's; meeting.md gains title_hash (amends A20; TUR-107)
 
 A20 trusted `title_source` alone. Someone who edited `title` in `meeting.md` by hand and left `title_source: calendar` or `agent` lost the edit to the next notes run, which replaces calendar and agent titles.
 
@@ -569,11 +564,16 @@ The calendar itself was already safe: it writes a title only while the meeting i
 
 **The search index follows every title at once.** The notes run's writes are the app's own, so the folder watcher skips them (§4), and the index (§3.6) kept the old title until the next rescan; the pre-meeting brief, which finds past meetings by title, missed them. The app now refreshes that one meeting in the index right after each of its three title writers (the agent, the calendar and a rename) has written `meeting.md`.
 
-### A22 — 2026-10-06 · Meeting reminders show as a compact card window on every OS, macOS included (amends the TUR-27/TUR-78 notification-plus-banner flow and TUR-59's popup; TUR-108)
+### A22 — 2026-10-06 · `transcription.language`: line by line, chosen in Settings, or Hinglish (amends §3.5, A16)
 
-A calendar reminder now shows as a small card window of meet-ai's own, top-right of the primary monitor's work area (on macOS just under the menu bar), on macOS as well as Windows and Linux: a thin accent bar (no calendar colour is stored), the meeting's title over its time range ("9:00 AM to 9:30 AM"), and one split button. The main part is **Join Meet & record** (Zoom, Teams, or plain **Join** for another service, from `calendar::join_url::join_service`) when the event has a safe meeting link, **Record** when it has none; its chevron opens a native menu with Join only, Record only, Open brief and Dismiss. The window is 380×72 logical px, transparent around a rounded card, always on top, with no focus taken and no Dock or taskbar entry. Detection prompts use the same card on Windows and Linux (the reason as its title, **Record**, Dismiss in the menu); on macOS they keep the notification and in-window banner. `detection::popup::uses_popup` is the one switch.
+A16's auto-detect asked whisper to guess the language of every utterance on its own. Utterances are a few seconds long, so a Marathi call came out as lines of Chinese, Tamil, Russian and Portuguese. Four changes:
 
-Unchanged: nothing records without a click (L15), one card at a time, it hides itself after `popup::AUTO_HIDE`, it closes when a recording starts some other way, and the OS notification is the fallback whenever the card window cannot be shown.
+- **Auto keeps each line's language, with a fallback** (`crates/stt/src/spoken_language.rs`). A line of 2 s or more that whisper is at least 50% sure about is written in that language. A shorter or unsure line is written in the speaker's usual language (whisper's probabilities from every long line, weighted by length, per channel). Locking each speaker to one language was tried first and dropped: on a real Hindi and English call it settled on English after 20 s and translated every Hindi sentence.
+- **`transcription.language` is read**: `auto` (the default), `hinglish`, or a whisper code such as `mr`, with a "Spoken language" picker in Settings → Speech. It reaches a multilingual whisper model only. An English-only model still gets `en`, and Apple and Parakeet ignore it. An unknown value is read as auto and logged; Settings refuses to write one.
+- **`hinglish`** tells whisper English, with a few sentences of Hinglish written in English letters as the prompt (`languages::HINGLISH_PROMPT`). On that call, English alone translated the Hindi ("toh close kar do" became "close to go"), and Hindi wrote English words in Devanagari and often looped. With the prompt, Hindi came out as spoken ("ticket agar close kar diya to wo close ticket mein chala jata hai na") and the English lines were unchanged. The prompt is passed as tokens made once per engine, because whisper-rs leaks the C string of a text prompt on every call. A line that is only a piece of the prompt is dropped.
+- **Loops are cut** (`crates/stt/src/whisper_text.rs`, now also home to the layer-3 phrase list). A word repeated 4 times in a row, or a phrase of 2 to 10 words repeated 3 times, is kept once, along with a cut-off last copy. Told Hindi or Marathi, whisper looped on about one line in ten.
+
+Measured on the Marathi call: large-v3-turbo never put Marathi in its top four guesses, even for 10-second sentences (it said English or Hindi), and large-v3 did only sometimes. So auto cannot find Marathi, and picking it is the fix. Told `mr`, both models write Devanagari Marathi, rough and with Hindi mixed in. The §3.5 example's `"language": "en"` is now `"auto"`, since a file copied from it would force English onto a multilingual model.
 
 ### A21 — 2026-10-05 · Updater keypair replaced before any build turned the updater on (amends §8.1's Updater keypair row; TUR-66)
 
