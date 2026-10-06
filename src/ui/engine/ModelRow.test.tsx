@@ -32,6 +32,7 @@ function renderRow(view: ModelView, onPick = vi.fn()) {
       inUse={false}
       onPick={onPick}
       onDownload={vi.fn()}
+      onDelete={vi.fn()}
     />,
   );
   return onPick;
@@ -101,5 +102,49 @@ describe("ModelRow: supported languages", () => {
     await user.click(button);
     expect(onPick).not.toHaveBeenCalled();
     expect(screen.getByRole("radio")).not.toBeChecked();
+  });
+});
+
+describe("ModelRow: delete (TUR-132)", () => {
+  function renderDeletable(view: ModelView, picked: boolean) {
+    const onDelete = vi.fn();
+    render(
+      <ModelRow
+        group="models"
+        model={view}
+        state={{}}
+        picked={picked}
+        inUse={false}
+        onPick={vi.fn()}
+        onDownload={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+    return onDelete;
+  }
+
+  test("no Delete on the picked model", () => {
+    renderDeletable(model(), true);
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  });
+
+  test("no Delete on a model that is not downloaded", () => {
+    renderDeletable(model({ installed: false }), false);
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  });
+
+  test("Delete asks first, Keep backs out, and confirming calls onDelete", async () => {
+    const user = userEvent.setup();
+    const onDelete = renderDeletable(model(), false);
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(screen.getByText("Delete 1.1 GB?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Keep" }));
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(screen.queryByText(/\?$/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(onDelete).toHaveBeenCalledTimes(1);
   });
 });

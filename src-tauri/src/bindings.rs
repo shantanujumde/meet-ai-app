@@ -43,6 +43,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             commands::engine_selection,
             commands::model_catalogue,
             commands::download_model,
+            commands::delete_model,
             commands::engine_choices,
             commands::model_credits,
             commands::set_transcription,

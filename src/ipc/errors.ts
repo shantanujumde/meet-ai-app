@@ -154,6 +154,12 @@ const COPY: Record<string, ErrorCopy> = {
     actionLabel: null,
     remedy: { action: "none" },
   },
+  "app/model-in-use": {
+    headline: "That model is in use",
+    body: "Pick another model first, and stop any recording.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
   "app/recording-in-progress": {
     headline: "Stop recording first",
     body: "meet-ai is still writing this meeting's files to the current folder. Stop the recording, then change the folder.",

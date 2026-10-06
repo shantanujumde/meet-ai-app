@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  deleteModel,
   downloadModel,
   engineChoices,
   engineEnvironment,
@@ -179,6 +180,25 @@ export function useSpeech() {
     [check, refreshModels],
   );
 
+  /** Delete a downloaded model, then re-read the list (TUR-132). */
+  const remove = useCallback(
+    async (id: string) => {
+      setDownloads((previous) => ({ ...previous, [id]: { busy: true } }));
+      try {
+        await deleteModel(id);
+        setDownloads((previous) => ({ ...previous, [id]: {} }));
+      } catch (thrown) {
+        setDownloads((previous) => ({
+          ...previous,
+          [id]: { error: toUiError(thrown), busy: false },
+        }));
+      }
+      await refreshModels();
+      void check();
+    },
+    [check, refreshModels],
+  );
+
   return {
     environment,
     environmentError,
@@ -196,5 +216,6 @@ export function useSpeech() {
     pickModel,
     pickLanguage,
     download,
+    remove,
   };
 }

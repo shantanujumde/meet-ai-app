@@ -262,6 +262,7 @@ export const ipc = {
   })),
   modelCatalogue: vi.fn<typeof Client.modelCatalogue>(async () => []),
   downloadModel: vi.fn<typeof Client.downloadModel>(async (id) => id),
+  deleteModel: vi.fn<typeof Client.deleteModel>(async () => undefined),
   // TUR-75: a Mac on macOS 26 with Apple's engine ready and no model downloaded.
   engineChoices: vi.fn<typeof Client.engineChoices>(async () => APPLE_READY),
   // TUR-62: the credit Settings, About shows.
