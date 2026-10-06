@@ -88,3 +88,32 @@ describe("permission-denied per OS (TUR-51)", () => {
     expect(permissionDeniedCopy("linux").remedy).toEqual({ action: "none" });
   });
 });
+
+describe("agent and config errors have their own wording (TUR-118)", () => {
+  const kinds = [
+    "agent-not-installed",
+    "agent-not-signed-in",
+    "agent-timed-out",
+    "agent-cancelled",
+    "agent-failed",
+    "agent-bad-reply",
+    "agent-invalid-json",
+    "agent-schema-mismatch",
+    "agent-could-not-start",
+    "unknown-harness",
+  ];
+  const generic = copyFor(error("app", "a-kind-nobody-has-written-yet"));
+
+  test.each(kinds)("%s is not the generic text", (kind) => {
+    const copy = copyFor(error("app", kind));
+    expect(copy.headline).not.toBe(generic.headline);
+    expect(copy.body).not.toBe(generic.body);
+    expect(`${copy.headline} ${copy.body}`).not.toContain("\u2014");
+  });
+
+  test("the three bad-reply kinds share one wording", () => {
+    const a = copyFor(error("app", "agent-bad-reply"));
+    expect(copyFor(error("app", "agent-invalid-json"))).toEqual(a);
+    expect(copyFor(error("app", "agent-schema-mismatch"))).toEqual(a);
+  });
+});
