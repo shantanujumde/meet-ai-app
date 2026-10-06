@@ -66,6 +66,14 @@ const GENERIC: ErrorCopy = {
   remedy: { action: "copy-details" },
 };
 
+/** One wording for the three ways an agent's reply can be unusable. */
+const AGENT_BAD_REPLY: ErrorCopy = {
+  headline: "The agent's answer could not be used",
+  body: "It replied, but not in the shape meet-ai asked for, so nothing was saved. Trying again usually works.",
+  actionLabel: "Copy details",
+  remedy: { action: "copy-details" },
+};
+
 /**
  * The agreed mapping, keyed by `domain/kind`.
  *
@@ -187,6 +195,53 @@ const COPY: Record<string, ErrorCopy> = {
     body: "It could not find a place on this Mac to save the folder you chose, so it kept the old one. Nothing moved.",
     actionLabel: "Copy details",
     remedy: { action: "copy-details" },
+  },
+
+  // --- the notes agent and the config that names it -------------------------
+  "app/agent-not-installed": {
+    headline: "The agent is not installed",
+    body: "meet-ai could not find it. Install it, or pick another agent in Settings → Notes.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
+  "app/agent-not-signed-in": {
+    headline: "The agent is not signed in",
+    body: "Sign in with the command shown in Settings → Notes, then try again.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
+  "app/agent-timed-out": {
+    headline: "The agent took too long",
+    body: "meet-ai stopped waiting, and nothing from this run was saved. A long meeting can take a few minutes; try again.",
+    actionLabel: "Copy details",
+    remedy: { action: "copy-details" },
+  },
+  "app/agent-cancelled": {
+    headline: "Stopped",
+    body: "The run was cancelled. Nothing from it was saved.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
+  "app/agent-failed": {
+    headline: "The agent stopped with an error",
+    body: "Its own message is below. Nothing from this run was saved.",
+    actionLabel: "Copy details",
+    remedy: { action: "copy-details" },
+  },
+  "app/agent-bad-reply": AGENT_BAD_REPLY,
+  "app/agent-invalid-json": AGENT_BAD_REPLY,
+  "app/agent-schema-mismatch": AGENT_BAD_REPLY,
+  "app/agent-could-not-start": {
+    headline: "The agent could not start",
+    body: "meet-ai found it but could not run it. The details below say why.",
+    actionLabel: "Copy details",
+    remedy: { action: "copy-details" },
+  },
+  "app/unknown-harness": {
+    headline: "meet-ai does not know that agent",
+    body: "config.jsonc names an agent meet-ai cannot run. Pick Claude Code, Codex or None in Settings → Notes.",
+    actionLabel: null,
+    remedy: { action: "none" },
   },
 };
 
