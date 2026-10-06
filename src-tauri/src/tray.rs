@@ -60,8 +60,12 @@ fn build(app: &AppHandle) -> tauri::Result<()> {
         quit: MenuItemBuilder::with_id(QUIT_ITEM, "Quit meet-ai").build(app)?,
     };
     // "Today" reads "Reading your calendar…" until the worker's first read.
-    let first =
-        menu_model::build_menu_model(&menu_model::CalendarRead::Pending, &chrono::Local::now(), 0);
+    let first = menu_model::build_menu_model(
+        &menu_model::CalendarRead::Pending,
+        &chrono::Local::now(),
+        0,
+        false,
+    );
     let menu = today::menu(app, &first, &fixed)?;
 
     let art = current_art(false);
@@ -106,6 +110,8 @@ fn watch_recording_state(app: &AppHandle, toggle: MenuItem<tauri::Wry>, first: T
             tracing::warn!(%error, "could not relabel the menu-bar recording item");
         }
         refresh_icon(&handle);
+        // Record in Today's submenus is greyed while a recording is under way.
+        today::redraw_soon(&handle);
     });
 }
 
