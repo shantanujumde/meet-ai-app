@@ -1,20 +1,26 @@
 /**
- * "Record this meeting?" in its own small window (TUR-59): the popup that
- * Windows and Linux show for a detection or reminder prompt, in place of a
- * notification whose buttons those platforms never draw.
+ * "Record this meeting?" as a compact card in its own small window (TUR-59,
+ * restyled after Granola's reminder in TUR-108): a thin accent bar, the
+ * meeting's title over its time range, and one split button.
  *
  * Rust owns the prompt (`detection/popup`): it makes this window, sends the
  * prompt on `prompt-popup://show`, hides it after a while, and does what the
- * buttons say. **Record** starts a recording through the same paths as the
- * banner and the menu bar (a reminded meeting names itself from its invite),
- * **Dismiss** closes it, and a reminder with a meeting link adds **Join and
- * record** and **Join**, as TUR-78's banner. Nothing records without a click
- * (L15). A recording that starts any other way answers the question, so the
- * popup closes.
+ * buttons say. A calendar reminder shows here on every OS; a detection
+ * prompt ("Zoom is open.") on Windows and Linux, with the reason as its title.
+ *
+ * The main button is **Join Meet & record** (Zoom, Teams, or plain "Join"
+ * for another service) when the event has a meeting link, and **Record**
+ * otherwise. The chevron beside it opens a native menu, since a 72px window
+ * cannot hold a dropdown: Join only and Record only (with a link), Open brief
+ * (a reminder), and Dismiss. Nothing records without a click (L15). A
+ * recording that starts any other way answers the question, so the card
+ * closes.
  */
 
-import { Circle, Video, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { LogicalPosition } from "@tauri-apps/api/dpi";
+import { Menu } from "@tauri-apps/api/menu";
+import { ChevronDown, Circle, Video } from "lucide-react";
+import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { onRecordingState } from "@/ipc/client";
 import {
   answerPromptPopup,
@@ -24,17 +30,52 @@ import {
   promptPopupCurrent,
 } from "@/ipc/promptPopup";
 import { toUiError } from "@/ipc/types";
-import { IconSquare } from "./icons";
-import { Button, ButtonRow } from "./primitives";
+import { cn } from "@/lib/cn";
+import { Icon } from "./icons";
+import { buttonVariants } from "./primitives";
+import { formatTime } from "./TodayPane";
 
-/** The neutral buttons' default fill is glass, which vanishes on a solid card: give them a visible fill and edge. */
-const QUIET_EDGE = "border-fg-secondary bg-glass-sunken";
+type Prompt = PopupPrompt["prompt"];
+
+/** One item in the chevron's menu. */
+export type Choice = { answer: PopupAnswer; text: string };
+
+/** The service's name on the main button: "Join Meet", or plain "Join". */
+const SERVICE: Record<string, string> = { meet: "Meet", zoom: "Zoom", teams: "Teams" };
+
+/** "Join Meet", "Join Zoom", "Join Teams", or "Join" for any other service. */
+export function joinWords(service: string | null): string {
+  const name = service === null ? undefined : SERVICE[service];
+  return name === undefined ? "Join" : `Join ${name}`;
+}
+
+/** The chevron menu's items for `prompt`, in order. */
+export function choicesFor(prompt: Prompt): Choice[] {
+  const choices: Choice[] = [];
+  if (prompt.canJoin) {
+    choices.push({ answer: "join", text: "Join only" }, { answer: "record", text: "Record only" });
+  }
+  if (prompt.signal.kind === "calendar") choices.push({ answer: "openBrief", text: "Open brief" });
+  choices.push({ answer: "dismiss", text: "Dismiss" });
+  return choices;
+}
+
+/** The card's second line: the time range, the reason, or the question. */
+function detailFor(prompt: Prompt): string {
+  if (prompt.startsAtMs !== null && prompt.endsAtMs !== null) {
+    const range = `${formatTime(prompt.startsAtMs)} to ${formatTime(prompt.endsAtMs)}`;
+    return prompt.test ? `${range} (test, nothing records)` : range;
+  }
+  return prompt.title === null ? "Record this meeting?" : prompt.reason;
+}
 
 export function PromptPopup() {
   const [shown, setShown] = useState<PopupPrompt | null>(null);
   const [error, setError] = useState<string | null>(null);
   const shownRef = useRef<PopupPrompt | null>(null);
   shownRef.current = shown;
+  /** The last native menu, freed when the next one replaces it. */
+  const menuRef = useRef<Menu | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -52,6 +93,7 @@ export function PromptPopup() {
     return () => {
       live = false;
       stop();
+      freeMenu(menuRef);
     };
   }, []);
 
@@ -81,53 +123,92 @@ export function PromptPopup() {
     });
   };
 
+  const openChoices = (event: MouseEvent<HTMLButtonElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    const items = choicesFor(prompt).map((choice) => ({
+      id: choice.answer,
+      text: choice.text,
+      action: () => answer(choice.answer),
+    }));
+    Menu.new({ items })
+      .then((menu) => {
+        freeMenu(menuRef);
+        menuRef.current = menu;
+        // Just under the chevron, from the window's top-left corner.
+        return menu.popup(new LogicalPosition(box.left, box.bottom));
+      })
+      .catch(() => setError("Could not open the menu. The card closes on its own."));
+  };
+
+  const join = prompt.canJoin;
+  const mainWords = join ? joinWords(prompt.joinService) : "Record";
+  const heading = prompt.title ?? prompt.reason;
+
   return (
     <section
       aria-labelledby="prompt-popup-title"
       aria-live="polite"
-      className="flex h-screen flex-col gap-4 overflow-hidden rounded-card border-[0.5px] border-rim bg-popup px-5 py-4 text-fg-primary"
+      className="flex h-screen items-center gap-5 overflow-hidden rounded-card border-[0.5px] border-rim bg-popup py-4 pr-4 pl-4 text-fg-primary"
     >
-      <div className="flex items-start gap-4">
-        <IconSquare icon={Circle} />
-        <div className="flex min-w-0 flex-col gap-1">
-          <h2 id="prompt-popup-title" className="text-headline font-semibold">
-            Record this meeting?
-          </h2>
-          <p className="line-clamp-2 text-body text-fg-secondary">{error ?? prompt.reason}</p>
-        </div>
+      <span
+        aria-hidden="true"
+        data-testid="prompt-popup-bar"
+        className="w-2 shrink-0 self-stretch rounded-capsule bg-accent"
+      />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <h2 id="prompt-popup-title" className="truncate text-headline font-semibold">
+          {heading}
+        </h2>
+        <p
+          className={cn("truncate text-footnote", error ? "text-danger" : "text-fg-secondary")}
+          role={error ? "alert" : undefined}
+        >
+          {error ?? detailFor(prompt)}
+        </p>
       </div>
-      <ButtonRow>
-        {prompt.canJoin ? (
-          <>
-            <Button
-              tone="primary"
-              size="small"
-              icon={Video}
-              onClick={() => answer("joinAndRecord")}
-            >
-              Join and record
-            </Button>
-            <Button size="small" icon={Video} className={QUIET_EDGE} onClick={() => answer("join")}>
-              Join
-            </Button>
-            <Button
-              size="small"
-              icon={Circle}
-              className={QUIET_EDGE}
-              onClick={() => answer("record")}
-            >
-              Record
-            </Button>
-          </>
-        ) : (
-          <Button tone="primary" size="small" icon={Circle} onClick={() => answer("record")}>
-            Record
-          </Button>
-        )}
-        <Button size="small" icon={X} className={QUIET_EDGE} onClick={() => answer("dismiss")}>
-          Dismiss
-        </Button>
-      </ButtonRow>
+      <div className="flex shrink-0 items-stretch">
+        <button
+          type="button"
+          aria-label={join ? `${mainWords} and record` : mainWords}
+          className={cn(
+            buttonVariants({ tone: "primary", size: "small" }),
+            "h-(--control-h-touch) rounded-r-none",
+          )}
+          onClick={() => answer(join ? "joinAndRecord" : "record")}
+        >
+          <Icon icon={join ? Video : Circle} />
+          {join ? (
+            <span className="flex flex-col items-start leading-tight">
+              <span>{mainWords}</span>
+              <span className="text-caption1 font-normal">&amp; record</span>
+            </span>
+          ) : (
+            mainWords
+          )}
+        </button>
+        <button
+          type="button"
+          aria-label="More choices"
+          aria-haspopup="menu"
+          title="More choices"
+          className={cn(
+            buttonVariants({ tone: "primary", size: "small" }),
+            "h-(--control-h-touch) rounded-l-none border-l-on-accent/30 px-2",
+          )}
+          onClick={openChoices}
+        >
+          <Icon icon={ChevronDown} />
+        </button>
+      </div>
     </section>
   );
+}
+
+/** Free the last native menu, if any; it is never shown again. */
+function freeMenu(menuRef: { current: Menu | null }) {
+  const menu = menuRef.current;
+  menuRef.current = null;
+  menu?.close().catch(() => {
+    // Already gone with the window; nothing to free.
+  });
 }

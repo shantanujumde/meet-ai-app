@@ -19,6 +19,10 @@ const ZOOM: Prompt = {
   eventId: null,
   canJoin: false,
   test: false,
+  title: null,
+  startsAtMs: null,
+  endsAtMs: null,
+  joinService: null,
 };
 
 const STANDUP: Prompt = {
@@ -28,6 +32,10 @@ const STANDUP: Prompt = {
   eventId: "standup-1",
   canJoin: false,
   test: false,
+  title: "Team standup",
+  startsAtMs: null,
+  endsAtMs: null,
+  joinService: null,
 };
 
 /** A reminder for an event with a meeting link (TUR-78). */
@@ -41,6 +49,10 @@ const TEST: Prompt = {
   eventId: null,
   canJoin: true,
   test: true,
+  title: "Test meeting",
+  startsAtMs: null,
+  endsAtMs: null,
+  joinService: null,
 };
 
 /** The banner's buttons, in order. */
