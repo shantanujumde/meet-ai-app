@@ -70,11 +70,7 @@ describe("meetingMenuItems (TUR-116)", () => {
   test("items that do not apply are left out, not greyed", () => {
     const groups = actions(meetingSummary({ lineCount: 0, hasNotes: false }), READY);
     // Nothing to write notes from and nothing to copy: that whole group goes.
-    expect(groups).toEqual([
-      ["open", "reveal", "copy-path"],
-      ["notes-off"],
-      ["rename", "delete"],
-    ]);
+    expect(groups).toEqual([["open", "reveal", "copy-path"], ["notes-off"], ["rename", "delete"]]);
   });
 });
 

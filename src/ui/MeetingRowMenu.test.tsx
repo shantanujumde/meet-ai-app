@@ -57,7 +57,13 @@ function Where() {
 }
 
 /** The sidebar fed from the store, as the shell feeds it. */
-function LiveSidebar({ recording, selectedId }: { recording: RecordingStatus; selectedId?: string }) {
+function LiveSidebar({
+  recording,
+  selectedId,
+}: {
+  recording: RecordingStatus;
+  selectedId?: string;
+}) {
   const list = useAppStore((state) => state.meetings);
   return <Sidebar list={list} loading={false} recording={recording} selectedId={selectedId} />;
 }
