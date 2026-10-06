@@ -70,7 +70,7 @@ fn sync_with(root: &Path, harness: &dyn Harness) -> Result<TicketSummary, UiErro
 
 fn reply(id: serde_json::Value, url: serde_json::Value) -> FakeHarness {
     FakeHarness::new(FakeBehavior::Reply(
-        json!({ "external_id": id, "external_url": url }),
+        json!({ "external_id": id, "external_url": url, "refused_reason": null }),
     ))
 }
 
@@ -94,7 +94,8 @@ fn a_reply_with_a_key_and_link_is_written_to_the_ticket() {
 }
 
 /// TUR-5: a Codex sync whose MCP call was refused exits 0 and answers with
-/// no issue key. That is "not synced": an error, and the file untouched.
+/// no issue key. That is "not synced": the tracker was not reached (TUR-113),
+/// and the file untouched.
 #[test]
 fn a_reply_with_no_key_is_not_synced_and_writes_nothing() {
     for (id, url) in [
@@ -111,7 +112,7 @@ fn a_reply_with_no_key_is_not_synced_and_writes_nothing() {
         let root = meetings_root();
         let before = fs::read(ticket_path(root.path())).unwrap();
         let err = sync_with(root.path(), &reply(id.clone(), url.clone())).unwrap_err();
-        assert_eq!(err.kind, "sync-not-done", "{id} {url}: {}", err.message);
+        assert_eq!(err.kind, "sync-unreachable", "{id} {url}: {}", err.message);
         assert!(err.message.contains("Linear"), "{}", err.message);
         assert!(err.message.contains("Retry"), "{}", err.message);
         assert_eq!(fs::read(ticket_path(root.path())).unwrap(), before);
@@ -160,6 +161,60 @@ fn agent_failures_keep_their_own_kind_and_write_nothing() {
         assert_eq!(err.kind, kind, "{}", err.message);
         assert_eq!(fs::read(ticket_path(root.path())).unwrap(), before);
     }
+}
+
+/// TUR-113: the tracker said no, and the agent said why.
+#[test]
+fn a_refusal_with_a_reason_is_its_own_error_and_writes_nothing() {
+    let root = meetings_root();
+    let before = fs::read(ticket_path(root.path())).unwrap();
+    let refused = FakeHarness::new(FakeBehavior::Reply(json!({
+        "external_id": null,
+        "external_url": null,
+        "refused_reason": "no permission to create issues in team ENG",
+    })));
+    let err = sync_with(root.path(), &refused).unwrap_err();
+    assert_eq!(err.kind, "sync-refused", "{}", err.message);
+    assert_eq!(
+        err.message,
+        "Linear refused the ticket: no permission to create issues in team ENG. Check the project in Settings, Tracker, then press Retry."
+    );
+    assert_eq!(fs::read(ticket_path(root.path())).unwrap(), before);
+}
+
+/// TUR-113: a signed-out agent and a run that stopped say what to do next.
+#[test]
+fn agent_failures_in_a_sync_say_what_to_do() {
+    let root = meetings_root();
+    let signed_out =
+        sync_with(root.path(), &FakeHarness::new(FakeBehavior::NotSignedIn)).unwrap_err();
+    assert!(
+        signed_out.message.starts_with("Couldn't send: "),
+        "{}",
+        signed_out.message
+    );
+    assert!(
+        signed_out.message.contains("isn't signed in"),
+        "{}",
+        signed_out.message
+    );
+    let runs = SyncRuns::default();
+    let claim = runs.claim("TICK-0001").unwrap();
+    runs.cancel("TICK-0001");
+    let sleepy = FakeHarness::new(FakeBehavior::Sleep(Duration::from_secs(10)));
+    let stopped = run(
+        root.path(),
+        "TICK-0001",
+        Some(MEETING),
+        &sleepy,
+        &settings(),
+        &claim.cancel,
+    )
+    .unwrap_err();
+    assert_eq!(
+        stopped.message,
+        "Sending stopped before it finished. Press Retry."
+    );
 }
 
 #[test]
@@ -262,7 +317,7 @@ fn claude_gets_only_the_task_and_only_the_tracker_tools() {
     let bin = tempfile::tempdir().unwrap();
     let envelope = json!({
         "type": "result", "subtype": "success", "is_error": false,
-        "structured_output": { "external_id": "ENG-42", "external_url": URL },
+        "structured_output": { "external_id": "ENG-42", "external_url": URL, "refused_reason": null },
     });
     let cli = fake_cli(bin.path(), "claude");
     cli.set("stdout", envelope.to_string());
@@ -324,7 +379,10 @@ fn a_refused_codex_sync_exits_0_and_is_not_synced() {
         .set("mcp.stdout", r#"[{"name":"linear"}]"#)
         .set("mcp.log_dir", mcp_logs.display().to_string())
         .set("reply_file_after", "-o")
-        .set("reply_file", r#"{"external_id":null,"external_url":null}"#);
+        .set(
+            "reply_file",
+            r#"{"external_id":null,"external_url":null,"refused_reason":null}"#,
+        );
     let mut settings = settings();
     settings.tickets.tracker_mcp = "linear".into();
     let harness = harness_for(&agent_config(
@@ -343,7 +401,12 @@ fn a_refused_codex_sync_exits_0_and_is_not_synced() {
         &CancelHandle::new(),
     )
     .unwrap_err();
-    assert_eq!(err.kind, "sync-not-done", "{}", err.message);
+    assert_eq!(err.kind, "sync-unreachable", "{}", err.message);
+    assert!(
+        err.message.contains("signed in in Codex"),
+        "{}",
+        err.message
+    );
     assert_eq!(fs::read(ticket_path(root.path())).unwrap(), before);
 
     let args = fs::read_to_string(bin.path().join("argv.log")).unwrap();
@@ -397,6 +460,16 @@ fn meeting_tasks_lists_its_own_and_shared_tickets_in_order() {
     assert_eq!(ids, ["TICK-0001", "TICK-0003", "TICK-0004"]);
     assert!(tasks.iter().all(|t| t.meeting.as_deref() == Some(MEETING)));
     assert!(tasks.iter().all(|t| t.synced_to.is_none()));
+    // TUR-113: the meeting's own are suggestions; the shared one is approved.
+    let suggested: Vec<bool> = tasks.iter().map(|t| t.suggested).collect();
+    assert_eq!(suggested, [true, false, true]);
+    assert!(
+        tasks
+            .iter()
+            .all(|t| t.meeting_title.as_deref() == Some("Standup"))
+    );
+    assert_eq!(tasks[0].owner.as_deref(), Some("Sam"));
+    assert_eq!(tasks[0].due.as_deref(), Some("Friday"));
 
     assert!(
         meeting_tasks_in(root.path(), "2026-01-01-0000-empty")

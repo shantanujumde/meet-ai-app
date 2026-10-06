@@ -16,12 +16,14 @@
 //! A reply with no issue key or no web address means **not synced**. TUR-5
 //! measured a Codex sync whose MCP call was refused: it exits 0 and answers
 //! with no key. Such a reply is an error the window shows next to Retry, and
-//! the ticket file is left as it was.
+//! the ticket file is left as it was. Each cause has its own kind and words
+//! ([`errors`], TUR-113).
 //!
 //! The commands here call `crates/agent` directly; the notes run and its
 //! status events are `agent_run.rs`'s (TUR-10). Settings for the tracker are
 //! in [`tracker`].
 
+mod errors;
 mod kept;
 mod save;
 pub mod tracker;
@@ -47,6 +49,8 @@ use crate::folder_move::FolderGate;
 use crate::meetings;
 use crate::sync::save::{Created, Fingerprint, Unsaved};
 use crate::tickets::{self, TicketSummary};
+
+pub(crate) use errors::{agent_error, tracker_name};
 
 /// The ticket's file is not where it should be.
 pub(crate) const TICKET_MISSING: &str = "ticket-missing";
@@ -230,7 +234,7 @@ pub async fn open_synced_issue(
 /// The user's chosen agent CLI as a [`Harness`]. Finding the binary does not
 /// run a sign-in check: a signed-out CLI says so when the run starts.
 pub(crate) fn harness_for(agent: &AgentConfig) -> Result<Box<dyn Harness>, UiError> {
-    let path = find_binary(agent)?;
+    let path = locate(agent, errors::send_error)?;
     Ok(match agent.harness {
         HarnessChoice::Codex => Box::new(CodexHarness::with_binary(path)),
         _ => {
@@ -246,6 +250,11 @@ pub(crate) fn harness_for(agent: &AgentConfig) -> Result<Box<dyn Harness>, UiErr
 /// Where the chosen agent CLI is: `agent.binary_path`, the login shell, then
 /// the usual install folders (`agent::detect::find`).
 pub(crate) fn find_binary(agent: &AgentConfig) -> Result<PathBuf, UiError> {
+    locate(agent, agent_error)
+}
+
+/// [`find_binary`], with `missing` wording the not-installed error.
+fn locate(agent: &AgentConfig, missing: fn(AgentError) -> UiError) -> Result<PathBuf, UiError> {
     let (cli, display) = match agent.harness {
         HarnessChoice::None => {
             return Err(UiError::app(
@@ -258,7 +267,7 @@ pub(crate) fn find_binary(agent: &AgentConfig) -> Result<PathBuf, UiError> {
     };
     let lookup = agent::detect::Lookup::system(agent.binary_path.as_deref());
     agent::detect::find(&cli, &lookup).ok_or_else(|| {
-        agent_error(AgentError::NotInstalled {
+        missing(AgentError::NotInstalled {
             harness: display.to_owned(),
         })
     })
@@ -336,8 +345,8 @@ pub(crate) fn run(
     job.model = settings.model.clone();
     job.timeout = settings.timeout;
     job.cancel = cancel.clone();
-    let reply = harness.run(&job).map_err(agent_error)?;
-    parse_sync_reply(&reply).ok_or_else(|| not_synced(tickets_config))
+    let reply = harness.run(&job).map_err(errors::send_error)?;
+    parse_sync_reply(&reply).ok_or_else(|| errors::not_synced(tickets_config, harness.id(), &reply))
 }
 
 /// Writes what a Sync run created into the ticket file. Never called for a
@@ -423,48 +432,11 @@ fn push_ticket_input(
 
 /// The `Due: X.` line the notes writer puts in a ticket's body (§3.3 has no
 /// due key).
-fn due_in(body: &str) -> Option<String> {
+pub(crate) fn due_in(body: &str) -> Option<String> {
     body.lines().find_map(|line| {
         let due = line.trim().strip_prefix("Due: ")?.strip_suffix('.')?.trim();
         (!due.is_empty()).then(|| due.to_owned())
     })
-}
-
-/// The error for a run that finished without creating an issue.
-fn not_synced(tickets_config: &TicketsConfig) -> UiError {
-    UiError::app(
-        "sync-not-done",
-        format!(
-            "The agent finished but did not create an issue in {}. Check that \"{}\" is connected and signed in (Settings, Tracker), then press Retry.",
-            tracker_name(&tickets_config.tracker),
-            tickets_config.tracker_mcp
-        ),
-    )
-}
-
-/// `linear` → `Linear`, for messages.
-pub(crate) fn tracker_name(tracker: &str) -> &str {
-    match tracker {
-        "linear" => "Linear",
-        "jira" => "Jira",
-        "github" => "GitHub",
-        other => other,
-    }
-}
-
-/// An agent run's failure, worded by `crates/agent`, with a stable kind the
-/// window can switch on.
-pub(crate) fn agent_error(error: AgentError) -> UiError {
-    let kind = match &error {
-        AgentError::NotInstalled { .. } => "agent-not-installed",
-        AgentError::NotSignedIn { .. } => "agent-not-signed-in",
-        AgentError::TimedOut { .. } => "agent-timed-out",
-        AgentError::Cancelled => "agent-cancelled",
-        AgentError::CliFailed { .. } => "agent-failed",
-        AgentError::InvalidJson { .. } | AgentError::SchemaMismatch { .. } => "agent-bad-reply",
-        AgentError::CouldNotStart { .. } => "agent-could-not-start",
-    };
-    UiError::app(kind, error.to_string())
 }
 
 // --- finding tickets --------------------------------------------------------
@@ -506,11 +478,12 @@ pub(crate) fn meeting_tasks_in(
     for (stem, path) in ticket_files(&dir)? {
         let mut summary = match Ticket::read(&path) {
             Ok(found) => tickets::summary_of(&stem, &found),
-            Err(_) => unreadable(&stem),
+            Err(_) => tickets::unreadable(&stem),
         };
         // Written by the notes run inside the meeting's folder, so it is this
-        // meeting's even if the file does not say so.
+        // meeting's even if the file does not say so; and not approved yet.
         summary.meeting.get_or_insert_with(|| meeting_id.to_owned());
+        summary.suggested = true;
         rows.push(summary);
     }
     for shared in tickets::list_under(root)? {
@@ -524,22 +497,8 @@ pub(crate) fn meeting_tasks_in(
             .cmp(&ticket::parse_id(&b.id))
             .then_with(|| a.id.cmp(&b.id))
     });
+    tickets::name_meetings(root, &mut rows);
     Ok(rows)
-}
-
-/// A ticket file that could not be read, still listed so it is not lost.
-fn unreadable(stem: &str) -> TicketSummary {
-    TicketSummary {
-        id: stem.to_owned(),
-        title: stem.to_owned(),
-        status: None,
-        meeting: None,
-        body: String::new(),
-        has_problems: true,
-        synced_to: None,
-        external_id: None,
-        external_url: None,
-    }
 }
 
 /// The `.md` files in `dir` as `(file stem, path)`, by name. A missing folder

@@ -41,6 +41,7 @@ export type Remedy =
   | { action: "retry" }
   | { action: "redownload" }
   | { action: "open-settings" }
+  | { action: "open-tracker-settings" }
   | { action: "none" };
 
 export type ErrorCopy = {
@@ -242,6 +243,19 @@ const COPY: Record<string, ErrorCopy> = {
     body: "meet-ai found it but could not run it. The details below say why.",
     actionLabel: "Copy details",
     remedy: { action: "copy-details" },
+  },
+  // --- sending a ticket to the tracker (TUR-113) ----------------------------
+  "app/sync-unreachable": {
+    headline: "Couldn't reach your tracker",
+    body: "Your agent ran but could not reach the tracker, so no issue was made. Check that the tracker's connection is set up and signed in in your agent, then press Retry.",
+    actionLabel: "Open Tracker settings",
+    remedy: { action: "open-tracker-settings" },
+  },
+  "app/sync-refused": {
+    headline: "The tracker refused the ticket",
+    body: "It said why below. Check the project in Settings, Tracker, then press Retry.",
+    actionLabel: "Open Tracker settings",
+    remedy: { action: "open-tracker-settings" },
   },
   "app/unknown-harness": {
     headline: "meet-ai does not know that agent",
