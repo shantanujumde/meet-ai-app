@@ -19,7 +19,7 @@
  */
 
 import { ChevronDown, FileText, LayoutList, Search, Settings, Ticket } from "lucide-react";
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { NavLink, useNavigate } from "react-router";
 import type { MeetingList, MeetingSummary, RecordingStatus } from "@/ipc/types";
 import { cn } from "@/lib/cn";
@@ -31,6 +31,7 @@ import {
 } from "@/lib/format";
 import { MEETINGS, meetingPath, SETTINGS, TICKETS } from "@/lib/routes";
 import { Icon, type LucideIcon } from "./icons";
+import { MeetingRowMenu, RenameField } from "./MeetingRowMenu";
 import { Checking } from "./states";
 
 /** A sidebar row's shape, shared by the page links and the meeting rows. */
@@ -264,43 +265,89 @@ function MeetingRow({
     meta.push({ text: INTERRUPTED_LABEL, colour: "text-warning" });
   else if (!meeting.notesOff) meta.push({ text: formatLineCount(meeting.lineCount) });
   if (meeting.notesOff) meta.push({ text: NOTES_OFF_LABEL });
-  return (
-    <button
-      type="button"
-      className={cn(rowClass(selected), "items-start")}
-      aria-current={selected}
-      onClick={onOpen}
+
+  // TUR-116: Rename… from the row's menu turns the title into a text field
+  // in place. Closing it from the keyboard puts focus back on the row.
+  const [renaming, setRenaming] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (!renaming && refocus.current) {
+      refocus.current = false;
+      button.current?.focus();
+    }
+  }, [renaming]);
+
+  const icon = (
+    <Icon
+      icon={FileText}
+      className={cn(
+        "mt-[2px]",
+        selected ? "text-on-accent" : empty ? "text-fg-tertiary" : "text-accent-text",
+      )}
+    />
+  );
+  const metaLine = (
+    // One line, so every row is the same height: it ends in an ellipsis when
+    // the sidebar is narrow, and the tooltip has all of it.
+    <span
+      title={meta.map((part) => part.text).join(" · ")}
+      className={cn(
+        "truncate text-footnote tabular-nums",
+        tone(empty ? "text-fg-tertiary" : "text-fg-secondary"),
+      )}
     >
-      <Icon
-        icon={FileText}
-        className={cn(
-          "mt-[2px]",
-          selected ? "text-on-accent" : empty ? "text-fg-tertiary" : "text-accent-text",
-        )}
-      />
-      <span className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className={cn("truncate font-medium", empty && tone("text-fg-secondary"))}>
-          {meeting.title}
+      {meta.map((part) => (
+        <span key={part.text} className={cn("mr-3 last:mr-0", part.colour && tone(part.colour))}>
+          {part.text}
         </span>
-        {/* One line, so every row is the same height: it ends in an ellipsis
-            when the sidebar is narrow, and the tooltip has all of it. */}
-        <span
-          title={meta.map((part) => part.text).join(" · ")}
-          className={cn(
-            "truncate text-footnote tabular-nums",
-            tone(empty ? "text-fg-tertiary" : "text-fg-secondary"),
-          )}
+      ))}
+    </span>
+  );
+
+  return (
+    // The ⋯ button sits beside the row button, at its end, so the row keeps
+    // room for it.
+    <MeetingRowMenu
+      meeting={meeting}
+      isRecording={isRecording}
+      selected={selected}
+      renaming={renaming}
+      onRename={() => setRenaming(true)}
+      buttonClassName={selected ? "text-on-accent hover:bg-transparent" : undefined}
+    >
+      {renaming ? (
+        <div className={cn(rowClass(selected), "items-start pe-9")}>
+          {icon}
+          <span className="flex min-w-0 flex-1 flex-col gap-1">
+            <RenameField
+              meeting={meeting}
+              onDone={(again) => {
+                refocus.current = again;
+                setRenaming(false);
+              }}
+              className="font-medium"
+            />
+            {metaLine}
+          </span>
+        </div>
+      ) : (
+        <button
+          ref={button}
+          type="button"
+          className={cn(rowClass(selected), "items-start pe-9")}
+          aria-current={selected}
+          onClick={onOpen}
         >
-          {meta.map((part) => (
-            <span
-              key={part.text}
-              className={cn("mr-3 last:mr-0", part.colour && tone(part.colour))}
-            >
-              {part.text}
+          {icon}
+          <span className="flex min-w-0 flex-1 flex-col gap-1">
+            <span className={cn("truncate font-medium", empty && tone("text-fg-secondary"))}>
+              {meeting.title}
             </span>
-          ))}
-        </span>
-      </span>
-    </button>
+            {metaLine}
+          </span>
+        </button>
+      )}
+    </MeetingRowMenu>
   );
 }

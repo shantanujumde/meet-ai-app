@@ -8,8 +8,9 @@
  */
 
 import { AudioLines, FileText } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import type { MeetingSummary } from "@/ipc/types";
 import { cn } from "@/lib/cn";
 import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
 import {
@@ -24,6 +25,7 @@ import { recordingBlocked } from "@/lib/recordingPermission";
 import { meetingPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
+import { MeetingRowMenu, RenameField } from "@/ui/MeetingRowMenu";
 import {
   Button,
   ButtonRow,
@@ -50,6 +52,7 @@ export function Meetings() {
   const permission = useAppStore((state) => state.permission);
   const toggle = useRecordingStore((state) => state.toggle);
   const recordingBusy = useRecordingStore((state) => state.busy);
+  const recording = useRecordingStore((state) => state.status);
 
   if (loading && list === null) {
     return (
@@ -123,45 +126,108 @@ export function Meetings() {
       ) : (
         <section className={cardVariants({ flush: true })}>
           {meetings.map((meeting) => (
-            // The whole row is the button. It draws no hairline between rows —
-            // the list reads as one block, and each row is its own hit target.
-            <button
+            <MeetingListRow
               key={meeting.id}
-              type="button"
-              className={cn(rowVariants({ divided: false }), "w-full text-start")}
-              onClick={() => navigate(meetingPath(meeting.id))}
-            >
-              <RowLabel
-                icon={meeting.recordingState === "interrupted" ? AudioLines : FileText}
-                name={
-                  <>
-                    {meeting.title}
-                    {/* TUR-29: who was invited, from the calendar event. */}
-                    {meeting.attendees.length > 0 ? (
-                      <span className="block text-footnote font-normal text-fg-secondary">
-                        {meeting.attendees.join(", ")}
-                      </span>
-                    ) : null}
-                  </>
-                }
-                detail={`${formatRelativeDate(meeting.date)}${meeting.time ? ` at ${meeting.time}` : ""}`}
-                mono={false}
-              />
-              <RowValue>
-                {meeting.recordingState === "interrupted" ? (
-                  <Pill tone="warn" className="me-4">
-                    {INTERRUPTED_LABEL}
-                  </Pill>
-                ) : null}
-                {/* TUR-12: this meeting is never sent to an agent. */}
-                {meeting.notesOff ? <Pill className="me-4">{NOTES_OFF_LABEL}</Pill> : null}
-                {formatLineCount(meeting.lineCount)}
-                {meeting.hasAnalysis ? " · wrapped up" : ""}
-              </RowValue>
-            </button>
+              meeting={meeting}
+              isRecording={recording.phase !== "idle" && recording.meetingId === meeting.id}
+              onOpen={() => navigate(meetingPath(meeting.id))}
+            />
           ))}
         </section>
       )}
     </div>
+  );
+}
+
+/**
+ * One meeting in the list. The whole row is the button. It draws no hairline
+ * between rows: the list reads as one block, and each row is its own hit
+ * target. Its ⋯ menu sits beside the button at the row's end, and the same
+ * menu opens on a right-click (TUR-116).
+ */
+function MeetingListRow({
+  meeting,
+  isRecording,
+  onOpen,
+}: {
+  meeting: MeetingSummary;
+  isRecording: boolean;
+  onOpen: () => void;
+}) {
+  // Rename… turns the name into a text field in place. Closing it from the
+  // keyboard puts focus back on the row.
+  const [renaming, setRenaming] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (!renaming && refocus.current) {
+      refocus.current = false;
+      button.current?.focus();
+    }
+  }, [renaming]);
+
+  const label = (
+    <RowLabel
+      icon={meeting.recordingState === "interrupted" ? AudioLines : FileText}
+      name={
+        <>
+          {renaming ? (
+            <RenameField
+              meeting={meeting}
+              onDone={(again) => {
+                refocus.current = again;
+                setRenaming(false);
+              }}
+            />
+          ) : (
+            meeting.title
+          )}
+          {/* TUR-29: who was invited, from the calendar event. */}
+          {meeting.attendees.length > 0 ? (
+            <span className="block text-footnote font-normal text-fg-secondary">
+              {meeting.attendees.join(", ")}
+            </span>
+          ) : null}
+        </>
+      }
+      detail={`${formatRelativeDate(meeting.date)}${meeting.time ? ` at ${meeting.time}` : ""}`}
+      mono={false}
+    />
+  );
+  const value = (
+    <RowValue>
+      {meeting.recordingState === "interrupted" ? (
+        <Pill tone="warn" className="me-4">
+          {INTERRUPTED_LABEL}
+        </Pill>
+      ) : null}
+      {/* TUR-12: this meeting is never sent to an agent. */}
+      {meeting.notesOff ? <Pill className="me-4">{NOTES_OFF_LABEL}</Pill> : null}
+      {formatLineCount(meeting.lineCount)}
+      {meeting.hasAnalysis ? " · wrapped up" : ""}
+    </RowValue>
+  );
+  const rowClass = cn(rowVariants({ divided: false }), "w-full text-start pe-9");
+
+  return (
+    <MeetingRowMenu
+      meeting={meeting}
+      isRecording={isRecording}
+      selected={false}
+      renaming={renaming}
+      onRename={() => setRenaming(true)}
+    >
+      {renaming ? (
+        <div className={rowClass}>
+          {label}
+          {value}
+        </div>
+      ) : (
+        <button ref={button} type="button" className={rowClass} onClick={onOpen}>
+          {label}
+          {value}
+        </button>
+      )}
+    </MeetingRowMenu>
   );
 }
