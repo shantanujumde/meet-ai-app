@@ -37,6 +37,7 @@ import { SearchBox } from "@/ui/SearchBox";
 import { SearchResults } from "@/ui/SearchResults";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 import { TodayPane } from "@/ui/TodayPane";
+import { WatchProblemNote } from "@/ui/WatchProblemNote";
 
 export function Meetings() {
   const navigate = useNavigate();
@@ -111,6 +112,7 @@ export function Meetings() {
           <span>{list?.root}</span>
         </p>
       </header>
+      <WatchProblemNote />
 
       <TodayPane />
 
