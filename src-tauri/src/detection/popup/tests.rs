@@ -150,6 +150,7 @@ fn a_test_reminder_never_records_or_joins() {
         PopupAnswer::Record,
         PopupAnswer::JoinAndRecord,
         PopupAnswer::Join,
+        PopupAnswer::OpenBrief,
         PopupAnswer::Dismiss,
     ] {
         assert_eq!(action_for(&test, answer), Action::Nothing, "{answer:?}");
@@ -167,14 +168,14 @@ fn the_popup_sits_top_right_of_the_work_area() {
         PhysicalSize::new(1920, 1055),
         1.0,
     );
-    assert_eq!(at, PhysicalPosition::new(1920 - 360 - 16, 25 + 16));
+    assert_eq!(at, PhysicalPosition::new(1920 - 380 - 16, 25 + 16));
     // A second monitor to the left, at 2x.
     let at = window::top_right(
         PhysicalPosition::new(-2880, 0),
         PhysicalSize::new(2880, 1800),
         2.0,
     );
-    assert_eq!(at, PhysicalPosition::new(-720 - 32, 32));
+    assert_eq!(at, PhysicalPosition::new(-760 - 32, 32));
     // Narrower than the popup: pinned to the left edge.
     let at = window::top_right(
         PhysicalPosition::new(0, 0),
@@ -193,4 +194,97 @@ fn the_window_hears_the_id_and_the_prompt() {
     assert_eq!(json["prompt"]["reason"], "Zoom is open.");
     let answer: PopupAnswer = serde_json::from_str("\"joinAndRecord\"").expect("parses");
     assert_eq!(answer, PopupAnswer::JoinAndRecord);
+}
+
+#[test]
+fn the_card_is_compact() {
+    assert_eq!((window::WIDTH, window::HEIGHT), (380.0, 72.0));
+}
+
+#[test]
+fn the_card_sits_under_the_macos_menu_bar() {
+    // A 1512x982 MacBook screen at 2x whose work area starts below a 37pt
+    // menu bar (the shape tauri-runtime-wry gives from `visibleFrame`).
+    let at = window::top_right(
+        PhysicalPosition::new(0, 74),
+        PhysicalSize::new(3024, 1890),
+        2.0,
+    );
+    assert_eq!(at, PhysicalPosition::new(3024 - 760 - 32, 74 + 32));
+}
+
+fn calendar_reminder(can_join: bool) -> Prompt {
+    let event = ::calendar::Event {
+        id: "standup-1".to_string(),
+        title: "Standup".to_string(),
+        start: chrono::Utc::now(),
+        end: chrono::Utc::now() + chrono::Duration::minutes(30),
+        attendees: 3,
+        attendee_names: Vec::new(),
+        ical_uid: None,
+        join_url: can_join.then(|| "https://meet.google.com/abc-defg-hij".to_string()),
+    };
+    super::super::notify::reminder_prompt(Phase::Idle, &event, chrono::Utc::now())
+        .expect("asks when idle")
+}
+
+#[test]
+fn open_brief_closes_it_and_opens_the_meetings_brief() {
+    for can_join in [true, false] {
+        let mut slot = Slot::default();
+        let shown = slot.show(calendar_reminder(can_join)).expect("shown");
+        assert_eq!(
+            slot.answer(shown.id, PopupAnswer::OpenBrief),
+            Some(Action::OpenBrief {
+                title: "Standup".to_string()
+            })
+        );
+        assert_eq!(slot.current(), None);
+    }
+}
+
+#[test]
+fn open_brief_on_a_detection_prompt_or_a_test_does_nothing() {
+    assert_eq!(action_for(&zoom(), PopupAnswer::OpenBrief), Action::Nothing);
+    let test = Prompt {
+        test: true,
+        ..calendar_reminder(true)
+    };
+    assert_eq!(action_for(&test, PopupAnswer::OpenBrief), Action::Nothing);
+}
+
+#[test]
+fn a_reminder_with_a_meet_link_names_the_service() {
+    let prompt = calendar_reminder(true);
+    assert_eq!(prompt.join_service.as_deref(), Some("meet"));
+    assert_eq!(
+        action_for(&prompt, PopupAnswer::JoinAndRecord),
+        Action::Start {
+            event_id: Some("standup-1".to_string()),
+            join: true
+        }
+    );
+    let answer: PopupAnswer = serde_json::from_str("\"openBrief\"").expect("parses");
+    assert_eq!(answer, PopupAnswer::OpenBrief);
+}
+
+#[test]
+fn reminders_use_the_card_on_every_os_detection_only_where_the_platform_says() {
+    let reminder = Signal::Calendar {
+        title: "Standup".to_string(),
+        attendees: 3,
+    };
+    let app = Signal::Process {
+        process: detect::processes::name_of("Zoom").to_string(),
+    };
+    // macOS's switch (false): reminders in the card, detection as before.
+    assert!(popup_for(&reminder, false));
+    assert!(!popup_for(&app, false));
+    assert!(!popup_for(&Signal::AudioActivity, false));
+    // Windows and Linux (true): every prompt in the card.
+    for signal in [&reminder, &app, &Signal::AudioActivity] {
+        assert!(popup_for(signal, true), "{signal:?}");
+    }
+    assert!(uses_popup(&reminder), "this OS too");
+    assert_eq!(uses_popup(&app), platform::DETECTION_IN_POPUP);
 }

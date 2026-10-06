@@ -16,6 +16,11 @@
 //! whose `detection` switch is off is dropped here ([`allowed`]), so a switch
 //! turned off in Settings stops its prompts at once. [`test_reminder`] is the
 //! card's "Send a test reminder".
+//!
+//! TUR-108: a reminder shows as the compact card window on every OS (title,
+//! time range, one split button; `super::popup`), and detection prompts do
+//! too on Windows and Linux ([`super::popup::uses_popup`]). The notification
+//! stays the fallback when the card cannot show.
 
 use chrono::{DateTime, Utc};
 use detect::Signal;
@@ -48,6 +53,20 @@ pub struct Prompt {
     pub can_join: bool,
     /// "Send a test reminder" (TUR-78): the buttons only close the banner.
     pub test: bool,
+    /// The meeting's name, for the reminder card's first line (TUR-108).
+    /// `None` for a detection prompt, whose card leads with the reason.
+    pub title: Option<String>,
+    /// When the reminded meeting starts and ends, in Unix milliseconds, for
+    /// the card's "9:00 AM to 9:30 AM". `None` when there is no event.
+    /// A JS number: milliseconds since 1970 stay far below 2^53.
+    #[specta(type = Option<specta_typescript::Number>)]
+    pub starts_at_ms: Option<i64>,
+    #[specta(type = Option<specta_typescript::Number>)]
+    pub ends_at_ms: Option<i64>,
+    /// The service the meeting link joins, for "Join Meet": `"meet"`,
+    /// `"zoom"`, `"teams"` or `"other"` (`join_url::join_service`). `None`
+    /// without a link.
+    pub join_service: Option<String>,
 }
 
 /// The fake event a test reminder is about.
@@ -65,6 +84,13 @@ pub fn prompt_for(phase: Phase, signal: &Signal) -> Option<Prompt> {
         event_id: None,
         can_join: false,
         test: false,
+        title: match signal {
+            Signal::Calendar { title, .. } => Some(title.clone()),
+            Signal::Process { .. } | Signal::AudioActivity => None,
+        },
+        starts_at_ms: None,
+        ends_at_ms: None,
+        join_service: None,
     })
 }
 
@@ -106,13 +132,20 @@ pub fn reminder_prompt(
         event.attendees
     );
     prompt.event_id = Some(event.id.clone());
-    prompt.can_join = super::actions::join_link(event).is_some();
+    let link = super::actions::join_link(event);
+    prompt.can_join = link.is_some();
+    prompt.join_service = link
+        .and_then(::calendar::join_url::join_service)
+        .map(str::to_string);
+    prompt.starts_at_ms = Some(event.start.timestamp_millis());
+    prompt.ends_at_ms = Some(event.end.timestamp_millis());
     Some(prompt)
 }
 
-/// "Send a test reminder": a fake meeting starting in `minutes`, laid out
-/// like a reminder with a link, that never records.
-pub fn test_prompt(phase: Phase, minutes: u32) -> Option<Prompt> {
+/// "Send a test reminder": a fake half-hour meeting on Google Meet starting
+/// in `minutes` from `now`, laid out like a reminder with a link, that never
+/// records.
+pub fn test_prompt(phase: Phase, minutes: u32, now: DateTime<Utc>) -> Option<Prompt> {
     let signal = Signal::Calendar {
         title: TEST_MEETING.to_string(),
         attendees: 0,
@@ -127,6 +160,10 @@ pub fn test_prompt(phase: Phase, minutes: u32) -> Option<Prompt> {
         format!("“{TEST_MEETING}” {when}. This is a test reminder: nothing will be recorded.");
     prompt.can_join = true;
     prompt.test = true;
+    let starts = now + chrono::Duration::minutes(i64::from(minutes));
+    prompt.starts_at_ms = Some(starts.timestamp_millis());
+    prompt.ends_at_ms = Some((starts + chrono::Duration::minutes(30)).timestamp_millis());
+    prompt.join_service = Some("meet".to_string());
     Some(prompt)
 }
 
@@ -189,7 +226,7 @@ pub fn remind(app: &AppHandle, event: &::calendar::Event) {
 /// starting in `minutes`, past the merge so it never hides a real prompt.
 /// `false` while recording, when nothing is asked.
 pub fn test_reminder(app: &AppHandle, minutes: u32) -> bool {
-    let prompt = test_prompt(current_phase(app), minutes);
+    let prompt = test_prompt(current_phase(app), minutes, Utc::now());
     let sent = prompt.is_some();
     deliver(app, prompt, |_, _| Delivery::New);
     sent
@@ -242,9 +279,10 @@ fn deliver(
         ?delivery,
         "a meeting looks like it started; asking whether to record"
     );
-    // TUR-59: on Windows and Linux the prompt is a popup window with the
-    // buttons on it; the notification is only the fallback when it can't show.
-    let in_popup = super::popup::enabled() && super::popup::show(app, &prompt);
+    // TUR-59, TUR-108: a reminder (every OS) and, on Windows and Linux, any
+    // prompt shows as the card window with the buttons on it; the
+    // notification is only the fallback when it can't show.
+    let in_popup = super::popup::uses_popup(signal) && super::popup::show(app, &prompt);
     if delivery == Delivery::New
         && !in_popup
         && let Err(error) = app
@@ -318,7 +356,11 @@ mod tests {
                 "updateOnly": false,
                 "eventId": null,
                 "canJoin": false,
-                "test": false
+                "test": false,
+                "title": null,
+                "startsAtMs": null,
+                "endsAtMs": null,
+                "joinService": null
             })
         );
     }
@@ -386,6 +428,14 @@ mod tests {
         )
         .expect("asks");
         assert!(prompt.can_join);
+        assert_eq!(prompt.join_service.as_deref(), Some("zoom"));
+        assert_eq!(prompt.title.as_deref(), Some("Standup"));
+        assert_eq!(
+            prompt.starts_at_ms,
+            Some(at(10, 0, 0).timestamp_millis()),
+            "the card's time range"
+        );
+        assert_eq!(prompt.ends_at_ms, Some(at(10, 30, 0).timestamp_millis()));
         assert_eq!(
             body(&prompt),
             "“Standup” starts in 1 min, with 3 people invited. \
@@ -399,6 +449,21 @@ mod tests {
         )
         .expect("asks");
         assert!(!odd.can_join);
+        assert_eq!(odd.join_service, None);
+    }
+
+    #[test]
+    fn a_reminder_without_a_link_still_has_its_title_and_times() {
+        let prompt = reminder_prompt(Phase::Idle, &event(None), at(9, 59, 0)).expect("asks");
+        assert_eq!(prompt.title.as_deref(), Some("Standup"));
+        assert_eq!(prompt.join_service, None);
+        assert!(prompt.starts_at_ms.is_some() && prompt.ends_at_ms.is_some());
+        let detection = prompt_for(Phase::Idle, &zoom()).expect("asks");
+        assert_eq!(
+            detection.title, None,
+            "a detection card leads with its reason"
+        );
+        assert_eq!(detection.starts_at_ms, None);
     }
 
     #[test]
@@ -444,20 +509,24 @@ mod tests {
 
     #[test]
     fn a_test_reminder_is_flagged_and_never_names_a_real_event() {
-        let prompt = test_prompt(Phase::Idle, 2).expect("asks when idle");
+        let prompt = test_prompt(Phase::Idle, 2, at(9, 58, 0)).expect("asks when idle");
         assert!(prompt.test);
         assert!(prompt.can_join, "laid out like a reminder with a link");
         assert_eq!(prompt.event_id, None, "nothing to join or record");
+        assert_eq!(prompt.title.as_deref(), Some(TEST_MEETING));
+        assert_eq!(prompt.join_service.as_deref(), Some("meet"));
+        assert_eq!(prompt.starts_at_ms, Some(at(10, 0, 0).timestamp_millis()));
+        assert_eq!(prompt.ends_at_ms, Some(at(10, 30, 0).timestamp_millis()));
         assert_eq!(
             prompt.reason,
             "“Test meeting” starts in 2 min. This is a test reminder: nothing will be recorded."
         );
         assert!(
-            test_prompt(Phase::Idle, 0)
+            test_prompt(Phase::Idle, 0, at(9, 58, 0))
                 .expect("asks")
                 .reason
                 .contains("is starting now")
         );
-        assert_eq!(test_prompt(Phase::Recording, 2), None);
+        assert_eq!(test_prompt(Phase::Recording, 2, at(9, 58, 0)), None);
     }
 }

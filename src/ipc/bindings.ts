@@ -1005,7 +1005,7 @@ export type meet_ai_lib_engine_parakeet_ParakeetModelView = {
 export type meet_ai_lib_recording_phase_Phase = "idle" | "starting" | "recording" | "stopping";
 
 /**  A button in the popup. */
-export type meet_ai_lib_detection_popup_PopupAnswer = "record" | "joinAndRecord" | "join" | "dismiss";
+export type meet_ai_lib_detection_popup_PopupAnswer = "record" | "joinAndRecord" | "join" | "openBrief" | "dismiss";
 
 /**
  *  What the popup window shows, on [`PROMPT_POPUP_EVENT`] and from
@@ -1055,6 +1055,24 @@ export type meet_ai_lib_detection_notify_Prompt = {
 	canJoin: boolean,
 	/**  "Send a test reminder" (TUR-78): the buttons only close the banner. */
 	test: boolean,
+	/**
+	 *  The meeting's name, for the reminder card's first line (TUR-108).
+	 *  `None` for a detection prompt, whose card leads with the reason.
+	 */
+	title: string | null,
+	/**
+	 *  When the reminded meeting starts and ends, in Unix milliseconds, for
+	 *  the card's "9:00 AM to 9:30 AM". `None` when there is no event.
+	 *  A JS number: milliseconds since 1970 stay far below 2^53.
+	 */
+	startsAtMs: number | null,
+	endsAtMs: number | null,
+	/**
+	 *  The service the meeting link joins, for "Join Meet": `"meet"`,
+	 *  `"zoom"`, `"teams"` or `"other"` (`join_url::join_service`). `None`
+	 *  without a link.
+	 */
+	joinService: string | null,
 };
 
 /**
