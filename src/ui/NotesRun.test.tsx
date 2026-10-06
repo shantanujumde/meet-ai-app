@@ -432,3 +432,15 @@ describe("notes only when I click (TUR-101)", () => {
     expect(screen.queryByText("Notes run when you ask")).toBeNull();
   });
 });
+
+describe("long words in the notes (TUR-115)", () => {
+  // jsdom has no layout, so this checks the class that makes a long URL or
+  // token wrap inside the column instead of widening the meeting page.
+  test("each notes body carries wrap-anywhere", async () => {
+    given({ state: "done", tasks: 0 }, NOTES);
+    renderRun();
+    await loaded();
+    const body = await screen.findByText("We agreed to ship on Friday.");
+    expect(body.className).toContain("wrap-anywhere");
+  });
+});
