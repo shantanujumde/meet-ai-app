@@ -313,6 +313,7 @@ mod tests {
             engine: Preference::Whisper,
             model: "small.en-q5_1".into(),
             language: "auto".into(),
+            live: true,
         };
         let view = view(&transcription, options(true, false));
         assert_eq!(view.spoken_language, "auto");
@@ -430,6 +431,7 @@ mod tests {
             engine: Preference::Parakeet,
             model: "small.en-q5_1".into(),
             language: "auto".into(),
+            live: true,
         };
         let view = view(&transcription, options(true, true));
         assert_eq!(view.engine, EngineChoice::Parakeet);

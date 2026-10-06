@@ -43,6 +43,7 @@ fn writing_both_keys_keeps_comments_other_keys_and_other_sections() {
             engine: Preference::Whisper,
             model: "small.en-q5_1".into(),
             language: "en".into(),
+            live: true,
         }
     );
     assert!(written.contains("// How speech becomes text. I set this by hand once."));
@@ -169,4 +170,28 @@ fn the_schema_says_repos_default_is_read() {
         assert!(!text.contains("no effect"), "{text}");
     }
     assert!(key["description"].as_str().unwrap().contains("Start Work"));
+}
+
+#[test]
+fn live_is_read_and_defaults_to_on() {
+    // TUR-137: `live: false` is how a user asks for transcription after Stop.
+    assert!(parse("").live);
+    assert!(parse(r#"{ "transcription": { "engine": "whisper" } }"#).live);
+    assert!(parse(r#"{ "transcription": { "live": true } }"#).live);
+    let off = parse(r#"{ "transcription": { "live": false, "model": "small.en-q5_1" } }"#);
+    assert!(!off.live);
+    assert_eq!(off.model, "small.en-q5_1", "the other keys still read");
+    // The commented example the app writes carries it too.
+    assert!(parse(COMMENTED).live);
+}
+
+#[test]
+fn the_schema_says_live_is_read() {
+    let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+    let key = &schema["properties"]["transcription"]["properties"]["live"];
+    assert_eq!(key["type"], "boolean");
+    assert_eq!(key["default"], true);
+    let text = key["description"].as_str().unwrap();
+    assert!(!text.contains("Not read by the app"), "{text}");
+    assert!(!text.contains("no effect"), "{text}");
 }

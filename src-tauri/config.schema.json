@@ -64,7 +64,7 @@
         },
         "live": {
           "type": "boolean",
-          "description": "Transcribe while the call is running. false = transcribe only after recording stops. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
+          "description": "Transcribe while the call is running. false = transcribe only after recording stops: nothing is shown while the call runs, and the notes start once the whole meeting is transcribed. Takes effect on the next recording.",
           "default": true
         }
       }
