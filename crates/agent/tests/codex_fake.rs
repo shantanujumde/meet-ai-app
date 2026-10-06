@@ -321,6 +321,18 @@ fn a_sync_run_pre_approves_only_the_tracker_and_turns_every_other_server_off() {
             "apps",
             "--disable",
             "plugins",
+            "--disable",
+            "shell_tool",
+            "--disable",
+            "image_generation",
+            "--disable",
+            "view_image",
+            "--disable",
+            "multi_agent",
+            "--disable",
+            "browser_use",
+            "--disable",
+            "computer_use",
             "mcp",
             "list",
             "--json"
@@ -336,7 +348,11 @@ fn a_sync_run_pre_approves_only_the_tracker_and_turns_every_other_server_off() {
         "{args:?}"
     );
     assert!(!args.contains(&"--ignore-rules".to_owned()), "{args:?}");
-    assert_eq!(args.iter().filter(|a| *a == "-c").count(), 1, "{args:?}");
+    assert_eq!(args.iter().filter(|a| *a == "-c").count(), 2, "{args:?}");
+    assert!(
+        args.contains(&"skills.include_instructions=false".to_owned()),
+        "{args:?}"
+    );
     assert_eq!(
         value_after(&args, "-c"),
         r#"mcp_servers={"linear"={default_tools_approval_mode="approve"},"node_repl"={enabled=false}}"#
@@ -347,7 +363,19 @@ fn a_sync_run_pre_approves_only_the_tracker_and_turns_every_other_server_off() {
         .filter(|(flag, _)| *flag == "--disable")
         .map(|(_, feature)| feature.as_str())
         .collect();
-    assert_eq!(off, ["apps", "plugins"]);
+    assert_eq!(
+        off,
+        [
+            "apps",
+            "plugins",
+            "shell_tool",
+            "image_generation",
+            "view_image",
+            "multi_agent",
+            "browser_use",
+            "computer_use"
+        ]
+    );
     assert_eq!(value_after(&args, "-s"), "read-only");
     assert_eq!(args.last().map(String::as_str), Some("-"));
     assert_eq!(
