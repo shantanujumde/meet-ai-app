@@ -523,6 +523,7 @@ struct Reopen {
     sys: Option<Box<dyn AudioSource>>,
     writer: SegmentsWriter,
     dir: PathBuf,
+    want_sys: bool,
 }
 
 impl Reopen {
@@ -540,7 +541,18 @@ impl Reopen {
             sys: Some(sys),
             writer: SegmentsWriter::new(open),
             dir,
+            want_sys: true,
         }
+    }
+
+    /// A session whose system track is already down (or never asked for).
+    fn without_sys(want_sys: bool) -> Self {
+        let mut r = Self::new();
+        if let Some(mut s) = r.sys.take() {
+            s.stop().unwrap();
+        }
+        r.want_sys = want_sys;
+        r
     }
 
     fn run(
@@ -565,6 +577,7 @@ impl Reopen {
             &paths,
             segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED,
             &Tees::default(),
+            self.want_sys,
             || new_mic,
             || new_sys,
         )
@@ -604,4 +617,81 @@ fn a_failed_reopen_stops_the_sources_it_started() {
     assert!(r.run(Box::new(mic), Some(Box::new(sys))).is_err());
     assert!(stopped(&mic_stopped), "new mic stopped");
     assert!(stopped(&sys_stopped), "new tap stopped");
+}
+
+fn sys_rates(r: &Reopen) -> Vec<u32> {
+    read_segments(&r.dir.join("segments.json"))
+        .segments
+        .iter()
+        .map(|s| s.sys_rate)
+        .collect()
+}
+
+/// TUR-121: a tap that was down at start comes back at the next reopen.
+#[test]
+fn a_system_track_down_at_start_returns_at_the_next_reopen() {
+    let mut r = Reopen::without_sys(true);
+    r.run(
+        Box::new(StubSource::new(Channel::Mic)),
+        Some(Box::new(StubSource::new(Channel::System))),
+    )
+    .unwrap();
+    assert!(r.sys.is_some());
+    assert!(sys_rates(&r)[1] > 0);
+}
+
+/// TUR-121: a tap lost at one reopen is rebuilt at the following one.
+#[test]
+fn a_system_track_lost_at_a_reopen_returns_at_the_following_one() {
+    let mut r = Reopen::new();
+    r.run(
+        Box::new(StubSource::new(Channel::Mic)),
+        Some(Box::new(FakeSource::new(Channel::System, None))),
+    )
+    .unwrap();
+    assert!(r.sys.is_none());
+    r.run(
+        Box::new(StubSource::new(Channel::Mic)),
+        Some(Box::new(StubSource::new(Channel::System))),
+    )
+    .unwrap();
+    assert!(r.sys.is_some());
+    let rates = sys_rates(&r);
+    assert_eq!(rates.len(), 3);
+    assert_eq!(rates[1], 0);
+    assert!(rates[2] > 0);
+}
+
+/// TUR-121: a session that never asked for system audio never builds it.
+#[test]
+fn a_session_without_system_audio_never_builds_one() {
+    let mut r = Reopen::without_sys(false);
+    let mut built = false;
+    let (segments, mic, sys) = (
+        r.dir.join("segments.json"),
+        r.dir.join("mic.wav"),
+        r.dir.join("system.wav"),
+    );
+    let paths = Paths {
+        segments: &segments,
+        mic: &mic,
+        sys: &sys,
+    };
+    reopen_segment(
+        &mut r.mic,
+        &mut r.sys,
+        &mut r.writer,
+        &paths,
+        segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED,
+        &Tees::default(),
+        r.want_sys,
+        || Box::new(StubSource::new(Channel::Mic)),
+        || {
+            built = true;
+            Some(Box::new(StubSource::new(Channel::System)))
+        },
+    )
+    .unwrap();
+    assert!(!built);
+    assert!(r.sys.is_none());
 }

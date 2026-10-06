@@ -304,11 +304,11 @@ impl Recorder {
 
         match RecordingSession::start_with_tees(layout::audio_dir(&meeting_dir), mic, sys, tees) {
             Ok(session) => {
-                // Mic is `You`, system audio is `Others` (L5). A system track
-                // that never came up gets no session, rather than a sidecar
-                // idling on a feed that will never carry audio.
+                // Mic is `You`, system audio is `Others` (L5). A requested
+                // system track keeps its session even if it is down now: the
+                // next device change rebuilds the tap (TUR-121).
                 let mut tracks = vec![(Speaker::You, mic_feed)];
-                if session.status().has_system_audio {
+                if session.wants_system_audio() {
                     tracks.push((Speaker::Others, sys_feed));
                 }
                 let transcription = app.state::<LiveTranscript>().start(

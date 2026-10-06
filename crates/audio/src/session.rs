@@ -200,6 +200,9 @@ pub struct RecordingSession {
     /// [`RecordingSession::tick`] then never sees a change.
     last_output_device: Option<crate::platform::DeviceId>,
     last_input_device: Option<crate::platform::DeviceId>,
+    /// Whether the caller asked for a system-audio source at start, kept
+    /// even after the tap drops so the next reopen rebuilds it (TUR-121).
+    want_system: bool,
 }
 
 impl RecordingSession {
@@ -240,6 +243,7 @@ impl RecordingSession {
         mut sys: Option<Box<dyn AudioSource>>,
         tees: Tees,
     ) -> Result<Self, String> {
+        let want_system = sys.is_some();
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
 
@@ -314,6 +318,7 @@ impl RecordingSession {
             tees,
             last_output_device,
             last_input_device,
+            want_system,
         })
     }
 
@@ -331,9 +336,17 @@ impl RecordingSession {
             &paths,
             reason,
             &self.tees,
+            self.want_system,
             default_mic_source,
             default_system_source,
         )
+    }
+
+    /// Whether a system-audio source was requested at start. Unlike
+    /// [`SessionStatus::has_system_audio`] this stays `true` while the tap is
+    /// down, since the next device-change reopen tries it again (TUR-121).
+    pub fn wants_system_audio(&self) -> bool {
+        self.want_system
     }
 
     /// Ask the session how it is doing, without touching disk.

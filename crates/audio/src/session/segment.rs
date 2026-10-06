@@ -184,6 +184,10 @@ pub(super) fn segment_open(
 /// stop, a new one that will not start, or one whose first frame is late
 /// all leave the next segment microphone-only. A microphone failure returns
 /// `Err`, after stopping every source this call started.
+///
+/// `want_sys` is whether the session asked for system audio at all, not
+/// whether the old segment had it: a tap that dropped earlier is rebuilt
+/// here at the next reopen (TUR-121).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn reopen_segment(
     mic: &mut Box<dyn AudioSource>,
@@ -192,12 +196,12 @@ pub(super) fn reopen_segment(
     paths: &Paths<'_>,
     reason: &str,
     tees: &Tees,
+    want_sys: bool,
     new_mic: impl FnOnce() -> Box<dyn AudioSource>,
     new_sys: impl FnOnce() -> Option<Box<dyn AudioSource>>,
 ) -> Result<(), String> {
     mic.stop()
         .map_err(|e| format!("stopping microphone for reopen: {e}"))?;
-    let wanted_sys = sys.is_some();
     if let Some(s) = sys.as_mut()
         && let Err(e) = s.stop()
     {
@@ -219,7 +223,7 @@ pub(super) fn reopen_segment(
         return Err(format!("restarting microphone after reopen: {e}"));
     }
 
-    let mut next_sys: Option<Box<dyn AudioSource>> = if wanted_sys {
+    let mut next_sys: Option<Box<dyn AudioSource>> = if want_sys {
         match new_sys() {
             Some(mut source) => {
                 match tees.attach_sys(&mut *source).start(paths.sys.to_path_buf()) {
