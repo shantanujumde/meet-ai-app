@@ -157,9 +157,7 @@ fn safe_service(link: &str) -> Option<&'static str> {
         .iter()
         .find(|(_, patterns)| {
             patterns.iter().any(|p| {
-                host_matches(&host, p.host)
-                    && path.len() > p.path.len()
-                    && path.starts_with(p.path)
+                host_matches(&host, p.host) && path.len() > p.path.len() && path.starts_with(p.path)
             })
         })
         .map(|(name, _)| *name)
@@ -326,7 +324,10 @@ mod tests {
             join_service("https://teams.microsoft.com/l/meetup-join/19%3ax/0"),
             Some("teams")
         );
-        assert_eq!(join_service("https://teams.live.com/meet/123"), Some("teams"));
+        assert_eq!(
+            join_service("https://teams.live.com/meet/123"),
+            Some("teams")
+        );
         assert_eq!(
             join_service("https://acme.webex.com/meet/priya"),
             Some("other")
