@@ -101,15 +101,21 @@ impl Watcher {
     ///
     /// Paths are reported as the OS reports them, which is the canonical form
     /// of `root` plus the path below it.
+    ///
+    /// `on_problem` runs once, with the message to show, if the OS runs out of
+    /// watches while this watcher is running (a new subfolder could not be
+    /// watched), so the window can say changes may be missed (TUR-134).
     pub fn start(
         root: &Path,
         self_writes: SelfWrites,
         on_change: impl Fn(Vec<PathBuf>) + Send + 'static,
+        on_problem: impl Fn(String) + Send + 'static,
     ) -> Result<Watcher, crate::Error> {
         let root = dunce::canonicalize(root)?;
         crate::platform::hide_app_dir(&meeting_format::layout::app_dir(&root));
         // `create_app_dir` hides a `.app` made later (first launch).
         let filter_root = root.clone();
+        let mut problem_reported = false;
 
         let mut debouncer = new_debouncer(
             WATCH_DEBOUNCE,
@@ -137,6 +143,10 @@ impl Watcher {
                     for error in errors {
                         if is_watch_limit(&error) {
                             warn_watch_limit_once();
+                            if !problem_reported {
+                                problem_reported = true;
+                                on_problem(WATCH_LIMIT_MESSAGE.to_string());
+                            }
                             continue;
                         }
                         tracing::warn!(%error, "file watcher error");
@@ -329,9 +339,14 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
 
         let (tx, rx) = mpsc::channel();
-        let _watcher = Watcher::start(&root, SelfWrites::default(), move |paths| {
-            tx.send(paths).ok();
-        })
+        let _watcher = Watcher::start(
+            &root,
+            SelfWrites::default(),
+            move |paths| {
+                tx.send(paths).ok();
+            },
+            |_| {},
+        )
         .unwrap();
         std::thread::sleep(Duration::from_millis(200));
 
@@ -361,9 +376,14 @@ mod tests {
 
         let writes = SelfWrites::default();
         let (tx, rx) = mpsc::channel();
-        let _watcher = Watcher::start(&root, writes.clone(), move |paths| {
-            tx.send(paths).ok();
-        })
+        let _watcher = Watcher::start(
+            &root,
+            writes.clone(),
+            move |paths| {
+                tx.send(paths).ok();
+            },
+            |_| {},
+        )
         .unwrap();
 
         // FSEvents can deliver the setup write late. Drain until the watcher

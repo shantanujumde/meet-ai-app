@@ -102,7 +102,8 @@ mod hide_tests {
         let app = root.path().join(".app");
         std::fs::create_dir(&app).unwrap();
         let _watcher =
-            crate::watcher::Watcher::start(root.path(), Default::default(), |_| {}).unwrap();
+            crate::watcher::Watcher::start(root.path(), Default::default(), |_| {}, |_| {})
+                .unwrap();
         let attributes = std::fs::metadata(&app).unwrap().file_attributes();
         assert_ne!(attributes & super::FILE_ATTRIBUTE_HIDDEN, 0);
     }
