@@ -75,6 +75,22 @@ fn the_schema_lists_every_engine_the_registry_reads() {
 }
 
 #[test]
+fn the_schema_documents_the_language_and_its_default() {
+    let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+    let key = &schema["properties"]["transcription"]["properties"]["language"];
+    assert_eq!(key["type"], "string");
+    assert_eq!(key["default"], stt::languages::AUTO);
+    assert_eq!(key["default"], super::Transcription::default().language);
+    assert!(
+        !key["description"]
+            .as_str()
+            .unwrap()
+            .contains("Not read by the app"),
+        "{key}"
+    );
+}
+
+#[test]
 fn every_engine_round_trips() {
     for engine in [
         Preference::Auto,

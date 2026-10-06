@@ -58,8 +58,9 @@
         },
         "language": {
           "type": "string",
-          "description": "Spoken language of the meeting, as a language code. Not read by the app yet (SPEC Phase 6); setting it has no effect for now.",
-          "default": "en"
+          "description": "The language people speak in meetings: \"auto\" (each line in its own language), \"hinglish\", or a whisper language code such as \"mr\". Used by multilingual whisper models only; an English-only model always uses English, and Apple Speech and Parakeet ignore it. An unknown value is read as auto.",
+          "default": "auto",
+          "examples": ["auto", "hinglish", "mr"]
         },
         "live": {
           "type": "boolean",
