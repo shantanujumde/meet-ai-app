@@ -38,7 +38,7 @@ impl Changed {
 /// How the last attempt to watch the meetings folder went.
 enum Attempt {
     /// Watching; dropping the watcher stops it.
-    Running(Watcher),
+    Running(#[allow(dead_code, reason = "held so dropping it stops the watcher")] Watcher),
     /// The folder did not exist yet (first launch, before the first recording).
     Missing,
     /// The folder exists but could not be watched; not retried on its own.
