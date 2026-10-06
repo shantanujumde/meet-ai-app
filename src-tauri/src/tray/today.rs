@@ -149,7 +149,11 @@ fn submenu(app: &AppHandle, meeting: &MeetingEntry) -> tauri::Result<tauri::menu
             .item(&MenuItemBuilder::with_id(format!("{JOIN_PREFIX}{id}"), JOIN_LABEL).build(app)?);
     }
     builder
-        .item(&MenuItemBuilder::with_id(format!("{RECORD_PREFIX}{id}"), RECORD_LABEL).build(app)?)
+        .item(
+            &MenuItemBuilder::with_id(format!("{RECORD_PREFIX}{id}"), RECORD_LABEL)
+                .enabled(meeting.can_record)
+                .build(app)?,
+        )
         .item(&MenuItemBuilder::with_id(format!("{BRIEF_PREFIX}{id}"), BRIEF_LABEL).build(app)?)
         .build()
 }
@@ -236,7 +240,10 @@ fn run(app: &AppHandle, tray_id: &str, fixed: &Fixed, rx: &mpsc::Receiver<Nudge>
                 .unwrap_or_else(|e| e.into_inner())
                 .clone()
                 .unwrap_or(CalendarRead::Pending);
-            let entries = menu_model::build_menu_model(&read, &now, min_attendees);
+            let recording = app
+                .try_state::<crate::recording::Recorder>()
+                .is_some_and(|r| r.status().phase != crate::recording::Phase::Idle);
+            let entries = menu_model::build_menu_model(&read, &now, min_attendees, recording);
             let title = config::app()
                 .menu_bar_countdown
                 .then(|| menu_model::countdown_title(&read, &now, min_attendees))

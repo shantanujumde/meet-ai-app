@@ -87,6 +87,9 @@ pub struct MeetingEntry {
     pub solo: bool,
     /// Present only when the event has a link: **Join** is shown only then.
     pub join_url: Option<String>,
+    /// Record is offered: false while a recording is starting, running or
+    /// stopping, so the item is greyed out until it ends.
+    pub can_record: bool,
 }
 
 /// The "Today" section for `read`, at `now` (whose time zone the times are
@@ -100,6 +103,7 @@ pub fn build_menu_model<Tz: TimeZone>(
     read: &CalendarRead,
     now: &DateTime<Tz>,
     min_attendees: usize,
+    recording: bool,
 ) -> Vec<MenuEntry>
 where
     Tz::Offset: std::fmt::Display,
@@ -125,7 +129,7 @@ where
         upcoming
             .into_iter()
             .take(MAX_MEETINGS)
-            .map(|event| MenuEntry::Meeting(meeting_entry(event, now, min_attendees))),
+            .map(|event| MenuEntry::Meeting(meeting_entry(event, now, min_attendees, recording))),
     );
     entries
 }
@@ -171,6 +175,7 @@ fn meeting_entry<Tz: TimeZone>(
     event: &Event,
     now: &DateTime<Tz>,
     min_attendees: usize,
+    recording: bool,
 ) -> MeetingEntry
 where
     Tz::Offset: std::fmt::Display,
@@ -190,6 +195,7 @@ where
         label: format!("{when}  {}", shorten(&event.title, MENU_TITLE_CHARS)),
         now: happening,
         solo: event.attendees < min_attendees,
+        can_record: !recording,
         // TUR-86: a link the Join check refuses gets no Join at all.
         join_url: event
             .join_url
@@ -256,6 +262,15 @@ mod tests {
     }
 
     #[test]
+    fn record_is_offered_only_while_idle() {
+        let read = CalendarRead::Events(vec![event("a", at(11, 0), 30, 3)]);
+        let idle = build_menu_model(&read, &at(10, 0), 2, false);
+        let busy = build_menu_model(&read, &at(10, 0), 2, true);
+        assert!(meetings(&idle)[0].can_record);
+        assert!(!meetings(&busy)[0].can_record);
+    }
+
+    #[test]
     fn lists_what_is_left_of_today_in_start_order() {
         let read = CalendarRead::Events(vec![
             event("c", at(15, 0), 30, 3),
@@ -263,7 +278,7 @@ mod tests {
             event("b", at(11, 0), 30, 3),
             event("a", at(11, 0), 15, 3),
         ]);
-        let entries = build_menu_model(&read, &at(10, 0), 2);
+        let entries = build_menu_model(&read, &at(10, 0), 2, false);
         assert_eq!(entries[0], MenuEntry::Heading(TODAY_HEADING));
         assert_eq!(
             ids(&entries),
@@ -280,7 +295,7 @@ mod tests {
                 .map(|i| event(&format!("m{i}"), at(11 + i, 0), 30, 2))
                 .collect(),
         );
-        let entries = build_menu_model(&read, &at(10, 0), 2);
+        let entries = build_menu_model(&read, &at(10, 0), 2, false);
         assert_eq!(ids(&entries), vec!["m0", "m1", "m2", "m3", "m4"]);
     }
 
@@ -290,7 +305,7 @@ mod tests {
             event("focus", at(11, 0), 60, 1),
             event("sync", at(12, 0), 30, 2),
         ]);
-        let entries = build_menu_model(&read, &at(10, 0), 2);
+        let entries = build_menu_model(&read, &at(10, 0), 2, false);
         let listed = meetings(&entries);
         assert!(listed[0].solo, "fewer than min_attendees");
         assert!(!listed[1].solo);
@@ -302,7 +317,7 @@ mod tests {
             event("now", at(9, 45), 30, 2),
             event("next", at(10, 30), 30, 2),
         ]);
-        let entries = build_menu_model(&read, &at(10, 0), 2);
+        let entries = build_menu_model(&read, &at(10, 0), 2, false);
         let listed = meetings(&entries);
         assert!(listed[0].now);
         assert_eq!(listed[0].label, "Now  Meeting now");
@@ -314,7 +329,7 @@ mod tests {
     fn a_meeting_that_just_ended_is_gone() {
         let read = CalendarRead::Events(vec![event("done", at(9, 30), 30, 2)]);
         assert_eq!(
-            build_menu_model(&read, &at(10, 0), 2),
+            build_menu_model(&read, &at(10, 0), 2, false),
             vec![
                 MenuEntry::Heading(TODAY_HEADING),
                 MenuEntry::Note(NO_MORE_MEETINGS)
@@ -325,7 +340,7 @@ mod tests {
     #[test]
     fn an_empty_day_says_so() {
         assert_eq!(
-            build_menu_model(&CalendarRead::Events(vec![]), &at(10, 0), 2),
+            build_menu_model(&CalendarRead::Events(vec![]), &at(10, 0), 2, false),
             vec![
                 MenuEntry::Heading(TODAY_HEADING),
                 MenuEntry::Note(NO_MORE_MEETINGS)
@@ -336,7 +351,7 @@ mod tests {
     #[test]
     fn a_denied_calendar_offers_to_connect() {
         assert_eq!(
-            build_menu_model(&CalendarRead::NotConnected, &at(10, 0), 2),
+            build_menu_model(&CalendarRead::NotConnected, &at(10, 0), 2, false),
             vec![
                 MenuEntry::Heading(TODAY_HEADING),
                 MenuEntry::ConnectCalendar(NOT_CONNECTED)
@@ -347,7 +362,7 @@ mod tests {
     #[test]
     fn before_the_first_read_it_says_it_is_reading() {
         assert_eq!(
-            build_menu_model(&CalendarRead::Pending, &at(10, 0), 2),
+            build_menu_model(&CalendarRead::Pending, &at(10, 0), 2, false),
             vec![MenuEntry::Heading(TODAY_HEADING), MenuEntry::Note(READING)]
         );
     }
@@ -357,7 +372,7 @@ mod tests {
         let mut zoom = event("zoom", at(11, 0), 30, 2);
         zoom.join_url = Some("https://zoom.us/j/1".into());
         let read = CalendarRead::Events(vec![zoom, event("room", at(12, 0), 30, 2)]);
-        let entries = build_menu_model(&read, &at(10, 0), 2);
+        let entries = build_menu_model(&read, &at(10, 0), 2, false);
         let listed = meetings(&entries);
         assert_eq!(listed[0].join_url.as_deref(), Some("https://zoom.us/j/1"));
         assert_eq!(listed[1].join_url, None);
@@ -370,7 +385,7 @@ mod tests {
         let mut userinfo = event("userinfo", at(12, 0), 30, 2);
         userinfo.join_url = Some("https://meet.google.com@evil.example/abc".into());
         let read = CalendarRead::Events(vec![phish, userinfo]);
-        let entries = build_menu_model(&read, &at(10, 0), 2);
+        let entries = build_menu_model(&read, &at(10, 0), 2, false);
         assert!(meetings(&entries).iter().all(|m| m.join_url.is_none()));
     }
 
@@ -378,7 +393,7 @@ mod tests {
     fn times_are_written_in_the_local_zone() {
         let ist = FixedOffset::east_opt(5 * 3600 + 1800).expect("a valid offset");
         let read = CalendarRead::Events(vec![event("a", at(11, 0), 30, 2)]);
-        let entries = build_menu_model(&read, &at(10, 0).with_timezone(&ist), 2);
+        let entries = build_menu_model(&read, &at(10, 0).with_timezone(&ist), 2, false);
         assert_eq!(meetings(&entries)[0].label, "16:30  Meeting a");
     }
 
@@ -388,7 +403,12 @@ mod tests {
         long.title = "A".repeat(80);
         let mut blank = event("blank", at(12, 0), 30, 2);
         blank.title = "  ".into();
-        let entries = build_menu_model(&CalendarRead::Events(vec![long, blank]), &at(10, 0), 2);
+        let entries = build_menu_model(
+            &CalendarRead::Events(vec![long, blank]),
+            &at(10, 0),
+            2,
+            false,
+        );
         let listed = meetings(&entries);
         assert_eq!(listed[0].label, format!("11:00  {}…", "A".repeat(39)));
         assert_eq!(listed[1].label, "12:00  Untitled");
