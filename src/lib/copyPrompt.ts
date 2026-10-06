@@ -4,8 +4,8 @@
  *
  * Two reasons, either one enough: the user set no agent up (`agent.harness`
  * is `none`), or they chose one whose CLI cannot be found on this Mac.
- * `cliFound` defaults to true because nothing detects the CLI yet; agent CLI
- * detection (TUR-6, TUR-10) is what will pass it.
+ * `cliFound` defaults to true so callers that have not detected the CLI keep
+ * the button hidden; `useCliFound` passes the real answer.
  */
 export function showsCopyPrompt({
   harnessIsNone,

@@ -144,6 +144,33 @@ describe("Review's Copy prompt", () => {
     expect(screen.queryByText("Bad TOML.")).toBeNull();
   });
 
+  test("is offered when the picked agent's CLI is missing", async () => {
+    copyPromptFallback.mockResolvedValue(false);
+    ipc.agentChoice.mockResolvedValueOnce({ harness: "codex", model: "", binaryPath: null });
+    renderReview();
+
+    expect(await screen.findByRole("button", { name: "Copy prompt" })).toBeTruthy();
+  });
+
+  test("is not offered when the picked agent's CLI is ready", async () => {
+    copyPromptFallback.mockResolvedValue(false);
+    renderReview();
+
+    expect(await screen.findByRole("button", { name: "Show in Finder" })).toBeTruthy();
+    await waitFor(() => expect(ipc.detectAgents).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Copy prompt" })).toBeNull();
+  });
+
+  test("is not offered if detecting the CLI fails", async () => {
+    copyPromptFallback.mockResolvedValue(false);
+    ipc.detectAgents.mockRejectedValueOnce({ domain: "app", kind: "io", message: "No." });
+    renderReview();
+
+    expect(await screen.findByRole("button", { name: "Show in Finder" })).toBeTruthy();
+    await waitFor(() => expect(ipc.detectAgents).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Copy prompt" })).toBeNull();
+  });
+
   test("is not offered while this meeting is recording", async () => {
     copyPromptFallback.mockResolvedValue(true);
     recording({ phase: "recording", meetingId: ID, startedAtMs: 0 });
