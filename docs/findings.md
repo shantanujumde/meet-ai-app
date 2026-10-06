@@ -1138,3 +1138,101 @@ cargo run -p stt --example offline_meeting -- transcribe --engine apple \
 
 `meet-stt <wav>` on a single track is the quickest cross-check when a 0-line
 result looks wrong.
+
+## 13. TUR-136 — how other recorders check that system audio is really captured (researched, 2026-10-07)
+
+The question: meet-ai waits about 10 s on every Record press while it plays its
+chime and listens for it on the system-audio tap (SPEC A7, §8.1). How do
+comparable apps check "is system audio really being captured", and what do they
+do when the permission is denied or the tap is silent? Open-source apps were
+read at the commit in each link; closed apps only from their public help pages.
+Code under GPL/AGPL was read, never copied. Columns: **When** = before or
+during recording; **How** = what the check is; **User sees** = what happens on
+the screen when system audio is missing; **Then** = record mic-only, or stop;
+**Re-check** = checked again later in the recording.
+
+### 13.1 Open-source apps (read from the source)
+
+| App (licence) | When | How | User sees | Then | Re-check | Sound played |
+|---|---|---|---|---|---|---|
+| anarlog, formerly Hyprnote (MIT) | Before: onboarding and Settings only, nothing on the start path | Private TCC SPI `TCCAccessPreflight("kTCCServiceAudioCapture")` (file credits AudioCap); without it, opens a tap and counts an error as denied | Permission rows in onboarding and Settings; nothing during a recording | Keeps recording; the missing side is padded with zeros (a `MicOnly` mode exists) | No (device-change restart only) | Digital silence for the whole session, to keep the output clocking |
+| Meetily (MIT) | Before: onboarding only | Counts "a tap was created" as granted; its own comment says a denied tap still delivers silence | Nothing (backend `warn!` log) | Mic-only; fails only if neither stream opens | No (mic recovery only) | ~300 ms of digital silence to wake Bluetooth |
+| Vibe (MIT) | Before every recording that asks for system audio | Private TCC SPI through the author's cpal fork | A toast; opens System Settings when denied | Refuses to start | No | None |
+| Handy (MIT) | Not applicable: mic-only dictation | — | — | — | — | An audible start chime after the first mic callback; it can land in the mic recording, not filtered |
+| Cap (AGPL-3.0, `scap-*` crates MIT) | Before: Screen Recording gate (audio comes through ScreenCaptureKit) | `CGPreflightScreenCaptureAccess` plus an `SCShareableContent` probe | Permission window; nothing specific to missing audio | Nothing records without the grant | Internal mixer stall reset only, user not told | None |
+| AudioCap (BSD-2-Clause) | Before: at launch and each time the app becomes active | Private TCC SPI (`TCCAccessPreflight` / `TCCAccessRequest`, behind `ENABLE_TCC_SPI`) | A "permission denied" view | Will not record until authorized | On app re-activation only | None |
+| Recap (MIT) | Before: session start | Tap creation must succeed; no SPI, no silence check | Error toast if the tap fails | Refuses to start | No | None |
+| screenpipe (source-available, proprietary) | During: a watchdog on the tap | Callback count and peak every 500 ms; zeros are deliberately allowed (nobody may be talking); only a 10 s callback stall rebuilds the tap | macOS: nothing; Windows: a "speaker silent" notification with Restart | Keeps recording | Yes, continuously | None found |
+
+Sources (open source):
+- anarlog: https://github.com/fastrepl/anarlog/blob/519f2938d632d811ce5f3c285c35c47fb94cd381/plugins/permissions/src/ext.rs#L398-L419, https://github.com/fastrepl/anarlog/blob/519f2938d632d811ce5f3c285c35c47fb94cd381/crates/tcc/swift-lib/src/lib.swift#L1-L60, https://github.com/fastrepl/anarlog/blob/519f2938d632d811ce5f3c285c35c47fb94cd381/crates/listener-core/src/actors/source/mod.rs#L240-L285, https://github.com/fastrepl/anarlog/blob/519f2938d632d811ce5f3c285c35c47fb94cd381/crates/audio-actual/src/capture/stream.rs#L446-L470
+- Meetily: https://github.com/Zackriya-Solutions/meetily/blob/a2cb62e827da7ef59f65064c97233efb2313878e/frontend/src-tauri/src/audio/permissions.rs#L93-L126, https://github.com/Zackriya-Solutions/meetily/blob/a2cb62e827da7ef59f65064c97233efb2313878e/frontend/src-tauri/src/audio/stream.rs#L403-L424
+- Vibe: https://github.com/thewh1teagle/vibe/blob/2ea5ecef989933282fca517d82d4e3128ae5fb0b/desktop/src-tauri/src/cmd/permissions.rs#L15-L145, https://github.com/thewh1teagle/cpal/blob/204e64f420b20d8052e685661d1415c548c500fc/src/host/coreaudio/macos/permissions.rs#L31-L70
+- Handy: https://github.com/cjpais/Handy/blob/a94b403e0610049fafa54b0a4077db2945084dd8/src-tauri/src/actions.rs#L505-L523, https://github.com/cjpais/Handy/blob/a94b403e0610049fafa54b0a4077db2945084dd8/src-tauri/src/audio_feedback.rs#L48-L90
+- Cap: https://github.com/CapSoftware/Cap/blob/94ad3fd8d107c40ec3ac08bdd445d1810f0f5a44/crates/scap-screencapturekit/src/permission.rs#L1-L21, https://github.com/CapSoftware/Cap/blob/94ad3fd8d107c40ec3ac08bdd445d1810f0f5a44/crates/recording/src/sources/audio_mixer.rs#L226-L310
+- AudioCap: https://github.com/insidegui/AudioCap/blob/6f609e8ad1b1e11fa0e8edbe91864cb099f00de3/AudioCap/ProcessTap/AudioRecordingPermission.swift#L1-L125
+- Recap: https://github.com/RecapAI/Recap/blob/6d3ccf5967bb7857632aad624467a97afe461792/Recap/Audio/Capture/Tap/ProcessTap.swift#L95-L110, https://github.com/RecapAI/Recap/blob/6d3ccf5967bb7857632aad624467a97afe461792/Recap/UseCases/Home/ViewModel/RecapViewModel+StartRecording.swift#L71-L77
+- screenpipe: https://github.com/screenpipe/screenpipe/blob/ac204c0b8e3499225f5d26bd4b4bef48ef818674/crates/screenpipe-audio/src/core/process_tap/macos.rs#L1108-L1145, https://github.com/screenpipe/screenpipe/blob/ac204c0b8e3499225f5d26bd4b4bef48ef818674/apps/screenpipe-app-tauri/src-tauri/src/engine_events/audio_health.rs#L45-L65
+
+### 13.2 Closed apps (from public docs only)
+
+"Not documented" means the public pages say nothing, not that the app does
+nothing.
+
+| App | When | How | User sees | Then | Re-check | Sound played |
+|---|---|---|---|---|---|---|
+| Granola | Setup | OS permissions ("Screen & System Audio Recording") | The other side's grey transcript bubbles are missing; an orange "trouble transcribing" warning covers network failures only | Keeps going on one side | Manual: Stop, then Resume | Not documented |
+| Otter (desktop) | First launch | OS permission prompts | Help article "Otter is only recording my voice" | Mic-only, as the docs imply | Not documented ("test a new recording") | Not documented |
+| Fathom (desktop) | Not documented | Not documented | Not documented | Not documented | Not documented | Not documented for bot-free capture |
+| Fireflies (desktop, no bot) | Not checked; "immediately starts capturing system audio" | Microphone permission only documented | The live transcript pane | Not documented | Not documented | Yes: an audible consent message about 10 s into the recording, on by default |
+| tl;dv (desktop) | Setup | OS permissions | Not documented | Not documented | Not documented | Not documented |
+| Krisp | First use | A banner leading to the OS permission; virtual devices picked in the call app | The permission banner | Not documented | Not documented | Optional audio prompt to notify others |
+| Jamie | Start of recording, microphone only | OS microphone permission | Recording does not start without the mic | Refuses without the mic; system audio not documented | No | Not documented |
+| MacWhisper | Setup | OS permissions | Not documented | Not documented | Not documented | Not documented |
+| Notion meeting notes | Before use | OS permissions; the browser version is mic-only by design | Not documented on desktop | Mic-only is an accepted mode | Not documented | Not documented |
+| Superwhisper | Not checked during recording | OS permission | Nothing; an empty recording shows up in History | Keeps recording | No | Not documented |
+
+Sources (closed, each fetched 2026-10-07):
+https://docs.granola.ai/help-center/troubleshooting/transcription-issues,
+https://help.otter.ai/hc/en-us/articles/35973988280215-Otter-Desktop-App-Mac-Windows,
+https://help.otter.ai/hc/en-us/articles/4403627500951-Troubleshoot-audio-recording-problems,
+https://help.fathom.video/en/articles/449088,
+https://guide.fireflies.ai/articles/6666374717-how-to-record-meetings-without-a-bot-on-the-fireflies-desktop-app,
+https://intercom.help/tldv/en/articles/14433337-recording-without-a-bot,
+https://help.krisp.ai/hc/en-us/articles/30146816045980-Record-your-meetings-with-Krisp-AI-Note-Taker,
+https://docs.meetjamie.ai/getting-started/recorder,
+https://macwhisper.helpscoutdocs.com/article/30-record-meetings,
+https://www.notion.com/help/ai-meeting-notes,
+https://superwhisper.com/docs/common-issues/microphone-and-system-audio
+
+### 13.3 What this means for meet-ai
+
+1. **Nobody holds Record for a system-audio check.** The apps that check
+   before starting use an instant answer (an OS or TCC call, a tap that
+   opens). None plays a tone and waits for it. meet-ai's ~10 s wait is unique.
+2. **When system audio is missing, almost everyone keeps recording the
+   microphone.** Only Vibe and Recap refuse to start. meet-ai already records
+   mic-only on a known system-audio denial (TUR-87), so a denial found during
+   the recording should do the same: drop the track, keep going.
+3. **Almost nobody tells the user during the recording.** Users find out from a
+   one-sided transcript (Granola, Otter, Superwhisper). Only screenpipe
+   notifies, and only on Windows. Saying so in the window is ahead of the
+   field and cheap, because meet-ai already has the banner.
+4. **Automatic re-checks are rare** and never sound-based: screenpipe watches
+   for a stalled tap, AudioCap re-reads the OS answer when it comes forward.
+   A second chime in the middle of a meeting would be new, and audible to
+   everyone in the call if the Mac's speakers are on.
+5. **A sound during the recording is accepted practice.** Fireflies plays a
+   spoken consent message ~10 s into the meeting on purpose, and Handy plays
+   a start chime that reaches its mic recording. No app was found filtering
+   its own sound out of a transcript; meet-ai has to do that itself.
+6. **Zeros are not proof of denial without a control.** screenpipe ignores
+   zeros on purpose (nobody may be speaking); Meetily's comment admits a
+   denied tap records silence. This agrees with §10.1: only a positive control
+   (the chime) or an OS answer can tell "denied" from "quiet".
+7. **The instant OS answer most of them use is a private API.**
+   `TCCAccessPreflight("kTCCServiceAudioCapture")` is undocumented SPI from
+   `/System/Library/PrivateFrameworks/TCC.framework`. It would make the check
+   silent and instant, but it is not measured on this Mac, a future macOS
+   can remove it, and SPEC §8.1 asks for a positive control. Not adopted in
+   TUR-136; worth its own ticket to measure next to the chime.
