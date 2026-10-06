@@ -248,18 +248,6 @@ pub fn notifications_blocked(app: &AppHandle) -> bool {
     }
 }
 
-/// Was the first line of a test that starts a fake agent CLI, returning early
-/// off Unix while the fakes needed `/bin/sh`. Every fake is the portable
-/// `fake-cli` program now (TUR-54, TUR-50), so it runs on every OS and this
-/// expands to nothing. The call sites go once their files' owners next touch
-/// them.
-#[cfg(test)]
-macro_rules! skip_without_fake_cli {
-    () => {};
-}
-#[cfg(test)]
-pub(crate) use skip_without_fake_cli;
-
 /// How the Setup screen writes the sign-in command for this OS's terminal
 /// (TUR-53). Plain data, so every style is tested on every OS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
