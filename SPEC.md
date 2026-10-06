@@ -259,7 +259,7 @@ One silent fix-up runs at launch, before the record shortcut exists: a WAV whose
 id: 2026-09-01-1430-standup
 title: Platform Standup
 title_source: calendar                   # optional; who wrote the title: calendar | agent | user (A20)
-title_hash: 06d2abde48536429             # with a calendar or agent title: hash of it as written; a title that differs was edited by hand (A21)
+title_hash: 06d2abde48536429             # with a calendar or agent title: hash of it as written; a title that differs was edited by hand (A22)
 date: 2026-09-01T14:30:00+05:30
 duration_sec: 2714
 attendees: [Shantanu, Priya, Dev]        # from EventKit when available
