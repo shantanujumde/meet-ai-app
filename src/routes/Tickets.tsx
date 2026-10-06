@@ -13,9 +13,9 @@ import { toUiError } from "@/ipc/types";
 import { CopyPromptButton } from "@/ui/CopyPromptButton";
 import { IconSquare } from "@/ui/icons";
 import { Button, ButtonRow, cardVariants, Pill } from "@/ui/primitives";
-import { SyncButton } from "@/ui/SyncButton";
+import { SyncControls, SyncErrors } from "@/ui/SyncButton";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
-import { useCanSync } from "@/ui/useTicketSync";
+import { useCanSync, useTicketSync } from "@/ui/useTicketSync";
 
 const STATUS_LABEL: Record<TicketStatus, string> = {
   open: "Open",
@@ -39,6 +39,12 @@ export function Tickets() {
   const [error, setError] = useState<UiError | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const canSync = useCanSync();
+  const replace = useCallback((updated: TicketSummary) => {
+    setTickets((current) =>
+      (current ?? []).map((each) => (each.id === updated.id ? updated : each)),
+    );
+  }, []);
+  const sync = useTicketSync(replace);
 
   const load = useCallback(async () => {
     setError(null);
@@ -124,16 +130,19 @@ export function Tickets() {
                   render={() => startWorkPrompt(ticket.id, ticket.meeting)}
                 />
                 {/* TUR-11: the agent creates the issue in the user's tracker. */}
-                <SyncButton
+                <SyncControls
                   ticket={ticket}
+                  state={sync.stateOf(ticket.id)}
                   canSync={canSync === true}
-                  onSynced={(updated) =>
-                    setTickets((current) =>
-                      (current ?? []).map((each) => (each.id === updated.id ? updated : each)),
-                    )
-                  }
+                  onSync={() => void sync.sync(ticket)}
+                  onCancel={() => void sync.cancel(ticket.id)}
+                  onDismiss={() => void sync.dismiss(ticket.id, ticket.meeting)}
                 />
               </ButtonRow>
+              {/* TUR-112: errors under the buttons, at the card's full width. */}
+              {ticket.syncedTo === null && canSync === true ? (
+                <SyncErrors state={sync.stateOf(ticket.id)} />
+              ) : null}
             </li>
           ))}
         </ul>

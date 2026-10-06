@@ -106,6 +106,28 @@ describe("MeetingTasks", () => {
     expect(await screen.findByText("ENG-TUR-2")).toBeTruthy();
   });
 
+  test("a long sync error sits under the row, outside the controls column (TUR-112)", async () => {
+    const message =
+      'The agent finished but did not create an issue in Linear. Check that "claude.ai Linear" is connected and signed in.';
+    meetingTasks.mockResolvedValue([task("TICK-0001", { title: "Build human session closure" })]);
+    syncTask.mockRejectedValueOnce({ domain: "app", kind: "agent-failed", message });
+    render(<MeetingTasks meetingId={MEETING} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Sync TICK-0001" }));
+    const row = screen.getByText("Build human session closure").closest("li") as HTMLElement;
+    const alert = await within(row).findByRole("alert");
+    expect(alert).toHaveTextContent(message);
+
+    const retry = within(row).getByRole("button", { name: "Retry sync of TICK-0001" });
+    const rowLine = row.firstElementChild as HTMLElement;
+    expect(rowLine.contains(retry)).toBe(true);
+    // The error is a sibling of the row line, not inside the right-hand column.
+    expect(rowLine.contains(alert)).toBe(false);
+    expect(alert.closest("li > *")).not.toBe(rowLine);
+    // The title column takes the free width; the controls do not shrink.
+    expect(screen.getByText("Build human session closure").closest(".flex-1")).toBeTruthy();
+  });
+
   test("Dismiss forgets a row's unattached issue with this meeting's id", async () => {
     meetingTasks.mockResolvedValue([task("TUR-1", { meeting: null })]);
     syncTask.mockRejectedValueOnce({

@@ -7,8 +7,9 @@
  * * {@link SyncControls} draws one ticket's controls from a {@link SyncState}
  *   it is given. A list that syncs several tickets (Sync all) holds the
  *   states itself, with `useTicketSync`, and draws each row with this.
- * * {@link SyncButton} is the same controls with their own state, for a
- *   screen that syncs tickets one by one.
+ * * {@link SyncErrors} draws the same state's errors. It sits under the row,
+ *   at full width, never in the narrow controls column (TUR-112).
+ * * {@link SyncButton} is the controls and errors with their own state.
  *
  * A synced ticket shows its issue id and an Open button instead. Rust opens
  * the issue's address; the window never opens a URL itself.
@@ -74,53 +75,71 @@ export function SyncControls({
   const canDismiss = failed && onDismiss !== undefined && isKeptIssue(state.error);
 
   return (
-    <div className={cn("flex flex-col gap-3", className)} aria-busy={busy}>
-      <ButtonRow>
-        {busy ? (
-          <>
-            <Button size="small" disabled>
-              Syncing…
-            </Button>
-            <Button
-              size="small"
-              tone="quiet"
-              disabled={state.cancelling}
-              aria-label={`Cancel sync of ${ticket.id}`}
-              onClick={onCancel}
-            >
-              {state.cancelling ? "Cancelling…" : "Cancel"}
-            </Button>
-          </>
-        ) : (
-          <Button
-            size="small"
-            icon={failed ? RotateCcw : RefreshCw}
-            disabled={disabled}
-            aria-label={failed ? `Retry sync of ${ticket.id}` : `Sync ${ticket.id}`}
-            onClick={onSync}
-          >
-            {failed ? "Retry" : "Sync"}
+    <ButtonRow className={className} aria-busy={busy}>
+      {busy ? (
+        <>
+          <Button size="small" disabled>
+            Syncing…
           </Button>
-        )}
-        {canDismiss ? (
           <Button
             size="small"
             tone="quiet"
-            icon={X}
-            aria-label={`Dismiss the unsaved issue of ${ticket.id}`}
-            onClick={onDismiss}
+            disabled={state.cancelling}
+            aria-label={`Cancel sync of ${ticket.id}`}
+            onClick={onCancel}
           >
-            Dismiss
+            {state.cancelling ? "Cancelling…" : "Cancel"}
           </Button>
-        ) : null}
-        <span className="sr-only" role="status" aria-live="polite">
-          {busy ? `Syncing ${ticket.id}` : ""}
-        </span>
-      </ButtonRow>
-      {failed ? <InlineError error={state.error} /> : null}
-      {busy && state.cancelError ? <InlineError error={state.cancelError} /> : null}
-    </div>
+        </>
+      ) : (
+        <Button
+          size="small"
+          icon={failed ? RotateCcw : RefreshCw}
+          disabled={disabled}
+          aria-label={failed ? `Retry sync of ${ticket.id}` : `Sync ${ticket.id}`}
+          onClick={onSync}
+        >
+          {failed ? "Retry" : "Sync"}
+        </Button>
+      )}
+      {canDismiss ? (
+        <Button
+          size="small"
+          tone="quiet"
+          icon={X}
+          aria-label={`Dismiss the unsaved issue of ${ticket.id}`}
+          onClick={onDismiss}
+        >
+          Dismiss
+        </Button>
+      ) : null}
+      <span className="sr-only" role="status" aria-live="polite">
+        {busy ? `Syncing ${ticket.id}` : ""}
+      </span>
+    </ButtonRow>
   );
+}
+
+/**
+ * The errors of one ticket's sync: the failure, or a Cancel that did not
+ * work. Render it below the row so a long message wraps at the row's width.
+ */
+export function SyncErrors({ state, className }: { state: SyncState; className?: string }) {
+  if (state.kind === "failed") {
+    return (
+      <div className={className}>
+        <InlineError error={state.error} />
+      </div>
+    );
+  }
+  if (state.kind === "busy" && state.cancelError) {
+    return (
+      <div className={className}>
+        <InlineError error={state.cancelError} />
+      </div>
+    );
+  }
+  return null;
 }
 
 /** The issue a synced ticket became: its id and a button to open it. */
@@ -177,16 +196,19 @@ export function SyncButton({
   className?: string;
 }) {
   const { stateOf, sync, cancel, dismiss } = useTicketSync(onSynced);
+  const state = stateOf(ticket.id);
   return (
-    <SyncControls
-      ticket={ticket}
-      state={stateOf(ticket.id)}
-      onSync={() => void sync(ticket)}
-      onCancel={() => void cancel(ticket.id)}
-      onDismiss={() => void dismiss(ticket.id, ticket.meeting)}
-      canSync={canSync}
-      disabled={disabled}
-      className={className}
-    />
+    <div className={cn("flex flex-col gap-3", className)}>
+      <SyncControls
+        ticket={ticket}
+        state={state}
+        onSync={() => void sync(ticket)}
+        onCancel={() => void cancel(ticket.id)}
+        onDismiss={() => void dismiss(ticket.id, ticket.meeting)}
+        canSync={canSync}
+        disabled={disabled}
+      />
+      {ticket.syncedTo === null && canSync ? <SyncErrors state={state} /> : null}
+    </div>
   );
 }
