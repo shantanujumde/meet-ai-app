@@ -99,6 +99,21 @@ describe("Review while its meeting records", () => {
     await Promise.resolve();
     expect(readMeeting).toHaveBeenCalledTimes(1);
   });
+
+  test("the finished transcript sits in a focusable scroll box under its heading", async () => {
+    recording({ phase: "idle" });
+    readMeeting.mockResolvedValueOnce(detail([transcriptLine({ text: "From the file." })]));
+    renderReview();
+
+    const box = (await screen.findAllByRole("region", { name: "Transcript" })).find(
+      (el) => el.getAttribute("tabindex") === "0",
+    ) as HTMLElement;
+    expect(box).toBeTruthy();
+    expect(box.className).toContain("overflow-y-auto");
+    expect(box.className).toContain("relative");
+    expect(box.querySelector("ol.transcript")).not.toBeNull();
+    expect(box.contains(screen.getByRole("heading", { name: "Transcript" }))).toBe(false);
+  });
 });
 
 /**
