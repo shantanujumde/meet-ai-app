@@ -14,7 +14,9 @@ describe("WatchProblemNote", () => {
   test("shows the problem pulled when the page opens", async () => {
     ipc.meetingsWatchProblem.mockResolvedValue("too many folders");
     render(<WatchProblemNote />);
-    await waitFor(() => expect(screen.getByRole("status").textContent).toContain(WATCH_PROBLEM_TEXT));
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain(WATCH_PROBLEM_TEXT),
+    );
     expect(screen.getByText("too many folders")).toBeTruthy();
   });
 
