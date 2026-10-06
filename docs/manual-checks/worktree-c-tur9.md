@@ -56,9 +56,10 @@ or run a signed-in CLI, so none was done.
 
 No real CLI was run from this ticket (0 of the 3 allowed probes used). The
 flags were measured by TUR-4 and TUR-5; the new code only feeds them.
-`claude auth login` as the sign-in command is assumed, not checked: TUR-6
-measured `claude auth status`, but nobody ran `claude auth --help`. If it is
-wrong, change `AgentCliId::sign_in_args` in `src-tauri/src/agent_setup/view.rs`.
+The sign-in commands were checked on 2026-10-06 against claude 2.1.290 and
+codex 0.152.1: `claude auth --help` lists `login`, and `codex login --help`
+shows that bare `codex login` signs in. Both match `AgentCliId::sign_in_args`
+in `src-tauri/src/agent_setup/view.rs`. If a CLI changes, update it there.
 
 ## Not done here, on purpose
 
