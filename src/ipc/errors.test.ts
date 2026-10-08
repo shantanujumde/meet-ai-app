@@ -117,3 +117,12 @@ describe("agent and config errors have their own wording (TUR-118)", () => {
     expect(copyFor(error("app", "agent-schema-mismatch"))).toEqual(a);
   });
 });
+
+describe("sync errors point at the tracker settings (TUR-113)", () => {
+  test.each(["sync-unreachable", "sync-refused"])("%s offers Open Tracker settings", (kind) => {
+    const copy = copyFor(error("app", kind));
+    expect(copy.actionLabel).toBe("Open Tracker settings");
+    expect(copy.remedy).toEqual({ action: "open-tracker-settings" });
+    expect(`${copy.headline} ${copy.body}`).not.toContain("\u2014");
+  });
+});

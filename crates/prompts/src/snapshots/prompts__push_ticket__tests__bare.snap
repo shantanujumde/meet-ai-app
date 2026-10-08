@@ -16,7 +16,7 @@ Title: Write the release notes
 ## The issue
 
 - Title: the task's title.
-- Description: the task's details. End it with one line saying the issue came from meet-ai task TICK-0001.
+- Description (the issue's body): one line saying the task has no details yet. End it with one line saying the issue came from meet-ai task TICK-0001. Never leave the description empty and never put it only in a comment.
 - If the tracker needs a team, project or repository and nothing here says which, use the user's default, or the only one there is. Do not ask.
 - Leave the issue unassigned.
 - Create exactly one issue. Do not search for, read or change any other issue.
@@ -25,6 +25,11 @@ Title: Write the release notes
 
 Reply with only this JSON and nothing else:
 
-{"external_id": "<the new issue's key, e.g. ENG-42, or owner/repo#12 on GitHub>", "external_url": "<the new issue's web address, starting with https://>"}
+{"external_id": "<the new issue's key, e.g. ENG-42, or owner/repo#12 on GitHub>", "external_url": "<the new issue's web address, starting with https://>", "refused_reason": null}
 
-If the issue could not be created for any reason (the tool is missing, the call was refused, the tracker needs sign-in, or it returned an error), reply with {"external_id": null, "external_url": null}. Never make up a key or a web address.
+If the issue could not be created, set "external_id" and "external_url" to null, and set "refused_reason" like this:
+
+- The tracker answered and said no (no permission, the team, project or repository was not found, a field it requires was missing): its reason in a few plain words, e.g. "no permission to create issues in team ENG".
+- The tool is missing, the server needs sign-in, or it could not be reached: null.
+
+Never make up a key, a web address or a reason.

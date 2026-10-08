@@ -265,6 +265,7 @@ duration_sec: 2714
 attendees: [Shantanu, Priya, Dev]        # from EventKit when available
 calendar_event_id: "ABC123"              # optional
 agent_notes: off                          # optional; user turned notes off for this meeting (A11)
+retired_tickets: [TICK-0003]              # optional; suggested tasks the user discarded, numbers never reused (A26)
 repo: ~/apps/api                          # optional link
 analyzed_by: claude-code                  # which agent: claude-code | codex | clipboard (A11)
 analyzed_model: opus                      # model the agent ran (A11)
@@ -545,6 +546,19 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 ---
 
 ## Amendments
+
+### A26 — 2026-10-06 · A meeting's tasks are suggestions until approved into Tickets; meeting.md gains retired_tickets; Sync errors by cause (amends §3.1, §3.2, §3.3 and A11's Sync; TUR-113)
+
+The notes run wrote each task as a ticket in the meeting's own `tickets/` folder, and the Tickets screen read only the root's `tickets/`, so a meeting could list five tasks while Tickets said "No tickets yet". The owner decided (2026-10-06) that the tasks a notes run finds are **suggestions** the user approves.
+
+- **Suggested** is a ticket file in `<meeting>/tickets/`, where the notes run (and the clipboard path) already writes it. Nothing about the file changes.
+- **Approved** is the same file moved to `<root>/tickets/`, beside the hand-made tickets, keeping its `id` and `meeting:`; a missing `meeting:` or `status:` is filled in (`status: open`). The meeting still lists it, as every root ticket whose `meeting:` names it, and its line stays in the meeting's Action Items: a notes run lists both the meeting's own tickets and the root tickets that name it there. Tickets lists every file in `<root>/tickets/`, the approved ones labelled with their meeting's title.
+- **Discarded** is the file deleted. Its id is added to a new `meeting.md` key, `retired_tickets` (a list of ids), and its line leaves Action Items. The `agent_tickets` record already kept a deleted ticket's number from coming back, but only until the next notes run rewrote the record; `retired_tickets` is never rewritten, and every writer that numbers tickets (a notes run, a hand-made ticket) counts it across the whole root.
+- **No re-run brings an approved or discarded task back**: to a notes run either is a ticket gone from the meeting's folder, the same as one the user deleted.
+- Approve, Approve all and Discard hold the meeting-writers lock (`lock_meeting_writers`), so they never land in the middle of a notes run numbering the same tickets. Approve is one `rename` on the same disk: the file is in one folder or the other, never both. An id already in `<root>/tickets/` is refused, never overwritten. Approve all skips (and logs) a file it cannot move, such as one with broken frontmatter, and moves the rest.
+- **Update step:** at launch, on the blocking pool, every meeting-folder ticket that has `synced_to` set counts as approved and moves to `<root>/tickets/`; the rest stay suggestions. Each move is logged; a second launch finds nothing to move.
+- **Descriptions:** the notes prompt asks for every task's `details` as 1 to 3 sentences of what to do and why, never empty. The push-ticket prompt puts the details in the issue's body word for word.
+- **Sync errors by cause.** The sync reply schema gains `refused_reason` (a string or null; required, as Codex's strict schemas need every key): the tracker's own reason when it said no. A run with no issue is `sync-refused` when that reason is there, and `sync-unreachable` (which replaces `sync-not-done`) when it is not: the MCP server is missing, signed out or could not be reached. A missing or signed-out agent CLI keeps `agent-not-installed` / `agent-not-signed-in`, now naming the CLI and the command that signs it in; a timed-out or cancelled run says "Sending stopped before it finished. Press Retry." No tracker set up is not an error: such a ticket is just not sent.
 
 ### A25 — 2026-10-07 · Record starts at once; the system-audio check runs during the recording (amends §8.1's onboarding row, A7, and TUR-87's H2 mic-only rule; TUR-136)
 

@@ -268,6 +268,22 @@ export const commands = {
 	 *  ticket file and must be `https://`; the webview never opens a URL itself.
 	 */
 	openSyncedIssue: (ticketId: string, meetingId: string | null) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("open_synced_issue", { ticketId, meetingId })),
+	/**
+	 *  Approve one of a meeting's suggested tasks: it moves to Tickets, keeping
+	 *  its id and meeting. Returns it as Tickets now lists it.
+	 */
+	approveTask: (meetingId: string, ticketId: string) => typedError<meet_ai_lib_tickets_TicketSummary, meet_ai_lib_error_UiError>(__TAURI_INVOKE("approve_task", { meetingId, ticketId })),
+	/**
+	 *  Approve every suggested task of a meeting that is still a suggestion.
+	 *  Returns the meeting's tasks as they now are, as `meeting_tasks` does. A
+	 *  task whose file cannot be moved stays a suggestion.
+	 */
+	approveAllTasks: (meetingId: string) => typedError<meet_ai_lib_tickets_TicketSummary[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("approve_all_tasks", { meetingId })),
+	/**
+	 *  Discard one of a meeting's suggested tasks: its file is deleted and its
+	 *  number is never handed out again.
+	 */
+	discardTask: (meetingId: string, ticketId: string) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("discard_task", { meetingId, ticketId })),
 	/**  The current tracker settings. */
 	trackerSettings: () => typedError<meet_ai_lib_sync_tracker_TrackerSettings, meet_ai_lib_error_UiError>(__TAURI_INVOKE("tracker_settings")),
 	/**
@@ -1391,6 +1407,17 @@ export type meet_ai_lib_tickets_TicketSummary = {
 	externalId: string | null,
 	/**  The issue's web address. */
 	externalUrl: string | null,
+	/**
+	 *  Still a suggestion in its meeting's own `tickets/` folder, waiting to
+	 *  be approved or discarded (SPEC A26). `false` for a ticket in Tickets.
+	 */
+	suggested: boolean,
+	/**  Who it is for (the file's `assignee`). */
+	owner: string | null,
+	/**  When it is due, as said in the meeting (the body's `Due: X.` line). */
+	due: string | null,
+	/**  The title of the meeting it came from, for "From: <meeting>". */
+	meetingTitle: string | null,
 };
 
 /**  One of today's events, as the Today pane shows it. */

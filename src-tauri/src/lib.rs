@@ -168,6 +168,8 @@ pub fn run() {
             detection::start_reminders(_app.handle(), detection_config.calendar);
             // TUR-100: notice edits made to the meetings folder outside the app.
             watch::state(_app.handle()).restart(_app.handle());
+            // TUR-113: tickets synced before suggestions existed move to Tickets.
+            tickets::start_migration(_app.handle());
             // TUR-101: open the search index now, rebuilding it if it is missing.
             {
                 let handle = _app.handle().clone();

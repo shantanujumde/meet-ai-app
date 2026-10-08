@@ -57,7 +57,7 @@ Each transcript line reads `[HH:MM:SS] Speaker: text`. "You" is the user; "Other
 - **open_questions**: each question that was raised and not answered.
 - **tasks**: each piece of work someone committed to do or was asked to do. For each one:
   - **title**: a short line saying what to do, e.g. "Ship the search box".
-  - **details**: what needs doing, plus any context from the meeting that helps.
+  - **details**: the task's description: what to do and why, in 1 to 3 sentences, from what was said in the meeting. Always write it, even for a small task; never leave it empty. The user reads it to decide whether to keep the task, and it becomes the body of the ticket in their tracker.
   - **owner**: the person who committed or was asked. If no one was named, null.
   - **due**: the deadline as it was said, e.g. "Friday". If none was said, null.
   - **transcript_ref**: the HH:MM:SS of the transcript line the task comes from, without the brackets, e.g. 00:00:05.
@@ -103,7 +103,7 @@ Write the notes into these files yourself. Do not change any other file.
    external_url: null
    ---
 
-   The task's details. Due: Friday.
+   The task's description: what to do and why, from the meeting. Due: Friday.
    ```
 
    Use `assignee: null` when there is no owner, and leave out "Due:" when there is no due date.

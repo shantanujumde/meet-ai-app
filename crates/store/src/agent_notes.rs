@@ -15,7 +15,9 @@
 //! The text matches what the copy-prompt fallback asks the agent to write
 //! (`crates/prompts/templates/wrap-up.md`), so a meeting looks the same
 //! whichever path made its notes. Action Items lists every ticket in the
-//! meeting's folder, in number order, not only the ones this run wrote.
+//! meeting's folder, and the approved ones in the root's `tickets/` that name
+//! it ([`crate::suggested`]), in number order, not only the ones this run
+//! wrote.
 //!
 //! Everything goes through [`Meeting`] and [`Ticket`], so the rules those
 //! types keep apply here too: a `meeting.md` with broken frontmatter is
@@ -73,10 +75,12 @@ use crate::ticket::{self, Status, Ticket};
 use crate::watcher::SelfWrites;
 use crate::{Error, MEETING_FILE, TICKETS_DIR};
 
+mod actions;
 mod retired;
 mod text;
 
-pub use retired::highest_recorded_ticket_number;
+pub use retired::{RETIRED_TICKETS_KEY, RETIRED_TITLES_KEY, highest_recorded_ticket_number};
+pub(crate) use retired::{retire, retire_title};
 
 /// The `meeting.md` frontmatter key that records which tickets the app wrote,
 /// and what each file held when it did. Each value is one SHA-256 in hex, or a
@@ -194,14 +198,20 @@ pub fn write(
     // too keeps a deleted top ticket from coming back under its old name.
     let next = highest_ticket_number(root)?
         .max(earlier.highest)
+        .max(highest_recorded_ticket_number(root)?)
         .saturating_add(1);
-    let plan = plan(
-        &tickets_dir,
-        meeting_id,
-        &notes.tasks,
-        earlier.replaceable,
-        next,
-    )?;
+    // A task the user approved or discarded does not come back (SPEC A26).
+    let settled = retired::settled_titles(root, meeting_id, &meeting);
+    let tasks: Vec<Task> = notes
+        .tasks
+        .iter()
+        .filter(|task| {
+            let title = text::clean(task).title;
+            !settled.iter().any(|t| retired::same_title(t, &title))
+        })
+        .cloned()
+        .collect();
+    let plan = plan(&tickets_dir, meeting_id, &tasks, earlier.replaceable, next)?;
     outcome.kept = earlier.kept;
 
     // Step 1: say which tickets are about to change, in both their states.
@@ -252,7 +262,7 @@ pub fn write(
         meeting.frontmatter.set_str(k, Some(v));
     }
     set_record(&mut meeting, record);
-    let actions = action_items(&tickets_dir, &plan.writes);
+    let actions = actions::action_items(root, meeting_id, &tickets_dir, &plan.writes);
     text::fill_sections(&mut meeting, notes, &actions);
     save_meeting(&meeting_path, &meeting, on_disk.as_deref(), self_writes)?;
     Ok(outcome)
@@ -539,42 +549,6 @@ fn plan<'a>(
         });
     }
     Ok(Plan { writes, leftovers })
-}
-
-/// One line per ticket in the meeting's folder, in number order. The tickets
-/// this run wrote use the task's words; the rest are read back from disk.
-fn action_items(tickets_dir: &Path, writes: &[Planned<'_>]) -> Vec<String> {
-    let mut ids: Vec<(u32, String)> = std::fs::read_dir(tickets_dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter_map(|entry| {
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    let id = name.strip_suffix(".md")?.to_owned();
-                    Some((ticket::parse_id(&id)?, id))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    ids.sort();
-    ids.into_iter()
-        .map(|(_, id)| {
-            if let Some(planned) = writes.iter().find(|p| p.id == id) {
-                let task = text::clean(planned.task);
-                return text::action_line(
-                    &id,
-                    &task.title,
-                    task.owner.as_deref(),
-                    task.due.as_deref(),
-                );
-            }
-            let found = Ticket::read(&ticket_path(tickets_dir, &id)).ok();
-            let title = found.as_ref().and_then(Ticket::title).unwrap_or_default();
-            let owner = found.as_ref().and_then(Ticket::assignee);
-            let due = found.as_ref().and_then(|t| text::due_in(&t.body));
-            text::action_line(&id, &title, owner.as_deref(), due.as_deref())
-        })
-        .collect()
 }
 
 #[cfg(test)]

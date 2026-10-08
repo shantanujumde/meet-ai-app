@@ -1,20 +1,34 @@
-//! Listing and hand-creating tickets for the Tickets screen (TUR-102).
+//! Listing, hand-creating and approving tickets for the Tickets screen
+//! (TUR-102, TUR-113).
 //!
-//! A thin adapter over `store::ticket`: `store` owns the file format, this
-//! module turns it into the shape the webview renders and picks the next id:
-//! the highest across the whole meetings root plus one, under the same lock
-//! and rules a notes run numbers its tickets by (`store::agent_notes`).
+//! A thin adapter over `store::ticket` and `store::suggested`: `store` owns
+//! the file format, this module turns it into the shape the webview renders
+//! and picks the next id: the highest across the whole meetings root plus
+//! one, under the same lock and rules a notes run numbers its tickets by
+//! (`store::agent_notes`).
+//!
+//! The Tickets screen lists `<root>/tickets/`: the hand-made tickets, and the
+//! suggested tasks the user approved from a meeting, labelled with that
+//! meeting's title (SPEC A26). The suggestions themselves stay in their
+//! meeting's own `tickets/` folder until approved or discarded.
+//!
 //! As everywhere else, a broken ticket file is a badge, not an error (SPEC §7).
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use store::agent_notes;
+use store::meeting::Meeting;
+use store::suggested;
 use store::ticket::{self, Ticket};
+use store::watcher::SelfWrites;
+use tauri::{AppHandle, Manager as _};
 
-use crate::error::UiError;
+use crate::error::{UiError, on_blocking_pool};
 use crate::meetings;
+use crate::sync::{TICKET_MISSING, due_in, meeting_tasks_in};
 
 /// How many times `create` bumps the id when another writer took it first.
 const CREATE_ATTEMPTS: u32 = 5;
@@ -40,9 +54,18 @@ pub struct TicketSummary {
     pub external_id: Option<String>,
     /// The issue's web address.
     pub external_url: Option<String>,
+    /// Still a suggestion in its meeting's own `tickets/` folder, waiting to
+    /// be approved or discarded (SPEC A26). `false` for a ticket in Tickets.
+    pub suggested: bool,
+    /// Who it is for (the file's `assignee`).
+    pub owner: Option<String>,
+    /// When it is due, as said in the meeting (the body's `Due: X.` line).
+    pub due: Option<String>,
+    /// The title of the meeting it came from, for "From: <meeting>".
+    pub meeting_title: Option<String>,
 }
 
-/// Every ticket under the meetings root, newest first.
+/// Every ticket in Tickets (`<root>/tickets/`), newest first.
 pub fn list() -> Result<Vec<TicketSummary>, UiError> {
     list_in(&meetings::root()?)
 }
@@ -51,6 +74,187 @@ pub fn list() -> Result<Vec<TicketSummary>, UiError> {
 pub fn create(title: &str, body: &str) -> Result<TicketSummary, UiError> {
     create_in(&meetings::root()?, title, body)
 }
+
+// --- approving suggested tasks (TUR-113) -------------------------------------
+
+/// Approve one of a meeting's suggested tasks: it moves to Tickets, keeping
+/// its id and meeting. Returns it as Tickets now lists it.
+#[tauri::command]
+#[specta::specta]
+pub async fn approve_task(
+    app: AppHandle,
+    meeting_id: String,
+    ticket_id: String,
+) -> Result<TicketSummary, UiError> {
+    on_blocking_pool(move || {
+        let self_writes = own_writes(&app);
+        let approved = crate::folder_move::writing_in_root(&app, |root| {
+            approve_in(root, &meeting_id, &ticket_id, &self_writes)
+        });
+        crate::search::meeting_written(&app, &meeting_id);
+        approved
+    })
+    .await?
+}
+
+/// Approve every suggested task of a meeting that is still a suggestion.
+/// Returns the meeting's tasks as they now are, as `meeting_tasks` does. A
+/// task whose file cannot be moved stays a suggestion.
+#[tauri::command]
+#[specta::specta]
+pub async fn approve_all_tasks(
+    app: AppHandle,
+    meeting_id: String,
+) -> Result<Vec<TicketSummary>, UiError> {
+    on_blocking_pool(move || {
+        let self_writes = own_writes(&app);
+        let tasks = crate::folder_move::writing_in_root(&app, |root| {
+            approve_all_in(root, &meeting_id, &self_writes)
+        });
+        crate::search::meeting_written(&app, &meeting_id);
+        tasks
+    })
+    .await?
+}
+
+/// Discard one of a meeting's suggested tasks: its file is deleted and its
+/// number is never handed out again.
+#[tauri::command]
+#[specta::specta]
+pub async fn discard_task(
+    app: AppHandle,
+    meeting_id: String,
+    ticket_id: String,
+) -> Result<(), UiError> {
+    on_blocking_pool(move || {
+        let self_writes = own_writes(&app);
+        let discarded = crate::folder_move::writing_in_root(&app, |root| {
+            discard_in(root, &meeting_id, &ticket_id, &self_writes)
+        });
+        crate::search::meeting_written(&app, &meeting_id);
+        discarded
+    })
+    .await?
+}
+
+/// The update step for tickets from before suggestions: soon after launch, on
+/// the blocking pool, move every meeting-folder ticket that was already synced
+/// to Tickets ([`migrate_synced`]).
+pub fn start_migration(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let self_writes = own_writes(&app);
+        let moved =
+            crate::folder_move::writing_in_root(&app, |root| migrate_synced(root, &self_writes));
+        match moved {
+            Ok(moved) => {
+                for meeting_id in moved.iter().map(|m| m.meeting_id.as_str()) {
+                    crate::search::meeting_written(&app, meeting_id);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(message = %error.message, "could not move synced tickets to Tickets");
+            }
+        }
+    });
+}
+
+/// Move every ticket in a meeting's folder that has `synced_to` set to
+/// `<root>/tickets/`: it was synced, so it counts as approved. The rest stay
+/// suggestions. Idempotent: a second run finds nothing to move. Each move is
+/// logged.
+pub(crate) fn migrate_synced(
+    root: &Path,
+    self_writes: &SelfWrites,
+) -> Result<Vec<suggested::Moved>, UiError> {
+    let moved = suggested::approve_synced(root, self_writes)?;
+    for each in &moved {
+        tracing::info!(
+            meeting_id = %each.meeting_id,
+            ticket_id = %each.ticket_id,
+            "moved a synced ticket from its meeting to Tickets"
+        );
+    }
+    Ok(moved)
+}
+
+fn approve_in(
+    root: &Path,
+    meeting_id: &str,
+    ticket_id: &str,
+    self_writes: &SelfWrites,
+) -> Result<TicketSummary, UiError> {
+    check_ticket_id(ticket_id)?;
+    let path = suggested::approve(root, meeting_id, ticket_id, self_writes)
+        .map_err(|error| suggestion_error(error, ticket_id))?;
+    let mut summary = match Ticket::read(&path) {
+        Ok(found) => summarize(ticket_id, &found),
+        Err(_) => unreadable(ticket_id),
+    };
+    summary.meeting.get_or_insert_with(|| meeting_id.to_owned());
+    name_meetings(root, std::slice::from_mut(&mut summary));
+    Ok(summary)
+}
+
+fn approve_all_in(
+    root: &Path,
+    meeting_id: &str,
+    self_writes: &SelfWrites,
+) -> Result<Vec<TicketSummary>, UiError> {
+    suggested::approve_all(root, meeting_id, self_writes)?;
+    meeting_tasks_in(root, meeting_id)
+}
+
+fn discard_in(
+    root: &Path,
+    meeting_id: &str,
+    ticket_id: &str,
+    self_writes: &SelfWrites,
+) -> Result<(), UiError> {
+    check_ticket_id(ticket_id)?;
+    suggested::discard(root, meeting_id, ticket_id, self_writes)
+        .map_err(|error| suggestion_error(error, ticket_id))
+}
+
+/// A ticket id, never a path: it comes from the window.
+fn check_ticket_id(ticket_id: &str) -> Result<(), UiError> {
+    if ticket::parse_id(ticket_id).is_some() {
+        return Ok(());
+    }
+    Err(UiError::app(
+        "bad-ticket-id",
+        format!("{ticket_id:?} is not a ticket id."),
+    ))
+}
+
+/// `store::suggested`'s refusals in the window's words.
+fn suggestion_error(error: store::Error, ticket_id: &str) -> UiError {
+    match error {
+        store::Error::Io(io) if io.kind() == std::io::ErrorKind::NotFound => UiError::app(
+            TICKET_MISSING,
+            format!(
+                "{ticket_id} is not a suggested task of this meeting any more. It may have been approved or discarded already."
+            ),
+        ),
+        store::Error::Io(io) if io.kind() == std::io::ErrorKind::AlreadyExists => UiError::app(
+            "ticket-already-in-tickets",
+            format!(
+                "Tickets already has a {ticket_id}, so this task stays here. Rename or remove the one in Tickets, then approve this one again."
+            ),
+        ),
+        other => other.into(),
+    }
+}
+
+/// The watcher's record of this process's own writes, so the files moved
+/// here do not come back as outside changes (SPEC §4).
+fn own_writes(app: &AppHandle) -> SelfWrites {
+    app.try_state::<crate::watch::MeetingsWatch>()
+        .map(|watch| watch.own_writes().clone())
+        .unwrap_or_default()
+}
+
+// --- listing ---------------------------------------------------------------
 
 fn tickets_dir(root: &Path) -> PathBuf {
     root.join(store::TICKETS_DIR)
@@ -67,6 +271,10 @@ fn summarize(stem: &str, ticket: &Ticket) -> TicketSummary {
         synced_to: ticket.synced_to(),
         external_id: ticket.frontmatter.get_str("external_id"),
         external_url: ticket.frontmatter.get_str("external_url"),
+        suggested: false,
+        owner: ticket.assignee().filter(|o| !o.trim().is_empty()),
+        due: due_in(&ticket.body),
+        meeting_title: None,
     }
 }
 
@@ -79,6 +287,63 @@ pub(crate) fn summary_of(stem: &str, ticket: &Ticket) -> TicketSummary {
 /// [`list`] under `root`, for the Sync commands.
 pub(crate) fn list_under(root: &Path) -> Result<Vec<TicketSummary>, UiError> {
     list_in(root)
+}
+
+/// A ticket file that could not be read, still listed, flagged, so it is not
+/// silently lost.
+pub(crate) fn unreadable(stem: &str) -> TicketSummary {
+    TicketSummary {
+        id: stem.to_owned(),
+        title: stem.to_owned(),
+        status: None,
+        meeting: None,
+        body: String::new(),
+        has_problems: true,
+        synced_to: None,
+        external_id: None,
+        external_url: None,
+        suggested: false,
+        owner: None,
+        due: None,
+        meeting_title: None,
+    }
+}
+
+/// Fill in each row's `meeting_title`: the meeting's `meeting.md` title, or
+/// its folder name made readable. Each meeting is read once.
+pub(crate) fn name_meetings(root: &Path, rows: &mut [TicketSummary]) {
+    let mut titles: HashMap<String, Option<String>> = HashMap::new();
+    for row in rows.iter_mut() {
+        let Some(id) = row.meeting.clone() else {
+            continue;
+        };
+        let title = titles
+            .entry(id)
+            .or_insert_with_key(|id| meeting_title(root, id))
+            .clone();
+        row.meeting_title = title;
+    }
+}
+
+/// The title of meeting `meeting_id` for "From: <meeting>". `None` only for
+/// an id that is not a folder name.
+fn meeting_title(root: &Path, meeting_id: &str) -> Option<String> {
+    let dir = store::folder::meeting_dir(root, meeting_id).ok()?;
+    let written = Meeting::read(&dir.join(store::MEETING_FILE))
+        .ok()
+        .flatten()
+        .and_then(|meeting| meeting.title())
+        .filter(|title| !title.trim().is_empty());
+    written.or_else(|| Some(folder_title(meeting_id)))
+}
+
+/// The folder's slug made readable, as a meeting with no `meeting.md` is
+/// titled.
+fn folder_title(meeting_id: &str) -> String {
+    match store::folder_name::split_folder_name(meeting_id) {
+        (_, _, Some(slug)) => store::folder_name::prettify_slug(slug),
+        _ => meeting_id.to_owned(),
+    }
 }
 
 /// The `.md` files in the tickets folder as `(file stem, path)`. A missing
@@ -107,24 +372,15 @@ fn list_in(root: &Path) -> Result<Vec<TicketSummary>, UiError> {
     for (stem, path) in ticket_files(root)? {
         let summary = match Ticket::read(&path) {
             Ok(ticket) => summarize(&stem, &ticket),
-            // Unreadable file: still show it, flagged, so it is not silently lost.
-            Err(_) => TicketSummary {
-                id: stem.clone(),
-                title: stem.clone(),
-                status: None,
-                meeting: None,
-                body: String::new(),
-                has_problems: true,
-                synced_to: None,
-                external_id: None,
-                external_url: None,
-            },
+            Err(_) => unreadable(&stem),
         };
         rows.push((ticket::parse_id(&summary.id), summary));
     }
     // Newest (highest number) first; ids that are not numbers go last.
     rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.id.cmp(&b.1.id)));
-    Ok(rows.into_iter().map(|(_, s)| s).collect())
+    let mut rows: Vec<TicketSummary> = rows.into_iter().map(|(_, s)| s).collect();
+    name_meetings(root, &mut rows);
+    Ok(rows)
 }
 
 fn create_in(root: &Path, title: &str, body: &str) -> Result<TicketSummary, UiError> {
@@ -366,6 +622,205 @@ mod tests {
         assert_eq!(
             create_in(root, "By hand", "").expect("create").id,
             "TICK-0002"
+        );
+    }
+
+    // --- suggested tasks (TUR-113) ---------------------------------------------
+
+    /// A meeting titled "Platform standup" whose notes run suggested the
+    /// three tasks, TICK-0001 to TICK-0003.
+    fn with_suggestions(name: &str) -> tempfile::TempDir {
+        let root_dir = temp_root(name);
+        let root = root_dir.path();
+        meeting_folder(root);
+        write_notes(root, &["Load test", "Move sessions to Redis", "Runbook"]);
+        let meeting_md = root.join(MEETING).join(store::MEETING_FILE);
+        let mut meeting = Meeting::read(&meeting_md)
+            .expect("read")
+            .expect("meeting.md");
+        meeting
+            .frontmatter
+            .set_str("title", Some("Platform standup"));
+        meeting.write(&meeting_md).expect("retitle");
+        root_dir
+    }
+
+    fn suggestion(root: &Path, id: &str) -> PathBuf {
+        root.join(MEETING)
+            .join(store::TICKETS_DIR)
+            .join(format!("{id}.md"))
+    }
+
+    #[test]
+    fn approve_moves_a_suggestion_to_tickets_labelled_with_its_meeting() {
+        let root_dir = with_suggestions("approve");
+        let root = root_dir.path();
+        let writes = SelfWrites::default();
+        assert!(
+            list_in(root).expect("list").is_empty(),
+            "suggestions are not in Tickets"
+        );
+
+        let approved = approve_in(root, MEETING, "TICK-0002", &writes).expect("approve");
+
+        assert_eq!(approved.id, "TICK-0002");
+        assert_eq!(approved.title, "Move sessions to Redis");
+        assert_eq!(approved.meeting.as_deref(), Some(MEETING));
+        assert_eq!(approved.meeting_title.as_deref(), Some("Platform standup"));
+        assert_eq!(approved.status.as_deref(), Some("open"));
+        assert!(!approved.suggested);
+        assert!(
+            approved.body.contains("From the call."),
+            "{}",
+            approved.body
+        );
+        assert!(!suggestion(root, "TICK-0002").exists());
+
+        let listed = list_in(root).expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "TICK-0002");
+        assert_eq!(listed[0].meeting_title.as_deref(), Some("Platform standup"));
+
+        // Still the meeting's task, no longer a suggestion.
+        let tasks = meeting_tasks_in(root, MEETING).expect("tasks");
+        let rows: Vec<(&str, bool)> = tasks.iter().map(|t| (t.id.as_str(), t.suggested)).collect();
+        assert_eq!(
+            rows,
+            [
+                ("TICK-0001", true),
+                ("TICK-0002", false),
+                ("TICK-0003", true)
+            ]
+        );
+    }
+
+    #[test]
+    fn approving_twice_or_a_bad_id_says_so() {
+        let root_dir = with_suggestions("approve-twice");
+        let root = root_dir.path();
+        let writes = SelfWrites::default();
+        approve_in(root, MEETING, "TICK-0001", &writes).expect("approve");
+        let again = approve_in(root, MEETING, "TICK-0001", &writes).expect_err("gone");
+        assert_eq!(again.kind, TICKET_MISSING);
+        let bad = approve_in(root, MEETING, "../TICK-0001", &writes).expect_err("bad");
+        assert_eq!(bad.kind, "bad-ticket-id");
+        assert_eq!(
+            discard_in(root, MEETING, "notes", &writes)
+                .expect_err("bad")
+                .kind,
+            "bad-ticket-id"
+        );
+    }
+
+    #[test]
+    fn approve_never_overwrites_a_ticket_already_in_tickets() {
+        let root_dir = with_suggestions("approve-taken");
+        let root = root_dir.path();
+        fs::create_dir_all(tickets_dir(root)).expect("dir");
+        fs::write(tickets_dir(root).join("TICK-0001.md"), "theirs").expect("write");
+        let error =
+            approve_in(root, MEETING, "TICK-0001", &SelfWrites::default()).expect_err("taken");
+        assert_eq!(error.kind, "ticket-already-in-tickets");
+        assert!(suggestion(root, "TICK-0001").exists());
+    }
+
+    #[test]
+    fn approve_all_moves_the_rest_and_returns_the_meetings_tasks() {
+        let root_dir = with_suggestions("approve-all");
+        let root = root_dir.path();
+        let writes = SelfWrites::default();
+        discard_in(root, MEETING, "TICK-0002", &writes).expect("discard");
+
+        let tasks = approve_all_in(root, MEETING, &writes).expect("approve all");
+
+        let rows: Vec<(&str, bool)> = tasks.iter().map(|t| (t.id.as_str(), t.suggested)).collect();
+        assert_eq!(rows, [("TICK-0001", false), ("TICK-0003", false)]);
+        let ids: Vec<String> = list_in(root)
+            .expect("list")
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids, ["TICK-0003", "TICK-0001"]);
+    }
+
+    #[test]
+    fn discarding_the_highest_task_keeps_its_number_from_a_hand_made_ticket() {
+        let root_dir = with_suggestions("discard");
+        let root = root_dir.path();
+        discard_in(root, MEETING, "TICK-0003", &SelfWrites::default()).expect("discard");
+
+        assert!(!suggestion(root, "TICK-0003").exists());
+        let ids: Vec<String> = meeting_tasks_in(root, MEETING)
+            .expect("tasks")
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids, ["TICK-0001", "TICK-0002"]);
+        assert_eq!(
+            create_in(root, "By hand", "").expect("create").id,
+            "TICK-0004"
+        );
+        // A notes re-run does not bring it back, nor take its number.
+        let written = write_notes(root, &["Load test", "Move sessions to Redis", "Runbook"]);
+        assert!(!written.contains(&"TICK-0003".to_owned()), "{written:?}");
+        assert!(!suggestion(root, "TICK-0003").exists());
+
+        let gone = discard_in(root, MEETING, "TICK-0003", &SelfWrites::default())
+            .expect_err("already gone");
+        assert_eq!(gone.kind, TICKET_MISSING);
+    }
+
+    #[test]
+    fn the_update_step_moves_synced_tickets_once() {
+        let root_dir = with_suggestions("migrate");
+        let root = root_dir.path();
+        let path = suggestion(root, "TICK-0002");
+        let mut synced = Ticket::read(&path).expect("read");
+        synced.frontmatter.set_str("synced_to", Some("linear"));
+        synced.frontmatter.set_str("external_id", Some("ENG-42"));
+        synced.write(&path).expect("write");
+
+        let moved = migrate_synced(root, &SelfWrites::default()).expect("migrate");
+
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].ticket_id, "TICK-0002");
+        assert_eq!(moved[0].meeting_id, MEETING);
+        let listed = list_in(root).expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].external_id.as_deref(), Some("ENG-42"));
+        assert_eq!(listed[0].meeting.as_deref(), Some(MEETING));
+        assert!(suggestion(root, "TICK-0001").exists());
+        assert!(suggestion(root, "TICK-0003").exists());
+
+        let again = migrate_synced(root, &SelfWrites::default()).expect("again");
+        assert!(again.is_empty(), "{again:?}");
+    }
+
+    #[test]
+    fn a_ticket_lists_its_owner_and_due_date() {
+        let root_dir = temp_root("owner-due");
+        let root = root_dir.path();
+        meeting_folder(root);
+        let mut notes = notes_with(&["Ship it"]);
+        notes.tasks[0].owner = Some("Priya".to_owned());
+        notes.tasks[0].due = Some("Friday".to_owned());
+        let analysis = agent_notes::Analysis {
+            by: agent_notes::AnalyzedBy::ClaudeCode,
+            model: "sonnet".to_owned(),
+            at: "2026-09-01T15:32:00+05:30".to_owned(),
+        };
+        agent_notes::write(root, MEETING, &notes, &analysis, &SelfWrites::default())
+            .expect("notes");
+        let tasks = meeting_tasks_in(root, MEETING).expect("tasks");
+        assert_eq!(tasks[0].owner.as_deref(), Some("Priya"));
+        assert_eq!(tasks[0].due.as_deref(), Some("Friday"));
+        assert!(tasks[0].suggested);
+        // The title a fresh meeting.md gets: the folder name, made readable.
+        assert_eq!(tasks[0].meeting_title.as_deref(), Some("Standup"));
+        let made = create_in(root, "By hand", "").expect("create");
+        assert_eq!(
+            (made.owner, made.due, made.meeting_title),
+            (None, None, None)
         );
     }
 }
