@@ -137,6 +137,20 @@ SOFTWARE.
     `crates/audio/src/platform/linux/headphones.rs` (the default sink's
     active port read, from `is_headphone_from_default_output_device` in
     `crates/audio-device/src/linux.rs`) (TUR-65)
+  - At commit 259a04ee2e1447dfed150ed08f0a1bb69909b836 (TUR-142):
+    `crates/audio/src/macos/activity.rs` (`mic_users`: the process list
+    walk keeping the processes running input, rewritten from `cidre` to
+    `objc2-core-audio`, from `list_mic_using_apps`),
+    `crates/audio/src/mic_users/naming.rs` (`outermost_app`, from
+    `find_outermost_app`) and `crates/audio/src/mic_users/known.rs` (the
+    Apple call daemon ids, from `APPLE_CALL_DAEMON_IDS`, and the Webex and
+    Teams bundle ids from `MEETING_APP_LIST` in
+    `crates/detect/src/app/macos.rs`), all from
+    `crates/detect/src/list/macos.rs`; the capture-session pids kept as a
+    list in `crates/audio/src/platform/windows/activity.rs` and the source
+    outputs' `application.name` in
+    `crates/audio/src/platform/linux/activity.rs`, from
+    `crates/detect/src/list/windows.rs` and `crates/detect/src/list/linux.rs`
 
 ```
 MIT License
@@ -393,6 +407,23 @@ SOFTWARE.
   - `crates/audio/src/platform/linux/clock.rs` (`host_now_ns`:
     `clock_gettime(CLOCK_MONOTONIC)`, from `monotonic_stream_instant`) from
     `src/host/pipewire/stream.rs` (TUR-38)
+
+## mila
+
+- URL: https://github.com/island-io/mila
+- Licence: Apache-2.0 (full text in our [`LICENSE`](./LICENSE); mila's
+  `NOTICE` text is in our [`NOTICE`](./NOTICE))
+- Copyright: Copyright (c) 2026 Island Technology, Inc.
+- Commit: 605babbd5c2639841fc4ea366f9d3cf9f4a21118
+- Files:
+  - `crates/audio/src/macos/activity.rs` (`process_objects`, `audio_process`
+    and `bundle_id`: the process object list, the `IsRunningInput` read and
+    the owned bundle id string) from `bundleIDsCapturingMicInput`,
+    `isRunningInput` and `processBundleID` in
+    `Mila/Audio/MeetingDetector.swift`, rewritten in Rust (TUR-142)
+  - `crates/audio/src/mic_users/known.rs` (the Zoom, Teams and browser
+    bundle ids, and the browser helper rule) from `supportedApps` in
+    `Mila/Audio/MeetingDetector.swift` (TUR-142)
 
 ## Whisper
 
