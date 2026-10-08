@@ -110,6 +110,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::detection::settings::os_notifications_blocked,
             crate::detection::settings::open_notification_settings,
             crate::detection::settings::send_test_reminder,
+            crate::detection::settings::never_detect_apps,
+            crate::detection::settings::set_never_detect_apps,
             crate::detection::actions::join_reminded_meeting,
             crate::detection::actions::record_reminded_meeting,
             crate::detection::popup::prompt_popup_current,

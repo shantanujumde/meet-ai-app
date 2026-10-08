@@ -442,6 +442,16 @@ export const commands = {
 	 */
 	sendTestReminder: () => __TAURI_INVOKE<boolean>("send_test_reminder"),
 	/**
+	 *  The "Never detect" list (TUR-143): `detection.never_detect`, the apps a
+	 *  prompt's "Never for" added or the user wrote in.
+	 */
+	neverDetectApps: () => typedError<string[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("never_detect_apps")),
+	/**
+	 *  Save the "Never detect" list (the card's remove buttons) and return what
+	 *  was saved. The call-start loop follows from its next reading.
+	 */
+	setNeverDetectApps: (apps: string[]) => typedError<string[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_never_detect_apps", { apps })),
+	/**
 	 *  **Join**: open the reminded meeting's link in the browser or the app that
 	 *  owns it.
 	 */
@@ -1038,6 +1048,8 @@ export type meet_ai_lib_detection_settings_NotificationSettings = {
 	audioActivity: boolean,
 	/**  "Only for meetings with at least N people": `detection.min_attendees`. */
 	minAttendees: number,
+	/**  "Ask to record when a call starts": `detection.call_start` (TUR-143). */
+	callStart: boolean,
 };
 
 /**
@@ -1287,7 +1299,13 @@ export type detect_Signal =
  *  (20 s, see [`activity`]), and no known meeting app explains it — a
  *  call in a browser tab, say.
  */
-{ kind: "audio_activity" };
+{ kind: "audio_activity" } | 
+/**
+ *  A call app or a browser has been using the mic for a while
+ *  ([`call_start`], TUR-143). `app` is its name as the user knows it
+ *  ("WhatsApp", "Google Chrome"); `browser` says the call is in a tab.
+ */
+{ kind: "call"; app: string; browser: boolean };
 
 /**
  *  What the `live_transcript` command returns: enough for a window opened

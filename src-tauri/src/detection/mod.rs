@@ -32,6 +32,8 @@ use tauri::{AppHandle, Manager as _};
 use crate::lock::lock_or_recover;
 
 pub mod actions;
+// TUR-143: a call app or a browser on the mic asks, naming it.
+pub mod call_start;
 pub mod live;
 pub mod merge;
 pub mod notify;
@@ -55,6 +57,8 @@ pub struct Detection {
     live: live::Live,
     /// The events reminded about lately, for the prompt's Join and Record.
     reminded: Mutex<actions::Reminded>,
+    /// Which apps use the mic, and the call-start loop (TUR-143).
+    calls: call_start::Calls,
 }
 
 impl Detection {
@@ -79,6 +83,11 @@ impl Detection {
     /// The mic and speakers have both been in use for a while: the process
     /// loop decides whether that asks, and as what.
     fn audio_activity(&self) {
+        // TUR-143: where the apps on the mic are known, only an unknown one asks.
+        if !self.calls.audio_activity_allowed() {
+            tracing::debug!("mic and speakers in use, but no unknown app on the mic; not asking");
+            return;
+        }
         if let Some(running) = lock_or_recover(&self.running).as_ref() {
             running.audio_activity();
         }
@@ -95,10 +104,8 @@ pub fn start(app: &AppHandle, processes: bool) {
     let recording_app = app.clone();
     let notify_app = app.clone();
     let running = spawn_loop(
-        Switched::new(
-            SysinfoProcesses::new(),
-            switch(app, |config| config.processes),
-        ),
+        // TUR-143: only where the apps on the mic cannot be listed.
+        Switched::new(SysinfoProcesses::new(), call_start::process_switch(app)),
         move || notify::recording(&recording_app),
         move |signal| notify::notify(&notify_app, &signal),
     );

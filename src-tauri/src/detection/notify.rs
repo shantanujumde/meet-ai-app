@@ -84,6 +84,7 @@ pub fn headline(signal: &Signal) -> String {
         Signal::Calendar { title, .. } => title.clone(),
         Signal::Process { process } => format!("{} call", detect::processes::label(process)),
         Signal::AudioActivity => "Audio activity".to_string(),
+        Signal::Call { app, browser } => super::call_start::headline(app, *browser),
     }
 }
 
@@ -91,6 +92,7 @@ pub fn headline(signal: &Signal) -> String {
 pub fn app_name(signal: &Signal) -> Option<String> {
     match signal {
         Signal::Process { process } => Some(detect::processes::label(process).to_string()),
+        Signal::Call { app, .. } => Some(app.clone()),
         Signal::Calendar { .. } | Signal::AudioActivity => None,
     }
 }
@@ -113,6 +115,7 @@ pub fn prompt_for(phase: Phase, signal: &Signal) -> Option<Prompt> {
         title: match signal {
             Signal::Calendar { title, .. } => Some(title.clone()),
             Signal::Process { .. } | Signal::AudioActivity => None,
+            Signal::Call { .. } => None,
         },
         starts_at_ms: None,
         ends_at_ms: None,
@@ -129,6 +132,7 @@ pub fn allowed(config: &crate::config::DetectionConfig, signal: &Signal) -> bool
         Signal::Process { .. } => config.processes,
         Signal::AudioActivity => config.audio_activity,
         Signal::Calendar { .. } => config.calendar,
+        Signal::Call { .. } => config.call_start,
     }
 }
 
@@ -209,6 +213,7 @@ fn body(prompt: &Prompt) -> String {
         Signal::Process { .. } | Signal::AudioActivity => {
             format!("{} Open meet-ai to record it.", prompt.reason)
         }
+        Signal::Call { .. } => format!("{}. Open meet-ai to record it.", prompt.headline),
     }
 }
 
@@ -410,6 +415,54 @@ mod tests {
         let reminder = prompt_for(Phase::Idle, &calendar).expect("asks");
         assert_eq!(reminder.headline, "Standup");
         assert_eq!(reminder.app, None);
+    }
+
+    fn whatsapp() -> Signal {
+        Signal::Call {
+            app: "WhatsApp".to_string(),
+            browser: false,
+        }
+    }
+
+    #[test]
+    fn a_call_prompt_names_the_app_and_offers_never_for_it() {
+        let prompt = prompt_for(Phase::Idle, &whatsapp()).expect("asks when idle");
+        assert_eq!(prompt.headline, "WhatsApp call detected");
+        assert_eq!(prompt.app.as_deref(), Some("WhatsApp"));
+        assert_eq!(prompt.reason, "WhatsApp is using your microphone.");
+        assert_eq!(prompt.title, None);
+        assert_eq!(
+            body(&prompt),
+            "WhatsApp call detected. Open meet-ai to record it."
+        );
+        let chrome = Signal::Call {
+            app: "Google Chrome".to_string(),
+            browser: true,
+        };
+        let prompt = prompt_for(Phase::Idle, &chrome).expect("asks");
+        assert_eq!(prompt.headline, "Call detected in Google Chrome");
+        assert_eq!(prompt.app.as_deref(), Some("Google Chrome"));
+        for phase in [Phase::Starting, Phase::Recording, Phase::Stopping] {
+            assert_eq!(prompt_for(phase, &whatsapp()), None, "{phase:?}");
+        }
+    }
+
+    #[test]
+    fn the_call_start_switch_turns_call_prompts_off() {
+        use crate::config::DetectionConfig;
+        let on = DetectionConfig::default();
+        assert!(allowed(&on, &whatsapp()));
+        let off = DetectionConfig {
+            call_start: false,
+            ..on
+        };
+        assert!(!allowed(&off, &whatsapp()));
+        assert!(allowed(&off, &zoom()));
+        let no_apps = DetectionConfig {
+            processes: false,
+            ..on
+        };
+        assert!(allowed(&no_apps, &whatsapp()), "its own switch");
     }
 
     #[test]
