@@ -358,6 +358,7 @@ export const ipc = {
 
   // TUR-65: not read yet, so no banner.
   headphoneWarning: vi.fn<typeof Client.headphoneWarning>(async () => null),
+  meetingsWatchProblem: vi.fn<typeof Client.meetingsWatchProblem>(async () => null),
 
   agentChoice: vi.fn<typeof Client.agentChoice>(async () => ({
     harness: "claude-code",
@@ -423,6 +424,7 @@ export function mockClient(actual: typeof Client): typeof Client {
     onNavigate: subscriber(actual.NAVIGATE_EVENT),
     onHookFailed: subscriber(actual.HOOK_FAILED_EVENT),
     onHeadphoneWarning: subscriber(actual.HEADPHONE_WARNING_EVENT),
+    onMeetingsWatchProblem: subscriber(actual.MEETINGS_WATCH_PROBLEM_EVENT),
   };
 }
 

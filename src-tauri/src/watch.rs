@@ -10,9 +10,14 @@
 //! the watcher would report, and the window would reload under the user's
 //! cursor. [`MeetingsWatch::note_own_write`] records those writes so the
 //! watcher skips them (SPEC §4).
+//!
+//! When the folder cannot be watched (Linux's inotify limit, say), changes
+//! made in other apps stop showing. [`MeetingsWatch`] keeps that problem and
+//! tells the window with [`crate::events::MEETINGS_WATCH_PROBLEM_EVENT`], so the
+//! Meetings page can say so (TUR-134). A restart that watches cleans it.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use serde::Serialize;
 use store::watcher::{SelfWrites, Watcher};
@@ -32,6 +37,53 @@ impl Changed {
         Self {
             paths: paths.iter().map(|p| p.display().to_string()).collect(),
         }
+    }
+}
+
+/// What [`crate::events::MEETINGS_WATCH_PROBLEM_EVENT`] carries: why the
+/// folder is not being watched, or `None` once it is again.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, specta::Type)]
+pub struct WatchProblem {
+    pub message: Option<String>,
+}
+
+/// The current watch problem, shared with the watcher's thread.
+#[derive(Clone, Default)]
+struct Problem(Arc<Mutex<Option<String>>>);
+
+impl Problem {
+    /// Store `message`; `true` when that changed what the window shows.
+    fn set(&self, message: Option<String>) -> bool {
+        let mut slot = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let changed = *slot != message;
+        *slot = message;
+        changed
+    }
+
+    fn get(&self) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Store `message` and tell the window if it changed.
+    fn report(&self, app: &AppHandle, message: Option<String>) {
+        if !self.set(message.clone()) {
+            return;
+        }
+        let payload = WatchProblem { message };
+        if let Err(error) = app.emit(crate::events::MEETINGS_WATCH_PROBLEM_EVENT, payload) {
+            tracing::warn!(%error, "could not tell the window about the meetings folder watch");
+        }
+    }
+}
+
+/// The problem a finished attempt leaves: only a failure is one.
+fn problem_of(attempt: &Attempt) -> Option<String> {
+    match attempt {
+        Attempt::Failed(reason) => Some(reason.clone()),
+        Attempt::Running(_) | Attempt::Missing => None,
     }
 }
 
@@ -66,6 +118,7 @@ fn next(state: &Attempt, root_is_dir: bool) -> Action {
 pub struct MeetingsWatch {
     running: Mutex<Attempt>,
     own_writes: SelfWrites,
+    problem: Problem,
 }
 
 impl Default for MeetingsWatch {
@@ -73,6 +126,7 @@ impl Default for MeetingsWatch {
         Self {
             running: Mutex::new(Attempt::Missing),
             own_writes: SelfWrites::default(),
+            problem: Problem::default(),
         }
     }
 }
@@ -120,7 +174,17 @@ impl MeetingsWatch {
         }
     }
 
+    /// Why the folder is not being watched right now, if it is not.
+    pub fn problem(&self) -> Option<String> {
+        self.problem.get()
+    }
+
     fn start_into(&self, app: &AppHandle, slot: &mut Attempt) {
+        self.attempt_into(app, slot);
+        self.problem.report(app, problem_of(slot));
+    }
+
+    fn attempt_into(&self, app: &AppHandle, slot: &mut Attempt) {
         let root = match meetings::root() {
             Ok(root) => root,
             Err(error) => {
@@ -134,15 +198,21 @@ impl MeetingsWatch {
             return;
         }
         let handle = app.clone();
-        let started = Watcher::start(&root, self.own_writes.clone(), move |paths| {
-            // TUR-101: keep the search index current before the window refreshes.
-            search::state(&handle).update(&paths);
-            if let Err(error) =
-                handle.emit(crate::events::MEETINGS_CHANGED_EVENT, Changed::new(&paths))
-            {
-                tracing::warn!(%error, "could not tell the window the meetings folder changed");
-            }
-        });
+        let (problem, problem_app) = (self.problem.clone(), app.clone());
+        let started = Watcher::start(
+            &root,
+            self.own_writes.clone(),
+            move |paths| {
+                // TUR-101: keep the search index current before the window refreshes.
+                search::state(&handle).update(&paths);
+                if let Err(error) =
+                    handle.emit(crate::events::MEETINGS_CHANGED_EVENT, Changed::new(&paths))
+                {
+                    tracing::warn!(%error, "could not tell the window the meetings folder changed");
+                }
+            },
+            move |message| problem.report(&problem_app, Some(message)),
+        );
         *slot = match started {
             Ok(watcher) => Attempt::Running(watcher),
             Err(error) => {
@@ -155,6 +225,14 @@ impl MeetingsWatch {
     fn lock(&self) -> MutexGuard<'_, Attempt> {
         self.running.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// Why the meetings folder is not being watched, for the Meetings page note
+/// when it opens; `None` while watching (TUR-134).
+#[tauri::command]
+#[specta::specta]
+pub fn meetings_watch_problem(watch: tauri::State<'_, MeetingsWatch>) -> Option<String> {
+    watch.problem()
 }
 
 /// The app's [`MeetingsWatch`], from managed state.
@@ -184,8 +262,28 @@ mod tests {
     #[test]
     fn a_running_watcher_is_left_alone() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let watcher = Watcher::start(dir.path(), SelfWrites::default(), |_| {}).expect("watch");
+        let watcher =
+            Watcher::start(dir.path(), SelfWrites::default(), |_| {}, |_| {}).expect("watch");
         assert_eq!(next(&Attempt::Running(watcher), true), Action::Nothing);
+    }
+
+    #[test]
+    fn a_failed_attempt_is_the_problem_and_a_running_one_clears_it() {
+        let problem = Problem::default();
+        assert!(problem.set(problem_of(&Attempt::Failed("limit".into()))));
+        assert_eq!(problem.get().as_deref(), Some("limit"));
+        // The same problem again does not tell the window twice.
+        assert!(!problem.set(problem_of(&Attempt::Failed("limit".into()))));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let watcher =
+            Watcher::start(dir.path(), SelfWrites::default(), |_| {}, |_| {}).expect("watch");
+        assert!(problem.set(problem_of(&Attempt::Running(watcher))));
+        assert_eq!(problem.get(), None);
+    }
+
+    #[test]
+    fn a_missing_folder_is_not_a_problem() {
+        assert_eq!(problem_of(&Attempt::Missing), None);
     }
 
     #[test]

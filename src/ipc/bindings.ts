@@ -439,6 +439,11 @@ export const commands = {
 	/**  Show the banner: the output is speakers and the setting is on. */
 	show: boolean,
 } | null>("headphone_warning"),
+	/**
+	 *  Why the meetings folder is not being watched, for the Meetings page note
+	 *  when it opens; `None` while watching (TUR-134).
+	 */
+	meetingsWatchProblem: () => __TAURI_INVOKE<string | null>("meetings_watch_problem"),
 };
 
 /* Constants */
@@ -451,6 +456,8 @@ export const HEADPHONE_WARNING_EVENT = "headphones://warning" as const;
 export const HOOK_FAILED_EVENT = "hook://failed" as const;
 
 export const MEETINGS_CHANGED_EVENT = "meetings-changed" as const;
+
+export const MEETINGS_WATCH_PROBLEM_EVENT = "meetings-watch://problem" as const;
 
 export const MODEL_PROGRESS_EVENT = "model://progress" as const;
 
@@ -1434,6 +1441,14 @@ export type meet_ai_lib_error_UiError = {
 	kind: string,
 	/**  The error's own sentence. Display it; do not parse it. */
 	message: string,
+};
+
+/**
+ *  What [`crate::events::MEETINGS_WATCH_PROBLEM_EVENT`] carries: why the
+ *  folder is not being watched, or `None` once it is again.
+ */
+export type meet_ai_lib_watch_WatchProblem = {
+	message: string | null,
 };
 
 /* Tauri Specta runtime */
