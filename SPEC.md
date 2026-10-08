@@ -547,6 +547,18 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A27 — 2026-10-08 · Every prompt is a card window on every OS; on macOS a non-activating panel on every Space; a countdown card (amends A24; TUR-147)
+
+A24 kept macOS detection prompts as a notification and an in-window banner. Now every prompt, on every OS, shows in meet-ai's own card window, and the OS notification is only the fallback when that window cannot be shown (`detection::popup::uses_popup` is true for every signal). Decisions:
+
+- **Calendar reminders keep A24's card unchanged** (380×72, accent bar, title over time range, split Join & record button, native chevron menu).
+- **Detection prompts get a narrow card** (220×120 logical px), laid out after Granola's: our app icon, one line naming the app (`Prompt::headline`: "Zoom call", "Audio activity"), a big primary **Record**, a quiet **Not now** (Dismiss), and a "⋯" button whose native menu holds **Never for <App>** (`PopupAnswer::NeverFor`; the app is the one the prompt on screen names, `Prompt::app`, never one the window sends). This change only answers it; TUR-143 stores the "Never detect" list. Audio activity names no app, so it has no "⋯". Unanswered for `AUTO_HIDE` (20 s) is still "not now".
+- **A countdown card, the same narrow card**: a line ("Zoom call ended"), a ring counting the seconds down, primary **Stop now**, quiet **Keep recording**. It does not hide after `AUTO_HIDE`; it ends when the countdown does. `detection::popup::countdown::show_countdown` is the API TUR-144 and TUR-145 call; its handle reports `StopNow`, `KeepRecording`, `TimedOut` or `Closed` (replaced, `cancel()`ed, or closed because the recording stopped). Only `StopNow` and `TimedOut` mean stop; this change holds no stop logic.
+- **On macOS the window becomes a non-activating `NSPanel`** (class swapped in place, `NonactivatingPanel` style, `CanJoinAllSpaces | FullScreenAuxiliary | IgnoresCycle`, does not hide when meet-ai is inactive), shown with `orderFrontRegardless` so it never becomes key or activates meet-ai. Why: a plain window cannot show over another app's full-screen Space, and Tauri's show makes the window key, taking the keyboard from the call. It can become key only when a control needs it, so VoiceOver reaches its buttons. The swap happens only when the panel class has the window's instance layout (unit-tested); otherwise it stays a plain floating window. Code: `objc2-app-kit` 0.3.2, the approach adapted from tauri-nspanel (MIT).
+- **Shadow and motion.** macOS draws the window shadow; on Windows and Linux the narrow card's window is 8 px bigger on every side for the card's own soft shadow. Each card slides in and fades out (the window hides `popup::FADE_OUT` after a card closes); with Reduce Motion it just appears and goes. Escape is Not now (Keep recording on a countdown) once the card has the keyboard.
+
+Unchanged: nothing records without a click (L15), one card at a time, top-right of the primary monitor's work area (Wayland: the compositor decides), a recording that starts some other way closes a prompt, and one that stops closes a countdown.
+
 ### A26 — 2026-10-06 · A meeting's tasks are suggestions until approved into Tickets; meeting.md gains retired_tickets; Sync errors by cause (amends §3.1, §3.2, §3.3 and A11's Sync; TUR-113)
 
 The notes run wrote each task as a ticket in the meeting's own `tickets/` folder, and the Tickets screen read only the root's `tickets/`, so a meeting could list five tasks while Tickets said "No tickets yet". The owner decided (2026-10-06) that the tasks a notes run finds are **suggestions** the user approves.
