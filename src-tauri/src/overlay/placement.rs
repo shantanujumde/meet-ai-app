@@ -10,9 +10,6 @@ pub const WIDTH: f64 = 320.0;
 pub const HEIGHT: f64 = 90.0;
 /// Its gap from the work area's top and right edges, in logical pixels.
 pub const MARGIN: f64 = 16.0;
-/// The card's corner radius, which the macOS material is cut to as well:
-/// `--radius-panel` in `design-system/meet-ai/tokens.css`.
-pub const RADIUS: f64 = 16.0;
 /// Room left above the default spot for the prompt card
 /// (`detection/popup/window.rs`, at the same margin): the taller of its
 /// two shapes, the 120 px narrow card that TUR-144's and TUR-145's stop

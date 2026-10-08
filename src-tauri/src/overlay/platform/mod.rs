@@ -32,6 +32,11 @@ pub const FOCUSABLE: bool = false;
 #[cfg(not(target_os = "macos"))]
 pub const FOCUSABLE: bool = true;
 
+/// The card's corner radius, which the macOS material is cut to as well:
+/// `--radius-panel` in `design-system/meet-ai/tokens.css`.
+#[cfg(target_os = "macos")]
+const RADIUS: f64 = 16.0;
+
 /// The blur behind the card, where the OS has one.
 #[cfg(target_os = "macos")]
 pub fn effects() -> Option<WindowEffectsConfig> {
@@ -39,7 +44,7 @@ pub fn effects() -> Option<WindowEffectsConfig> {
     Some(WindowEffectsConfig {
         effects: vec![Effect::Popover],
         state: Some(EffectState::Active),
-        radius: Some(super::placement::RADIUS),
+        radius: Some(RADIUS),
         ..WindowEffectsConfig::default()
     })
 }
