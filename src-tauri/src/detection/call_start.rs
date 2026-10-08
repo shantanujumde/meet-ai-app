@@ -156,6 +156,9 @@ pub fn signal(call: &CallStarted) -> Signal {
 pub fn headline(app: &str, browser: bool) -> String {
     if browser {
         format!("Call detected in {app}")
+    } else if app.to_lowercase().ends_with(" call") {
+        // `audio` names Apple's call service "Phone call".
+        format!("{app} detected")
     } else {
         format!("{app} call detected")
     }
@@ -321,6 +324,7 @@ mod tests {
             }
         );
         assert_eq!(headline("WhatsApp", false), "WhatsApp call detected");
+        assert_eq!(headline("Phone call", false), "Phone call detected");
         assert_eq!(
             headline("Google Chrome", true),
             "Call detected in Google Chrome"
