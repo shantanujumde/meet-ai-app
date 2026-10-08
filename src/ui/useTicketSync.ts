@@ -1,40 +1,26 @@
 /**
- * The state behind every Sync button (TUR-11).
+ * The send state of every ticket on the Tickets page (TUR-113).
  *
- * One hook holds the sync state of many tickets, keyed by id, so a list can
- * run them one after another (Sync all) and still show each row's own
- * progress and error. A single Sync button is the same hook with one ticket.
- *
- * A sync is one run of the user's agent CLI and can take minutes. The window
- * only waits for Rust's answer: the updated ticket, or a `UiError` whose
- * message is shown as it is.
+ * Rust sends each new ticket to the tracker on its own, one at a time
+ * (`sync/auto.rs`). The window does not start sends: it reads where each one
+ * is with `ticketSyncStates`, follows `TICKET_SYNC_EVENT` from then on, and
+ * asks for a Retry when the user presses it.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { cancelSync, dismissUnsavedSync, syncTask, trackerSettings } from "@/ipc/client";
-import type { TicketSummary, UiError } from "@/ipc/types";
+import { useCallback, useEffect, useState } from "react";
+import {
+  onTicketSync,
+  retryTicketSync,
+  type TicketSyncOverview,
+  type TicketSyncStatus,
+  ticketSyncStates,
+} from "@/ipc/client";
+import type { TicketSummary, Tracker, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
-
-export type SyncState =
-  | { kind: "idle" }
-  | {
-      kind: "busy";
-      /** Cancel was pressed and Rust has not answered yet. */
-      cancelling: boolean;
-      /** Cancel itself failed; the run is still going. */
-      cancelError: UiError | null;
-    }
-  | { kind: "failed"; error: UiError };
-
-/** How one sync ended, for a caller running several in a row. */
-export type SyncResult = "synced" | "failed" | "cancelled";
-
-const IDLE: SyncState = { kind: "idle" };
 
 /**
  * The errors of a sync whose issue was created but not attached to the task.
- * Rust keeps that issue, and every Sync of the task answers with this error,
- * until the user dismisses it.
+ * Rust keeps that issue until the user dismisses it.
  */
 const KEPT_ISSUE_KINDS: ReadonlySet<string> = new Set(["sync-not-saved", "sync-not-attached"]);
 
@@ -43,110 +29,86 @@ export function isKeptIssue(error: UiError): boolean {
   return error.domain === "app" && KEPT_ISSUE_KINDS.has(error.kind);
 }
 
-export function useTicketSync(onSynced: (ticket: TicketSummary) => void) {
-  const [states, setStates] = useState<Record<string, SyncState>>({});
+/** One ticket's send state as the window shows it. */
+export type SendState =
+  | { kind: "not-sent" }
+  | { kind: "sending" }
+  | { kind: "sent" }
+  | { kind: "failed"; error: UiError };
 
-  // The latest callback, so a sync that started several renders ago still
-  // reports to the list as it is now.
-  const latestOnSynced = useRef(onSynced);
-  useLayoutEffect(() => {
-    latestOnSynced.current = onSynced;
-  });
-
-  const put = useCallback((ticketId: string, state: SyncState) => {
-    setStates((current) => ({ ...current, [ticketId]: state }));
-  }, []);
-
-  const updateBusy = useCallback(
-    (ticketId: string, change: (busy: Extract<SyncState, { kind: "busy" }>) => SyncState) => {
-      setStates((current) => {
-        const state = current[ticketId];
-        return state?.kind === "busy" ? { ...current, [ticketId]: change(state) } : current;
-      });
-    },
-    [],
-  );
-
-  /** Sync one ticket. `meetingId` is the meeting whose folder holds it. */
-  const sync = useCallback(
-    async (ticket: TicketSummary, meetingId = ticket.meeting): Promise<SyncResult> => {
-      put(ticket.id, { kind: "busy", cancelling: false, cancelError: null });
-      try {
-        const updated = await syncTask(ticket.id, meetingId);
-        put(ticket.id, IDLE);
-        latestOnSynced.current(updated);
-        return "synced";
-      } catch (caught) {
-        const error = toUiError(caught);
-        // The user asked for it, so it is not an error: back to plain Sync.
-        if (error.domain === "app" && error.kind === "agent-cancelled") {
-          put(ticket.id, IDLE);
-          return "cancelled";
-        }
-        put(ticket.id, { kind: "failed", error });
-        return "failed";
-      }
-    },
-    [put],
-  );
-
-  /** Stop a running sync. Its `sync` call then resolves as `cancelled`. */
-  const cancel = useCallback(
-    async (ticketId: string) => {
-      updateBusy(ticketId, (busy) => ({ ...busy, cancelling: true, cancelError: null }));
-      try {
-        await cancelSync(ticketId);
-      } catch (caught) {
-        const cancelError = toUiError(caught);
-        updateBusy(ticketId, (busy) => ({ ...busy, cancelling: false, cancelError }));
-      }
-    },
-    [updateBusy],
-  );
-
-  /**
-   * Forget the issue Rust kept for this ticket, so the next Sync is a fresh
-   * run. A failed dismiss keeps the row failed, with the new error.
-   */
-  const dismiss = useCallback(
-    async (ticketId: string, meetingId: string | null) => {
-      try {
-        await dismissUnsavedSync(ticketId, meetingId);
-        put(ticketId, IDLE);
-      } catch (caught) {
-        put(ticketId, { kind: "failed", error: toUiError(caught) });
-      }
-    },
-    [put],
-  );
-
-  const stateOf = useCallback((ticketId: string) => states[ticketId] ?? IDLE, [states]);
-  const anyBusy = Object.values(states).some((state) => state.kind === "busy");
-
-  return { stateOf, sync, cancel, dismiss, anyBusy };
+/** The state for a ticket: its issue key wins, then what Rust last said. */
+export function sendStateOf(
+  ticket: TicketSummary,
+  status: TicketSyncStatus | undefined,
+): SendState {
+  if (ticket.externalId !== null || ticket.syncedTo !== null) return { kind: "sent" };
+  if (!status) return { kind: "not-sent" };
+  switch (status.state) {
+    case "queued":
+    case "sending":
+      return { kind: "sending" };
+    case "failed":
+      return status.error ? { kind: "failed", error: status.error } : { kind: "not-sent" };
+    default:
+      return { kind: "not-sent" };
+  }
 }
 
-/**
- * Whether there is an agent to run a sync: false when the user chose none.
- * Null until known, so a Sync button does not appear and then vanish. A
- * failed answer counts as yes — Rust then says what is wrong when Sync is
- * pressed, which beats a button that silently is not there.
- */
-export function useCanSync(): boolean | null {
-  const [canSync, setCanSync] = useState<boolean | null>(null);
+export function useTicketSyncStates(onSent: (ticket: TicketSummary) => void) {
+  const [overview, setOverview] = useState<TicketSyncOverview | null>(null);
+  const [statuses, setStatuses] = useState<Record<string, TicketSyncStatus>>({});
+  const [retryErrors, setRetryErrors] = useState<Record<string, UiError>>({});
+
   useEffect(() => {
     let current = true;
-    trackerSettings().then(
-      (settings) => {
-        if (current) setCanSync(settings.harness !== "none");
+    const stop = onTicketSync((status) => {
+      setStatuses((all) => ({ ...all, [status.ticketId]: status }));
+      if (status.state === "sent" && status.ticket) onSent(status.ticket);
+    });
+    ticketSyncStates().then(
+      (answer) => {
+        if (!current) return;
+        setOverview(answer);
+        // Events that came in while this was on its way are newer: keep them.
+        setStatuses((all) => ({
+          ...Object.fromEntries(answer.tickets.map((each) => [each.ticketId, each])),
+          ...all,
+        }));
       },
       () => {
-        if (current) setCanSync(true);
+        // Unknown: every ticket reads Not sent and the hint stays out, rather
+        // than claiming a tracker is or is not set up.
       },
     );
     return () => {
       current = false;
+      stop();
     };
+  }, [onSent]);
+
+  const retry = useCallback(async (ticketId: string) => {
+    setRetryErrors(({ [ticketId]: _gone, ...rest }) => rest);
+    try {
+      await retryTicketSync(ticketId);
+    } catch (caught) {
+      setRetryErrors((all) => ({ ...all, [ticketId]: toUiError(caught) }));
+    }
   }, []);
-  return canSync;
+
+  const stateOf = useCallback(
+    (ticket: TicketSummary): SendState => {
+      const retryError = retryErrors[ticket.id];
+      if (retryError) return { kind: "failed", error: retryError };
+      return sendStateOf(ticket, statuses[ticket.id]);
+    },
+    [statuses, retryErrors],
+  );
+
+  return {
+    /** Null until Rust has answered. */
+    trackerSetUp: overview?.trackerSetUp ?? null,
+    tracker: (overview?.tracker ?? "linear") as Tracker,
+    stateOf,
+    retry,
+  };
 }

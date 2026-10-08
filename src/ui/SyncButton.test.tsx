@@ -1,217 +1,97 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { describe, expect, test, vi } from "vitest";
-import type { TicketSummary } from "@/ipc/types";
 import { ticketSummary } from "@/test/fixtures";
 import { ipc } from "@/test/ipcMock";
-import { openLabel, SyncButton } from "./SyncButton";
+import { SendError, SendStatus, sendLabel, trackerName } from "./SyncButton";
+import type { SendState } from "./useTicketSync";
 
 vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
 );
 
-const { syncTask, cancelSync, dismissUnsavedSync, openSyncedIssue } = ipc;
+const { dismissUnsavedSync, openSyncedIssue } = ipc;
 
-const SYNCED = ticketSummary({
-  meeting: "2026-09-30-1015-meeting",
+const SENT = ticketSummary({
   syncedTo: "linear",
   externalId: "ENG-42",
   externalUrl: "https://linear.app/team/issue/ENG-42",
 });
 
-/** A sync that stays running until the test settles it. */
-function pendingSync() {
-  let resolve: (ticket: TicketSummary) => void = () => {};
-  let reject: (error: unknown) => void = () => {};
-  syncTask.mockImplementation(
-    () =>
-      new Promise<TicketSummary>((res, rej) => {
-        resolve = res;
-        reject = rej;
-      }),
-  );
-  return { resolve: (t: TicketSummary) => resolve(t), reject: (e: unknown) => reject(e) };
+function failed(kind: string, message = "It broke."): SendState {
+  return { kind: "failed", error: { domain: "app", kind, message } };
 }
 
-describe("SyncButton", () => {
-  test("syncs the ticket with its meeting, shows progress, then reports the update", async () => {
-    const run = pendingSync();
-    const onSynced = vi.fn();
-    const ticket = ticketSummary({ meeting: "2026-09-30-1015-meeting" });
-    render(<SyncButton ticket={ticket} onSynced={onSynced} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Sync TUR-7" }));
-
-    expect(syncTask).toHaveBeenCalledWith("TUR-7", "2026-09-30-1015-meeting");
-    expect(await screen.findByText("Syncing…")).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toBe("Syncing TUR-7");
-    expect(screen.getByRole("button", { name: "Cancel sync of TUR-7" })).toBeTruthy();
-
-    await act(async () => run.resolve(SYNCED));
-    expect(onSynced).toHaveBeenCalledWith(SYNCED);
-  });
-
-  test("a failed sync shows Rust's message and offers Retry", async () => {
-    syncTask.mockRejectedValueOnce({
-      domain: "app",
-      kind: "sync-not-done",
-      message: "The agent finished but did not create an issue.",
-    });
-    render(<SyncButton ticket={ticketSummary()} onSynced={vi.fn()} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Sync TUR-7" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The agent finished but did not create an issue.",
-    );
-    const retry = screen.getByRole("button", { name: "Retry sync of TUR-7" });
-    expect(retry.textContent).toBe("Retry");
-
-    fireEvent.click(retry);
-    await waitFor(() => expect(syncTask).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-  });
-
-  test("an issue that was made but not attached shows its link, and Dismiss clears it", async () => {
-    const message =
-      "Created in Linear but couldn't attach it to this task: https://linear.app/team/issue/ENG-42 " +
-      "The file is gone. Sync will not create another issue until you dismiss this.";
-    syncTask.mockRejectedValueOnce({ domain: "app", kind: "sync-not-attached", message });
-    render(
-      <SyncButton
-        ticket={ticketSummary({ meeting: "2026-09-30-1015-meeting" })}
-        onSynced={vi.fn()}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Sync TUR-7" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "https://linear.app/team/issue/ENG-42",
-    );
-    expect(screen.getByRole("button", { name: "Retry sync of TUR-7" })).toBeTruthy();
-    const dismiss = screen.getByRole("button", { name: "Dismiss the unsaved issue of TUR-7" });
-    expect(dismiss.textContent).toBe("Dismiss");
-
-    fireEvent.click(dismiss);
-    await waitFor(() =>
-      expect(dismissUnsavedSync).toHaveBeenCalledWith("TUR-7", "2026-09-30-1015-meeting"),
-    );
-    expect(await screen.findByRole("button", { name: "Sync TUR-7" })).toBeTruthy();
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.queryByRole("button", { name: /Dismiss/ })).toBeNull();
-  });
-
-  test("an issue whose link is not saved yet offers Dismiss next to Retry", async () => {
-    syncTask.mockRejectedValueOnce({
-      domain: "app",
-      kind: "sync-not-saved",
-      message:
-        "Created ENG-42 but couldn't save its link yet: https://linear.app/team/issue/ENG-42",
-    });
-    render(<SyncButton ticket={ticketSummary()} onSynced={vi.fn()} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Sync TUR-7" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "https://linear.app/team/issue/ENG-42",
-    );
-    expect(screen.getByRole("button", { name: "Retry sync of TUR-7" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Dismiss the unsaved issue of TUR-7" })).toBeTruthy();
-  });
-
-  test("a failed Dismiss keeps the row failed and shows the new error", async () => {
-    syncTask.mockRejectedValueOnce({
-      domain: "app",
-      kind: "sync-not-saved",
-      message: "Created ENG-42 but couldn't save its link yet.",
-    });
-    dismissUnsavedSync.mockRejectedValueOnce({
-      domain: "app",
-      kind: "unexpected",
-      message: "Could not dismiss it.",
-    });
-    render(<SyncButton ticket={ticketSummary()} onSynced={vi.fn()} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Sync TUR-7" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Dismiss the unsaved issue of TUR-7" }),
-    );
-
-    expect(await screen.findByText("Could not dismiss it.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Retry sync of TUR-7" })).toBeTruthy();
-  });
-
-  test("an ordinary failure offers Retry but not Dismiss", async () => {
-    syncTask.mockRejectedValueOnce({
-      domain: "app",
-      kind: "agent-failed",
-      message: "The agent gave up.",
-    });
-    render(<SyncButton ticket={ticketSummary()} onSynced={vi.fn()} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Sync TUR-7" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("The agent gave up.");
-    expect(screen.getByRole("button", { name: "Retry sync of TUR-7" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Dismiss/ })).toBeNull();
-  });
-
-  test("Cancel stops the run and goes back to Sync without an error", async () => {
-    const run = pendingSync();
-    render(<SyncButton ticket={ticketSummary()} onSynced={vi.fn()} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Sync TUR-7" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Cancel sync of TUR-7" }));
-
-    expect(cancelSync).toHaveBeenCalledWith("TUR-7");
-    expect(await screen.findByText("Cancelling…")).toBeTruthy();
-
-    await act(async () =>
-      run.reject({ domain: "app", kind: "agent-cancelled", message: "Sync was cancelled." }),
-    );
-    expect(await screen.findByRole("button", { name: "Sync TUR-7" })).toBeTruthy();
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
-
-  test("a synced ticket shows its issue id and opens it through Rust", async () => {
-    render(<SyncButton ticket={SYNCED} onSynced={vi.fn()} />);
-
-    expect(screen.getByText("ENG-42")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Sync/ })).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "Open in Linear" }));
-    await waitFor(() =>
-      expect(openSyncedIssue).toHaveBeenCalledWith("TUR-7", "2026-09-30-1015-meeting"),
-    );
-  });
-
-  test("a failed open shows the message", async () => {
-    openSyncedIssue.mockRejectedValueOnce({
-      domain: "app",
-      kind: "unexpected",
-      message: "Could not open the browser.",
-    });
-    render(<SyncButton ticket={SYNCED} onSynced={vi.fn()} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Open in Linear" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not open the browser.");
+describe("sendLabel", () => {
+  test("each state has its words", () => {
+    const ticket = ticketSummary();
+    expect(sendLabel({ kind: "not-sent" }, "linear", ticket)).toBe("Not sent");
+    expect(sendLabel({ kind: "sending" }, "linear", ticket)).toBe("Sending to Linear…");
+    expect(sendLabel(failed("x"), "jira", ticket)).toBe("Couldn't send to Jira");
+    expect(sendLabel({ kind: "sent" }, "linear", SENT)).toBe("In Linear: ENG-42");
   });
 
   test("names each tracker, with a fallback for one it does not know", () => {
-    expect(openLabel("linear")).toBe("Open in Linear");
-    expect(openLabel("jira")).toBe("Open in Jira");
-    expect(openLabel("github")).toBe("Open in GitHub");
-    expect(openLabel("asana")).toBe("Open issue");
-    expect(openLabel(null)).toBe("Open issue");
+    expect(trackerName("linear")).toBe("Linear");
+    expect(trackerName("github")).toBe("GitHub");
+    expect(trackerName("other")).toBe("other");
+  });
+});
+
+describe("SendStatus", () => {
+  test("a sent ticket opens its issue through Rust", async () => {
+    render(<SendStatus ticket={SENT} state={{ kind: "sent" }} tracker="linear" />);
+    fireEvent.click(screen.getByRole("button", { name: "In Linear: ENG-42, open the issue" }));
+    await waitFor(() => expect(openSyncedIssue).toHaveBeenCalledWith("TUR-7", null));
   });
 
-  test("with no agent there is no Sync button, but a synced issue still opens", () => {
-    const { rerender } = render(
-      <SyncButton ticket={ticketSummary()} canSync={false} onSynced={vi.fn()} />,
-    );
-    expect(screen.queryByRole("button")).toBeNull();
+  test("a failed open shows the message", async () => {
+    openSyncedIssue.mockRejectedValueOnce({ domain: "app", kind: "x", message: "No browser." });
+    render(<SendStatus ticket={SENT} state={{ kind: "sent" }} tracker="linear" />);
+    fireEvent.click(screen.getByRole("button", { name: "In Linear: ENG-42, open the issue" }));
+    expect(await screen.findByText("No browser.")).toBeTruthy();
+  });
+});
 
-    rerender(<SyncButton ticket={SYNCED} canSync={false} onSynced={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "Open in Linear" })).toBeTruthy();
+function renderError(state: SendState, onRetry = vi.fn()) {
+  render(
+    <MemoryRouter>
+      <SendError ticket={ticketSummary()} state={state} onRetry={onRetry} />
+    </MemoryRouter>,
+  );
+  return onRetry;
+}
+
+describe("SendError", () => {
+  test("nothing unless the send failed", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <SendError ticket={ticketSummary()} state={{ kind: "sending" }} onRetry={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(container.innerHTML).toBe("");
+  });
+
+  test("unreachable and refused offer Open Tracker settings next to Retry", () => {
+    for (const kind of ["sync-unreachable", "sync-refused"]) {
+      const onRetry = renderError(failed(kind));
+      expect(screen.getByRole("button", { name: "Open Tracker settings" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Retry sending TUR-7" }));
+      expect(onRetry).toHaveBeenCalled();
+      document.body.innerHTML = "";
+    }
+  });
+
+  test("a stopped send offers only Retry", () => {
+    renderError(failed("agent-timed-out", "Sending stopped before it finished. Press Retry."));
+    expect(screen.getByText("Sending stopped before it finished. Press Retry.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open Tracker settings" })).toBeNull();
+  });
+
+  test("a kept issue offers Dismiss, which forgets it and retries", async () => {
+    const onRetry = renderError(failed("sync-not-saved"));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss the unsaved issue of TUR-7" }));
+    await waitFor(() => expect(dismissUnsavedSync).toHaveBeenCalledWith("TUR-7", null));
+    await waitFor(() => expect(onRetry).toHaveBeenCalled());
   });
 });

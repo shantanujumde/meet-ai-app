@@ -1,29 +1,32 @@
 /**
- * Sync: ask the user's agent CLI to create a ticket's issue in their tracker
- * (Linear, Jira or GitHub) through its MCP server (TUR-11).
+ * A ticket's place in the tracker (TUR-11, TUR-113): where it is in being
+ * sent, and why it was not.
  *
- * Two pieces:
+ * Rust sends tickets on its own (`useTicketSyncStates`); these pieces only
+ * show the state and offer Retry.
  *
- * * {@link SyncControls} draws one ticket's controls from a {@link SyncState}
- *   it is given. A list that syncs several tickets (Sync all) holds the
- *   states itself, with `useTicketSync`, and draws each row with this.
- * * {@link SyncErrors} draws the same state's errors. It sits under the row,
- *   at full width, never in the narrow controls column (TUR-112).
- * * {@link SyncButton} is the controls and errors with their own state.
+ * * {@link SendStatus} sits on the ticket's row: *Not sent*, *Sending to
+ *   Linear…*, *In Linear: ENG-42* (opens the issue) or *Couldn't send to
+ *   Linear*.
+ * * {@link SendError} sits **under** the row, at full width, so a long
+ *   message wraps there and never lies over the title (TUR-112). It carries
+ *   Retry, and Open Tracker settings when the fix is in Settings.
  *
- * A synced ticket shows its issue id and an Open button instead. Rust opens
- * the issue's address; the window never opens a URL itself.
+ * Rust opens the issue's address; the window never opens a URL itself.
  */
 
-import { ExternalLink, RefreshCw, RotateCcw, X } from "lucide-react";
+import { ExternalLink, RotateCcw, Settings as SettingsIcon, X } from "lucide-react";
 import { useState } from "react";
-import { openSyncedIssue } from "@/ipc/client";
+import { useNavigate } from "react-router";
+import { dismissUnsavedSync, openSyncedIssue } from "@/ipc/client";
+import { copyFor } from "@/ipc/errors";
 import type { TicketSummary, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { cn } from "@/lib/cn";
+import { settingsPath } from "@/lib/routes";
 import { Button, ButtonRow, Pill } from "./primitives";
 import { InlineError } from "./states";
-import { isKeptIssue, type SyncState, useTicketSync } from "./useTicketSync";
+import { isKeptIssue, type SendState } from "./useTicketSync";
 
 const TRACKER_NAME: Record<string, string> = {
   linear: "Linear",
@@ -31,184 +34,149 @@ const TRACKER_NAME: Record<string, string> = {
   github: "GitHub",
 };
 
-/** "Open in Linear", or "Open issue" for a tracker this window does not know. */
-export function openLabel(syncedTo: string | null): string {
-  const name = syncedTo ? TRACKER_NAME[syncedTo] : undefined;
-  return name ? `Open in ${name}` : "Open issue";
+/** "Linear" for `linear`; the id itself for a tracker this window does not know. */
+export function trackerName(tracker: string | null): string {
+  return tracker ? (TRACKER_NAME[tracker] ?? tracker) : "your tracker";
 }
 
-export function SyncControls({
+/** "In Linear: ENG-42", or "In Linear" when the tracker gave no key. */
+export function sentLabel(ticket: TicketSummary): string {
+  const where = `In ${trackerName(ticket.syncedTo)}`;
+  return ticket.externalId ? `${where}: ${ticket.externalId}` : where;
+}
+
+/** Words for a state, as the Tickets page shows them. */
+export function sendLabel(state: SendState, tracker: string, ticket: TicketSummary): string {
+  const name = trackerName(tracker);
+  switch (state.kind) {
+    case "sending":
+      return `Sending to ${name}…`;
+    case "sent":
+      return sentLabel(ticket);
+    case "failed":
+      return `Couldn't send to ${name}`;
+    default:
+      return "Not sent";
+  }
+}
+
+export function SendStatus({
   ticket,
   state,
-  onSync,
-  onCancel,
-  onDismiss,
-  meetingId = ticket.meeting,
-  canSync = true,
-  disabled = false,
+  tracker,
   className,
 }: {
   ticket: TicketSummary;
-  state: SyncState;
-  onSync: () => void;
-  onCancel: () => void;
-  /**
-   * Forget the issue Rust kept after a sync that could not attach it. The
-   * Dismiss button shows only when this is given and the error is such a kept issue.
-   */
-  onDismiss?: () => void;
-  /** The meeting whose folder holds the ticket. Defaults to `ticket.meeting`. */
-  meetingId?: string | null;
-  /** False when there is no agent to run: the Sync button is left out. */
-  canSync?: boolean;
-  /** Another sync is running, so this one cannot start yet. */
-  disabled?: boolean;
-  className?: string;
-}) {
-  if (ticket.syncedTo !== null) {
-    return <SyncedIssue ticket={ticket} meetingId={meetingId} className={className} />;
-  }
-  if (!canSync) return null;
-
-  const busy = state.kind === "busy";
-  const failed = state.kind === "failed";
-  const canDismiss = failed && onDismiss !== undefined && isKeptIssue(state.error);
-
-  return (
-    <ButtonRow className={className} aria-busy={busy}>
-      {busy ? (
-        <>
-          <Button size="small" disabled>
-            Syncing…
-          </Button>
-          <Button
-            size="small"
-            tone="quiet"
-            disabled={state.cancelling}
-            aria-label={`Cancel sync of ${ticket.id}`}
-            onClick={onCancel}
-          >
-            {state.cancelling ? "Cancelling…" : "Cancel"}
-          </Button>
-        </>
-      ) : (
-        <Button
-          size="small"
-          icon={failed ? RotateCcw : RefreshCw}
-          disabled={disabled}
-          aria-label={failed ? `Retry sync of ${ticket.id}` : `Sync ${ticket.id}`}
-          onClick={onSync}
-        >
-          {failed ? "Retry" : "Sync"}
-        </Button>
-      )}
-      {canDismiss ? (
-        <Button
-          size="small"
-          tone="quiet"
-          icon={X}
-          aria-label={`Dismiss the unsaved issue of ${ticket.id}`}
-          onClick={onDismiss}
-        >
-          Dismiss
-        </Button>
-      ) : null}
-      <span className="sr-only" role="status" aria-live="polite">
-        {busy ? `Syncing ${ticket.id}` : ""}
-      </span>
-    </ButtonRow>
-  );
-}
-
-/**
- * The errors of one ticket's sync: the failure, or a Cancel that did not
- * work. Render it below the row so a long message wraps at the row's width.
- */
-export function SyncErrors({ state, className }: { state: SyncState; className?: string }) {
-  if (state.kind === "failed") {
-    return (
-      <div className={className}>
-        <InlineError error={state.error} />
-      </div>
-    );
-  }
-  if (state.kind === "busy" && state.cancelError) {
-    return (
-      <div className={className}>
-        <InlineError error={state.cancelError} />
-      </div>
-    );
-  }
-  return null;
-}
-
-/** The issue a synced ticket became: its id and a button to open it. */
-function SyncedIssue({
-  ticket,
-  meetingId,
-  className,
-}: {
-  ticket: TicketSummary;
-  meetingId: string | null;
+  state: SendState;
+  /** The tracker set up in Settings, for the words before the ticket is sent. */
+  tracker: string;
   className?: string;
 }) {
   const [error, setError] = useState<UiError | null>(null);
+  const label = sendLabel(state, tracker, ticket);
 
   async function open() {
     setError(null);
     try {
-      await openSyncedIssue(ticket.id, meetingId);
+      await openSyncedIssue(ticket.id, ticket.meeting);
     } catch (caught) {
       setError(toUiError(caught));
     }
   }
 
   return (
-    <div className={cn("flex flex-col gap-3", className)}>
-      <ButtonRow>
-        <Pill tone="ok">Synced</Pill>
-        {ticket.externalId ? (
-          <span className="font-mono text-caption1 text-fg-secondary">{ticket.externalId}</span>
-        ) : null}
-        {ticket.externalUrl ? (
-          <Button size="small" icon={ExternalLink} onClick={() => void open()}>
-            {openLabel(ticket.syncedTo)}
-          </Button>
-        ) : null}
-      </ButtonRow>
+    <div className={cn("flex flex-col items-end gap-2", className)}>
+      {state.kind === "sent" && ticket.externalUrl ? (
+        <Button
+          size="small"
+          icon={ExternalLink}
+          aria-label={`${label}, open the issue`}
+          onClick={() => void open()}
+        >
+          {label}
+        </Button>
+      ) : (
+        <Pill tone={TONE[state.kind]} aria-busy={state.kind === "sending"}>
+          {label}
+        </Pill>
+      )}
       {error ? <InlineError error={error} /> : null}
     </div>
   );
 }
 
-/** One ticket's Sync, with its own state. */
-export function SyncButton({
+const TONE: Record<SendState["kind"], "neutral" | "ok" | "warn" | "danger"> = {
+  "not-sent": "neutral",
+  sending: "warn",
+  sent: "ok",
+  failed: "danger",
+};
+
+/**
+ * Why a ticket was not sent, under its row: the message (it wraps), Retry,
+ * and Open Tracker settings when the fix is there. Nothing for any other state.
+ */
+export function SendError({
   ticket,
-  onSynced,
-  canSync = true,
-  disabled = false,
+  state,
+  onRetry,
   className,
 }: {
   ticket: TicketSummary;
-  onSynced: (ticket: TicketSummary) => void;
-  canSync?: boolean;
-  disabled?: boolean;
+  state: SendState;
+  onRetry: () => void;
   className?: string;
 }) {
-  const { stateOf, sync, cancel, dismiss } = useTicketSync(onSynced);
-  const state = stateOf(ticket.id);
+  const navigate = useNavigate();
+  const [dismissError, setDismissError] = useState<UiError | null>(null);
+  if (state.kind !== "failed") return null;
+  const inSettings = copyFor(state.error).remedy.action === "open-tracker-settings";
+  const kept = isKeptIssue(state.error);
+
+  async function dismiss() {
+    setDismissError(null);
+    try {
+      await dismissUnsavedSync(ticket.id, ticket.meeting);
+      onRetry();
+    } catch (caught) {
+      setDismissError(toUiError(caught));
+    }
+  }
+
   return (
-    <div className={cn("flex flex-col gap-3", className)}>
-      <SyncControls
-        ticket={ticket}
-        state={state}
-        onSync={() => void sync(ticket)}
-        onCancel={() => void cancel(ticket.id)}
-        onDismiss={() => void dismiss(ticket.id, ticket.meeting)}
-        canSync={canSync}
-        disabled={disabled}
-      />
-      {ticket.syncedTo === null && canSync ? <SyncErrors state={state} /> : null}
+    <div className={cn("flex w-full min-w-0 flex-col gap-3", className)}>
+      <InlineError error={dismissError ?? state.error} />
+      <ButtonRow>
+        <Button
+          size="small"
+          icon={RotateCcw}
+          aria-label={`Retry sending ${ticket.id}`}
+          onClick={onRetry}
+        >
+          Retry
+        </Button>
+        {inSettings ? (
+          <Button
+            size="small"
+            tone="quiet"
+            icon={SettingsIcon}
+            onClick={() => navigate(settingsPath("tracker"))}
+          >
+            Open Tracker settings
+          </Button>
+        ) : null}
+        {kept ? (
+          <Button
+            size="small"
+            tone="quiet"
+            icon={X}
+            aria-label={`Dismiss the unsaved issue of ${ticket.id}`}
+            onClick={() => void dismiss()}
+          >
+            Dismiss
+          </Button>
+        ) : null}
+      </ButtonRow>
     </div>
   );
 }

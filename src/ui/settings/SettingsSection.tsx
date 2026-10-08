@@ -21,8 +21,11 @@ export function SettingsSection({
   description,
   children,
   after,
+  anchorId,
   className,
 }: {
+  /** The section's element id, for `/settings?section=<id>` to scroll to (TUR-113). */
+  anchorId?: string;
   title: ReactNode;
   /** One quiet sentence under the heading, when the section needs it. */
   description?: ReactNode;
@@ -34,7 +37,11 @@ export function SettingsSection({
 }) {
   const id = useId();
   return (
-    <section className={cn("flex flex-col gap-(--section-gap)", className)} aria-labelledby={id}>
+    <section
+      id={anchorId}
+      className={cn("flex scroll-mt-6 flex-col gap-(--section-gap)", className)}
+      aria-labelledby={id}
+    >
       <header className="flex flex-col gap-1 px-1">
         <h2 className="m-0 text-headline font-semibold" id={id}>
           {title}

@@ -14,6 +14,8 @@
  */
 
 import { ListRestart } from "lucide-react";
+import { useEffect } from "react";
+import { useSearchParams } from "react-router";
 import { useAppStore } from "@/state/app";
 import { AboutSettings } from "@/ui/AboutSettings";
 import { AudioRetentionRow } from "@/ui/AudioRetentionRow";
@@ -35,6 +37,12 @@ import { ErrorState } from "@/ui/states";
 import { TrackerSettings } from "@/ui/TrackerSettings";
 
 export function Settings() {
+  // TUR-113: `/settings?section=tracker` ("Open Tracker settings") scrolls there.
+  const [params] = useSearchParams();
+  const section = params.get("section");
+  useEffect(() => {
+    if (section) document.getElementById(section)?.scrollIntoView({ block: "start" });
+  }, [section]);
   const restartOnboarding = useAppStore((state) => state.restartOnboarding);
   const onboardingError = useAppStore((state) => state.onboardingError);
   const rootExists = useAppStore((state) => state.meetings?.rootExists ?? false);

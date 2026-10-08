@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { describe, expect, test, vi } from "vitest";
 import { Settings } from "@/routes/Settings";
 import { ipc } from "@/test/ipcMock";
@@ -12,7 +13,11 @@ const { openLogsFolder } = ipc;
 
 describe("LogsFolderRow", () => {
   test("Settings has an Open logs folder button that opens the folder", async () => {
-    render(<Settings />);
+    render(
+      <MemoryRouter>
+        <Settings />
+      </MemoryRouter>,
+    );
 
     fireEvent.click(await screen.findByRole("button", { name: "Open logs folder" }));
 
