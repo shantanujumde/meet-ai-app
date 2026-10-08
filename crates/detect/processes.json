@@ -9,6 +9,10 @@
   { "os": "macos", "name": "Webex", "label": "Webex", "needs_call_signal": false },
   { "os": "macos", "name": "Slack", "label": "Slack", "needs_call_signal": true },
   { "os": "macos", "name": "Discord", "label": "Discord", "needs_call_signal": true },
+  { "os": "macos", "name": "WhatsApp", "label": "WhatsApp", "needs_call_signal": true },
+  { "os": "macos", "name": "FaceTime", "label": "FaceTime", "needs_call_signal": true },
+  { "os": "macos", "name": "Telegram", "label": "Telegram", "needs_call_signal": true },
+  { "os": "macos", "name": "Signal", "label": "Signal", "needs_call_signal": true },
   { "os": "windows", "name": "Zoom.exe", "label": "Zoom", "needs_call_signal": false },
   {
     "os": "windows",

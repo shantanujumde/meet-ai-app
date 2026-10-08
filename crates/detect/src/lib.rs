@@ -10,17 +10,25 @@
 //! - [`poll`]: the loop that reads the process list and emits [`Signal`]s.
 //! - [`activity`]: when the mic and speakers both in use count as a call
 //!   (TUR-31), and the loop that reads them.
+//! - [`call_start`]: when a call app or a browser holding the mic counts as
+//!   a call starting (TUR-143), and [`mic_poll`], the loop that feeds it.
+//!   Where the OS can list the apps using the mic, this replaces "a meeting
+//!   app is open" ([`detector`]), which stays the fallback.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 pub mod activity;
+pub mod call_start;
 pub mod detector;
+pub mod mic_poll;
 pub mod poll;
 pub mod processes;
 mod worker;
 
 pub use activity::{AUDIO_POLL_INTERVAL, ActivityLoop, ActivitySource, AudioReading};
+pub use call_start::{CallStarted, MicKind, MicReading, MicUser};
 pub use detector::{CALL_SIGNAL_WINDOW, Detector, RunningProcess};
+pub use mic_poll::{MicLoop, MicLoopHooks, MicSource};
 pub use poll::{DetectionLoop, POLL_INTERVAL, ProcessSource, SysinfoProcesses, spawn};
 
 /// Why meet-ai thinks a meeting is happening.
@@ -43,6 +51,10 @@ pub enum Signal {
     /// (20 s, see [`activity`]), and no known meeting app explains it — a
     /// call in a browser tab, say.
     AudioActivity,
+    /// A call app or a browser has been using the mic for a while
+    /// ([`call_start`], TUR-143). `app` is its name as the user knows it
+    /// ("WhatsApp", "Google Chrome"); `browser` says the call is in a tab.
+    Call { app: String, browser: bool },
 }
 
 impl Signal {
@@ -56,6 +68,13 @@ impl Signal {
             Self::Process { process } => format!("{} is open.", processes::label(process)),
             Self::AudioActivity => {
                 "Your microphone and speakers are both in use, like on a call.".to_string()
+            }
+            Self::Call {
+                app,
+                browser: false,
+            } => format!("{app} is using your microphone."),
+            Self::Call { app, browser: true } => {
+                format!("{app} is using your microphone, like a call in a tab.")
             }
         }
     }
@@ -98,6 +117,27 @@ mod tests {
         assert!(calendar.reason().contains("Standup"));
         assert!(calendar.reason().contains('4'));
         assert!(!Signal::AudioActivity.reason().is_empty());
+    }
+
+    #[test]
+    fn a_call_names_its_app() {
+        let whatsapp = Signal::Call {
+            app: "WhatsApp".to_string(),
+            browser: false,
+        };
+        assert_eq!(whatsapp.reason(), "WhatsApp is using your microphone.");
+        let chrome = Signal::Call {
+            app: "Google Chrome".to_string(),
+            browser: true,
+        };
+        assert_eq!(
+            chrome.reason(),
+            "Google Chrome is using your microphone, like a call in a tab."
+        );
+        assert_eq!(
+            serde_json::to_value(&chrome).expect("serialises"),
+            serde_json::json!({ "kind": "call", "app": "Google Chrome", "browser": true })
+        );
     }
 
     #[test]

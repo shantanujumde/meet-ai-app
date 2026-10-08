@@ -126,6 +126,10 @@ const KNOWN: &[Known] = &[
     ),
     browser("Arc", &["company.thebrowser.browser"], &["arc"]),
     browser("Helium", &[], &["helium"]),
+    // TUR-143: by app folder; their bundle ids are not confirmed (see
+    // docs/manual-checks/worktree-tur143.md).
+    browser("Dia", &[], &["dia"]),
+    browser("Comet", &[], &["comet"]),
     browser("Safari", &["com.apple.safari"], &["safari"]),
     browser("Firefox", &["org.mozilla.firefox"], &["firefox"]),
     browser(
@@ -142,6 +146,8 @@ const KNOWN: &[Known] = &[
     browser("Island", &["io.island.island"], &["island"]),
     browser("Vivaldi", &[], &["vivaldi"]),
     browser("Opera", &[], &["opera"]),
+    // TUR-143: Krisp's bundle id, as the ticket gives it.
+    ignored(Some("Krisp"), &["ai.krisp.krispmac"], &[]),
     ignored(Some("Krisp"), &[], &["krisp"]),
     ignored(
         None,
@@ -269,6 +275,17 @@ mod tests {
                 named(None, "Krisp", "krisp"),
                 "Krisp",
                 AppKind::IgnoredSystem,
+            ),
+            (
+                named(Some("ai.krisp.krispMac"), "Krisp Helper", "Krisp Helper"),
+                "Krisp",
+                AppKind::IgnoredSystem,
+            ),
+            (named(None, "Dia", "Dia Helper"), "Dia", AppKind::Browser),
+            (
+                named(None, "Comet", "Comet Helper"),
+                "Comet",
+                AppKind::Browser,
             ),
             (
                 named(None, "Wispr Flow", "Wispr Flow"),

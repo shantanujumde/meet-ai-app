@@ -129,7 +129,17 @@ mod tests {
     fn the_shipped_list_parses_and_has_the_spec_2_3_apps() {
         assert_eq!(
             names_for("macos"),
-            ["zoom.us", "Microsoft Teams", "Webex", "Slack", "Discord"]
+            [
+                "zoom.us",
+                "Microsoft Teams",
+                "Webex",
+                "Slack",
+                "Discord",
+                "WhatsApp",
+                "FaceTime",
+                "Telegram",
+                "Signal",
+            ]
         );
     }
 
@@ -220,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn only_slack_and_discord_need_a_call_signal() {
+    fn only_apps_open_all_day_need_a_call_signal() {
         let list = parse(PROCESSES_JSON).expect("processes.json must parse");
         for os in ["macos", "windows", "linux"] {
             let needing: Vec<String> = for_os(list.clone(), os)
@@ -228,7 +238,15 @@ mod tests {
                 .filter(|p| p.needs_call_signal)
                 .map(|p| p.label)
                 .collect();
-            assert_eq!(needing, ["Slack", "Discord"], "{os}");
+            // TUR-143: the chat apps added for macOS are open all day too.
+            let expected: &[&str] = if os == "macos" {
+                &[
+                    "Slack", "Discord", "WhatsApp", "FaceTime", "Telegram", "Signal",
+                ]
+            } else {
+                &["Slack", "Discord"]
+            };
+            assert_eq!(needing, expected, "{os}");
         }
     }
 
