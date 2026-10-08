@@ -102,6 +102,21 @@ fn fixture_notes(name: &str) -> Notes {
     Notes::from_json(&fs::read_to_string(path).unwrap()).unwrap()
 }
 
+const RUNBOOK: &str = "Write the cutover runbook";
+
+/// Titles of the files in `<meeting>/tickets/`.
+fn suggestion_titles(root: &Root, meeting: &str) -> Vec<String> {
+    let dir = root.path.join(meeting).join(TICKETS_DIR);
+    fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|e| Ticket::read(&e.path()).ok()?.title())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn ids(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| (*s).to_owned()).collect()
 }
@@ -170,6 +185,13 @@ fn an_approved_task_is_not_brought_back_by_a_notes_rerun_and_stays_in_action_ite
     );
     assert!(!root.suggestion(STANDUP, "TICK-0003").exists());
     assert!(root.approved("TICK-0003").exists());
+    // Not back under a new number either: only the two untouched are rewritten.
+    assert!(
+        !suggestion_titles(&root, STANDUP).contains(&RUNBOOK.to_owned()),
+        "{:?}",
+        suggestion_titles(&root, STANDUP)
+    );
+    assert_eq!(outcome.written.len(), 2, "{outcome:?}");
     // The approved one is still this meeting's task.
     let items = action_items(&root.read_meeting(STANDUP));
     assert!(
@@ -338,6 +360,12 @@ fn a_discarded_task_is_not_recreated_by_notes_reruns() {
         );
     }
     assert!(!root.suggestion(STANDUP, "TICK-0003").exists());
+    assert!(
+        !suggestion_titles(&root, STANDUP).contains(&RUNBOOK.to_owned()),
+        "{:?}",
+        suggestion_titles(&root, STANDUP)
+    );
+    assert_eq!(second.written.len(), 2, "{second:?}");
     assert!(
         agent_notes::highest_recorded_ticket_number(&root.path).unwrap() >= 3,
         "the number stays retired"

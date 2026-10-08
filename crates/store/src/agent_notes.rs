@@ -79,8 +79,8 @@ mod actions;
 mod retired;
 mod text;
 
-pub(crate) use retired::retire;
-pub use retired::{RETIRED_TICKETS_KEY, highest_recorded_ticket_number};
+pub use retired::{RETIRED_TICKETS_KEY, RETIRED_TITLES_KEY, highest_recorded_ticket_number};
+pub(crate) use retired::{retire, retire_title};
 
 /// The `meeting.md` frontmatter key that records which tickets the app wrote,
 /// and what each file held when it did. Each value is one SHA-256 in hex, or a
@@ -200,13 +200,18 @@ pub fn write(
         .max(earlier.highest)
         .max(highest_recorded_ticket_number(root)?)
         .saturating_add(1);
-    let plan = plan(
-        &tickets_dir,
-        meeting_id,
-        &notes.tasks,
-        earlier.replaceable,
-        next,
-    )?;
+    // A task the user approved or discarded does not come back (SPEC A26).
+    let settled = retired::settled_titles(root, meeting_id, &meeting);
+    let tasks: Vec<Task> = notes
+        .tasks
+        .iter()
+        .filter(|task| {
+            let title = text::clean(task).title;
+            !settled.iter().any(|t| retired::same_title(t, &title))
+        })
+        .cloned()
+        .collect();
+    let plan = plan(&tickets_dir, meeting_id, &tasks, earlier.replaceable, next)?;
     outcome.kept = earlier.kept;
 
     // Step 1: say which tickets are about to change, in both their states.

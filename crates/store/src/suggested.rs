@@ -22,7 +22,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::agent_notes::{default_title, lock_meeting_writers, retire};
+use crate::agent_notes::{default_title, lock_meeting_writers, retire, retire_title};
 use crate::folder::{self, meeting_dir};
 use crate::meeting::Meeting;
 use crate::ticket::{self, Status, Ticket};
@@ -143,6 +143,9 @@ pub fn discard(
         None => Meeting::new(meeting_id, &default_title(meeting_id)),
     };
     retire(&mut meeting, ticket_id);
+    if let Some(title) = Ticket::read(&path).ok().and_then(|t| t.title()) {
+        retire_title(&mut meeting, &title);
+    }
     drop_action_line(&mut meeting, ticket_id);
     meeting.write(&meeting_path)?;
     self_writes.note(&meeting_path);

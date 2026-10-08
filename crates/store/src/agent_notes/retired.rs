@@ -6,14 +6,20 @@ use std::path::Path;
 
 use yaml_rust2::Yaml;
 
-use super::AGENT_TICKETS_KEY;
+use super::{AGENT_TICKETS_KEY, actions};
 use crate::meeting::Meeting;
-use crate::{Error, MEETING_FILE, folder, ticket};
+use crate::ticket::Ticket;
+use crate::{Error, MEETING_FILE, TICKETS_DIR, folder, ticket};
 
 /// The `meeting.md` frontmatter key listing the ticket ids the user discarded
 /// from this meeting's suggested tasks (SPEC A26). A list of ids; no writer
 /// hands any of them out again.
 pub const RETIRED_TICKETS_KEY: &str = "retired_tickets";
+
+/// The `meeting.md` frontmatter key listing the titles of the suggested tasks
+/// the user discarded, so a notes re-run does not suggest them again (SPEC
+/// A26). Compared without case or outer spaces.
+pub const RETIRED_TITLES_KEY: &str = "retired_titles";
 
 /// The highest ticket number any meeting's `agent_tickets` record or
 /// `retired_tickets` list names, tickets the user deleted or discarded
@@ -82,4 +88,44 @@ pub(crate) fn retire(meeting: &mut Meeting, ticket_id: &str) {
     meeting
         .frontmatter
         .set(RETIRED_TICKETS_KEY, Yaml::Array(list));
+}
+
+/// Add `title` to `meeting`'s `retired_titles` list, once.
+pub(crate) fn retire_title(meeting: &mut Meeting, title: &str) {
+    let mut titles = meeting
+        .frontmatter
+        .get_str_list(RETIRED_TITLES_KEY)
+        .unwrap_or_default();
+    if titles.iter().any(|t| same_title(t, title)) {
+        return;
+    }
+    titles.push(title.trim().to_owned());
+    let list = titles.into_iter().map(Yaml::String).collect();
+    meeting
+        .frontmatter
+        .set(RETIRED_TITLES_KEY, Yaml::Array(list));
+}
+
+/// Whether two ticket titles are the same task.
+pub(super) fn same_title(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
+}
+
+/// The titles a notes run must not suggest again for `meeting_id`: those of
+/// its approved tickets (root `tickets/` files naming it) and the ones in its
+/// `retired_titles` list.
+pub(super) fn settled_titles(root: &Path, meeting_id: &str, meeting: &Meeting) -> Vec<String> {
+    let mut titles = meeting
+        .frontmatter
+        .get_str_list(RETIRED_TITLES_KEY)
+        .unwrap_or_default();
+    for (_, _, path) in actions::ticket_files(&root.join(TICKETS_DIR)) {
+        let Ok(found) = Ticket::read(&path) else {
+            continue;
+        };
+        if found.meeting().is_some_and(|m| m == meeting_id) {
+            titles.extend(found.title());
+        }
+    }
+    titles
 }

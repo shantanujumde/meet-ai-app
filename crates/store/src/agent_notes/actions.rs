@@ -51,7 +51,7 @@ pub(super) fn action_items(
 
 /// The `TICK-NNNN.md` files in `dir` as `(number, id, path)`, unsorted. A
 /// folder that cannot be listed has none.
-fn ticket_files(dir: &Path) -> Vec<(u32, String, PathBuf)> {
+pub(super) fn ticket_files(dir: &Path) -> Vec<(u32, String, PathBuf)> {
     std::fs::read_dir(dir)
         .map(|entries| {
             entries
