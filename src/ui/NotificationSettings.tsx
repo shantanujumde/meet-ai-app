@@ -11,6 +11,10 @@
  * * "Ask when my mic and speakers are both in use" is
  *   `detection.audio_activity`.
  * * "Only for meetings with at least N people" is `detection.min_attendees`.
+ * * "Ask to record when a call starts" is `detection.call_start` (TUR-143):
+ *   a call app or a browser using the mic for 15 seconds, named in the
+ *   prompt. The "Never detect" list under it is `detection.never_detect`
+ *   ({@link NeverDetectList}).
  *
  * A change saves the whole section through Rust's comment-keeping writer and
  * shows what was saved; the reminder and detection loops pick it up on their
@@ -26,6 +30,7 @@ import {
   Bell,
   FlaskConical,
   Settings as Gear,
+  PhoneIncoming,
   Timer,
   Users,
 } from "lucide-react";
@@ -41,6 +46,7 @@ import {
 import { toUiError, type UiError } from "@/ipc/types";
 import { osText } from "@/lib/osText";
 import type { LucideIcon } from "./icons";
+import { NeverDetectList } from "./NeverDetectList";
 import { Button } from "./primitives";
 import { Switch } from "./SettingSwitch";
 import { SETTINGS_SELECT, SettingsRow, SettingsSection } from "./settings/SettingsSection";
@@ -51,6 +57,7 @@ export const LEAD_LABEL = "How early";
 export const PROCESSES_LABEL = "Ask when a meeting app is running";
 export const AUDIO_LABEL = "Ask when my mic and speakers are both in use";
 export const ATTENDEES_LABEL = "Only for meetings with at least";
+export const CALL_START_LABEL = "Ask to record when a call starts";
 
 /** The lead times the card offers, in minutes. */
 export const LEAD_MINUTES = [1, 2, 5, 10];
@@ -137,6 +144,15 @@ export function NotificationSettings() {
         options={leadChoices.map((minutes) => ({ value: minutes, label: leadLabel(minutes) }))}
         onChange={(remindBeforeMinutes) => void save({ remindBeforeMinutes })}
       />
+      <SwitchRow
+        icon={PhoneIncoming}
+        label={CALL_START_LABEL}
+        detail="When an app like WhatsApp or a browser has used the mic for 15 seconds."
+        on={settings?.callStart ?? false}
+        disabled={disabled}
+        onChange={(callStart) => void save({ callStart })}
+      />
+      <NeverDetectList onError={setError} />
       <SwitchRow
         icon={AppWindow}
         label={PROCESSES_LABEL}

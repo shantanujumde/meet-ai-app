@@ -20,6 +20,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   processes: true,
   audioActivity: true,
   minAttendees: 2,
+  callStart: true,
 };
 
 /** The `detection` section of `config.jsonc`, as the card shows it. */
@@ -33,6 +34,20 @@ export function setNotificationSettings(
   settings: NotificationSettings,
 ): Promise<NotificationSettings> {
   return call(() => commands.setNotificationSettings(settings));
+}
+
+/**
+ * The "Never detect" list (TUR-143): the apps a prompt's "Never for" added,
+ * by name ("WhatsApp"), or by id when written into `config.jsonc` by hand.
+ */
+export async function neverDetectApps(): Promise<string[]> {
+  if (!hasBackend()) return [];
+  return call(() => commands.neverDetectApps());
+}
+
+/** Save the "Never detect" list; applies without a restart. Resolves to what was saved. */
+export function setNeverDetectApps(apps: string[]): Promise<string[]> {
+  return call(() => commands.setNeverDetectApps(apps));
 }
 
 /** Whether the OS is blocking meet-ai's notifications. */
