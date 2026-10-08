@@ -91,6 +91,10 @@ pub(crate) mod pipeline;
 /// every platform: [`activity::device_activity`].
 pub mod activity;
 
+/// Which apps are using a mic, by name, never meet-ai itself (TUR-142), on
+/// every platform: [`mic_users::mic_users`].
+pub mod mic_users;
+
 /// The microphone [`AudioSource`], via `cpal`. Cross-platform on purpose —
 /// unlike the process tap, `cpal` already runs on Windows, so this is not
 /// gated under `macos`.

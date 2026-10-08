@@ -34,6 +34,7 @@ pub(crate) use super::windows_loopback::system_source;
 // TUR-51: this OS's own permission checks.
 pub(crate) use super::windows_permission::{check_mic, check_system, stored_mic_denial};
 pub(crate) use activity::device_activity;
+pub(crate) use activity::mic_users;
 #[cfg(test)]
 pub(crate) use activity::{DEVICE_ACTIVITY, DEVICE_ACTIVITY_NEEDS_SERVER};
 pub(crate) use headphones::default_output_info;

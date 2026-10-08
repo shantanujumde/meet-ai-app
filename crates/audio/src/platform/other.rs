@@ -91,6 +91,12 @@ pub(crate) fn device_activity() -> Result<DeviceActivity, Error> {
     Err(Error::Unsupported)
 }
 
+/// No process list to name the apps using a mic.
+#[allow(dead_code)] // Windows and Linux have their own reader (TUR-142).
+pub(crate) fn mic_users() -> crate::mic_users::MicUsers {
+    crate::mic_users::MicUsers::NotSupported
+}
+
 /// No OS-level microphone decision to read without opening a stream.
 // Windows and Linux bring their own permission checks (TUR-51).
 #[cfg_attr(any(target_os = "windows", target_os = "linux"), allow(dead_code))]

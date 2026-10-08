@@ -63,6 +63,11 @@ pub(crate) fn device_activity() -> Result<DeviceActivity, Error> {
     super::activity::read()
 }
 
+/// The Core Audio process list, named (TUR-142).
+pub(crate) fn mic_users() -> crate::mic_users::MicUsers {
+    super::activity::mic_users()
+}
+
 /// Ask macOS directly whether the microphone is authorized, without opening
 /// any stream.
 ///

@@ -101,6 +101,8 @@ pub(crate) use os::DEVICE_ACTIVITY_NEEDS_SERVER;
 #[cfg(test)]
 pub(crate) use os::F32_GOLDEN_HASHES;
 pub(crate) use os::input_devices;
+// TUR-142: which apps are using a mic.
+pub(crate) use os::mic_users;
 pub(crate) use os::{
     DeviceId, default_input_device, default_output_device, device_activity, host_now_ns,
 };

@@ -9,9 +9,19 @@
 //!
 //! The read is all COM calls on the caller's thread: no stream is opened, so
 //! there is no permission prompt and no mic indicator.
+//!
+//! [`mic_users`] keeps the capture sessions' pids instead of only counting
+//! them (TUR-142): each gets its name, path, command line and parent from
+//! `sysinfo`, and [`crate::mic_users::name_apps`] names them. Chrome records
+//! in its audio service, a `--type=utility` child, which is named after its
+//! parent, the browser. The ConsentStore registry is not read (TUR-141
+//! decision 20).
+
+use std::collections::HashSet;
 
 use crate::Error;
-use crate::activity::{AppStream, DeviceActivity, reading_without_our_own};
+use crate::activity::{AppStream, DeviceActivity, other_apps, reading_without_our_own};
+use crate::mic_users::{MicApp, MicUsers, ProcessFacts, name_apps};
 
 /// [`device_activity`] gives a real reading here.
 #[cfg(test)]
@@ -62,6 +72,98 @@ pub(crate) fn device_activity() -> Result<DeviceActivity, Error> {
         name_processes(&mut render);
     }
     Ok(reading_without_our_own(&capture, &render))
+}
+
+/// The apps with an active session on any capture endpoint, named, without
+/// meet-ai. [`MicUsers::NotSupported`] when WASAPI cannot be read.
+pub(crate) fn mic_users() -> MicUsers {
+    match read_mic_users() {
+        Ok(apps) => MicUsers::Supported(apps),
+        Err(error) => {
+            tracing::debug!(%error, "could not list the apps using a mic");
+            MicUsers::NotSupported
+        }
+    }
+}
+
+// Adapted from github.com/fastrepl/anarlog/crates/detect/src/list/windows.rs @ 259a04ee2e1447dfed150ed08f0a1bb69909b836 (MIT)
+fn read_mic_users() -> Result<Vec<MicApp>, Error> {
+    let own_pid = std::process::id();
+    let (mic, playing) = {
+        let _com = ComGuard::initialize();
+        let enumerator = wasapi::DeviceEnumerator::new().map_err(read_error)?;
+        let capture = sessions(&enumerator, &wasapi::Direction::Capture)?;
+        let render = sessions(&enumerator, &wasapi::Direction::Render)?;
+        let mut mic: Vec<u32> = other_apps(&capture, own_pid)
+            .filter_map(|s| s.pid)
+            .collect();
+        mic.sort_unstable();
+        mic.dedup();
+        let playing: HashSet<u32> = other_apps(&render, own_pid).filter_map(|s| s.pid).collect();
+        (mic, playing)
+    };
+    if mic.is_empty() {
+        return Ok(Vec::new());
+    }
+    let system = processes_and_parents(&mic);
+    let users = mic
+        .iter()
+        .map(|&pid| process_facts(&system, pid, playing.contains(&pid)))
+        .collect();
+    Ok(name_apps(users, own_pid, |pid| {
+        system
+            .process(sysinfo::Pid::from_u32(pid))
+            .map(|_| process_facts(&system, pid, playing.contains(&pid)))
+    }))
+}
+
+/// `sysinfo` for `pids`, their parents and grandparents: a WebView2 app's
+/// audio service is two parents below the app.
+fn processes_and_parents(pids: &[u32]) -> sysinfo::System {
+    let kind = sysinfo::ProcessRefreshKind::nothing()
+        .with_exe(sysinfo::UpdateKind::OnlyIfNotSet)
+        .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet);
+    let mut system = sysinfo::System::new();
+    let mut wanted: Vec<sysinfo::Pid> = pids.iter().copied().map(sysinfo::Pid::from_u32).collect();
+    for _ in 0..3 {
+        if wanted.is_empty() {
+            break;
+        }
+        system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&wanted), false, kind);
+        wanted = wanted
+            .iter()
+            .filter_map(|pid| system.process(*pid)?.parent())
+            .filter(|parent| system.process(*parent).is_none())
+            .collect();
+    }
+    system
+}
+
+/// What `sysinfo` knows about `pid`; only the pid when it has gone.
+fn process_facts(system: &sysinfo::System, pid: u32, output: bool) -> ProcessFacts {
+    let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) else {
+        return ProcessFacts {
+            pid,
+            output,
+            ..ProcessFacts::default()
+        };
+    };
+    ProcessFacts {
+        pid,
+        path: process
+            .exe()
+            .map(|path| path.to_string_lossy().into_owned()),
+        exe: process.name().to_string_lossy().into_owned(),
+        args: process
+            .cmd()
+            .iter()
+            .skip(1)
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect(),
+        parent: process.parent().map(sysinfo::Pid::as_u32),
+        output,
+        ..ProcessFacts::default()
+    }
 }
 
 fn read_error(error: wasapi::WasapiError) -> Error {

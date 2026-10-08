@@ -52,6 +52,8 @@ objc2-core-audio.workspace = true
 objc2-core-audio-types.workspace = true
 objc2-core-foundation.workspace = true
 objc2-foundation.workspace = true
+# TUR-142: `proc_pidpath` and `dlsym` for naming the apps using the mic.
+libc.workspace = true
 
 # The microphone consent registry keys (TUR-51, src/platform/windows_permission.rs).
 [target.'cfg(target_os = "windows")'.dependencies]
