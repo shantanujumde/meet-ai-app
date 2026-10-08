@@ -47,9 +47,9 @@ describe("isPaused", () => {
   it("is true only for a recording with an open pause", () => {
     const open = { pausedAtMs: 7_000, pausedTotalMs: 0 };
     expect(isPaused({ phase: "recording", pause: open })).toBe(true);
-    expect(isPaused({ phase: "recording", pause: { pausedAtMs: null, pausedTotalMs: 3_000 } })).toBe(
-      false,
-    );
+    expect(
+      isPaused({ phase: "recording", pause: { pausedAtMs: null, pausedTotalMs: 3_000 } }),
+    ).toBe(false);
     expect(isPaused({ phase: "recording", pause: undefined })).toBe(false);
     expect(isPaused({ phase: "stopping", pause: open })).toBe(false);
   });
