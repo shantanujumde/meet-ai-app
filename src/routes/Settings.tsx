@@ -29,6 +29,7 @@ import { FolderRow } from "@/ui/FolderRow";
 import { LogsFolderRow } from "@/ui/LogsFolderRow";
 import { MenuBarCountdownSetting } from "@/ui/MenuBarCountdownSetting";
 import { NotificationSettings } from "@/ui/NotificationSettings";
+import { OverlaySetting } from "@/ui/OverlaySetting";
 import { Button } from "@/ui/primitives";
 import { StartAtLoginSetting } from "@/ui/StartAtLoginSetting";
 import { AppearanceSettings } from "@/ui/settings/AppearanceSettings";
@@ -63,6 +64,8 @@ export function Settings() {
         <AudioRetentionRow />
         {/* TUR-91: keep Bluetooth headphones out of call mode. */}
         <BluetoothMicSetting />
+        {/* TUR-146: the small always-on-top window while recording. */}
+        <OverlaySetting />
       </SettingsSection>
 
       <AgentSetup />

@@ -10,15 +10,23 @@
  * * **It is disabled, not failing at click time**, when permission is denied —
  *   with the reason on the button's accessible name, so a VoiceOver user is not
  *   left wondering why.
+ *
+ * TUR-146: while recording, a Pause button sits beside Stop (Resume while
+ * paused, the same control as the overlay's). Paused, the dot stops pulsing,
+ * the timer freezes and the words say "Paused", so the state is never carried
+ * by the icon alone.
  */
 
-import { Mic, Square } from "lucide-react";
+import { Mic, Pause, Play, Square } from "lucide-react";
 import { useEffect, useState } from "react";
+import { isPaused } from "@/ipc/client";
 import type { PermissionStatus, RecordingStatus } from "@/ipc/types";
 import { formatElapsed } from "@/lib/format";
 import { osText, shortcutLabel } from "@/lib/osText";
 import { recordingBlocked } from "@/lib/recordingPermission";
 import { Icon } from "./icons";
+import { IconButton } from "./primitives";
+import { useRecordedMs } from "./useRecordedMs";
 
 /** Human wording for each phase. `Starting`/`Stopping` get their own. */
 function labelFor(phase: RecordingStatus["phase"]): string {
@@ -58,14 +66,18 @@ export function RecordControl({
   permission,
   busy,
   onToggle,
+  onTogglePause,
 }: {
   status: RecordingStatus;
   permission: PermissionStatus | null;
   busy: boolean;
   onToggle: () => void;
+  /** Pause a live recording, or resume a paused one (TUR-146). */
+  onTogglePause: () => void;
 }) {
-  const elapsed = useElapsed(status.startedAtMs);
+  const elapsed = useRecordedMs(status);
   const live = status.phase === "recording";
+  const paused = isPaused(status);
   const transitioning = status.phase === "starting" || status.phase === "stopping";
 
   // A denied microphone is the only state that disables the control (TUR-87:
@@ -79,7 +91,7 @@ export function RecordControl({
   const accessibleName = denied
     ? "Recording is unavailable because meet-ai is not allowed to record this Mac's audio"
     : live
-      ? `Stop recording. ${formatElapsed(elapsed)} so far.`
+      ? `Stop recording. ${formatElapsed(elapsed)} so far${paused ? ", paused" : ""}.`
       : "Start recording";
 
   return (
@@ -97,12 +109,27 @@ export function RecordControl({
             elapsed timer and the word Stop carry it too). Idle and the two
             transitions get the action's icon instead. */}
         {live ? (
-          <span className="record__dot record__dot--live" aria-hidden="true" />
+          <span
+            className={paused ? "record__dot" : "record__dot record__dot--live"}
+            aria-hidden="true"
+          />
         ) : (
           <Icon icon={status.phase === "stopping" ? Square : Mic} />
         )}
         {labelFor(status.phase)}
       </button>
+
+      {live ? (
+        <IconButton
+          icon={paused ? Play : Pause}
+          label={paused ? "Resume recording" : "Pause recording"}
+          tone="neutral"
+          className="rounded-capsule"
+          aria-pressed={paused}
+          disabled={busy}
+          onClick={onTogglePause}
+        />
+      ) : null}
 
       {/* Beside the button it starts, not across the timer's empty room. */}
       <span className="record__shortcut" aria-hidden="true">
@@ -114,6 +141,7 @@ export function RecordControl({
           edge. */}
       <span className="record__elapsed" aria-hidden={!live}>
         {live ? formatElapsed(elapsed) : ""}
+        {paused ? " Paused" : ""}
       </span>
     </div>
   );

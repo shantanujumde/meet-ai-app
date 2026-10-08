@@ -248,6 +248,8 @@ export type RecordingStatus = {
    * as `null` when nothing went wrong.
    */
   error: UiError | null;
+  /** TUR-146: the paused stretches. Rust always sends it; absent reads as never paused. */
+  pause?: import("./recordingPause").PauseClock;
 };
 
 /**

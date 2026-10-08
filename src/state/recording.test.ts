@@ -11,10 +11,17 @@ const handlers: { state?: (status: RecordingStatus) => void } = {};
 const teardown = vi.fn();
 const recordingStatus = vi.fn<() => Promise<RecordingStatus>>();
 const toggleRecording = vi.fn<() => Promise<RecordingStatus>>();
+const pauseRecording = vi.fn<() => Promise<RecordingStatus>>();
+const resumeRecording = vi.fn<() => Promise<RecordingStatus>>();
+const stopRecording = vi.fn<() => Promise<RecordingStatus>>();
 
-vi.mock("@/ipc/client", () => ({
+vi.mock("@/ipc/client", async () => ({
+  isPaused: (await import("@/ipc/recordingPause")).isPaused,
   recordingStatus: () => recordingStatus(),
   toggleRecording: () => toggleRecording(),
+  pauseRecording: () => pauseRecording(),
+  resumeRecording: () => resumeRecording(),
+  stopRecording: () => stopRecording(),
   onRecordingState: (handler: (status: RecordingStatus) => void) => {
     handlers.state = handler;
     return teardown;
@@ -46,6 +53,9 @@ describe("the recording store", () => {
     useRecordingStore.setState({ status: IDLE, error: null, busy: false });
     recordingStatus.mockResolvedValue(IDLE);
     toggleRecording.mockReset();
+    pauseRecording.mockReset();
+    resumeRecording.mockReset();
+    stopRecording.mockReset();
     teardown.mockClear();
     sessionStorage.clear();
   });
@@ -134,5 +144,42 @@ describe("the recording store", () => {
     toggleRecording.mockResolvedValue({ ...IDLE, error: INTERRUPTED });
     await useRecordingStore.getState().toggle();
     expect(useRecordingStore.getState().error).toEqual(INTERRUPTED);
+  });
+
+  it("pauses a live recording and resumes a paused one (TUR-146)", async () => {
+    const paused = { ...RECORDING, pause: { pausedAtMs: 5_000, pausedTotalMs: 0 } };
+    useRecordingStore.setState({ status: RECORDING });
+    pauseRecording.mockResolvedValue(paused);
+    await useRecordingStore.getState().togglePause();
+    expect(pauseRecording).toHaveBeenCalledOnce();
+    expect(useRecordingStore.getState().status).toEqual(paused);
+
+    const resumed = { ...RECORDING, pause: { pausedAtMs: null, pausedTotalMs: 3_000 } };
+    resumeRecording.mockResolvedValue(resumed);
+    await useRecordingStore.getState().togglePause();
+    expect(resumeRecording).toHaveBeenCalledOnce();
+    expect(useRecordingStore.getState().status).toEqual(resumed);
+    expect(useRecordingStore.getState().busy).toBe(false);
+  });
+
+  it("only pauses a live recording", async () => {
+    for (const status of [IDLE, STARTING, { ...RECORDING, phase: "stopping" as const }]) {
+      useRecordingStore.setState({ status });
+      await useRecordingStore.getState().togglePause();
+    }
+    expect(pauseRecording).not.toHaveBeenCalled();
+    expect(resumeRecording).not.toHaveBeenCalled();
+  });
+
+  it("shows a refused pause in the banner, and stop goes through the store", async () => {
+    useRecordingStore.setState({ status: RECORDING });
+    pauseRecording.mockRejectedValue(INTERRUPTED);
+    await useRecordingStore.getState().togglePause();
+    expect(useRecordingStore.getState().error).toEqual(INTERRUPTED);
+
+    stopRecording.mockResolvedValue(IDLE);
+    await useRecordingStore.getState().stop();
+    expect(stopRecording).toHaveBeenCalledOnce();
+    expect(useRecordingStore.getState().status).toEqual(IDLE);
   });
 });

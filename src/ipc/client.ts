@@ -499,6 +499,8 @@ export * from "./micSetting";
 export * from "./models";
 export * from "./notesAutoRun";
 export * from "./notifications";
+export * from "./overlay";
+export * from "./recordingPause";
 // Settings' audio retention line (TUR-45, TUR-85).
 export * from "./retention";
 // The Settings speech engine picker (TUR-75).

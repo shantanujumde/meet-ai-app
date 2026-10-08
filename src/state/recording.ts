@@ -15,7 +15,15 @@
  */
 
 import { create } from "zustand";
-import { onRecordingState, recordingStatus, toggleRecording } from "@/ipc/client";
+import {
+  isPaused,
+  onRecordingState,
+  pauseRecording,
+  recordingStatus,
+  resumeRecording,
+  stopRecording,
+  toggleRecording,
+} from "@/ipc/client";
 import type { RecordingStatus, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 
@@ -37,6 +45,10 @@ type RecordingStore = {
   busy: boolean;
   refresh: () => Promise<void>;
   toggle: () => Promise<void>;
+  /** Pause a live recording, or resume a paused one (TUR-146). */
+  togglePause: () => Promise<void>;
+  /** Stop a live or paused recording: the overlay's Stop (TUR-146). */
+  stop: () => Promise<void>;
   clearError: () => void;
   /** Apply a state pushed from Rust. Not for components to call. */
   applyFromBackend: (status: RecordingStatus) => void;
@@ -55,16 +67,18 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     }
   },
 
-  async toggle() {
-    if (get().busy) return;
-    set({ busy: true, error: null });
-    try {
-      set(withError(await toggleRecording()));
-    } catch (thrown) {
-      set({ error: toUiError(thrown) });
-    } finally {
-      set({ busy: false });
-    }
+  toggle() {
+    return request(toggleRecording);
+  },
+
+  togglePause() {
+    const { status } = get();
+    if (status.phase !== "recording") return Promise.resolve();
+    return request(isPaused(status) ? resumeRecording : pauseRecording);
+  },
+
+  stop() {
+    return request(stopRecording);
   },
 
   clearError() {
@@ -77,6 +91,23 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     set(withError(status));
   },
 }));
+
+/**
+ * One recorder command from this window: never two at once (the buttons
+ * disable while `busy`), and its answer or its refusal shown the same way.
+ */
+async function request(command: () => Promise<RecordingStatus>): Promise<void> {
+  const { busy } = useRecordingStore.getState();
+  if (busy) return;
+  useRecordingStore.setState({ busy: true, error: null });
+  try {
+    useRecordingStore.setState(withError(await command()));
+  } catch (thrown) {
+    useRecordingStore.setState({ error: toUiError(thrown) });
+  } finally {
+    useRecordingStore.setState({ busy: false });
+  }
+}
 
 /**
  * A status from Rust, plus what it means for the shown error.
