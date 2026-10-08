@@ -166,6 +166,8 @@ pub fn run() {
             detection::start(_app.handle(), detection_config.processes);
             // TUR-31: and for the mic and speakers both in use, like a call in a browser.
             detection::start_audio_activity(_app.handle(), detection_config.audio_activity);
+            // TUR-143: and for a call app or a browser using the mic, by name.
+            detection::call_start::start(_app.handle());
             // TUR-30: and remind a minute before each meeting on the calendar.
             detection::start_reminders(_app.handle(), detection_config.calendar);
             // TUR-100: notice edits made to the meetings folder outside the app.

@@ -464,3 +464,43 @@ fn a_countdown_answer_maps_every_button() {
         );
     }
 }
+
+fn whatsapp_call() -> Prompt {
+    super::super::notify::prompt_for(
+        Phase::Idle,
+        &Signal::Call {
+            app: "WhatsApp".to_string(),
+            browser: false,
+        },
+    )
+    .expect("asks when idle")
+}
+
+#[test]
+fn a_call_prompt_offers_never_for_its_app_and_not_now_names_it() {
+    let mut slot = Slot::default();
+    let shown = slot.show(whatsapp_call().into(), 0, None).expect("shown");
+    assert!(uses_popup(&whatsapp_call().signal));
+    assert_eq!(not_now_app(&shown, shown.id).as_deref(), Some("WhatsApp"));
+    assert_eq!(not_now_app(&shown, shown.id + 1), None, "a stale click");
+    assert_eq!(
+        slot.answer(shown.id, PopupAnswer::NeverFor),
+        Some(Action::NeverFor {
+            app: "WhatsApp".to_string()
+        })
+    );
+    // Only a call prompt's Not now starts a cooldown.
+    let zoom = slot.show(zoom().into(), 0, None).expect("shown");
+    assert_eq!(not_now_app(&zoom, zoom.id), None);
+    let countdown = slot
+        .show(
+            Card::Countdown {
+                line: "Zoom call ended".to_string(),
+                seconds: 10,
+            },
+            0,
+            None,
+        )
+        .expect("shown");
+    assert_eq!(not_now_app(&countdown, countdown.id), None);
+}

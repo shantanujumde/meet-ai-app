@@ -14,6 +14,9 @@
 //!   second system notification. If that prompt was dismissed, nothing comes
 //!   back.
 //!
+//! A call prompt naming the app on the mic (TUR-143, "WhatsApp call
+//! detected") is a process signal here: it takes the same [`Merger::other`].
+//!
 //! Pure state over wall-clock times passed in, so every rule is a unit test.
 
 use chrono::{DateTime, Duration, Utc};

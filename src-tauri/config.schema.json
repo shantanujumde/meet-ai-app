@@ -192,6 +192,17 @@
           "description": "Watch for the mic and speakers being used at the same time.",
           "default": true
         },
+        "call_start": {
+          "type": "boolean",
+          "description": "Ask to record when a call app or a browser has been using the mic for 15 seconds. Where the app list cannot be read (macOS older than 14), \"processes\" asks instead.",
+          "default": true
+        },
+        "never_detect": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Apps never to ask about, by name as the prompt shows it (\"WhatsApp\") or by id (\"net.whatsapp.WhatsApp\"). Filled by a prompt's \"Never for\" and edited in Settings, Notifications.",
+          "default": []
+        },
         "min_attendees": {
           "type": "integer",
           "minimum": 0,

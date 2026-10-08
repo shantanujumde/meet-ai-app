@@ -280,6 +280,7 @@ impl PromptPopup {
 pub fn uses_popup(signal: &Signal) -> bool {
     match signal {
         Signal::Calendar { .. } | Signal::Process { .. } | Signal::AudioActivity => true,
+        Signal::Call { .. } => true,
     }
 }
 
@@ -382,9 +383,17 @@ pub async fn answer_prompt_popup(
     id: u32,
     answer: PopupAnswer,
 ) -> Result<(), UiError> {
+    // TUR-143: Not now on a call prompt starts that app's 10 minutes.
+    let not_now = (answer == PopupAnswer::Dismiss)
+        .then(|| app.try_state::<PromptPopup>()?.with(|slot| slot.current()))
+        .flatten()
+        .and_then(|shown| not_now_app(&shown, id));
     let action = app
         .try_state::<PromptPopup>()
         .and_then(|state| state.with(|slot| slot.answer(id, answer)));
+    if let (Some(name), Some(detection)) = (not_now, app.try_state::<super::Detection>()) {
+        detection.calls.dismissed(&name);
+    }
     let Some(action) = action else {
         // Replaced or timed out; the window may still be up from a race.
         hide_after_fade(&app);
@@ -399,10 +408,7 @@ pub async fn answer_prompt_popup(
 async fn run(app: &AppHandle, action: Action) -> Result<(), UiError> {
     match action {
         Action::Nothing => Ok(()),
-        Action::NeverFor { app: name } => {
-            never_for(&name);
-            Ok(())
-        }
+        Action::NeverFor { app: name } => super::call_start::never_for(app, &name).await,
         Action::OpenBrief { title } => {
             crate::lifecycle::navigate(app, NavigateTo::Brief { title });
             Ok(())
@@ -429,10 +435,16 @@ async fn run(app: &AppHandle, action: Action) -> Result<(), UiError> {
     }
 }
 
-/// **Never for <App>** was pressed. For now it closes the card like Not
-/// now; TUR-143 adds `app` to the "Never detect" list here.
-fn never_for(app: &str) {
-    tracing::info!(app, "Never for: not asking about this app now");
+/// The app a Not now on card `id` is about: a call prompt's, when that card
+/// is the one on screen (TUR-143).
+pub fn not_now_app(shown: &PopupPrompt, id: u32) -> Option<String> {
+    match &shown.card {
+        Card::Prompt { prompt } if shown.id == id => match &prompt.signal {
+            Signal::Call { app, .. } => Some(app.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 #[cfg(test)]

@@ -40,6 +40,8 @@ pub struct NotificationSettings {
     pub audio_activity: bool,
     /// "Only for meetings with at least N people": `detection.min_attendees`.
     pub min_attendees: u32,
+    /// "Ask to record when a call starts": `detection.call_start` (TUR-143).
+    pub call_start: bool,
 }
 
 impl From<DetectionConfig> for NotificationSettings {
@@ -50,6 +52,7 @@ impl From<DetectionConfig> for NotificationSettings {
             processes: config.processes,
             audio_activity: config.audio_activity,
             min_attendees: config.min_attendees,
+            call_start: config.call_start,
         }
     }
 }
@@ -75,6 +78,7 @@ impl NotificationSettings {
             audio_activity: self.audio_activity,
             min_attendees: self.min_attendees,
             remind_before_minutes: self.remind_before_minutes,
+            call_start: self.call_start,
         })
     }
 }
@@ -107,6 +111,36 @@ pub async fn set_notification_settings(
     }
     tracing::info!(?saved, "notification settings saved");
     Ok(NotificationSettings::from(saved))
+}
+
+/// The "Never detect" list (TUR-143): `detection.never_detect`, the apps a
+/// prompt's "Never for" added or the user wrote in.
+#[tauri::command]
+#[specta::specta]
+pub async fn never_detect_apps() -> Result<Vec<String>, UiError> {
+    on_blocking_pool(config::never_detect).await
+}
+
+/// Save the "Never detect" list (the card's remove buttons) and return what
+/// was saved. The call-start loop follows from its next reading.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_never_detect_apps(
+    app: AppHandle,
+    apps: Vec<String>,
+) -> Result<Vec<String>, UiError> {
+    let handle = app.clone();
+    let saved = on_blocking_pool(move || {
+        handle
+            .state::<FolderGate>()
+            .writing(|| Ok(config::set_never_detect(&apps)?))
+    })
+    .await??;
+    if let Some(detection) = app.try_state::<Detection>() {
+        detection.calls.set_never(saved.clone());
+    }
+    tracing::info!(count = saved.len(), "the Never detect list was saved");
+    Ok(saved)
 }
 
 /// Is the OS blocking meet-ai's notifications? The card then offers the OS
@@ -167,6 +201,7 @@ mod tests {
                 processes: true,
                 audio_activity: true,
                 min_attendees: 2,
+                call_start: true,
             }
         );
     }
@@ -179,6 +214,7 @@ mod tests {
             processes: false,
             audio_activity: false,
             min_attendees: 5,
+            call_start: false,
         };
         assert_eq!(
             changed.to_config().unwrap(),
@@ -188,6 +224,7 @@ mod tests {
                 audio_activity: false,
                 min_attendees: 5,
                 remind_before_minutes: 10,
+                call_start: false,
             }
         );
         assert_eq!(
@@ -235,7 +272,8 @@ mod tests {
                 "remindBeforeMinutes": 1,
                 "processes": true,
                 "audioActivity": true,
-                "minAttendees": 2
+                "minAttendees": 2,
+                "callStart": true
             })
         );
     }

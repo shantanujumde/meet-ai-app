@@ -547,6 +547,17 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A30 — 2026-10-09 · A call app or a browser on the mic asks, naming it; "Never detect" list (amends §2.3's two detection rows and §3.5's `detection`; TUR-143)
+
+Where the OS can list the apps using a mic (`audio::mic_users`, TUR-142: macOS 14 and later, WASAPI on Windows, PulseAudio on Linux), a call is noticed by which app holds the mic, not by which apps are open:
+
+- **A call app or a browser on the mic for 15 s asks**, naming it: "WhatsApp call detected", "Call detected in Google Chrome". The rule is `detect::call_start` (pure, unit-tested with fake readings), fed every 2 s. Nothing records without a click (L15). Already recording counts as handled, as for the TUR-27 rule.
+- **Browser calls are in scope** (amends §2.3's "Browser-meeting detection: skipped in v1"), spotted only through which browser process uses the mic. No new permission: no extension, no window titles, no Accessibility or Screen Recording. Which site the call is on is not known, so the prompt names the browser.
+- **"A meeting app is open" (TUR-27) is the fallback only** where the list cannot be read (amends §2.3's meeting-app row); there `processes.json` also lists WhatsApp, FaceTime, Telegram and Signal on macOS, asking only with a call signal, like Slack. **"Mic and speakers both in use" (TUR-31)** asks only when an app we do not know is on the mic.
+- **Never a call:** meet-ai and its WebKit child, Krisp, Rogue Amoeba's apps, BlackHole, Superwhisper, Wispr Flow, MacWhisper, Raycast and Siri (`corespeechd`), built in.
+- **Not now** (or no answer) keeps that app quiet for 10 minutes. **Never for <App>** adds it to the "Never detect" list, editable in Settings → Notifications.
+- **§3.5 `detection` gains two keys:** `call_start` (bool, default `true`: "Ask to record when a call starts") and `never_detect` (string array, default `[]`: app names as the prompt shows them, or ids).
+
 ### A28 — 2026-10-09 · Tickets go to the tracker on their own once the user picked one; "Send a test ticket" creates nothing (amends A11's Sync and A26; TUR-113)
 
 The owner decided (2026-10-06) that tickets on the Tickets page are sent to the tracker without a Sync press.

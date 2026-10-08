@@ -59,6 +59,8 @@ mod audio_mic;
 mod audio_headphones;
 mod calendar_section;
 mod detection_section;
+// TUR-143: `detection.never_detect`, the "Never detect" list.
+mod detection_never;
 mod file;
 // TUR-63: `hooks`, the user's own commands.
 mod hooks_section;
@@ -87,6 +89,8 @@ pub use hooks_section::{HooksConfig, hooks};
 pub use calendar_section::set_providers as set_calendar_providers;
 // TUR-78: Settings → Notifications writes the section; the reminder reads the lead time.
 pub use detection_section::{DEFAULT_REMIND_BEFORE_MINUTES, DetectionConfig, set_detection};
+// TUR-143: the "Never detect" list, from a prompt and from Settings → Notifications.
+pub use detection_never::{add_never_detect, never_detect, set_never_detect};
 // TUR-9 (Setup screens) adds the IPC commands that use these.
 #[allow(unused_imports)]
 pub use agent_section::{AgentConfig, Harness, TicketsConfig};

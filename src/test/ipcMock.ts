@@ -341,10 +341,14 @@ export const ipc = {
     processes: true,
     audioActivity: true,
     minAttendees: 2,
+    callStart: true,
   })),
   setNotificationSettings: vi.fn<typeof Client.setNotificationSettings>(
     async (settings) => settings,
   ),
+  // TUR-143: no app on the "Never detect" list yet.
+  neverDetectApps: vi.fn<typeof Client.neverDetectApps>(async () => []),
+  setNeverDetectApps: vi.fn<typeof Client.setNeverDetectApps>(async (apps) => apps),
   osNotificationsBlocked: vi.fn<typeof Client.osNotificationsBlocked>(async () => false),
   openNotificationSettings: vi.fn<typeof Client.openNotificationSettings>(async () => {}),
   sendTestReminder: vi.fn<typeof Client.sendTestReminder>(async () => true),

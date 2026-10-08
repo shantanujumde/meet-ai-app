@@ -13,6 +13,10 @@
 //! [`MAX_REMIND_BEFORE_MINUTES`] is logged and read as the default, without
 //! losing the other keys. [`set_detection`] writes the section back through
 //! the comment-keeping writer in `file.rs`.
+//!
+//! TUR-143 added `call_start`, "Ask to record when a call starts", and the
+//! "Never detect" list `never_detect` (its own reader, `detection_never.rs`,
+//! so this section stays `Copy`).
 
 use serde::Deserialize;
 
@@ -41,6 +45,9 @@ pub struct DetectionConfig {
     pub min_attendees: u32,
     /// Remind this many minutes before a meeting starts; `0` is at the start.
     pub remind_before_minutes: u32,
+    /// Ask to record when a call app or a browser starts using the mic
+    /// (TUR-143).
+    pub call_start: bool,
 }
 
 impl Default for DetectionConfig {
@@ -51,6 +58,7 @@ impl Default for DetectionConfig {
             audio_activity: true,
             min_attendees: 2,
             remind_before_minutes: DEFAULT_REMIND_BEFORE_MINUTES,
+            call_start: true,
         }
     }
 }
@@ -64,6 +72,7 @@ struct RawDetection {
     min_attendees: Option<u32>,
     /// Any JSON, so a bad lead time falls back alone (see the module docs).
     remind_before_minutes: Option<serde_json::Value>,
+    call_start: Option<bool>,
 }
 
 /// `detection` from the text of `config.jsonc`. Empty text, or no
@@ -79,6 +88,7 @@ pub fn parse_detection(raw: &str) -> Result<DetectionConfig, ConfigError> {
         audio_activity: detection.audio_activity.unwrap_or(defaults.audio_activity),
         min_attendees: detection.min_attendees.unwrap_or(defaults.min_attendees),
         remind_before_minutes: remind_before_minutes(detection.remind_before_minutes),
+        call_start: detection.call_start.unwrap_or(defaults.call_start),
     })
 }
 
@@ -133,6 +143,7 @@ pub fn with_detection(raw: &str, detection: &DetectionConfig) -> Result<String, 
                 "remind_before_minutes",
                 detection.remind_before_minutes.into(),
             ),
+            ("call_start", detection.call_start.into()),
         ],
     )
 }
@@ -157,6 +168,7 @@ mod tests {
             audio_activity: true,
             min_attendees: 2,
             remind_before_minutes: 1,
+            call_start: true,
         };
         assert_eq!(DetectionConfig::default(), defaults);
         for raw in [
@@ -197,6 +209,13 @@ mod tests {
                 ..on
             }
         );
+        assert_eq!(
+            off("call_start"),
+            DetectionConfig {
+                call_start: false,
+                ..on
+            }
+        );
     }
 
     #[test]
@@ -209,7 +228,8 @@ mod tests {
                     "processes": false,
                     "audio_activity": false,
                     "min_attendees": 0,
-                    "remind_before_minutes": 10
+                    "remind_before_minutes": 10,
+                    "call_start": false
                 }
             }"#,
         )
@@ -222,6 +242,7 @@ mod tests {
                 audio_activity: false,
                 min_attendees: 0,
                 remind_before_minutes: 10,
+                call_start: false,
             }
         );
     }
@@ -279,6 +300,7 @@ mod tests {
             audio_activity: false,
             min_attendees: 4,
             remind_before_minutes: 5,
+            call_start: false,
             ..DetectionConfig::default()
         };
         let written = with_detection(raw, &changed).unwrap();
@@ -311,5 +333,8 @@ mod tests {
         assert_eq!(key["minimum"], 0);
         assert_eq!(key["maximum"], MAX_REMIND_BEFORE_MINUTES);
         assert_eq!(key["default"], DEFAULT_REMIND_BEFORE_MINUTES);
+        let call_start = &schema["properties"]["detection"]["properties"]["call_start"];
+        assert_eq!(call_start["type"], "boolean");
+        assert_eq!(call_start["default"], DetectionConfig::default().call_start);
     }
 }
