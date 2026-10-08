@@ -27,6 +27,7 @@ import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
 import { COPIED_RESET_MS } from "@/lib/constants";
 import {
+  backupStopLabel,
   describeInterruption,
   formatDuration,
   formatRelativeDate,
@@ -153,6 +154,9 @@ function MetaLine({
   }
   if (summary.hasAnalysis && !live) parts.push(<Fact icon={Check}>Wrapped up</Fact>);
   if (interrupted) parts.push(INTERRUPTED_LABEL);
+  // TUR-145: a meeting a backup stop ended says which, in words.
+  const stoppedBy = live ? null : backupStopLabel(summary.recordingState);
+  if (stoppedBy) parts.push(stoppedBy);
 
   return (
     <p

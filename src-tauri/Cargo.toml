@@ -125,6 +125,10 @@ objc2-foundation = { workspace = true, features = [
     "NSFormatter",
     "NSLocale",
     "NSString",
+    # NSWorkspace's will-sleep notification (TUR-145, `recording/backup_stop/platform/macos.rs`).
+    "NSNotification",
+    "NSOperation",
+    "block2",
 ] }
 # The prompt card as a non-activating panel (TUR-147,
 # `detection/popup/platform/macos.rs`).
@@ -134,10 +138,21 @@ objc2-app-kit = { workspace = true, features = [
     "NSPanel",
     "NSResponder",
     "NSWindow",
+    "NSWorkspace",
 ] }
+# The will-sleep observer's block (TUR-145).
+block2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 winreg.workspace = true
+# The suspend callback that stops a recording before sleep (TUR-145,
+# `recording/backup_stop/platform/windows.rs`).
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Power", "Win32_UI_WindowsAndMessaging"] }
+
+# logind's PrepareForSleep and its delay inhibitor (TUR-145,
+# `recording/backup_stop/platform/linux.rs`).
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus.workspace = true
 
 [dev-dependencies]
 # The notes-run tests drive the fake agent CLI (TUR-10), and so do

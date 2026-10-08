@@ -547,6 +547,16 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A32 — 2026-10-09 · Backup stops: 10 minutes of silence asks to stop, sleep stops at once; `detection.stop_after_silence` (amends §3.5; TUR-145)
+
+A recording nobody stops (a call app that keeps the mic after hang-up, someone who walked away) used to run until someone pressed Stop. Two backup stops now end it, for every recording however it started:
+
+- **Ten minutes of silence.** No speech on the mic or in the call for 10 minutes puts up A27's countdown card, "No one has spoken for 10 minutes", with **Stop now** and **Keep recording**; it stops when the ring reaches zero (10 s). Keep recording, or a card that closed without an answer, starts the 10 minutes again; speech during the countdown takes the card down quietly. Speech is judged by the transcript's own detector (`stt::vad`: earshot and its `Segmenter`, whisper's thresholds) on a copy of each channel's 16 kHz frames fanned out ahead of the live transcript's tees, so it works whatever the engine and with `transcription.live: false`. New key `detection.stop_after_silence` (boolean, default true), the Settings → Notifications switch "Stop after 10 min of silence".
+- **Sleep.** The computer going to sleep or its lid closing stops and saves the recording at once, no card, always on: macOS `NSWorkspaceWillSleepNotification` (handled on the main thread, which holds the sleep up to Apple's 30 s), Windows `PBT_APMSUSPEND` through `RegisterSuspendResumeNotification`'s callback (no window needed; the stop gets 1.5 s of Windows' "approximately two seconds", and finishes after the wake if it needs longer), Linux logind's `PrepareForSleep` with a `delay` inhibitor (released after the stop or 4 s).
+- Both stop through the Stop button's own path (`Recorder::stop`). The meeting then reads "Stopped when this Mac went to sleep" or "Stopped after 10 minutes of silence" on its page (`RecordingState::StoppedForSleep` / `StoppedForSilence`). The reason is kept in memory for as long as the app runs, not written to the meeting's files; after a restart such a meeting reads as finished.
+
+Unchanged: nothing starts a recording without a click (L15), and a calendar event ending stops nothing.
+
 ### A31 — 2026-10-09 · When the call app hangs up, a 10-second countdown asks before stopping; `detection.call_end` (amends §3.5; TUR-144)
 
 While recording, meet-ai follows one call app on the mic (TUR-142's `audio::mic_users`, read every 2 s, only while recording): the app of the prompt whose **Record** started it, or else the first call app or browser seen using the mic. When that app has been off the mic for 5 s straight, A27's countdown card shows "Zoom call ended" ("Call ended in Google Chrome" for a browser) counting down 10 s. Decisions:

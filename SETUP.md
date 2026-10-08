@@ -127,6 +127,7 @@ Pin these exactly in `Cargo.toml` and commit `Cargo.lock`. 🆕 = new major with
 | `winreg` | see `Cargo.toml` | Windows only (TUR-51): the microphone consent registry keys |
 | `cpal` features `pipewire`, `pulseaudio` | (cpal 0.18.2) | 🆕 TUR-38, Linux only. Pull `pipewire` 0.10.1 (MIT) and `pulseaudio` 0.3.1 (MIT). Host order PipeWire, then PulseAudio, then ALSA. Build deps `libasound2-dev libpulse-dev libpipewire-0.3-dev` (and `clang` for bindgen). ⚠️ Never bundle libpipewire or libspa in an AppImage: they load plugins from a build-time path and capture silence on other distros (anarlog #7549). No Flatpak: there is no audio-capture portal yet |
 | `libc` | **0.2.189** | 🆕 TUR-38, Linux only. `clock_gettime(CLOCK_MONOTONIC)`, the host clock PipeWire's capture times use. Already in the tree through cpal |
+| `zbus` | **5.19.0** | 🆕 TUR-145, Linux only, in `src-tauri`. MIT. logind's `PrepareForSleep` signal and its `Inhibit("sleep", …, "delay")` lock, so a recording stops and saves before the computer sleeps. Blocking API, default features. Already in the tree at this version through `tauri-plugin-single-instance` and `notify-rust`, so it adds no crates |
 
 ### 2.3 Speech-to-text
 

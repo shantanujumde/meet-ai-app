@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  backupStopLabel,
   describeInterruption,
   formatBytes,
   formatDuration,
@@ -116,5 +117,25 @@ describe("meeting length in the header (TUR-81)", () => {
     expect(timestampToMs("01:00:00")).toBe(3_600_000);
     expect(timestampToMs(null)).toBeNull();
     expect(timestampToMs("50 min")).toBeNull();
+  });
+});
+
+describe("backupStopLabel", () => {
+  test("names the backup stop in the OS's own words", () => {
+    expect(backupStopLabel("stopped-for-sleep", "macos")).toBe(
+      "Stopped when this Mac went to sleep",
+    );
+    expect(backupStopLabel("stopped-for-sleep", "windows")).toBe(
+      "Stopped when this PC went to sleep",
+    );
+    expect(backupStopLabel("stopped-for-silence", "linux")).toBe(
+      "Stopped after 10 minutes of silence",
+    );
+  });
+
+  test("says nothing for any other ending", () => {
+    for (const state of ["finished", "interrupted", "recording"] as const) {
+      expect(backupStopLabel(state)).toBeNull();
+    }
   });
 });

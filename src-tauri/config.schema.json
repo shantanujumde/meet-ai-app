@@ -220,6 +220,11 @@
           "type": "boolean",
           "description": "Ask to stop recording when the call app stops using the mic: a 10-second countdown with Keep recording and Stop now.",
           "default": true
+        },
+        "stop_after_silence": {
+          "type": "boolean",
+          "description": "Ask to stop a recording after 10 minutes in which no one spoke on the mic or in the call, with a 10-second countdown and Keep recording. Going to sleep always stops a recording.",
+          "default": true
         }
       }
     },

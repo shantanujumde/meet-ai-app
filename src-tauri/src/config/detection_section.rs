@@ -50,6 +50,9 @@ pub struct DetectionConfig {
     pub call_start: bool,
     /// Ask to stop the recording when the call app hangs up (TUR-144).
     pub call_end: bool,
+    /// Ask to stop a recording after 10 minutes in which no one spoke
+    /// (TUR-145). Sleep always stops a recording; this has no switch.
+    pub stop_after_silence: bool,
 }
 
 impl Default for DetectionConfig {
@@ -62,6 +65,7 @@ impl Default for DetectionConfig {
             remind_before_minutes: DEFAULT_REMIND_BEFORE_MINUTES,
             call_start: true,
             call_end: true,
+            stop_after_silence: true,
         }
     }
 }
@@ -77,6 +81,7 @@ struct RawDetection {
     remind_before_minutes: Option<serde_json::Value>,
     call_start: Option<bool>,
     call_end: Option<bool>,
+    stop_after_silence: Option<bool>,
 }
 
 /// `detection` from the text of `config.jsonc`. Empty text, or no
@@ -94,6 +99,9 @@ pub fn parse_detection(raw: &str) -> Result<DetectionConfig, ConfigError> {
         remind_before_minutes: remind_before_minutes(detection.remind_before_minutes),
         call_start: detection.call_start.unwrap_or(defaults.call_start),
         call_end: detection.call_end.unwrap_or(defaults.call_end),
+        stop_after_silence: detection
+            .stop_after_silence
+            .unwrap_or(defaults.stop_after_silence),
     })
 }
 
@@ -150,6 +158,7 @@ pub fn with_detection(raw: &str, detection: &DetectionConfig) -> Result<String, 
             ),
             ("call_start", detection.call_start.into()),
             ("call_end", detection.call_end.into()),
+            ("stop_after_silence", detection.stop_after_silence.into()),
         ],
     )
 }
@@ -176,6 +185,7 @@ mod tests {
             remind_before_minutes: 1,
             call_start: true,
             call_end: true,
+            stop_after_silence: true,
         };
         assert_eq!(DetectionConfig::default(), defaults);
         for raw in [
@@ -230,6 +240,13 @@ mod tests {
                 ..on
             }
         );
+        assert_eq!(
+            off("stop_after_silence"),
+            DetectionConfig {
+                stop_after_silence: false,
+                ..on
+            }
+        );
     }
 
     #[test]
@@ -244,7 +261,8 @@ mod tests {
                     "min_attendees": 0,
                     "remind_before_minutes": 10,
                     "call_start": false,
-                    "call_end": false
+                    "call_end": false,
+                    "stop_after_silence": false
                 }
             }"#,
         )
@@ -259,6 +277,7 @@ mod tests {
                 remind_before_minutes: 10,
                 call_start: false,
                 call_end: false,
+                stop_after_silence: false,
             }
         );
     }
@@ -317,6 +336,7 @@ mod tests {
             min_attendees: 4,
             remind_before_minutes: 5,
             call_start: false,
+            stop_after_silence: false,
             ..DetectionConfig::default()
         };
         let written = with_detection(raw, &changed).unwrap();

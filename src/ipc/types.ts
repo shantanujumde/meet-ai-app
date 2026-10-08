@@ -64,8 +64,15 @@ export type MeetingSummary = {
  * - `interrupted` — cut short by a force quit, a crash or the Mac shutting
  *   down. Shown as "Interrupted" and opened exactly like any other meeting.
  * - `recording` — this app is writing it right now.
+ * - `stopped-for-sleep` / `stopped-for-silence` — finished, but by a backup
+ *   stop (TUR-145): the computer slept, or no one spoke for 10 minutes.
  */
-export type RecordingState = "finished" | "interrupted" | "recording";
+export type RecordingState =
+  | "finished"
+  | "interrupted"
+  | "recording"
+  | "stopped-for-sleep"
+  | "stopped-for-silence";
 
 /** One line of `transcript.md`, parsed per SPEC §3.4. */
 export type TranscriptLine = {

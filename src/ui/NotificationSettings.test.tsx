@@ -11,6 +11,7 @@ import {
   NotificationSettings,
   PROCESSES_LABEL,
   REMIND_LABEL,
+  SILENCE_LABEL,
 } from "./NotificationSettings";
 
 vi.mock("@/ipc/client", async (importOriginal) =>
@@ -25,6 +26,7 @@ const DEFAULTS = {
   minAttendees: 2,
   callStart: true,
   callEnd: true,
+  stopAfterSilence: true,
 };
 
 async function show() {
@@ -47,6 +49,7 @@ describe("NotificationSettings", () => {
       AUDIO_LABEL,
       CALL_START_LABEL,
       CALL_END_LABEL,
+      SILENCE_LABEL,
     ]) {
       expect(screen.getByRole("switch", { name: label })).toHaveAttribute("aria-checked", "true");
     }
@@ -67,6 +70,7 @@ describe("NotificationSettings", () => {
     [AUDIO_LABEL, { audioActivity: false }],
     [CALL_START_LABEL, { callStart: false }],
     [CALL_END_LABEL, { callEnd: false }],
+    [SILENCE_LABEL, { stopAfterSilence: false }],
   ])("switching %s off writes its key", async (label, change) => {
     await show();
     const toggle = screen.getByRole("switch", { name: label });

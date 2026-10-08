@@ -199,7 +199,7 @@ pub(super) fn summarize(folder: &store::folder::MeetingFolder, is_live: bool) ->
     let recording_state = if is_live {
         RecordingState::Recording
     } else if audio.ended_cleanly {
-        RecordingState::Finished
+        RecordingState::ended_cleanly(&folder.id)
     } else {
         RecordingState::Interrupted
     };

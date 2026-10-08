@@ -41,6 +41,7 @@
 //! is built from that status too.
 
 pub(crate) mod auto_title;
+pub(crate) mod backup_stop;
 mod phase;
 mod start_check;
 mod ticker;
@@ -275,11 +276,10 @@ impl Recorder {
         let mic: Box<dyn AudioSource> = Box::new(audio::mic::MicSource::new());
         let sys = audio::session::default_system_source();
 
-        // One tee per channel (TUR-31). A tee costs capture nothing if nobody
-        // ends up reading it, so they are handed out before knowing whether
-        // the speech engine will start. The system one also feeds the
-        // permission check, and both are hushed for its chime (TUR-136).
-        let (tees, mic_feed, sys_feed, check) = start_check::tees();
+        // One tee per channel (TUR-31), handed out before the speech engine
+        // is known to start: an unread tee costs capture nothing. They also feed
+        // the permission check (TUR-136) and the silence stop (TUR-145).
+        let (tees, mic_feed, sys_feed, check) = backup_stop::tees();
 
         match RecordingSession::start_with_tees(layout::audio_dir(&meeting_dir), mic, sys, tees) {
             Ok(session) => {
