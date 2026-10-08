@@ -298,6 +298,23 @@ export const commands = {
 	 */
 	trackerServers: () => typedError<meet_ai_lib_sync_tracker_TrackerServer[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("tracker_servers")),
 	/**
+	 *  Whether a tracker is set up, and every ticket queued, sending or failed.
+	 *  After this, [`crate::events::TICKET_SYNC_EVENT`] keeps it current.
+	 */
+	ticketSyncStates: () => typedError<meet_ai_lib_sync_auto_TicketSyncOverview, meet_ai_lib_error_UiError>(__TAURI_INVOKE("ticket_sync_states")),
+	/**
+	 *  Retry: send one root ticket again, even after a failure under the same
+	 *  settings. Returns at once; the result comes on
+	 *  [`crate::events::TICKET_SYNC_EVENT`].
+	 */
+	retryTicketSync: (ticketId: string) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("retry_ticket_sync", { ticketId })),
+	/**
+	 *  Check that the agent reaches `tracker` through `tracker_mcp`, the values
+	 *  on screen (saved or not). Creates nothing. Takes as long as the agent
+	 *  does (up to `agent.timeout_sec`), so it runs on the blocking pool.
+	 */
+	sendTestTicket: (tracker: string, trackerMcp: string) => typedError<meet_ai_lib_sync_check_TrackerCheck, meet_ai_lib_error_UiError>(__TAURI_INVOKE("send_test_ticket", { tracker, trackerMcp })),
+	/**
 	 *  Switch "Make notes for this meeting" on or off (SPEC A11, "Skip one
 	 *  meeting", TUR-12), and answer with the meeting's notes as they now stand.
 	 * 
@@ -509,6 +526,8 @@ export const RECORDING_STATE_EVENT = "recording://state" as const;
 export const RECORD_SHORTCUT_MAC = "CmdOrCtrl+Shift+R" as const;
 
 export const RECORD_SHORTCUT_OTHER = "Ctrl+Alt+R" as const;
+
+export const TICKET_SYNC_EVENT = "ticket-sync://status" as const;
 
 export const TRANSCRIPT_STATUS_EVENT = "transcript://status" as const;
 
@@ -1467,6 +1486,51 @@ export type meet_ai_lib_tickets_TicketSummary = {
 	meetingTitle: string | null,
 };
 
+/**
+ *  What the Tickets page needs to show sending: whether a tracker is set up,
+ *  which one, and every ticket queued, sending or failed.
+ */
+export type meet_ai_lib_sync_auto_TicketSyncOverview = {
+	/**  A tracker is chosen in Settings, Tracker and an agent is chosen. */
+	trackerSetUp: boolean,
+	/**  `linear`, `jira` or `github`, the default when none is set up. */
+	tracker: string,
+	tickets: meet_ai_lib_sync_auto_TicketSyncStatus[],
+};
+
+/**  How far one ticket is in being sent on its own. */
+export type meet_ai_lib_sync_auto_TicketSyncState = 
+/**
+ *  Not sent, and nothing is waiting to send it: no tracker is set up, or
+ *  the ticket is gone. The window shows *Not sent* for a ticket with no
+ *  issue key.
+ */
+"not_sent" | 
+/**  Waiting for the send before it to finish. */
+"queued" | 
+/**  The agent is sending it now. */
+"sending" | 
+/**  In the tracker; `ticket` has its key and link. */
+"sent" | 
+/**  The send did not create an issue; `error` says why and what to do. */
+"failed";
+
+/**  One ticket's state, as [`crate::events::TICKET_SYNC_EVENT`] sends it. */
+export type meet_ai_lib_sync_auto_TicketSyncStatus = {
+	ticketId: string,
+	state: meet_ai_lib_sync_auto_TicketSyncState,
+	/**
+	 *  Why it was not sent, with a kind the window can switch on
+	 *  (`sync::errors`). Only for [`TicketSyncState::Failed`].
+	 */
+	error: meet_ai_lib_error_UiError | null,
+	/**
+	 *  The ticket as it is now. Only for [`TicketSyncState::Sent`], and not
+	 *  then either when it was found already in the tracker.
+	 */
+	ticket: meet_ai_lib_tickets_TicketSummary | null,
+};
+
 /**  One of today's events, as the Today pane shows it. */
 export type meet_ai_lib_calendar_TodayEvent = {
 	id: string,
@@ -1491,6 +1555,17 @@ export type meet_ai_lib_calendar_TodaysMeetings = {
 	refreshMinutes: number,
 	/**  `detection.min_attendees`: below it an event is `solo`. */
 	minAttendees: number,
+};
+
+/**  What the check found, in plain words. */
+export type meet_ai_lib_sync_check_TrackerCheck = {
+	/**  The team, project or repository new tickets would go to. */
+	project: string,
+	/**
+	 *  The sentence to show, e.g. "Claude Code reached Linear. New tickets
+	 *  will go to Engineering."
+	 */
+	message: string,
 };
 
 /**  One MCP server the agent's CLI lists. */

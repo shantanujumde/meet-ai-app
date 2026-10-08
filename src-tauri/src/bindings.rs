@@ -18,6 +18,7 @@ use crate::events::MEETINGS_WATCH_PROBLEM_EVENT;
 use crate::events::NAVIGATE_EVENT;
 use crate::events::PROMPT_POPUP_EVENT;
 use crate::events::QUIT_CONFIRM_EVENT;
+use crate::events::TICKET_SYNC_EVENT;
 use crate::events::{
     MEETINGS_CHANGED_EVENT, MODEL_PROGRESS_EVENT, PERMISSION_STATUS_EVENT, RECORDING_STATE_EVENT,
     TRANSCRIPT_STATUS_EVENT, TRANSCRIPT_UPDATE_EVENT,
@@ -81,6 +82,9 @@ pub fn builder() -> Builder<tauri::Wry> {
             tracker::tracker_settings,
             tracker::set_tracker,
             tracker::tracker_servers,
+            sync::auto::ticket_sync_states,
+            sync::auto::retry_ticket_sync,
+            sync::check::send_test_ticket,
             agent_run::set_meeting_notes,
             crate::calendar::todays_meetings,
             crate::calendar::calendar_refresh_minutes,
@@ -131,6 +135,7 @@ pub fn builder() -> Builder<tauri::Wry> {
         .constant("HOOK_FAILED_EVENT", HOOK_FAILED_EVENT)
         .constant("HEADPHONE_WARNING_EVENT", HEADPHONE_WARNING_EVENT)
         .constant("MEETINGS_WATCH_PROBLEM_EVENT", MEETINGS_WATCH_PROBLEM_EVENT)
+        .constant("TICKET_SYNC_EVENT", TICKET_SYNC_EVENT)
         .constant("RECORD_SHORTCUT_MAC", crate::shortcut::RECORD_SHORTCUT_MAC)
         .constant(
             "RECORD_SHORTCUT_OTHER",

@@ -99,6 +99,8 @@ pub async fn set_tracker(
         let tickets = checked(&tracker, &tracker_mcp)?;
         app.state::<FolderGate>()
             .writing(|| Ok(config::set_tickets(&tickets)?))?;
+        // TUR-113: every ticket not in the tracker yet gets one more try.
+        super::auto::settings_changed(&app);
         current()
     })
     .await?
