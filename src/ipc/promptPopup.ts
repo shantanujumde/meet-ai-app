@@ -1,6 +1,6 @@
 /**
- * The prompt card window's IPC (TUR-59, TUR-108): its prompt, its
- * answers, and the event that brings a new prompt. Its own file so
+ * The prompt card window's IPC (TUR-59, TUR-108, TUR-147): its card, its
+ * answers, and the event that brings a new card. Its own file so
  * `client.ts` stays under the size limit; same rules as there: without a
  * backend, reads return nothing and writes reject with `no-backend`.
  */
@@ -8,6 +8,7 @@
 import { listen } from "@tauri-apps/api/event";
 import {
   commands,
+  type meet_ai_lib_detection_popup_Card,
   type meet_ai_lib_detection_popup_PopupAnswer,
   type meet_ai_lib_detection_popup_PopupPrompt,
   PROMPT_POPUP_EVENT,
@@ -16,8 +17,10 @@ import { hasBackend } from "./client";
 import { NO_BACKEND } from "./errors";
 import { toUiError } from "./types";
 
-/** What the popup shows: the prompt, and the id an answer names. */
+/** What the popup shows: its card, the id an answer names, and when it closes. */
 export type PopupPrompt = meet_ai_lib_detection_popup_PopupPrompt;
+/** A prompt ("Record this meeting?") or a countdown ("Zoom call ended", TUR-147). */
+export type PopupCard = meet_ai_lib_detection_popup_Card;
 export type PopupAnswer = meet_ai_lib_detection_popup_PopupAnswer;
 
 /** The prompt on screen, for a popup that just loaded. */
