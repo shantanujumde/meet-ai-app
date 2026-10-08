@@ -547,6 +547,17 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A28 — 2026-10-09 · Tickets go to the tracker on their own once the user picked one; "Send a test ticket" creates nothing (amends A11's Sync and A26; TUR-113)
+
+The owner decided (2026-10-06) that tickets on the Tickets page are sent to the tracker without a Sync press.
+
+- **Set up** means the user saved Settings, Tracker (`config.jsonc` has a `tickets` section naming `tracker` and `tracker_mcp`) and `agent.harness` is not `none`. The §3.5 defaults alone never count: nothing is ever sent to a tracker the user did not choose. Not set up, a ticket is just not sent: no run, no error.
+- **What starts a send:** approving a task (each one Approve all moves), making a ticket by hand, Retry, and saving Settings, Tracker (every root ticket with no issue yet, except `dropped` ones, once). Nothing else: no timer, no loop, nothing at launch.
+- **One at a time**, in the order queued, each the same agent run as a Sync press (`sync_in`, `push-ticket.md`), filed under the ticket's meeting so an issue a press made but could not save is saved, not made twice.
+- **A failure is not retried on its own.** It is remembered in memory with the settings it ran under (tracker, server, agent, binary, model); a later trigger skips it while those are the same. Retry sends it anyway; a settings change gives it one more try. After a restart nothing is remembered, so nothing is retried until one of the triggers.
+- Each change goes out on `ticket-sync://status` (`not_sent`, `queued`, `sending`, `sent`, `failed` with the A26 error kinds); `ticket_sync_states` gives the same plus whether a tracker is set up.
+- **Send a test ticket** is a read-only check: one agent run with only the server's tools, asked to read the name of the team, project or repository new issues go to, and to create or change nothing. It carries nothing from any meeting. The CLIs cannot be held to a server's read-only tools by name, so "read only" rests on the prompt; the run still reaches only that server.
+
 ### A27 — 2026-10-08 · Every prompt is a card window on every OS; on macOS a non-activating panel on every Space; a countdown card (amends A24; TUR-147)
 
 A24 kept macOS detection prompts as a notification and an in-window banner. Now every prompt, on every OS, shows in meet-ai's own card window, and the OS notification is only the fallback when that window cannot be shown (`detection::popup::uses_popup` is true for every signal). Decisions:
