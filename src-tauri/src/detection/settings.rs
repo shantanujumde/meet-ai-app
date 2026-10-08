@@ -42,6 +42,8 @@ pub struct NotificationSettings {
     pub min_attendees: u32,
     /// "Ask to record when a call starts": `detection.call_start` (TUR-143).
     pub call_start: bool,
+    /// "Ask to stop when a call ends": `detection.call_end` (TUR-144).
+    pub call_end: bool,
 }
 
 impl From<DetectionConfig> for NotificationSettings {
@@ -53,6 +55,7 @@ impl From<DetectionConfig> for NotificationSettings {
             audio_activity: config.audio_activity,
             min_attendees: config.min_attendees,
             call_start: config.call_start,
+            call_end: config.call_end,
         }
     }
 }
@@ -79,6 +82,7 @@ impl NotificationSettings {
             min_attendees: self.min_attendees,
             remind_before_minutes: self.remind_before_minutes,
             call_start: self.call_start,
+            call_end: self.call_end,
         })
     }
 }
@@ -202,6 +206,7 @@ mod tests {
                 audio_activity: true,
                 min_attendees: 2,
                 call_start: true,
+                call_end: true,
             }
         );
     }
@@ -215,6 +220,7 @@ mod tests {
             audio_activity: false,
             min_attendees: 5,
             call_start: false,
+            call_end: false,
         };
         assert_eq!(
             changed.to_config().unwrap(),
@@ -225,6 +231,7 @@ mod tests {
                 min_attendees: 5,
                 remind_before_minutes: 10,
                 call_start: false,
+                call_end: false,
             }
         );
         assert_eq!(
@@ -273,7 +280,8 @@ mod tests {
                 "processes": true,
                 "audioActivity": true,
                 "minAttendees": 2,
-                "callStart": true
+                "callStart": true,
+                "callEnd": true
             })
         );
     }

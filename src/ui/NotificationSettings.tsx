@@ -15,6 +15,8 @@
  *   a call app or a browser using the mic for 15 seconds, named in the
  *   prompt. The "Never detect" list under it is `detection.never_detect`
  *   ({@link NeverDetectList}).
+ * * "Ask to stop when a call ends" is `detection.call_end` (TUR-144): when the
+ *   call app hangs up, a 10-second countdown asks before stopping.
  *
  * A change saves the whole section through Rust's comment-keeping writer and
  * shows what was saved; the reminder and detection loops pick it up on their
@@ -31,6 +33,7 @@ import {
   FlaskConical,
   Settings as Gear,
   PhoneIncoming,
+  PhoneOff,
   Timer,
   Users,
 } from "lucide-react";
@@ -58,6 +61,7 @@ export const PROCESSES_LABEL = "Ask when a meeting app is running";
 export const AUDIO_LABEL = "Ask when my mic and speakers are both in use";
 export const ATTENDEES_LABEL = "Only for meetings with at least";
 export const CALL_START_LABEL = "Ask to record when a call starts";
+export const CALL_END_LABEL = "Ask to stop when a call ends";
 
 /** The lead times the card offers, in minutes. */
 export const LEAD_MINUTES = [1, 2, 5, 10];
@@ -168,6 +172,14 @@ export function NotificationSettings() {
         on={settings?.audioActivity ?? false}
         disabled={disabled}
         onChange={(audioActivity) => void save({ audioActivity })}
+      />
+      <SwitchRow
+        icon={PhoneOff}
+        label={CALL_END_LABEL}
+        detail="When the call app hangs up, stops in 10 seconds unless you keep recording."
+        on={settings?.callEnd ?? false}
+        disabled={disabled}
+        onChange={(callEnd) => void save({ callEnd })}
       />
       <SelectRow
         icon={Users}

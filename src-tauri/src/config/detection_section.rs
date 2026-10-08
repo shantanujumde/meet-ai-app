@@ -48,6 +48,8 @@ pub struct DetectionConfig {
     /// Ask to record when a call app or a browser starts using the mic
     /// (TUR-143).
     pub call_start: bool,
+    /// Ask to stop the recording when the call app hangs up (TUR-144).
+    pub call_end: bool,
 }
 
 impl Default for DetectionConfig {
@@ -59,6 +61,7 @@ impl Default for DetectionConfig {
             min_attendees: 2,
             remind_before_minutes: DEFAULT_REMIND_BEFORE_MINUTES,
             call_start: true,
+            call_end: true,
         }
     }
 }
@@ -73,6 +76,7 @@ struct RawDetection {
     /// Any JSON, so a bad lead time falls back alone (see the module docs).
     remind_before_minutes: Option<serde_json::Value>,
     call_start: Option<bool>,
+    call_end: Option<bool>,
 }
 
 /// `detection` from the text of `config.jsonc`. Empty text, or no
@@ -89,6 +93,7 @@ pub fn parse_detection(raw: &str) -> Result<DetectionConfig, ConfigError> {
         min_attendees: detection.min_attendees.unwrap_or(defaults.min_attendees),
         remind_before_minutes: remind_before_minutes(detection.remind_before_minutes),
         call_start: detection.call_start.unwrap_or(defaults.call_start),
+        call_end: detection.call_end.unwrap_or(defaults.call_end),
     })
 }
 
@@ -144,6 +149,7 @@ pub fn with_detection(raw: &str, detection: &DetectionConfig) -> Result<String, 
                 detection.remind_before_minutes.into(),
             ),
             ("call_start", detection.call_start.into()),
+            ("call_end", detection.call_end.into()),
         ],
     )
 }
@@ -169,6 +175,7 @@ mod tests {
             min_attendees: 2,
             remind_before_minutes: 1,
             call_start: true,
+            call_end: true,
         };
         assert_eq!(DetectionConfig::default(), defaults);
         for raw in [
@@ -216,6 +223,13 @@ mod tests {
                 ..on
             }
         );
+        assert_eq!(
+            off("call_end"),
+            DetectionConfig {
+                call_end: false,
+                ..on
+            }
+        );
     }
 
     #[test]
@@ -229,7 +243,8 @@ mod tests {
                     "audio_activity": false,
                     "min_attendees": 0,
                     "remind_before_minutes": 10,
-                    "call_start": false
+                    "call_start": false,
+                    "call_end": false
                 }
             }"#,
         )
@@ -243,6 +258,7 @@ mod tests {
                 min_attendees: 0,
                 remind_before_minutes: 10,
                 call_start: false,
+                call_end: false,
             }
         );
     }

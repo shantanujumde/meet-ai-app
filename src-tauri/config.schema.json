@@ -215,6 +215,11 @@
           "maximum": 15,
           "description": "How many minutes before a meeting starts its reminder fires. 0 = at the start. A value outside 0-15 is logged and read as 1.",
           "default": 1
+        },
+        "call_end": {
+          "type": "boolean",
+          "description": "Ask to stop recording when the call app stops using the mic: a 10-second countdown with Keep recording and Stop now.",
+          "default": true
         }
       }
     },

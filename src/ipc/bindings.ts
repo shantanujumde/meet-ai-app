@@ -1050,6 +1050,8 @@ export type meet_ai_lib_detection_settings_NotificationSettings = {
 	minAttendees: number,
 	/**  "Ask to record when a call starts": `detection.call_start` (TUR-143). */
 	callStart: boolean,
+	/**  "Ask to stop when a call ends": `detection.call_end` (TUR-144). */
+	callEnd: boolean,
 };
 
 /**
