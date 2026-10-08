@@ -1511,7 +1511,7 @@ export type meet_ai_lib_recording_Status = {
 	 *  one without the other. Serialised as `null` when nothing went wrong.
 	 */
 	error: meet_ai_lib_error_UiError | null,
-	/**  The paused stretches, so the timer leaves them out (TUR-146). */
+	/**  The paused stretches, so the timer leaves them out (TUR-146). Boxed: keeps `Status` small. */
 	pause: meet_ai_lib_recording_pause_PauseClock,
 };
 

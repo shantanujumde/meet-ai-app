@@ -91,8 +91,8 @@ pub struct Status {
     /// for the move to `Idle` and its reason means the window can never show
     /// one without the other. Serialised as `null` when nothing went wrong.
     pub error: Option<UiError>,
-    /// The paused stretches, so the timer leaves them out (TUR-146).
-    pub pause: pause::PauseClock,
+    /// The paused stretches, so the timer leaves them out (TUR-146). Boxed: keeps `Status` small.
+    pub pause: Box<pause::PauseClock>,
 }
 
 impl Status {
@@ -102,7 +102,7 @@ impl Status {
             meeting_id: None,
             started_at_ms: None,
             error: None,
-            pause: pause::PauseClock::default(),
+            pause: Box::default(),
         }
     }
 }

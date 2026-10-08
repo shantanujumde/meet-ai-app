@@ -18,7 +18,9 @@ const KEY: &str = "overlayPosition";
 pub fn saved_in(state: &AppState) -> Option<Point> {
     let value = state.other.get(KEY)?;
     serde_json::from_value(value.clone())
-        .inspect_err(|error| tracing::debug!(%error, "unreadable overlay position; using the default"))
+        .inspect_err(
+            |error| tracing::debug!(%error, "unreadable overlay position; using the default"),
+        )
         .ok()
 }
 

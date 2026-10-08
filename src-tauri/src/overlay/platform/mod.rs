@@ -78,7 +78,7 @@ mod tests {
         let effects = super::effects().expect("macOS has a material");
         assert_eq!(effects.effects, [tauri::window::Effect::Popover]);
         assert_eq!(effects.state, Some(tauri::window::EffectState::Active));
-        assert!(!super::FOCUSABLE);
+        const { assert!(!super::FOCUSABLE) };
     }
 
     #[test]

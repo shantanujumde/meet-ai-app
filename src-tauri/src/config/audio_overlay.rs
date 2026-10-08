@@ -74,7 +74,10 @@ mod tests {
 
     #[test]
     fn a_bad_value_is_an_error_and_the_reader_uses_the_default() {
-        for raw in [r#"{ "audio": { "show_recording_overlay": "no" } }"#, "{ not json"] {
+        for raw in [
+            r#"{ "audio": { "show_recording_overlay": "no" } }"#,
+            "{ not json",
+        ] {
             assert!(parse(raw).is_err(), "{raw:?}");
             assert!(or_default(raw), "{raw:?}");
         }

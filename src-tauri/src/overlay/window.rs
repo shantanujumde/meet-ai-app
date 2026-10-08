@@ -37,7 +37,8 @@ pub fn close(app: &AppHandle) {
     match window.outer_position() {
         Ok(at) => {
             let point = Point { x: at.x, y: at.y };
-            let saved = crate::folder_move::writing_in_root(app, |root| position::save(root, point));
+            let saved =
+                crate::folder_move::writing_in_root(app, |root| position::save(root, point));
             if let Err(error) = saved {
                 tracing::warn!(message = %error.message, "could not save where the overlay was");
             }
@@ -50,26 +51,27 @@ pub fn close(app: &AppHandle) {
 }
 
 fn build(app: &AppHandle) -> tauri::Result<WebviewWindow> {
-    let builder = tauri::WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()))
-        .title("meet-ai recording")
-        .inner_size(WIDTH, HEIGHT)
-        .resizable(false)
-        .maximizable(false)
-        .minimizable(false)
-        .decorations(false)
-        // Only the rounded card paints; what is behind the window shows
-        // through its corners, and through the card itself where the OS
-        // blurs it ([`platform::effects`]).
-        .transparent(true)
-        .shadow(platform::SHADOW)
-        .always_on_top(true)
-        .visible_on_all_workspaces(true)
-        .skip_taskbar(true)
-        .focused(false)
-        .focusable(platform::FOCUSABLE)
-        // A click on Pause works first time, with meet-ai in the background.
-        .accept_first_mouse(true)
-        .visible(false);
+    let builder =
+        tauri::WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()))
+            .title("meet-ai recording")
+            .inner_size(WIDTH, HEIGHT)
+            .resizable(false)
+            .maximizable(false)
+            .minimizable(false)
+            .decorations(false)
+            // Only the rounded card paints; what is behind the window shows
+            // through its corners, and through the card itself where the OS
+            // blurs it ([`platform::effects`]).
+            .transparent(true)
+            .shadow(platform::SHADOW)
+            .always_on_top(true)
+            .visible_on_all_workspaces(true)
+            .skip_taskbar(true)
+            .focused(false)
+            .focusable(platform::FOCUSABLE)
+            // A click on Pause works first time, with meet-ai in the background.
+            .accept_first_mouse(true)
+            .visible(false);
     match platform::effects() {
         Some(effects) => builder.effects(effects),
         None => builder,

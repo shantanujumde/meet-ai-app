@@ -121,10 +121,15 @@ mod tests {
     #[test]
     fn a_pause_flips_the_session_switch_and_freezes_the_clock() {
         let (mut inner, switch) = recording();
-        let paused = inner.set_paused(true, 5_000).expect("a live recording pauses");
+        let paused = inner
+            .set_paused(true, 5_000)
+            .expect("a live recording pauses");
         assert_eq!(paused.phase, Phase::Recording, "still one meeting");
         assert_eq!(paused.pause.paused_at_ms, Some(5_000));
-        assert!(switch.wanted(), "the session is asked to stop both channels");
+        assert!(
+            switch.wanted(),
+            "the session is asked to stop both channels"
+        );
 
         assert!(inner.set_paused(true, 6_000).is_none(), "already paused");
         assert_eq!(inner.status.pause.paused_at_ms, Some(5_000));
@@ -133,7 +138,10 @@ mod tests {
         assert!(!resumed.pause.is_paused());
         assert_eq!(resumed.pause.paused_total_ms, 4_000);
         assert!(!switch.wanted());
-        assert!(inner.set_paused(false, 9_500).is_none(), "already recording");
+        assert!(
+            inner.set_paused(false, 9_500).is_none(),
+            "already recording"
+        );
     }
 
     #[test]
@@ -162,10 +170,10 @@ mod tests {
         let (mut inner, _switch) = recording();
         inner.set_paused(true, 2_000).unwrap();
         inner.end(None);
-        assert_eq!(inner.status.pause, PauseClock::default());
+        assert_eq!(*inner.status.pause, PauseClock::default());
         assert!(inner.pause.is_none(), "the switch goes with the session");
         let starting = inner.enter_starting().unwrap();
-        assert_eq!(starting.pause, PauseClock::default());
+        assert_eq!(*starting.pause, PauseClock::default());
     }
 
     #[test]

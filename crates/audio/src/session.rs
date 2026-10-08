@@ -26,8 +26,8 @@ mod system_drop;
 // TUR-146: pause and resume.
 mod pause;
 
-use self::segment::{Paths, align_and_pad, reopen_segment, segment_open};
 pub use self::pause::PauseSwitch;
+use self::segment::{Paths, align_and_pad, reopen_segment, segment_open};
 pub use self::system_drop::SystemDrop;
 use crate::segments::{self, Anchor, CHECKPOINT_INTERVAL_S, SegmentsWriter};
 use crate::tee::Tee;

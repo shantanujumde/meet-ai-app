@@ -66,7 +66,8 @@ impl RecordingSession {
         }
         tracing::info!("pausing: stopping both channels");
         let close = stop_for(&mut *self.mic, &mut self.sys, "pause")?;
-        self.writer.update_frames(close.mic_frames, close.sys_frames);
+        self.writer
+            .update_frames(close.mic_frames, close.sys_frames);
         self.writer
             .write_atomic(&self.segments_path)
             .map_err(|e| format!("writing segments.json at a pause: {e}"))?;
