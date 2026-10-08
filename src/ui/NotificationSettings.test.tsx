@@ -4,8 +4,8 @@ import { ipc } from "@/test/ipcMock";
 import {
   ATTENDEES_LABEL,
   AUDIO_LABEL,
-  CALL_START_LABEL,
   CALL_END_LABEL,
+  CALL_START_LABEL,
   LEAD_LABEL,
   leadLabel,
   NotificationSettings,
