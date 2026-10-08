@@ -36,6 +36,8 @@ mod meetings;
 mod mic_setting;
 mod notify;
 mod onboarding;
+// TUR-146: the small always-on-top window while recording.
+mod overlay;
 mod permission;
 mod platform;
 mod recording;
@@ -136,6 +138,8 @@ pub fn run() {
         .manage(lifecycle::Lifecycle::default())
         // TUR-77: the menu bar's Record names the meeting from the event clicked.
         .manage(recording::auto_title::PinnedEvent::default())
+        // TUR-146: wakes the overlay worker.
+        .manage(overlay::Overlay::default())
         .on_window_event(lifecycle::on_window_event)
         .setup(|_app| {
             // TUR-46: first, so a panic anywhere below leaves a crash file.
@@ -190,6 +194,8 @@ pub fn run() {
             headphone_warning::init(_app.handle());
             // TUR-145: the computer going to sleep stops and saves the recording.
             recording::backup_stop::install_sleep_stop(_app.handle());
+            // TUR-146: the recording overlay follows the recorder.
+            overlay::init(_app.handle());
             // TUR-58: the first instance never records from its flag (SPEC
             // L15, `cli.rs`); it only says so in the log.
             if cli::wants_toggle(&std::env::args().collect::<Vec<_>>()) {

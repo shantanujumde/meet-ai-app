@@ -173,6 +173,14 @@ export const commands = {
 	 */
 	stopRecording: () => typedError<meet_ai_lib_recording_Status, meet_ai_lib_error_UiError>(__TAURI_INVOKE("stop_recording")),
 	/**
+	 *  Pause the live recording (TUR-146): nothing is written or transcribed
+	 *  until [`resume_recording`], and the timer stops. Instant: the ticker
+	 *  thread stops the audio at its next tick. Not a recording: no change.
+	 */
+	pauseRecording: () => __TAURI_INVOKE<meet_ai_lib_recording_Status>("pause_recording"),
+	/**  Carry on recording into the same meeting after [`pause_recording`]. */
+	resumeRecording: () => __TAURI_INVOKE<meet_ai_lib_recording_Status>("resume_recording"),
+	/**
 	 *  Everything the live pane should show right now, so a window opened
 	 *  mid-meeting (or reloaded) catches up without replaying events it missed.
 	 *  In-memory only and cheap; after this, `transcript://update` and
@@ -506,6 +514,16 @@ export const commands = {
 	 *  when it opens; `None` while watching (TUR-134).
 	 */
 	meetingsWatchProblem: () => __TAURI_INVOKE<string | null>("meetings_watch_problem"),
+	/**  `audio.show_recording_overlay`, on unless `config.jsonc` turns it off. */
+	showRecordingOverlay: () => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("show_recording_overlay")),
+	/**
+	 *  Save the setting and return it as saved. Writes under the meetings root,
+	 *  so through the [`FolderGate`]. Takes effect at once: turned off mid-call,
+	 *  the overlay closes; turned on, it opens.
+	 */
+	setShowRecordingOverlay: (on: boolean) => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_show_recording_overlay", { on })),
+	/**  The overlay's transcript text was clicked: bring the main window forward. */
+	overlayShowMain: () => __TAURI_INVOKE<void>("overlay_show_main"),
 };
 
 /* Constants */
@@ -1107,6 +1125,20 @@ export type meet_ai_lib_engine_parakeet_ParakeetModelView = {
 };
 
 /**
+ *  The paused stretches of the recording, on [`Status::pause`]. The window
+ *  works the timer out from these and `started_at_ms`, as it already does,
+ *  rather than being sent a tick a second: the elapsed time is the time
+ *  since the start, less `paused_total_ms`, frozen at `paused_at_ms` while a
+ *  pause runs.
+ */
+export type meet_ai_lib_recording_pause_PauseClock = {
+	/**  Unix epoch milliseconds the current pause began; `None` while recording. */
+	pausedAtMs: number | null,
+	/**  Milliseconds of every earlier, finished pause, summed. */
+	pausedTotalMs: number,
+};
+
+/**
  *  Where the recorder is right now.
  * 
  *  `Starting` and `Stopping` are not decoration: opening the tap (the
@@ -1479,6 +1511,8 @@ export type meet_ai_lib_recording_Status = {
 	 *  one without the other. Serialised as `null` when nothing went wrong.
 	 */
 	error: meet_ai_lib_error_UiError | null,
+	/**  The paused stretches, so the timer leaves them out (TUR-146). */
+	pause: meet_ai_lib_recording_pause_PauseClock,
 };
 
 /**  `appearance.theme`: which colour scheme the window uses. */

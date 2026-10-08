@@ -57,6 +57,8 @@ mod audio_section;
 mod audio_mic;
 // TUR-65: `audio.warn_no_headphones`.
 mod audio_headphones;
+// TUR-146: `audio.show_recording_overlay`.
+mod audio_overlay;
 mod calendar_section;
 mod detection_section;
 // TUR-143: `detection.never_detect`, the "Never detect" list.
@@ -76,6 +78,7 @@ pub use app_section::{AppConfig, app, set_app};
 pub use appearance_section::{AppearanceConfig, Theme, appearance, set_appearance};
 pub use audio_headphones::warn_no_headphones;
 pub use audio_mic::{set_use_builtin_mic_with_bluetooth, use_builtin_mic_with_bluetooth};
+pub use audio_overlay::{set_show_recording_overlay, show_recording_overlay};
 pub use audio_section::Policy as RetentionPolicy;
 pub use audio_section::audio;
 #[cfg(test)]
