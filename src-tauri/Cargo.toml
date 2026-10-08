@@ -74,6 +74,8 @@ tokio = { workspace = true, features = [
 # fall through to `log`, which tauri-plugin-log already writes to that file.
 tracing = { workspace = true, features = ["log"] }
 tracing-subscriber.workspace = true
+# Delete moves a meeting folder to the Trash, never erases it (TUR-116).
+trash.workspace = true
 
 # Workspace crates. `stt` and `modelfetch` are live (the settings and model
 # download screens); the rest is wiring Rune and Vox land into.

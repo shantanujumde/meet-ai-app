@@ -34,6 +34,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             commands::rename_meeting,
             commands::change_meetings_folder,
             commands::reveal_meeting,
+            crate::meetings::delete::delete_meeting,
             commands::measure_permission,
             commands::permission_quick,
             commands::open_privacy_settings,

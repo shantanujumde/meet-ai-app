@@ -585,14 +585,13 @@ export * from "./headphones";
 // `subscribe` are exported for such modules.
 export * from "./lifecycle";
 export * from "./logs";
+export * from "./meetingActions";
 export * from "./meetingsWatch";
 // Settings' Bluetooth mic switch (TUR-91), then deleting a model (TUR-132).
 export * from "./micSetting";
 export * from "./models";
 export * from "./notesAutoRun";
 export * from "./notifications";
-// Renaming a meeting from its page (TUR-103).
-export * from "./renameMeeting";
 // Settings' audio retention line (TUR-45, TUR-85).
 export * from "./retention";
 // The Settings speech engine picker (TUR-75).

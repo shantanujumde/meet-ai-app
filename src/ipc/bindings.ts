@@ -53,6 +53,19 @@ export const commands = {
 	 */
 	revealMeeting: (id: string) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("reveal_meeting", { id })),
 	/**
+	 *  Move one meeting's folder to the Trash.
+	 * 
+	 *  Through the [`FolderGate`] like every other write under the root, so a
+	 *  folder move cannot run at the same time. The recorder's state is read
+	 *  inside it: while the gate is held for writing no move can start, and a
+	 *  new recording always makes a new folder, never this one. The meeting's
+	 *  notes run, if one is going, is cancelled first so its agent stops writing
+	 *  into a folder that is about to go. The search index then drops the
+	 *  meeting. The folder watcher tells the window the list changed, and the
+	 *  window also reloads it itself.
+	 */
+	deleteMeeting: (id: string) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("delete_meeting", { id })),
+	/**
 	 *  Runs the real positive-control check (SPEC §8.1/A6): plays the permission
 	 *  chime and probes the microphone. Real wall-clock time, so it runs on a
 	 *  blocking thread rather than parking a tokio worker.

@@ -21,7 +21,9 @@
 //! (TUR-97) — see [`RecordingState`] for the name and [`classify_audio`] for
 //! the rule.
 
+pub mod delete;
 mod list;
+mod platform;
 mod root;
 #[cfg(test)]
 mod tests;
