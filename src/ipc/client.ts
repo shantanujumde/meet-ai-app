@@ -585,8 +585,8 @@ export * from "./headphones";
 // `subscribe` are exported for such modules.
 export * from "./lifecycle";
 export * from "./logs";
-export * from "./meetingsWatch";
 export * from "./meetingActions";
+export * from "./meetingsWatch";
 // Settings' Bluetooth mic switch (TUR-91), then deleting a model (TUR-132).
 export * from "./micSetting";
 export * from "./models";
