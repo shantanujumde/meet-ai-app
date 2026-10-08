@@ -380,7 +380,7 @@ fn every_path_discard_and_approve_touch_is_noted_as_a_self_write() {
         root.approved("TICK-0002"),
     ] {
         // Stored in canonical form: on macOS `/var` is `/private/var`.
-        let path = fs::canonicalize(&path).unwrap();
+        let path = dunce::canonicalize(&path).unwrap();
         assert!(
             noted.is_suppressed(&path, std::time::Instant::now()),
             "{}",
