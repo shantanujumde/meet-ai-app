@@ -188,6 +188,8 @@ pub fn run() {
             hooks::app::init(_app.handle());
             // TUR-65: warn while recording through speakers (SPEC L6).
             headphone_warning::init(_app.handle());
+            // TUR-145: the computer going to sleep stops and saves the recording.
+            recording::backup_stop::install_sleep_stop(_app.handle());
             // TUR-58: the first instance never records from its flag (SPEC
             // L15, `cli.rs`); it only says so in the log.
             if cli::wants_toggle(&std::env::args().collect::<Vec<_>>()) {

@@ -44,6 +44,9 @@ pub struct NotificationSettings {
     pub call_start: bool,
     /// "Ask to stop when a call ends": `detection.call_end` (TUR-144).
     pub call_end: bool,
+    /// "Stop after 10 min of silence": `detection.stop_after_silence`
+    /// (TUR-145).
+    pub stop_after_silence: bool,
 }
 
 impl From<DetectionConfig> for NotificationSettings {
@@ -56,6 +59,7 @@ impl From<DetectionConfig> for NotificationSettings {
             min_attendees: config.min_attendees,
             call_start: config.call_start,
             call_end: config.call_end,
+            stop_after_silence: config.stop_after_silence,
         }
     }
 }
@@ -83,6 +87,7 @@ impl NotificationSettings {
             remind_before_minutes: self.remind_before_minutes,
             call_start: self.call_start,
             call_end: self.call_end,
+            stop_after_silence: self.stop_after_silence,
         })
     }
 }
@@ -207,6 +212,7 @@ mod tests {
                 min_attendees: 2,
                 call_start: true,
                 call_end: true,
+                stop_after_silence: true,
             }
         );
     }
@@ -221,6 +227,7 @@ mod tests {
             min_attendees: 5,
             call_start: false,
             call_end: false,
+            stop_after_silence: false,
         };
         assert_eq!(
             changed.to_config().unwrap(),
@@ -232,6 +239,7 @@ mod tests {
                 remind_before_minutes: 10,
                 call_start: false,
                 call_end: false,
+                stop_after_silence: false,
             }
         );
         assert_eq!(
@@ -282,6 +290,7 @@ mod tests {
                 "minAttendees": 2,
                 "callStart": true,
                 "callEnd": true
+                "stopAfterSilence": true
             })
         );
     }

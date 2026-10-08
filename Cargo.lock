@@ -3659,6 +3659,7 @@ dependencies = [
  "agent",
  "anyhow",
  "audio",
+ "block2",
  "calendar",
  "chrono",
  "crash-handler",
@@ -3701,7 +3702,9 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trash",
+ "windows 0.62.2",
  "winreg 0.55.0",
+ "zbus",
 ]
 
 [[package]]
