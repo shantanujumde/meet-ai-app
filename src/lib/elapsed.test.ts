@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatTimer, recordedMs } from "./elapsed";
+import { formatTimer, isPaused, recordedMs } from "./elapsed";
 
 describe("recordedMs", () => {
   it("is the time since the start while recording", () => {
@@ -40,5 +40,17 @@ describe("formatTimer", () => {
 
   it("never shows a negative time", () => {
     expect(formatTimer(-5_000)).toBe("00:00");
+  });
+});
+
+describe("isPaused", () => {
+  it("is true only for a recording with an open pause", () => {
+    const open = { pausedAtMs: 7_000, pausedTotalMs: 0 };
+    expect(isPaused({ phase: "recording", pause: open })).toBe(true);
+    expect(isPaused({ phase: "recording", pause: { pausedAtMs: null, pausedTotalMs: 3_000 } })).toBe(
+      false,
+    );
+    expect(isPaused({ phase: "recording", pause: undefined })).toBe(false);
+    expect(isPaused({ phase: "stopping", pause: open })).toBe(false);
   });
 });

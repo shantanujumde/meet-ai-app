@@ -15,8 +15,10 @@ const pauseRecording = vi.fn<() => Promise<RecordingStatus>>();
 const resumeRecording = vi.fn<() => Promise<RecordingStatus>>();
 const stopRecording = vi.fn<() => Promise<RecordingStatus>>();
 
+// `@/lib/elapsed`, not `@/ipc/recordingPause`: that one imports `./client`,
+// this very mock, so awaiting it inside the factory never settles.
 vi.mock("@/ipc/client", async () => ({
-  isPaused: (await import("@/ipc/recordingPause")).isPaused,
+  isPaused: (await import("@/lib/elapsed")).isPaused,
   recordingStatus: () => recordingStatus(),
   toggleRecording: () => toggleRecording(),
   pauseRecording: () => pauseRecording(),

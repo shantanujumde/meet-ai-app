@@ -15,10 +15,9 @@ export type PauseClock = meet_ai_lib_recording_pause_PauseClock;
 /** Never paused: what a status without a `pause` means. */
 export const NEVER_PAUSED: PauseClock = { pausedAtMs: null, pausedTotalMs: 0 };
 
-/** Whether `status` is a recording that is paused right now. */
-export function isPaused(status: Pick<RecordingStatus, "phase" | "pause">): boolean {
-  return status.phase === "recording" && (status.pause?.pausedAtMs ?? null) !== null;
-}
+// Pure, so it lives with the timer and a test's `@/ipc/client` mock can use
+// the real one without importing this module (which imports `./client`).
+export { isPaused } from "@/lib/elapsed";
 
 /** Pause the live recording. Resolves to the status after it. */
 export function pauseRecording(): Promise<RecordingStatus> {
