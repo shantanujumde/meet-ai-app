@@ -34,6 +34,7 @@ use crate::lock::lock_or_recover;
 pub mod actions;
 // TUR-143: a call app or a browser on the mic asks, naming it.
 pub mod call_start;
+pub mod call_end;
 pub mod live;
 pub mod merge;
 pub mod notify;
@@ -59,6 +60,8 @@ pub struct Detection {
     reminded: Mutex<actions::Reminded>,
     /// Which apps use the mic, and the call-start loop (TUR-143).
     calls: call_start::Calls,
+    /// The call-end rules while recording (TUR-144).
+    call_end: call_end::Watch,
 }
 
 impl Detection {
