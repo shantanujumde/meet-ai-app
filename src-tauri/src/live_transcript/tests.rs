@@ -200,7 +200,7 @@ fn an_engine_that_will_not_start_fails_transcription_and_nothing_else() {
         notify.clone(),
         path.clone(),
         vec![(Speaker::You, mic_feed)],
-        Box::new(|| Err("no speech engine is ready".to_string())),
+        Plan::live(Box::new(|| Err("no speech engine is ready".to_string()))),
     );
     wait_for("the failure", || {
         live.snapshot().status.state == State::Failed
@@ -313,7 +313,7 @@ fn a_wedged_engine_cannot_hold_stop_hostage_or_touch_the_next_meeting() {
         notify.clone(),
         next_dir.path.clone(),
         vec![(Speaker::You, feed)],
-        Box::new(|| Err("not this time".to_string())),
+        Plan::live(Box::new(|| Err("not this time".to_string()))),
     );
     assert!(
         live.snapshot().finals.is_empty(),
@@ -512,10 +512,10 @@ fn stop_before_the_engine_has_loaded_still_transcribes_what_was_recorded() {
         notify.clone(),
         path.clone(),
         vec![(Speaker::You, mic_feed)],
-        Box::new(|| {
+        Plan::live(Box::new(|| {
             std::thread::sleep(Duration::from_millis(300));
             Ok(Box::new(FakeEngine(Mode::Echo)) as Box<dyn SttEngine>)
-        }),
+        })),
     );
     for _ in 0..3 {
         mic_tee.offer(&chunk());
@@ -913,7 +913,9 @@ fn stop_a_late_line_meeting(
         Arc::new(CollectingNotify::default()),
         path.clone(),
         vec![(Speaker::You, mic_feed)],
-        Box::new(move || Ok(Box::new(LateLineEngine(hold)) as Box<dyn SttEngine>)),
+        Plan::live(Box::new(move || {
+            Ok(Box::new(LateLineEngine(hold)) as Box<dyn SttEngine>)
+        })),
     );
     drop(mic_tee);
     let (status, transcript_final) = transcription.finish_final(timeout);
@@ -976,7 +978,9 @@ fn transcript_md_is_in_time_order_by_the_time_it_is_final() {
         Arc::new(CollectingNotify::default()),
         path.clone(),
         vec![(Speaker::You, mic_feed)],
-        Box::new(|| Ok(Box::new(LateLineEngine(Hold::For(Duration::ZERO))) as Box<dyn SttEngine>)),
+        Plan::live(Box::new(|| {
+            Ok(Box::new(LateLineEngine(Hold::For(Duration::ZERO))) as Box<dyn SttEngine>)
+        })),
     );
     drop(mic_tee);
     let (status, mut transcript_final) = transcription.finish_final(STOP_TIMEOUT);

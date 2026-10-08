@@ -3,9 +3,10 @@
 //!
 //! This is deliberately not a config system; it is the hub of the section
 //! readers. Phase 6 (SPEC §5) owns the settings UI to edit the rest of §3.5.
-//! What is still unread is `transcription.live`. (`transcription.language` is
-//! read, see `stt::languages`; `repos.default` is read by
-//! [`default_repo`].) The Phase 1 exit gate, **"engine switch is a config
+//! Every `transcription` key is read: `transcription.language` through
+//! `stt::languages`, and `transcription.live` by `live_transcript`, which
+//! transcribes after Stop when it is `false` (TUR-137). `repos.default` is
+//! read by [`default_repo`]. The Phase 1 exit gate, **"engine switch is a config
 //! change only"**, is what this module first made true: before it,
 //! `src-tauri/src/engine.rs` hardcoded the engine to
 //! [`stt::registry::Preference::Auto`][crate::engine], so trying whisper meant
@@ -115,6 +116,11 @@ pub struct Transcription {
     /// reason to drop the engine and model beside it.
     #[serde(default = "default_language")]
     pub language: String,
+    /// Transcribe while the call runs (`true`, the default), or only after
+    /// Stop (`false`): then the recording opens no speech engine, and Stop
+    /// transcribes the saved audio before the notes run starts (TUR-137).
+    #[serde(default = "default_live")]
+    pub live: bool,
 }
 
 impl Default for Transcription {
@@ -123,8 +129,13 @@ impl Default for Transcription {
             engine: Preference::default(),
             model: default_model(),
             language: default_language(),
+            live: default_live(),
         }
     }
+}
+
+fn default_live() -> bool {
+    true
 }
 
 fn default_language() -> String {

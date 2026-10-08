@@ -38,6 +38,9 @@
 //! dependency graph, and engine selection is filesystem-only apart from the
 //! local `meet-stt --probe` (L9–L11).
 //!
+//! With `transcription.live: false` none of the above runs while the meeting
+//! records; Stop transcribes the saved WAVs instead ([`after_stop`], TUR-137).
+//!
 //! # Timestamps
 //!
 //! `start_sec` on a live line is the position in the tee, which is the position
@@ -50,6 +53,8 @@ mod board;
 mod e2e;
 #[cfg(test)]
 mod fakes;
+// TUR-137: `transcription.live: false`, the whole meeting at Stop.
+mod after_stop;
 mod sink;
 mod supervise;
 #[cfg(test)]
@@ -175,6 +180,35 @@ pub fn open_configured_engine() -> Result<Box<dyn SttEngine>, String> {
     Ok(engine)
 }
 
+/// How a meeting is transcribed: which engine, and whether while it records
+/// or only after Stop (`transcription.live`, TUR-137).
+pub struct Plan {
+    open: OpenEngine,
+    live: bool,
+}
+
+impl Plan {
+    /// What `config.jsonc` asks for, read now, so a change takes effect on
+    /// the next recording.
+    pub fn configured() -> Self {
+        Self {
+            open: Box::new(open_configured_engine),
+            live: crate::config::transcription().live,
+        }
+    }
+
+    /// Lines while the meeting records, from `open`'s engine.
+    pub fn live(open: OpenEngine) -> Self {
+        Self { open, live: true }
+    }
+}
+
+impl From<OpenEngine> for Plan {
+    fn from(open: OpenEngine) -> Self {
+        Self::live(open)
+    }
+}
+
 /// Managed Tauri state: the board behind the `live_transcript` command.
 #[derive(Clone, Default)]
 pub struct LiveTranscript {
@@ -199,13 +233,19 @@ impl LiveTranscript {
     /// whisper model that takes seconds — happens on a thread of its own, and
     /// the tee queues the audio that arrives meanwhile. `tracks` is one feed
     /// per channel that is actually capturing.
+    ///
+    /// With a [`Plan`] that is not live (`transcription.live: false`) no
+    /// engine opens and the feeds are let go at once, which costs capture
+    /// nothing (`audio::tee`). The WAVs are transcribed at Stop instead, see
+    /// [`Transcription::finish_final`].
     pub fn start(
         &self,
         notify: Arc<dyn Notify>,
         transcript: PathBuf,
         tracks: Vec<(Speaker, TeeFeed)>,
-        open: OpenEngine,
+        plan: impl Into<Plan>,
     ) -> Transcription {
+        let Plan { open, live } = plan.into();
         let generation = {
             let mut board = lock_or_recover(&self.board);
             board.generation += 1;
@@ -219,6 +259,16 @@ impl LiveTranscript {
             notify,
         };
         scope.notify.status(&Status::idle());
+
+        if !live {
+            drop(tracks);
+            tracing::info!("transcription.live is off; the meeting is transcribed after Stop");
+            return Transcription {
+                scope,
+                work: Work::AfterStop(open),
+                transcript,
+            };
+        }
 
         let stopping = Arc::new(AtomicBool::new(false));
         let transcript_path = transcript.clone();
@@ -244,8 +294,7 @@ impl LiveTranscript {
 
         Transcription {
             scope,
-            stopping,
-            done,
+            work: Work::Live { stopping, done },
             transcript: transcript_path,
         }
     }
@@ -259,10 +308,20 @@ pub(super) const STILL_RECORDING: &str = "Recording continues, and the meeting c
 /// One meeting's transcription, held by the recorder until Stop.
 pub struct Transcription {
     scope: Scope,
-    stopping: Arc<AtomicBool>,
-    done: mpsc::Receiver<()>,
+    work: Work,
     /// The meeting's `transcript.md`, inside its meeting folder.
     transcript: PathBuf,
+}
+
+/// What Stop has to finish.
+enum Work {
+    /// Engines running alongside the recording.
+    Live {
+        stopping: Arc<AtomicBool>,
+        done: mpsc::Receiver<()>,
+    },
+    /// Nothing yet: the saved audio is transcribed at Stop with this engine.
+    AfterStop(OpenEngine),
 }
 
 impl Transcription {
@@ -279,7 +338,7 @@ impl Transcription {
     /// its finals and dropping any unsettled guess), and the final status goes
     /// out. Returns within `timeout` even if an engine never does.
     pub fn finish(self, timeout: Duration) -> Status {
-        self.finish_final(timeout).0
+        self.end(timeout, false).0
     }
 
     /// [`Self::finish`], plus a way to learn when `transcript.md` is final.
@@ -288,9 +347,29 @@ impl Transcription {
     /// writing its last lines. Anything that reads the file afterwards — the
     /// notes run (TUR-17) — waits on the [`TranscriptFinal`] instead of
     /// assuming Stop's timeout means the file is complete.
+    ///
+    /// When the meeting was not transcribed live, this is where it is: the
+    /// WAVs are transcribed whole on a thread of their own
+    /// ([`after_stop`]), Stop waits up to `timeout` for that as it would for
+    /// live engines, and the [`TranscriptFinal`] resolves only once it is
+    /// done, so the notes run never reads a transcript that is not there yet.
     pub fn finish_final(self, timeout: Duration) -> (Status, TranscriptFinal) {
-        self.stopping.store(true, Ordering::Release);
-        let waited = self.done.recv_timeout(timeout);
+        self.end(timeout, true)
+    }
+
+    /// `marks_late` is whether a transcription after Stop that outlasts
+    /// `timeout` marks the meeting's audio complete itself: the caller of
+    /// [`Self::finish_final`] does that from the status it gets back, and
+    /// that status cannot say yet.
+    fn end(self, timeout: Duration, marks_late: bool) -> (Status, TranscriptFinal) {
+        let (stopping, done) = match self.work {
+            Work::Live { stopping, done } => (stopping, done),
+            Work::AfterStop(open) => {
+                return after_stop::finish(self.scope, self.transcript, open, timeout, marks_late);
+            }
+        };
+        stopping.store(true, Ordering::Release);
+        let waited = done.recv_timeout(timeout);
         match waited {
             Ok(()) => {}
             Err(RecvTimeoutError::Timeout) => {
@@ -317,8 +396,14 @@ impl Transcription {
         }
         // Only a timeout leaves the supervisor running; it still says when it
         // ends, on the same channel, so hand that on.
-        let pending = matches!(waited, Err(RecvTimeoutError::Timeout)).then_some(self.done);
-        (self.scope.seal(), TranscriptFinal { pending })
+        let pending = matches!(waited, Err(RecvTimeoutError::Timeout)).then_some(done);
+        (
+            self.scope.seal(),
+            TranscriptFinal {
+                pending,
+                patient: false,
+            },
+        )
     }
 }
 
@@ -326,23 +411,39 @@ impl Transcription {
 /// more will be written to it.
 ///
 /// Usually that is already true when Stop returns. It is not when Stop gave up
-/// on a slow engine, which may still settle a line or two afterwards.
+/// on a slow engine, which may still settle a line or two afterwards, or when
+/// the whole meeting is still being transcribed after Stop.
 pub struct TranscriptFinal {
     /// The supervisor's "I have ended" channel, while it has not yet said so.
     /// `None` once the file is final.
     pending: Option<mpsc::Receiver<()>>,
+    /// The whole meeting is being transcribed after Stop. That takes as long
+    /// as the meeting's audio needs, not a slow engine's last few seconds, so
+    /// [`Self::wait`] waits for it in full. An engine error or a panic still
+    /// ends it.
+    patient: bool,
 }
 
 impl TranscriptFinal {
     /// Whether `transcript.md` is final, waiting up to `timeout` for it.
     ///
     /// True at once when it already is. A `false` can be followed by a later
-    /// wait that succeeds: a slow engine is still worth waiting for.
+    /// wait that succeeds: a slow engine is still worth waiting for. A
+    /// transcription after Stop is waited for however long it takes, past
+    /// `timeout`.
     pub fn wait(&mut self, timeout: Duration) -> bool {
         let Some(done) = &self.pending else {
             return true;
         };
-        match done.recv_timeout(timeout) {
+        let waited = if self.patient {
+            // No cap, on purpose (TUR-137): notes come only after the full
+            // transcript, and a batch engine's error or panic ends this wait.
+            // Its start and end are logged at info, so a long wait shows.
+            done.recv().map_err(|_| RecvTimeoutError::Disconnected)
+        } else {
+            done.recv_timeout(timeout)
+        };
+        match waited {
             // A supervisor that went away without saying so — it panicked —
             // will not write anything more either.
             Ok(()) | Err(RecvTimeoutError::Disconnected) => {
