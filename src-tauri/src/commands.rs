@@ -389,6 +389,22 @@ pub async fn stop_recording(app: AppHandle) -> Result<Status, UiError> {
     on_blocking_pool(move || app.state::<Recorder>().stop(&app)).await?
 }
 
+/// Pause the live recording (TUR-146): nothing is written or transcribed
+/// until [`resume_recording`], and the timer stops. Instant: the ticker
+/// thread stops the audio at its next tick. Not a recording: no change.
+#[tauri::command]
+#[specta::specta]
+pub fn pause_recording(app: AppHandle, recorder: State<'_, Recorder>) -> Status {
+    recorder.pause(&app)
+}
+
+/// Carry on recording into the same meeting after [`pause_recording`].
+#[tauri::command]
+#[specta::specta]
+pub fn resume_recording(app: AppHandle, recorder: State<'_, Recorder>) -> Status {
+    recorder.resume(&app)
+}
+
 // --- live transcript ------------------------------------------------------
 
 /// Everything the live pane should show right now, so a window opened

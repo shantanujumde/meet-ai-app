@@ -42,6 +42,9 @@
 
 pub(crate) mod auto_title;
 pub(crate) mod backup_stop;
+mod interrupted;
+// TUR-146: pause and resume.
+pub(crate) mod pause;
 mod phase;
 mod start_check;
 mod ticker;
@@ -49,7 +52,7 @@ mod ticker;
 use std::sync::{Arc, Mutex};
 
 use audio::AudioSource;
-use audio::session::RecordingSession;
+use audio::session::{PauseSwitch, RecordingSession};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter as _, Manager as _};
 use {meeting_format::layout, stt::Speaker};
@@ -88,6 +91,8 @@ pub struct Status {
     /// for the move to `Idle` and its reason means the window can never show
     /// one without the other. Serialised as `null` when nothing went wrong.
     pub error: Option<UiError>,
+    /// The paused stretches, so the timer leaves them out (TUR-146).
+    pub pause: pause::PauseClock,
 }
 
 impl Status {
@@ -97,6 +102,7 @@ impl Status {
             meeting_id: None,
             started_at_ms: None,
             error: None,
+            pause: pause::PauseClock::default(),
         }
     }
 }
@@ -116,6 +122,8 @@ struct Inner {
     /// The live transcript riding on the session's tees (TUR-96). Taken
     /// together with the ticker on stop, so the two always end as a pair.
     transcription: Option<Transcription>,
+    /// How the window pauses the session the ticker owns (TUR-146).
+    pause: Option<PauseSwitch>,
 }
 
 impl Inner {
@@ -124,6 +132,7 @@ impl Inner {
             status: Status::idle(),
             ticker: None,
             transcription: None,
+            pause: None,
         }
     }
 
@@ -335,6 +344,7 @@ impl Recorder {
             }
         };
 
+        let pause = session.pause_switch();
         let mut inner = self.lock();
         match Ticker::spawn(
             TICKER_THREAD_NAME,
@@ -349,6 +359,7 @@ impl Recorder {
                 inner.status.started_at_ms = Some(started.timestamp_millis());
                 inner.ticker = Some(ticker);
                 inner.transcription = Some(transcription);
+                inner.pause = Some(pause);
                 let status = inner.status.clone();
                 drop(inner);
                 emit_state(app, &status);
@@ -579,7 +590,7 @@ impl Recorder {
     /// the session is stopped (`stop_error` is how that went). Returns the
     /// idle status to announce and the error it carries.
     fn end_interrupted(&self, message: &str, stop_error: Option<&str>) -> (Status, UiError) {
-        let error = interrupted(message, stop_error);
+        let error = interrupted::interrupted(message, stop_error);
         let mut inner = self.lock();
         inner.end(Some(error.clone()));
         (inner.status.clone(), error)
@@ -592,23 +603,6 @@ fn emit_state(app: &AppHandle, status: &Status) {
     if let Err(error) = app.emit(RECORDING_STATE_EVENT, status) {
         tracing::warn!(%error, "could not tell the window about a recording state change");
     }
-}
-
-/// The error a recording that ended on its own leaves on the idle status:
-/// the tick failure that ended it, and whether closing its files worked after
-/// that (`stop_error`).
-fn interrupted(message: &str, stop_error: Option<&str>) -> UiError {
-    let body = match stop_error {
-        None => format!(
-            "The recording stopped because of an error ({message}). The audio recorded up to \
-             that point was saved."
-        ),
-        Some(stop_message) => format!(
-            "The recording stopped because of an error ({message}), and finishing its files also \
-             failed ({stop_message})."
-        ),
-    };
-    UiError::app("recording-interrupted", body)
 }
 
 /// One tick of the live session, with a panic turned into an ordinary tick
@@ -859,17 +853,5 @@ mod tests {
         inner.status.phase = Phase::Stopping;
         assert!(inner.enter_starting().is_err());
         assert!(inner.status.error.is_some());
-    }
-
-    #[test]
-    fn an_interrupted_recording_says_whether_its_files_were_saved() {
-        let saved = interrupted("mic fsync: disk full", None);
-        assert_eq!(saved.kind, "recording-interrupted");
-        assert!(saved.message.contains("(mic fsync: disk full)"));
-        assert!(saved.message.contains("was saved"), "{}", saved.message);
-
-        let lost = interrupted("tick", Some("stop"));
-        assert!(lost.message.contains("(tick)") && lost.message.contains("(stop)"));
-        assert!(!lost.message.contains("was saved"), "{}", lost.message);
     }
 }

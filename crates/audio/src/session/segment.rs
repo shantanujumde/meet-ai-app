@@ -200,22 +200,68 @@ pub(super) fn reopen_segment(
     new_mic: impl FnOnce() -> Box<dyn AudioSource>,
     new_sys: impl FnOnce() -> Option<Box<dyn AudioSource>>,
 ) -> Result<(), String> {
+    let close = stop_for(&mut **mic, sys, "reopen")?;
+    open_next(
+        mic, sys, writer, paths, reason, tees, want_sys, close, new_mic, new_sys,
+    )
+}
+
+/// The first half of [`reopen_segment`], and all of a pause (TUR-146): stop
+/// both channels, *then* read where each ended (the order that function's
+/// docs explain), as the anchor that closes the segment. `why` names the
+/// caller in the errors and the log.
+///
+/// Only the microphone can fail this; a system track that will not stop is
+/// logged, and the next segment builds a fresh tap.
+pub(super) fn stop_for(
+    mic: &mut dyn AudioSource,
+    sys: &mut Option<Box<dyn AudioSource>>,
+    why: &str,
+) -> Result<Anchor, String> {
     mic.stop()
-        .map_err(|e| format!("stopping microphone for reopen: {e}"))?;
+        .map_err(|e| format!("stopping microphone for {why}: {e}"))?;
     if let Some(s) = sys.as_mut()
         && let Err(e) = s.stop()
     {
-        tracing::warn!("stopping system audio for reopen failed ({e}); trying a fresh tap");
+        tracing::warn!("stopping system audio for {why} failed ({e}); trying a fresh tap");
     }
 
     let mic_close = mic
         .position()
-        .ok_or_else(|| "microphone stopped producing audio before a segment reopen".to_string())?;
+        .ok_or_else(|| format!("microphone stopped producing audio before a segment {why}"))?;
     let sys_close = match sys.as_deref() {
         Some(s) => s.position().unwrap_or((0, 0)),
         None => (0, 0),
     };
+    Ok(Anchor {
+        mic_host_ns: mic_close.0,
+        mic_frames: mic_close.1,
+        sys_host_ns: sys_close.0,
+        sys_frames: sys_close.1,
+    })
+}
 
+/// The second half of [`reopen_segment`], and all of a resume (TUR-146):
+/// start the sources `new_mic` and `new_sys` build into the same files,
+/// align them, close the old segment at `close` (from [`stop_for`]) and open
+/// the next one with `reason`.
+///
+/// The system track never fails this (TUR-87); a microphone failure returns
+/// `Err` after stopping every source this call started, and leaves `mic`,
+/// `sys` and `writer` as they were.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn open_next(
+    mic: &mut Box<dyn AudioSource>,
+    sys: &mut Option<Box<dyn AudioSource>>,
+    writer: &mut SegmentsWriter,
+    paths: &Paths<'_>,
+    reason: &str,
+    tees: &Tees,
+    want_sys: bool,
+    close: Anchor,
+    new_mic: impl FnOnce() -> Box<dyn AudioSource>,
+    new_sys: impl FnOnce() -> Option<Box<dyn AudioSource>>,
+) -> Result<(), String> {
     let mut next_mic = new_mic();
     tees.attach_mic(&mut *next_mic);
     if let Err(e) = next_mic.start(paths.mic.to_path_buf()) {
@@ -255,16 +301,8 @@ pub(super) fn reopen_segment(
     };
     let next_open = segment_open(new_start_host_ns, &*next_mic, next_sys.as_deref(), reason);
 
-    writer.update_frames(mic_close.1, sys_close.1);
-    writer.close_segment(
-        Anchor {
-            mic_host_ns: mic_close.0,
-            mic_frames: mic_close.1,
-            sys_host_ns: sys_close.0,
-            sys_frames: sys_close.1,
-        },
-        next_open,
-    );
+    writer.update_frames(close.mic_frames, close.sys_frames);
+    writer.close_segment(close, next_open);
     *mic = next_mic;
     *sys = next_sys;
     writer
