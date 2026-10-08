@@ -557,6 +557,7 @@ Where the OS can list the apps using a mic (`audio::mic_users`, TUR-142: macOS 1
 - **Never a call:** meet-ai and its WebKit child, Krisp, Rogue Amoeba's apps, BlackHole, Superwhisper, Wispr Flow, MacWhisper, Raycast and Siri (`corespeechd`), built in.
 - **Not now** (or no answer) keeps that app quiet for 10 minutes. **Never for <App>** adds it to the "Never detect" list, editable in Settings → Notifications.
 - **§3.5 `detection` gains two keys:** `call_start` (bool, default `true`: "Ask to record when a call starts") and `never_detect` (string array, default `[]`: app names as the prompt shows them, or ids).
+
 ### A28 — 2026-10-09 · Tickets go to the tracker on their own once the user picked one; "Send a test ticket" creates nothing (amends A11's Sync and A26; TUR-113)
 
 The owner decided (2026-10-06) that tickets on the Tickets page are sent to the tracker without a Sync press.
