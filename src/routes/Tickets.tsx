@@ -1,21 +1,30 @@
 /**
  * The ticket list, and a small form to add one.
  *
+ * TUR-113: every ticket in Tickets, the ones approved from a meeting (with a
+ * "From: <meeting>" link) and the hand-made ones. When a tracker is set up,
+ * Rust sends each new ticket to it on its own; each card shows where that is,
+ * and a failure shows under the card's line with Retry.
+ *
  * Local state rather than the global store: nothing else in the app reads
  * tickets, so the page loads them itself when it opens.
  */
 
-import { Plus, Ticket as TicketIcon } from "lucide-react";
+import { Plus, Settings as SettingsIcon, Ticket as TicketIcon } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { createTicket, listTickets, startWorkPrompt } from "@/ipc/client";
+import { Link, useNavigate } from "react-router";
+import { createTicket, listTickets, onMeetingsChanged, startWorkPrompt } from "@/ipc/client";
 import type { TicketStatus, TicketSummary, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
+import { osText } from "@/lib/osText";
+import { meetingPath, settingsPath } from "@/lib/routes";
 import { CopyPromptButton } from "@/ui/CopyPromptButton";
 import { IconSquare } from "@/ui/icons";
 import { Button, ButtonRow, cardVariants, Pill } from "@/ui/primitives";
-import { SyncControls, SyncErrors } from "@/ui/SyncButton";
+import { SendError, SendStatus, trackerName } from "@/ui/SyncButton";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
-import { useCanSync, useTicketSync } from "@/ui/useTicketSync";
+import { TicketDetails } from "@/ui/TicketDetails";
+import { useTicketSyncStates } from "@/ui/useTicketSync";
 
 const STATUS_LABEL: Record<TicketStatus, string> = {
   open: "Open",
@@ -34,17 +43,19 @@ const STATUS_TONE: Record<TicketStatus, "neutral" | "ok" | "warn" | "danger"> = 
 const FIELD =
   "w-full rounded-control border-[0.5px] border-separator bg-glass-sunken px-4 py-3 text-body text-fg-primary";
 
+const HINT_START = "Tickets you approved from meetings, and ones you added.";
+
 export function Tickets() {
   const [tickets, setTickets] = useState<TicketSummary[] | null>(null);
   const [error, setError] = useState<UiError | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  const canSync = useCanSync();
+  const navigate = useNavigate();
   const replace = useCallback((updated: TicketSummary) => {
     setTickets((current) =>
       (current ?? []).map((each) => (each.id === updated.id ? updated : each)),
     );
   }, []);
-  const sync = useTicketSync(replace);
+  const sync = useTicketSyncStates(replace);
 
   const load = useCallback(async () => {
     setError(null);
@@ -57,6 +68,8 @@ export function Tickets() {
 
   useEffect(() => {
     void load();
+    // An approve on a meeting page, or a send writing the issue key, changes the folder.
+    return onMeetingsChanged(() => void load());
   }, [load]);
 
   if (error && tickets === null) {
@@ -75,10 +88,31 @@ export function Tickets() {
     );
   }
 
+  const name = trackerName(sync.tracker);
+
   return (
     <div className="page">
-      <div className="page__header">
+      <div className="page__header items-start">
         <h1 className="page__title">Tickets</h1>
+        {sync.trackerSetUp === true ? (
+          <p className="text-callout text-fg-secondary">
+            {`${HINT_START} Each one is sent to ${name} on its own.`}
+          </p>
+        ) : null}
+        {sync.trackerSetUp === false ? (
+          <>
+            <p className="text-callout text-fg-secondary">
+              {`${HINT_START} They stay on ${osText("thisComputer")} until you connect a tracker.`}
+            </p>
+            <Button
+              size="small"
+              icon={SettingsIcon}
+              onClick={() => navigate(settingsPath("tracker"))}
+            >
+              Set up a tracker
+            </Button>
+          </>
+        ) : null}
       </div>
 
       {formOpen ? (
@@ -100,51 +134,56 @@ export function Tickets() {
       {tickets.length === 0 ? (
         <EmptyState
           title="No tickets yet"
-          body="Tickets are small tasks that come out of your meetings. Use New ticket to add the first one."
+          body="Approve a task on a meeting's page, or use New ticket to add one."
         />
       ) : (
         <ul className="flex flex-col gap-4">
-          {tickets.map((ticket) => (
-            <li key={ticket.id} className={cardVariants()}>
-              <div className="flex items-start gap-5">
-                <IconSquare icon={TicketIcon} />
-                <div className="flex min-w-0 flex-1 flex-col gap-2">
-                  <div className="flex items-center justify-between gap-5">
-                    <span className="font-mono text-caption1 text-fg-tertiary">{ticket.id}</span>
-                    {ticket.status ? (
-                      <Pill tone={STATUS_TONE[ticket.status]}>{STATUS_LABEL[ticket.status]}</Pill>
+          {tickets.map((ticket) => {
+            const state = sync.stateOf(ticket);
+            return (
+              <li key={ticket.id} className={cardVariants()}>
+                <div className="flex items-start gap-5">
+                  <IconSquare icon={TicketIcon} />
+                  <div className="flex min-w-0 flex-1 flex-col gap-2">
+                    <div className="flex items-center justify-between gap-5">
+                      <span className="font-mono text-caption1 text-fg-tertiary">{ticket.id}</span>
+                      {ticket.status ? (
+                        <Pill tone={STATUS_TONE[ticket.status]}>{STATUS_LABEL[ticket.status]}</Pill>
+                      ) : null}
+                    </div>
+                    <h2 className="wrap-anywhere text-body font-semibold text-fg-primary">
+                      {ticket.title}
+                    </h2>
+                    {ticket.meeting ? (
+                      <Link
+                        className="wrap-anywhere text-footnote text-accent-text"
+                        to={meetingPath(ticket.meeting)}
+                      >
+                        {`From: ${ticket.meetingTitle ?? ticket.meeting}`}
+                      </Link>
                     ) : null}
+                    <TicketDetails ticket={ticket} />
                   </div>
-                  <h2 className="text-body font-semibold text-fg-primary">{ticket.title}</h2>
-                  {ticket.body ? (
-                    <p className="line-clamp-3 text-callout text-fg-secondary">{ticket.body}</p>
-                  ) : null}
                 </div>
-              </div>
-              {/* L14: Rust renders the prompt; the user pastes it into their
-                  own agent session in the repo. */}
-              <ButtonRow className="items-start">
-                <CopyPromptButton
-                  label="Start Work"
-                  size="small"
-                  render={() => startWorkPrompt(ticket.id, ticket.meeting)}
-                />
-                {/* TUR-11: the agent creates the issue in the user's tracker. */}
-                <SyncControls
+                {/* L14: Rust renders the prompt; the user pastes it into their
+                    own agent session in the repo. */}
+                <ButtonRow className="items-start justify-between">
+                  <CopyPromptButton
+                    label="Start Work"
+                    size="small"
+                    render={() => startWorkPrompt(ticket.id, ticket.meeting)}
+                  />
+                  <SendStatus ticket={ticket} state={state} tracker={sync.tracker} />
+                </ButtonRow>
+                {/* TUR-112: the error under the buttons, at the card's full width. */}
+                <SendError
                   ticket={ticket}
-                  state={sync.stateOf(ticket.id)}
-                  canSync={canSync === true}
-                  onSync={() => void sync.sync(ticket)}
-                  onCancel={() => void sync.cancel(ticket.id)}
-                  onDismiss={() => void sync.dismiss(ticket.id, ticket.meeting)}
+                  state={state}
+                  onRetry={() => void sync.retry(ticket.id)}
                 />
-              </ButtonRow>
-              {/* TUR-112: errors under the buttons, at the card's full width. */}
-              {ticket.syncedTo === null && canSync === true ? (
-                <SyncErrors state={sync.stateOf(ticket.id)} />
-              ) : null}
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
