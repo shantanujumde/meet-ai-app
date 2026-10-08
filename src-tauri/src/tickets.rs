@@ -92,6 +92,10 @@ pub async fn approve_task(
             approve_in(root, &meeting_id, &ticket_id, &self_writes)
         });
         crate::search::meeting_written(&app, &meeting_id);
+        // Sent to the tracker on its own, when one is set up.
+        if let Ok(approved) = &approved {
+            crate::sync::auto::queue(&app, &[approved.id.as_str()]);
+        }
         approved
     })
     .await?
@@ -108,11 +112,15 @@ pub async fn approve_all_tasks(
 ) -> Result<Vec<TicketSummary>, UiError> {
     on_blocking_pool(move || {
         let self_writes = own_writes(&app);
-        let tasks = crate::folder_move::writing_in_root(&app, |root| {
+        let approved = crate::folder_move::writing_in_root(&app, |root| {
             approve_all_in(root, &meeting_id, &self_writes)
         });
         crate::search::meeting_written(&app, &meeting_id);
-        tasks
+        // The ones this approved are sent to the tracker on their own.
+        let (approved, tasks) = approved?;
+        let approved: Vec<&str> = approved.iter().map(String::as_str).collect();
+        crate::sync::auto::queue(&app, &approved);
+        Ok(tasks)
     })
     .await?
 }
@@ -196,13 +204,14 @@ fn approve_in(
     Ok(summary)
 }
 
+/// Returns the ids it approved, and the meeting's tasks as they now are.
 fn approve_all_in(
     root: &Path,
     meeting_id: &str,
     self_writes: &SelfWrites,
-) -> Result<Vec<TicketSummary>, UiError> {
-    suggested::approve_all(root, meeting_id, self_writes)?;
-    meeting_tasks_in(root, meeting_id)
+) -> Result<(Vec<String>, Vec<TicketSummary>), UiError> {
+    let approved = suggested::approve_all(root, meeting_id, self_writes)?.approved;
+    Ok((approved, meeting_tasks_in(root, meeting_id)?))
 }
 
 fn discard_in(
@@ -731,7 +740,9 @@ mod tests {
         let writes = SelfWrites::default();
         discard_in(root, MEETING, "TICK-0002", &writes).expect("discard");
 
-        let tasks = approve_all_in(root, MEETING, &writes).expect("approve all");
+        let (approved, tasks) = approve_all_in(root, MEETING, &writes).expect("approve all");
+
+        assert_eq!(approved, ["TICK-0001", "TICK-0003"]);
 
         let rows: Vec<(&str, bool)> = tasks.iter().map(|t| (t.id.as_str(), t.suggested)).collect();
         assert_eq!(rows, [("TICK-0001", false), ("TICK-0003", false)]);

@@ -43,6 +43,12 @@ pub fn tickets() -> Result<TicketsConfig, ConfigError> {
     parse_tickets(&read_in(&app_dir()?)?)
 }
 
+/// Whether `~/Meetings/.app/config.jsonc` names a tracker itself, not only by
+/// default (TUR-113): only then are tickets sent to it on their own.
+pub fn tickets_chosen() -> Result<bool, ConfigError> {
+    super::agent_section::parse_tickets_chosen(&read_in(&app_dir()?)?)
+}
+
 /// `repos.default` from `~/Meetings/.app/config.jsonc`, `None` when unset.
 pub fn default_repo() -> Result<Option<String>, ConfigError> {
     parse_default_repo(&read_in(&app_dir()?)?)

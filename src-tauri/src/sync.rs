@@ -23,6 +23,8 @@
 //! status events are `agent_run.rs`'s (TUR-10). Settings for the tracker are
 //! in [`tracker`].
 
+pub mod auto;
+pub mod check;
 mod errors;
 mod kept;
 mod save;

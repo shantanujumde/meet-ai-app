@@ -124,6 +124,8 @@ pub fn run() {
         .manage(search::SearchIndex::default())
         .manage(agent_run::AgentRuns::default())
         .manage(sync::SyncRuns::default())
+        // TUR-113: tickets go to the tracker on their own, one at a time.
+        .manage(sync::auto::AutoSync::default())
         .manage(detection::Detection::default())
         .manage(detection::popup::PromptPopup::default())
         .manage(calendar::CalendarState::default())

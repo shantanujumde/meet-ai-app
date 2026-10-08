@@ -57,3 +57,7 @@ pub const HEADPHONE_WARNING_EVENT: &str = "headphones://warning";
 /// The meetings folder cannot be watched, or can be again (TUR-134):
 /// `watch::WatchProblem`. The Meetings page shows a note while it is set.
 pub const MEETINGS_WATCH_PROBLEM_EVENT: &str = "meetings-watch://problem";
+
+/// A ticket on the Tickets page changed how far it is in being sent to the
+/// tracker on its own (TUR-113): `sync::auto::TicketSyncStatus`.
+pub const TICKET_SYNC_EVENT: &str = "ticket-sync://status";

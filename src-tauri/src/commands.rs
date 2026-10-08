@@ -417,8 +417,14 @@ pub async fn create_ticket(
     body: String,
 ) -> Result<TicketSummary, UiError> {
     on_blocking_pool(move || {
-        app.state::<FolderGate>()
-            .writing(|| tickets::create(&title, &body))
+        let made = app
+            .state::<FolderGate>()
+            .writing(|| tickets::create(&title, &body));
+        // TUR-113: sent to the tracker on its own, when one is set up.
+        if let Ok(made) = &made {
+            crate::sync::auto::queue(&app, &[made.id.as_str()]);
+        }
+        made
     })
     .await?
 }

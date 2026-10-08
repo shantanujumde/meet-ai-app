@@ -223,6 +223,17 @@ pub fn parse_tickets(raw: &str) -> Result<TicketsConfig, ConfigError> {
     })
 }
 
+/// Whether the text of `config.jsonc` names a tracker and its MCP server
+/// itself, as Settings, Tracker saves them (TUR-113). The defaults alone never
+/// count: no ticket is sent to a tracker the user did not pick.
+pub fn parse_tickets_chosen(raw: &str) -> Result<bool, ConfigError> {
+    let tickets: Option<RawTickets> = read_section(raw, "tickets").map_err(ConfigError::Invalid)?;
+    Ok(tickets.is_some_and(|tickets| {
+        let named = |value: &Option<String>| value.as_deref().is_some_and(|v| !v.trim().is_empty());
+        named(&tickets.tracker) && named(&tickets.tracker_mcp)
+    }))
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct RawRepos {
     default: Option<String>,

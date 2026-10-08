@@ -381,3 +381,23 @@ fn repos_default_is_read_and_blank_is_unset() {
         Err(ConfigError::Invalid(_))
     ));
 }
+
+/// TUR-113: tickets go to a tracker on their own only once the user saved
+/// one; the defaults alone never count.
+#[test]
+fn only_a_saved_tracker_counts_as_chosen() {
+    use super::agent_section::parse_tickets_chosen;
+    for raw in [
+        "",
+        "{}",
+        r#"{ "tickets": {} }"#,
+        r#"{ "tickets": { "tracker": "linear" } }"#,
+    ] {
+        assert!(!parse_tickets_chosen(raw).unwrap(), "{raw:?}");
+    }
+    let blank = r#"{ "tickets": { "tracker": "linear", "tracker_mcp": " " } }"#;
+    assert!(!parse_tickets_chosen(blank).unwrap());
+    let saved = with_tickets("", &TicketsConfig::default()).unwrap();
+    assert!(parse_tickets_chosen(&saved).unwrap(), "{saved}");
+    assert!(parse_tickets_chosen("{ not json").is_err());
+}

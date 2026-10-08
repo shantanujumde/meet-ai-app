@@ -107,7 +107,7 @@ fn agent_kind(error: &AgentError) -> &'static str {
 }
 
 /// The agent's name for messages, by `agent::Harness::id`.
-fn harness_name(harness_id: &str) -> &'static str {
+pub(super) fn harness_name(harness_id: &str) -> &'static str {
     match harness_id {
         agent::claude::ID => agent::claude::DISPLAY_NAME,
         agent::codex::ID => "Codex",
