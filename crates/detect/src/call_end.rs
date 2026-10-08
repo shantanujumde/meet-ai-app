@@ -36,6 +36,8 @@
 
 use std::time::{Duration, Instant};
 
+use crate::call_start::{MicKind, MicReading, MicUser};
+
 /// How long the tracked app must stay off the mic before the call counts as
 /// ended (TUR-141 decision 6).
 pub const OFF_WAIT: Duration = Duration::from_secs(5);
@@ -54,49 +56,9 @@ pub const TIMEOUT_GRACE: Duration = Duration::from_secs(1);
 /// start that failed never names the next recording's app.
 pub const ORIGIN_TTL: Duration = Duration::from_secs(30);
 
-/// What sort of app is using the mic, as far as the call end cares.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MicKind {
-    /// An app made for calls: Zoom, WhatsApp, FaceTime.
-    CallApp,
-    /// A browser: the call is in a tab (Meet, a Slack huddle).
-    Browser,
-    /// Anything else: never tracked unless a prompt named it.
-    Other,
-}
-
-/// One app using the mic.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MicUser {
-    /// A stable id for the app (`com.google.Chrome`, `zoom.exe`).
-    pub id: String,
-    /// The app's name for the UI: "Zoom", "Google Chrome".
-    pub name: String,
-    pub kind: MicKind,
-}
-
-impl MicUser {
-    pub fn new(id: impl Into<String>, name: impl Into<String>, kind: MicKind) -> Self {
-        Self {
-            id: id.into(),
-            name: name.into(),
-            kind,
-        }
-    }
-
-    /// Is this the app called `app` (its id, or its name without case)?
-    fn is(&self, app: &str) -> bool {
-        self.id == app || self.name.eq_ignore_ascii_case(app)
-    }
-}
-
-/// One reading of who uses the mic.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MicReading {
-    /// The apps using a mic now, never meet-ai itself.
-    Supported(Vec<MicUser>),
-    /// This OS (or this read) cannot say which apps use the mic.
-    NotSupported,
+/// Is `user` the app called `app` (its id, or its name without case)?
+fn is_app(user: &MicUser, app: &str) -> bool {
+    user.id == app || user.name.eq_ignore_ascii_case(app)
 }
 
 /// How the countdown card ended, as the app's card reports it.
@@ -239,7 +201,7 @@ impl CallEnd {
             Phase::Unseen | Phase::OnMic | Phase::OffSince(_)
         ) {
             self.origin_app = Some(app.to_string());
-            self.tracked = self.last.iter().find(|user| user.is(app)).cloned();
+            self.tracked = self.last.iter().find(|user| is_app(user, app)).cloned();
             self.phase = if self.tracked.is_some() {
                 Phase::OnMic
             } else {
@@ -369,7 +331,7 @@ impl CallEnd {
     /// call app or browser.
     fn pick(&self, users: &[MicUser]) -> Option<MicUser> {
         let found = match &self.origin_app {
-            Some(app) => users.iter().find(|user| user.is(app)),
+            Some(app) => users.iter().find(|user| is_app(user, app)),
             None => users
                 .iter()
                 .find(|user| matches!(user.kind, MicKind::CallApp | MicKind::Browser)),

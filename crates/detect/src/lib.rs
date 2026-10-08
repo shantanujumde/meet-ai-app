@@ -20,8 +20,8 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 pub mod activity;
-pub mod call_start;
 pub mod call_end;
+pub mod call_start;
 pub mod detector;
 pub mod mic_poll;
 pub mod poll;

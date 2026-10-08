@@ -239,7 +239,7 @@ impl MicSource for SystemMics {
 }
 
 /// `audio`'s answer in `detect`'s types.
-fn reading_of(users: MicUsers) -> MicReading {
+pub(super) fn reading_of(users: MicUsers) -> MicReading {
     match users {
         MicUsers::Supported(apps) => MicReading::Supported(apps.iter().map(user_of).collect()),
         MicUsers::NotSupported => MicReading::NotSupported,

@@ -32,9 +32,9 @@ use tauri::{AppHandle, Manager as _};
 use crate::lock::lock_or_recover;
 
 pub mod actions;
+pub mod call_end;
 // TUR-143: a call app or a browser on the mic asks, naming it.
 pub mod call_start;
-pub mod call_end;
 pub mod live;
 pub mod merge;
 pub mod notify;

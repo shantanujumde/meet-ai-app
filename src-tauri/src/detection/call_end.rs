@@ -25,8 +25,8 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use audio::mic_users::{AppKind, MicUsers};
-use detect::call_end::{Answer, CallEnd, MicKind, MicReading, MicUser, Step};
+use detect::MicReading;
+use detect::call_end::{Answer, CallEnd, Step};
 use tauri::{AppHandle, Manager as _};
 
 use super::Detection;
@@ -75,7 +75,7 @@ fn poll(app: &AppHandle) {
     };
     let recording = super::notify::recording(app);
     let reading = if recording && state.config().call_end {
-        reading(audio::mic_users::mic_users())
+        super::call_start::reading_of(audio::mic_users::mic_users())
     } else {
         MicReading::NotSupported
     };
@@ -206,27 +206,6 @@ fn stop(app: &AppHandle) {
     tracing::info!("the call ended: stopping the recording");
     if let Err(error) = recorder.stop(app) {
         tracing::warn!(message = %error.message, "the recording did not stop cleanly");
-    }
-}
-
-/// The apps on the mic, as the rules see them. Dictation, audio-routing
-/// tools and system daemons are never a call, so they are left out.
-pub fn reading(users: MicUsers) -> MicReading {
-    match users {
-        MicUsers::NotSupported => MicReading::NotSupported,
-        MicUsers::Supported(apps) => MicReading::Supported(
-            apps.into_iter()
-                .filter_map(|app| {
-                    let kind = match app.kind {
-                        AppKind::CallApp => MicKind::CallApp,
-                        AppKind::Browser => MicKind::Browser,
-                        AppKind::Other => MicKind::Other,
-                        AppKind::IgnoredSystem => return None,
-                    };
-                    Some(MicUser::new(app.id, app.name, kind))
-                })
-                .collect(),
-        ),
     }
 }
 

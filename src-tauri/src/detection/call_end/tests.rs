@@ -2,8 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use audio::mic_users::MicApp;
-use detect::Signal;
+use detect::{MicKind, MicUser, Signal};
 
 use super::*;
 use crate::detection::notify::prompt_for;
@@ -143,35 +142,6 @@ fn back_on_the_mic_closes_the_card_and_keeps_recording() {
     assert!(!run(&card, &watch, id, start, None));
     assert_eq!(card.tick.get(), 1, "seen on the next tick");
     assert_eq!(card.cancels.get(), 1);
-}
-
-fn mic_app(id: &str, name: &str, kind: AppKind) -> MicApp {
-    MicApp {
-        pid: 1,
-        id: id.to_string(),
-        name: name.to_string(),
-        kind,
-        playing: true,
-    }
-}
-
-#[test]
-fn the_reading_keeps_call_apps_browsers_and_others_but_never_system_tools() {
-    let users = MicUsers::Supported(vec![
-        mic_app("us.zoom.xos", "Zoom", AppKind::CallApp),
-        mic_app("com.google.Chrome", "Google Chrome", AppKind::Browser),
-        mic_app("com.apple.VoiceMemos", "Voice Memos", AppKind::Other),
-        mic_app("com.krisp.krispMac", "Krisp", AppKind::IgnoredSystem),
-    ]);
-    assert_eq!(
-        reading(users),
-        MicReading::Supported(vec![
-            MicUser::new("us.zoom.xos", "Zoom", MicKind::CallApp),
-            MicUser::new("com.google.Chrome", "Google Chrome", MicKind::Browser),
-            MicUser::new("com.apple.VoiceMemos", "Voice Memos", MicKind::Other),
-        ])
-    );
-    assert_eq!(reading(MicUsers::NotSupported), MicReading::NotSupported);
 }
 
 #[test]
