@@ -2,3 +2,12 @@ meet-ai
 Copyright 2026 Shantanu Jumde
 
 This product includes software developed as part of the meet-ai project.
+
+This product includes software adapted from Mila
+(https://github.com/island-io/mila), whose NOTICE reads:
+
+  Mila
+  Originally developed by Uri Harduf at Island Technology, Inc.
+  Copyright (c) 2026 Island Technology, Inc.
+
+  This product includes software developed at Island Technology, Inc.

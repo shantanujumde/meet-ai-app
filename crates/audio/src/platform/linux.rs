@@ -27,6 +27,7 @@ pub(crate) use super::other::{SILENT_SYSTEM_DENIAL, mic_source, start_sound};
 // TUR-51: this OS's own permission checks.
 pub(crate) use super::linux_permission::{check_mic, check_system, stored_mic_denial};
 pub(crate) use activity::device_activity;
+pub(crate) use activity::mic_users;
 #[cfg(test)]
 pub(crate) use activity::{DEVICE_ACTIVITY, DEVICE_ACTIVITY_NEEDS_SERVER};
 // TUR-38: system audio, the host clock and the device watch.

@@ -11,6 +11,11 @@
 //! This speaks the PulseAudio protocol, which PipeWire desktops answer through
 //! pipewire-pulse. It never starts a sound server (`NOAUTOSPAWN`): with none
 //! running, the read is an error and the detection loop treats it as quiet.
+//!
+//! [`mic_users`] keeps the source outputs instead of only counting them
+//! (TUR-142): each running one's pid, binary and `application.name` go to
+//! [`crate::mic_users::name_apps`]. With no sound server the answer is
+//! [`MicUsers::NotSupported`].
 
 // Adapted from github.com/fastrepl/anarlog/crates/detect/src/list/linux.rs @ 93deb8642e75a0a2f8ece1bed186da4362213edd (MIT)
 
@@ -26,6 +31,7 @@ use libpulse_binding::proplist::Proplist;
 
 use crate::Error;
 use crate::activity::{AppStream, DeviceActivity, reading_without_our_own};
+use crate::mic_users::{MicUsers, ProcessFacts, name_apps};
 
 /// [`device_activity`] gives a real reading here.
 #[cfg(test)]
@@ -45,6 +51,51 @@ const IDLE_SLEEP: Duration = Duration::from_millis(10);
 /// Whether another app has a running stream from a source (a mic) and to a
 /// sink (speakers, headphones).
 pub(crate) fn device_activity() -> Result<DeviceActivity, Error> {
+    let (capture, render) = both_listings()?;
+    Ok(reading_without_our_own(&capture.streams, &render.streams))
+}
+
+/// The apps with a running source output, named, without meet-ai.
+/// [`MicUsers::NotSupported`] when the sound server cannot be read.
+pub(crate) fn mic_users() -> MicUsers {
+    match both_listings() {
+        Ok((capture, render)) => {
+            MicUsers::Supported(apps_from(&capture, &render, std::process::id()))
+        }
+        Err(error) => {
+            tracing::debug!(%error, "could not list the apps using a mic");
+            MicUsers::NotSupported
+        }
+    }
+}
+
+/// The running source outputs as processes for [`name_apps`]; `playing`
+/// when the same pid has a running sink input.
+// Adapted from github.com/fastrepl/anarlog/crates/detect/src/list/linux.rs @ 259a04ee2e1447dfed150ed08f0a1bb69909b836 (MIT)
+fn apps_from(capture: &Listing, render: &Listing, own_pid: u32) -> Vec<crate::mic_users::MicApp> {
+    let playing = |pid: Option<u32>| {
+        pid.is_some_and(|pid| {
+            crate::activity::other_apps(&render.streams, own_pid).any(|s| s.pid == Some(pid))
+        })
+    };
+    let users = capture
+        .streams
+        .iter()
+        .zip(&capture.labels)
+        .filter(|(stream, _)| stream.active && stream.pid != Some(0))
+        .map(|(stream, label)| ProcessFacts {
+            pid: stream.pid.unwrap_or_default(),
+            exe: stream.name.clone(),
+            label: label.clone(),
+            output: playing(stream.pid),
+            ..ProcessFacts::default()
+        })
+        .collect();
+    name_apps(users, own_pid, |_| None)
+}
+
+/// Connect, read both stream lists, disconnect.
+fn both_listings() -> Result<(Listing, Listing), Error> {
     let mut mainloop =
         Mainloop::new().ok_or_else(|| read_error("could not create a PulseAudio main loop"))?;
     let mut context = Context::new(&mainloop, "meet-ai")
@@ -54,8 +105,7 @@ pub(crate) fn device_activity() -> Result<DeviceActivity, Error> {
         .map_err(|error| read_error(format!("could not reach the sound server: {error}")))?;
     let result = read_streams(&mut mainloop, &context);
     context.disconnect();
-    let (capture, render) = result?;
-    Ok(reading_without_our_own(&capture, &render))
+    result
 }
 
 pub(super) fn read_error(message: impl Into<String>) -> Error {
@@ -63,10 +113,7 @@ pub(super) fn read_error(message: impl Into<String>) -> Error {
 }
 
 /// The source outputs (capture) and sink inputs (render), once connected.
-fn read_streams(
-    mainloop: &mut Mainloop,
-    context: &Context,
-) -> Result<(Vec<AppStream>, Vec<AppStream>), Error> {
+fn read_streams(mainloop: &mut Mainloop, context: &Context) -> Result<(Listing, Listing), Error> {
     wait_for_ready(mainloop, context)?;
     let introspect = context.introspect();
 
@@ -86,8 +133,8 @@ fn read_streams(
     });
     wait_for_listing(mainloop, &render, operation, "sink inputs")?;
 
-    let capture = std::mem::take(&mut capture.borrow_mut().streams);
-    let render = std::mem::take(&mut render.borrow_mut().streams);
+    let capture = std::mem::take(&mut *capture.borrow_mut());
+    let render = std::mem::take(&mut *render.borrow_mut());
     Ok((capture, render))
 }
 
@@ -95,6 +142,8 @@ fn read_streams(
 #[derive(Default)]
 struct Listing {
     streams: Vec<AppStream>,
+    /// Each stream's `application.name`, in the same order (TUR-142).
+    labels: Vec<Option<String>>,
     completed: bool,
     failed: bool,
 }
@@ -123,7 +172,10 @@ impl Listing {
     /// One callback result: a stream, or the end of the list.
     fn take(&mut self, item: Item<'_>) {
         match item {
-            Item::Stream(corked, proplist) => self.streams.push(stream_from(corked, proplist)),
+            Item::Stream(corked, proplist) => {
+                self.streams.push(stream_from(corked, proplist));
+                self.labels.push(proplist.get_str("application.name"));
+            }
             Item::End => self.completed = true,
             Item::Error => {
                 self.completed = true;
@@ -265,6 +317,41 @@ mod tests {
             }
         );
         assert!(!stream_from(true, &props).active);
+    }
+
+    fn listing(streams: Vec<(AppStream, Option<&str>)>) -> Listing {
+        let (streams, labels) = streams
+            .into_iter()
+            .map(|(stream, label)| (stream, label.map(str::to_string)))
+            .unzip();
+        Listing {
+            streams,
+            labels,
+            completed: true,
+            failed: false,
+        }
+    }
+
+    fn stream(pid: u32, name: &str, active: bool) -> AppStream {
+        AppStream {
+            pid: Some(pid),
+            name: name.to_string(),
+            active,
+        }
+    }
+
+    #[test]
+    fn running_source_outputs_become_named_apps_without_ours() {
+        let capture = listing(vec![
+            (stream(10, "zoom", true), Some("ZOOM VoiceEngine")),
+            (stream(11, "chrome", true), Some("Google Chrome")),
+            (stream(12, "obs", false), Some("OBS")),
+            (stream(4242, "meet-ai", true), None),
+        ]);
+        let render = listing(vec![(stream(10, "zoom", true), None)]);
+        let apps = apps_from(&capture, &render, 4242);
+        let named: Vec<(&str, bool)> = apps.iter().map(|a| (a.name.as_str(), a.playing)).collect();
+        assert_eq!(named, [("Google Chrome", false), ("Zoom", true)]);
     }
 
     #[test]
