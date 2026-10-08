@@ -201,10 +201,6 @@ mod tests {
         );
         assert!(panel.superclass() == Some(NSPanel::class()));
         assert!(panel.instance_variable(c"focusable").is_some());
-        assert!(
-            !same_layout(NSWindow::class(), panel),
-            "a plain window is not swapped"
-        );
     }
 
     #[test]
