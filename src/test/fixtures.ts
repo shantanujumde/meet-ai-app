@@ -21,6 +21,10 @@ export function ticketSummary(overrides: Partial<TicketSummary> = {}): TicketSum
     syncedTo: null,
     externalId: null,
     externalUrl: null,
+    suggested: false,
+    owner: null,
+    due: null,
+    meetingTitle: null,
     ...overrides,
   };
 }

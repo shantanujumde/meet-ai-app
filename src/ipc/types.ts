@@ -364,6 +364,12 @@ export type TicketSummary = {
   externalId: string | null;
   /** The issue's web address. Rust opens it; the window never does. */
   externalUrl: string | null;
+  /** Still a suggestion in its meeting's folder, waiting for Approve or Discard (TUR-113). */
+  suggested: boolean;
+  owner: string | null;
+  due: string | null;
+  /** The title of the meeting it came from, for "From: <meeting>". */
+  meetingTitle: string | null;
 };
 
 /** The issue trackers Sync can create an issue in. */

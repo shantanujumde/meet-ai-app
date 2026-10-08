@@ -212,6 +212,10 @@ export const ipc = {
     syncedTo: null,
     externalId: null,
     externalUrl: null,
+    suggested: false,
+    owner: null,
+    due: null,
+    meetingTitle: null,
   })),
   startWorkPrompt: vi.fn<typeof Client.startWorkPrompt>(async (id) => `Start work on ${id}`),
 
@@ -240,6 +244,22 @@ export const ipc = {
     harness: "claude-code",
   })),
   trackerServers: vi.fn<typeof Client.trackerServers>(async () => []),
+  // TUR-113: suggested tasks and sending on their own. No tracker set up.
+  approveTask: vi.fn<typeof Client.approveTask>(async (meeting, id) =>
+    ticketSummary({ id, meeting, suggested: false }),
+  ),
+  approveAllTasks: vi.fn<typeof Client.approveAllTasks>(async () => []),
+  discardTask: vi.fn<typeof Client.discardTask>(async () => {}),
+  ticketSyncStates: vi.fn<typeof Client.ticketSyncStates>(async () => ({
+    trackerSetUp: false,
+    tracker: "linear",
+    tickets: [],
+  })),
+  retryTicketSync: vi.fn<typeof Client.retryTicketSync>(async () => {}),
+  sendTestTicket: vi.fn<typeof Client.sendTestTicket>(async () => ({
+    project: "Engineering",
+    message: "Claude Code reached Linear. New tickets will go to Engineering.",
+  })),
 
   measurePermission: vi.fn<typeof Client.measurePermission>(async () => NOT_CHECKED),
   permissionQuick: vi.fn<typeof Client.permissionQuick>(async () => NOT_CHECKED),
@@ -427,6 +447,7 @@ export function mockClient(actual: typeof Client): typeof Client {
     onHookFailed: subscriber(actual.HOOK_FAILED_EVENT),
     onHeadphoneWarning: subscriber(actual.HEADPHONE_WARNING_EVENT),
     onMeetingsWatchProblem: subscriber(actual.MEETINGS_WATCH_PROBLEM_EVENT),
+    onTicketSync: subscriber(actual.TICKET_SYNC_EVENT),
   };
 }
 
