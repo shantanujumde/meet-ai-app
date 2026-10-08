@@ -289,7 +289,7 @@ mod tests {
                 "audioActivity": true,
                 "minAttendees": 2,
                 "callStart": true,
-                "callEnd": true
+                "callEnd": true,
                 "stopAfterSilence": true
             })
         );

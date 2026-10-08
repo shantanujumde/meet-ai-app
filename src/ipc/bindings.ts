@@ -1052,6 +1052,11 @@ export type meet_ai_lib_detection_settings_NotificationSettings = {
 	callStart: boolean,
 	/**  "Ask to stop when a call ends": `detection.call_end` (TUR-144). */
 	callEnd: boolean,
+	/**
+	 *  "Stop after 10 min of silence": `detection.stop_after_silence`
+	 *  (TUR-145).
+	 */
+	stopAfterSilence: boolean,
 };
 
 /**
@@ -1245,7 +1250,18 @@ export type meet_ai_lib_recording_state_RecordingState =
  *  last segment has not been closed — because it has not been stopped
  *  *yet*, so it must never be labelled interrupted.
  */
-"recording";
+"recording" | 
+/**
+ *  Stopped cleanly by a backup stop because the computer went to sleep
+ *  or its lid closed (TUR-145). Finished in every other way: the files
+ *  closed and it plays.
+ */
+"stopped-for-sleep" | 
+/**
+ *  Stopped cleanly after ten minutes in which no one spoke and nobody
+ *  pressed Keep recording (TUR-145).
+ */
+"stopped-for-silence";
 
 /**  The repo the meeting is about and what landed in it since last time. */
 export type meet_ai_lib_brief_RepoCommits = {

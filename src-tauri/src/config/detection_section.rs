@@ -237,6 +237,10 @@ mod tests {
             off("call_end"),
             DetectionConfig {
                 call_end: false,
+                ..on
+            }
+        );
+        assert_eq!(
             off("stop_after_silence"),
             DetectionConfig {
                 stop_after_silence: false,
@@ -257,7 +261,7 @@ mod tests {
                     "min_attendees": 0,
                     "remind_before_minutes": 10,
                     "call_start": false,
-                    "call_end": false
+                    "call_end": false,
                     "stop_after_silence": false
                 }
             }"#,
