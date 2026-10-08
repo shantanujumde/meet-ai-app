@@ -24,9 +24,8 @@ pub fn open(app: &AppHandle) -> tauri::Result<()> {
     let window = build(app)?;
     platform::after_build(&window);
     place(app, &window);
-    window.show()?;
-    window.set_always_on_top(true)?;
-    Ok(())
+    // In front of every app without making it key or activating meet-ai.
+    crate::detection::popup::show_floating(&window)
 }
 
 /// Remember where the overlay is, then close it. Nothing when it is not up.

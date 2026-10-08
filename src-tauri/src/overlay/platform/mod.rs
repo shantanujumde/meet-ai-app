@@ -6,8 +6,8 @@
 //!   on even while meet-ai is in the background (the overlay's normal
 //!   state); never the key window,
 //!   so showing it or clicking it never takes the keyboard from the call;
-//!   and full-screen auxiliary, so it can join another app's full-screen
-//!   Space ([`macos::float_over_full_screen`]).
+//!   and TUR-147's non-activating panel ([`after_build`]), the one kind of
+//!   window that shows over another app's full-screen Space.
 //! - **Windows**: acrylic blur behind it (Windows 10 1903 and later). No OS
 //!   shadow: on an undecorated window it draws a 1px frame around the
 //!   transparent corners (TUR-108).
@@ -16,9 +16,6 @@
 
 use tauri::WebviewWindow;
 use tauri::utils::config::WindowEffectsConfig;
-
-#[cfg(target_os = "macos")]
-mod macos;
 
 /// Does the overlay keep the OS window shadow?
 #[cfg(target_os = "macos")]
@@ -62,12 +59,11 @@ pub fn effects() -> Option<WindowEffectsConfig> {
     None
 }
 
-/// What the builder cannot say, once the window exists.
+/// What the builder cannot say, once the window exists: on macOS the
+/// prompt card's panel (`detection/popup/platform/macos.rs`), on every Space
+/// and over full-screen apps; nothing elsewhere.
 pub fn after_build(window: &WebviewWindow) {
-    #[cfg(target_os = "macos")]
-    macos::float_over_full_screen(window);
-    #[cfg(not(target_os = "macos"))]
-    let _ = window;
+    crate::detection::popup::make_panel(window);
 }
 
 #[cfg(test)]

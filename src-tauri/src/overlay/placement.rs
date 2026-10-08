@@ -13,10 +13,11 @@ pub const MARGIN: f64 = 16.0;
 /// The card's corner radius, which the macOS material is cut to as well:
 /// `--radius-panel` in `design-system/meet-ai/tokens.css`.
 pub const RADIUS: f64 = 16.0;
-/// Room left above the default spot for the reminder card
-/// (`detection/popup/window.rs`, 72 px tall at the same margin), so a
-/// reminder for the next meeting never lands on Pause and Stop.
-pub const CARD_SLOT: f64 = 72.0;
+/// Room left above the default spot for the prompt card
+/// (`detection/popup/window.rs`, at the same margin): the taller of its
+/// two shapes, the 120 px narrow card that TUR-144's and TUR-145's stop
+/// countdowns use mid-recording, so no card lands on Pause and Stop.
+pub const CARD_SLOT: f64 = 120.0;
 
 /// A window's top-left corner, in physical pixels: what the OS reports
 /// and what `state.json` keeps.
@@ -89,7 +90,7 @@ mod tests {
         let area = Area { y: 74, ..LAPTOP };
         let spot = default_spot(area, 2.0);
         assert_eq!(spot.x, 3024 - 640 - 32, "flush right, less the margin");
-        assert_eq!(spot.y, 74 + 208, "under the card's slot");
+        assert_eq!(spot.y, 74 + 304, "under the card's slot");
     }
 
     #[test]
