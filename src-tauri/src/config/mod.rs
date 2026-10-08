@@ -91,6 +91,8 @@ pub use detection_section::{DEFAULT_REMIND_BEFORE_MINUTES, DetectionConfig, set_
 #[allow(unused_imports)]
 pub use agent_section::{AgentConfig, Harness, TicketsConfig};
 pub use file::default_repo;
+// TUR-113: tickets are sent on their own only to a tracker the user saved.
+pub use file::tickets_chosen;
 #[allow(unused_imports)] // TUR-9, same
 pub use file::{agent, set_agent, set_tickets, tickets};
 pub use file::{set_transcription, set_transcription_language};
