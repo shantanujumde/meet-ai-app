@@ -173,6 +173,11 @@ tauri-plugin-single-instance = "=2.4.4"
 # "Start at login" (TUR-58): LaunchAgent, Run key, XDG autostart.
 tauri-plugin-autostart = "=2.5.1"
 tauri-plugin-updater = "=2.11.0"
+# The prompt card as a non-activating NSPanel on every Space (TUR-147,
+# src-tauri/src/detection/popup/platform/macos.rs). Same 0.3.2 line as the
+# other objc2-* crates, already in the tree through tao. Zlib OR Apache-2.0
+# OR MIT. No default features: they pull every AppKit class.
+objc2-app-kit = { version = "=0.3.2", default-features = false }
 
 # --- generated TypeScript bindings (Phase 2) ---
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }

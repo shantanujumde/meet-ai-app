@@ -1,15 +1,21 @@
-//! The one place that picks, per OS, which prompts use the card window
-//! (TUR-59, TUR-108). A calendar reminder uses it everywhere; whether the
-//! detection prompts ("Zoom is open", the mic and speakers in use) do too is
-//! the line below. macOS keeps its notification and in-window banner for
-//! those.
+//! The one place that picks, per OS, how the card window behaves (TUR-59,
+//! TUR-108, TUR-147). Every prompt uses the card on every OS now; what
+//! differs is the window itself:
+//!
+//! * macOS ([`macos`]): the window becomes a non-activating `NSPanel` that
+//!   joins every Space and shows over full-screen apps, and is ordered in
+//!   front without being made key, so it never takes focus from the call.
+//! * Windows and Linux ([`other`]): a plain always-on-top window, as before.
 
-/// Do detection prompts (not only reminders) show in the card?
 #[cfg(target_os = "macos")]
-pub const DETECTION_IN_POPUP: bool = false;
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::{make_panel, show};
 
 #[cfg(not(target_os = "macos"))]
-pub const DETECTION_IN_POPUP: bool = true;
+mod other;
+#[cfg(not(target_os = "macos"))]
+pub use other::{make_panel, show};
 
 /// Does the card window keep the OS window shadow? macOS draws it around the
 /// card's rounded shape. On Windows an undecorated window with a shadow gets
@@ -20,24 +26,30 @@ pub const SHADOW: bool = true;
 #[cfg(not(target_os = "macos"))]
 pub const SHADOW: bool = false;
 
+/// The room, in logical pixels, left around the narrow card for its own
+/// soft shadow (TUR-147). None on macOS, where the OS draws the shadow; the
+/// card's page drops its CSS shadow there (`data-os`).
+#[cfg(target_os = "macos")]
+pub const CARD_INSET: f64 = 0.0;
+
+#[cfg(not(target_os = "macos"))]
+pub const CARD_INSET: f64 = 8.0;
+
 #[cfg(test)]
 mod tests {
     use detect::Signal;
 
     #[test]
-    #[cfg(target_os = "macos")]
-    fn macos_shows_reminders_in_the_card_and_detection_as_before() {
+    fn every_os_shows_every_prompt_in_the_card() {
         let reminder = Signal::Calendar {
             title: "Standup".to_string(),
             attendees: 3,
         };
-        assert!(super::super::uses_popup(&reminder));
-        assert!(!super::super::uses_popup(&Signal::AudioActivity));
-    }
-
-    #[test]
-    #[cfg(not(target_os = "macos"))]
-    fn windows_and_linux_show_every_prompt_in_the_card() {
-        assert!(super::super::uses_popup(&Signal::AudioActivity));
+        let app = Signal::Process {
+            process: detect::processes::name_of("Zoom").to_string(),
+        };
+        for signal in [reminder, app, Signal::AudioActivity] {
+            assert!(super::super::uses_popup(&signal), "{signal:?}");
+        }
     }
 }

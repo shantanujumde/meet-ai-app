@@ -126,6 +126,15 @@ objc2-foundation = { workspace = true, features = [
     "NSLocale",
     "NSString",
 ] }
+# The prompt card as a non-activating panel (TUR-147,
+# `detection/popup/platform/macos.rs`).
+objc2.workspace = true
+objc2-app-kit = { workspace = true, features = [
+    "std",
+    "NSPanel",
+    "NSResponder",
+    "NSWindow",
+] }
 
 [target.'cfg(windows)'.dependencies]
 winreg.workspace = true

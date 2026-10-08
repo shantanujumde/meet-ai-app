@@ -435,16 +435,22 @@ export const commands = {
 	 *  start a recording named after this meeting.
 	 */
 	recordRemindedMeeting: (eventId: string, join: boolean) => typedError<meet_ai_lib_recording_Status, meet_ai_lib_error_UiError>(__TAURI_INVOKE("record_reminded_meeting", { eventId, join })),
-	/**  The prompt the popup should show, for a window that just loaded. */
+	/**  The card the popup should show, for a window that just loaded. */
 	promptPopupCurrent: () => __TAURI_INVOKE<{
 	/**
-	 *  This prompt's id; an answer names it, so a stale click is ignored.
+	 *  This card's id; an answer names it, so a stale click is ignored.
 	 *  A JS number: ids count up from 1 and never get near 2^53.
 	 */
 	id: number,
-	prompt: meet_ai_lib_detection_notify_Prompt,
+	card: meet_ai_lib_detection_popup_Card,
+	/**
+	 *  When the card closes on its own, in Unix milliseconds: the end of a
+	 *  prompt's [`AUTO_HIDE`] or of a countdown. The window counts down to
+	 *  it and fades out there. A JS number, far below 2^53.
+	 */
+	closesAtMs: number,
 } | null>("prompt_popup_current"),
-	/**  A popup button was pressed for prompt `id`. */
+	/**  A popup button was pressed for card `id`. */
 	answerPromptPopup: (id: number, answer: meet_ai_lib_detection_popup_PopupAnswer) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("answer_prompt_popup", { id, answer })),
 	/**  Whether meet-ai starts when the user logs in. */
 	startAtLogin: () => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("start_at_login")),
@@ -670,6 +676,19 @@ export type meet_ai_lib_calendar_sources_CalendarSources = {
 	/**  The sign-ins named in `calendar.providers`, so read when signed in. */
 	connected: meet_ai_lib_calendar_signin_SignInProvider[],
 };
+
+/**  What the card asks. */
+export type meet_ai_lib_detection_popup_Card = 
+/**
+ *  "Record this meeting?": a reminder's card for a calendar signal, the
+ *  narrow detection card for the rest.
+ */
+{ kind: "prompt"; prompt: meet_ai_lib_detection_notify_Prompt } | 
+/**
+ *  "Zoom call ended": stopping in `seconds` unless the user keeps
+ *  recording ([`countdown`]).
+ */
+{ kind: "countdown"; line: string; seconds: number };
 
 /**  One `git log` line. */
 export type meet_ai_lib_brief_Commit = {
@@ -1060,7 +1079,18 @@ export type meet_ai_lib_engine_parakeet_ParakeetModelView = {
 export type meet_ai_lib_recording_phase_Phase = "idle" | "starting" | "recording" | "stopping";
 
 /**  A button in the popup. */
-export type meet_ai_lib_detection_popup_PopupAnswer = "record" | "joinAndRecord" | "join" | "openBrief" | "dismiss";
+export type meet_ai_lib_detection_popup_PopupAnswer = "record" | "joinAndRecord" | "join" | "openBrief" | 
+/**  **Dismiss**, and the detection card's **Not now**. */
+"dismiss" | 
+/**
+ *  The "⋯" menu's **Never for <App>** (TUR-147). The app is the one the
+ *  prompt on screen names ([`Prompt::app`]), never one the window sends.
+ */
+"neverFor" | 
+/**  The countdown's **Stop now** (TUR-147). */
+"stopNow" | 
+/**  The countdown's **Keep recording** (TUR-147). */
+"keepRecording";
 
 /**
  *  What the popup window shows, on [`PROMPT_POPUP_EVENT`] and from
@@ -1068,11 +1098,17 @@ export type meet_ai_lib_detection_popup_PopupAnswer = "record" | "joinAndRecord"
  */
 export type meet_ai_lib_detection_popup_PopupPrompt = {
 	/**
-	 *  This prompt's id; an answer names it, so a stale click is ignored.
+	 *  This card's id; an answer names it, so a stale click is ignored.
 	 *  A JS number: ids count up from 1 and never get near 2^53.
 	 */
 	id: number,
-	prompt: meet_ai_lib_detection_notify_Prompt,
+	card: meet_ai_lib_detection_popup_Card,
+	/**
+	 *  When the card closes on its own, in Unix milliseconds: the end of a
+	 *  prompt's [`AUTO_HIDE`] or of a countdown. The window counts down to
+	 *  it and fades out there. A JS number, far below 2^53.
+	 */
+	closesAtMs: number,
 };
 
 /**  What was said last time. */
@@ -1128,6 +1164,17 @@ export type meet_ai_lib_detection_notify_Prompt = {
 	 *  without a link.
 	 */
 	joinService: string | null,
+	/**
+	 *  The card's one line naming what was noticed (TUR-147): "Zoom call",
+	 *  "Audio activity", or the meeting's title for a reminder.
+	 */
+	headline: string,
+	/**
+	 *  The app the prompt is about, for the card's "Never for Zoom"
+	 *  (TUR-147; TUR-143 keeps the list). `None` when no one app explains
+	 *  it: audio activity, a reminder.
+	 */
+	app: string | null,
 };
 
 /**

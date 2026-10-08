@@ -23,6 +23,8 @@ const ZOOM: Prompt = {
   startsAtMs: null,
   endsAtMs: null,
   joinService: null,
+  headline: "Zoom call",
+  app: "Zoom",
 };
 
 const STANDUP: Prompt = {
@@ -36,6 +38,8 @@ const STANDUP: Prompt = {
   startsAtMs: null,
   endsAtMs: null,
   joinService: null,
+  headline: "Team standup",
+  app: null,
 };
 
 /** A reminder for an event with a meeting link (TUR-78). */
@@ -53,6 +57,8 @@ const TEST: Prompt = {
   startsAtMs: null,
   endsAtMs: null,
   joinService: null,
+  headline: "Test meeting",
+  app: null,
 };
 
 /** The banner's buttons, in order. */
