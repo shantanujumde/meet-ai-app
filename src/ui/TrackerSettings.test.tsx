@@ -8,7 +8,7 @@ vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
 );
 
-const { trackerSettings, trackerServers, setTracker } = ipc;
+const { trackerSettings, trackerServers, setTracker, sendTestTicket } = ipc;
 
 const SERVERS: TrackerServer[] = [
   { name: "claude.ai Linear", status: "connected" },
@@ -101,7 +101,7 @@ describe("TrackerSettings", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save.");
   });
 
-  test("with no agent it says Sync needs one", async () => {
+  test("with no agent it says sending needs one", async () => {
     trackerSettings.mockResolvedValue({
       tracker: "github",
       trackerMcp: "github",
@@ -109,7 +109,7 @@ describe("TrackerSettings", () => {
     });
     render(<TrackerSettings />);
 
-    expect(await screen.findByText(/Sync needs Claude Code or Codex/)).toBeTruthy();
+    expect(await screen.findByText(/Sending tickets needs Claude Code or Codex/)).toBeTruthy();
   });
 
   test("Check again asks the agent again, and a failure shows in its spot", async () => {
@@ -128,5 +128,37 @@ describe("TrackerSettings", () => {
     expect(await screen.findByRole("option", { name: "jira (Needs sign-in)" })).toBeTruthy();
     expect(trackerServers).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  test("explains how sending works, and is the tracker anchor", async () => {
+    const { container } = render(<TrackerSettings />);
+    expect(await screen.findByText(/meet-ai doesn't sign in to your tracker itself/)).toBeTruthy();
+    expect(
+      screen.getByText("Connect your tracker in your agent first, e.g. claude.ai Linear."),
+    ).toBeTruthy();
+    expect(container.querySelector("section#tracker")).not.toBeNull();
+  });
+
+  test("Send a test ticket checks the values on screen and says what it found", async () => {
+    render(<TrackerSettings />);
+    await waitFor(() => expect(serverName().value).toBe("claude.ai Linear"));
+    fireEvent.change(serverName(), { target: { value: "my linear" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send a test ticket" }));
+    await waitFor(() => expect(sendTestTicket).toHaveBeenCalledWith("linear", "my linear"));
+    expect(
+      await screen.findByText("Claude Code reached Linear. New tickets will go to Engineering."),
+    ).toBeTruthy();
+  });
+
+  test("a failed test ticket shows the message in plain words", async () => {
+    sendTestTicket.mockRejectedValueOnce({
+      domain: "app",
+      kind: "sync-unreachable",
+      message: "Your agent couldn't reach Linear.",
+    });
+    render(<TrackerSettings />);
+    await waitFor(() => expect(serverName().value).toBe("claude.ai Linear"));
+    fireEvent.click(screen.getByRole("button", { name: "Send a test ticket" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your agent couldn't reach Linear.");
   });
 });

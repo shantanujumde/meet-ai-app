@@ -1,5 +1,7 @@
 import { act, render, screen, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { describe, expect, test, vi } from "vitest";
+import { settingsPath } from "@/lib/routes";
 import { BLUETOOTH_MIC_LABEL } from "@/ui/BluetoothMicSetting";
 import { Settings } from "./Settings";
 
@@ -9,8 +11,12 @@ vi.mock("@/ipc/client", async (importOriginal) =>
 
 const RETENTION_TEXT = /^Audio is kept for 7 days\./;
 
-async function show() {
-  render(<Settings />);
+async function show(path = "/settings") {
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <Settings />
+    </MemoryRouter>,
+  );
   await act(async () => {});
 }
 
@@ -37,5 +43,22 @@ describe("Settings: Audio section", () => {
     const speech = titles.indexOf("Speech");
     expect(speech).toBeGreaterThanOrEqual(0);
     expect(titles[speech + 1]).toBe("Audio");
+  });
+});
+
+describe("Settings: a section link (TUR-113)", () => {
+  test("?section=tracker scrolls the Tracker section into view", async () => {
+    const scrolled: Element[] = [];
+    const before = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      await show(settingsPath("tracker"));
+      expect(scrolled.map((each) => each.id)).toEqual(["tracker"]);
+      expect(screen.getByRole("region", { name: "Tracker" }).id).toBe("tracker");
+    } finally {
+      Element.prototype.scrollIntoView = before;
+    }
   });
 });

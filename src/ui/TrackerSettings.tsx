@@ -1,5 +1,5 @@
 /**
- * Settings → Tracker: where Sync creates issues, and through which of the
+ * Settings → Tracker: where tickets are sent, and through which of the
  * agent's MCP servers (TUR-11).
  *
  * The server list comes from `claude mcp list` / `codex mcp list`, which can
@@ -11,9 +11,9 @@
  * itself, through its own MCP connection.
  */
 
-import { ListTodo, RefreshCw } from "lucide-react";
+import { ListTodo, RefreshCw, Send } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { setTracker, trackerServers, trackerSettings } from "@/ipc/client";
+import { sendTestTicket, setTracker, trackerServers, trackerSettings } from "@/ipc/client";
 import type {
   Harness,
   McpStatus,
@@ -109,8 +109,9 @@ export function TrackerSettings() {
   const harness = saved?.harness ?? null;
 
   return (
-    <SettingsSection title="Tracker" description="Where Sync creates issues for your tasks">
+    <SettingsSection title="Tracker" anchorId="tracker">
       <form className="flex flex-col gap-5 py-6" onSubmit={(event) => void save(event)}>
+        <HowItWorks />
         {harness ? <AgentLine harness={harness} /> : null}
         {loadError ? <InlineError error={loadError} /> : null}
 
@@ -155,18 +156,82 @@ export function TrackerSettings() {
             {justSaved ? "Saved" : ""}
           </span>
         </ButtonRow>
+        <TestTicket tracker={tracker} server={name} />
       </form>
     </SettingsSection>
   );
 }
 
-/** Which agent runs Sync, or that there is none to run it. */
+/** What this card is for, and the three steps to make it work (TUR-113). */
+function HowItWorks() {
+  return (
+    <div className="flex flex-col gap-3">
+      <Prose>
+        Pick where your tickets go: Linear, Jira or GitHub. meet-ai doesn't sign in to your tracker
+        itself. Your agent (Claude Code or Codex) sends each ticket using one of its own connections
+        (an MCP server).
+      </Prose>
+      <ol className="flex list-decimal flex-col gap-1 pl-8 text-callout text-fg-secondary">
+        <li>Connect your tracker in your agent first, e.g. claude.ai Linear.</li>
+        <li>Pick the tracker and that connection below.</li>
+        <li>
+          Press <span className="font-semibold text-fg-primary">Send a test ticket</span> to check
+          it works.
+        </li>
+      </ol>
+    </div>
+  );
+}
+
+/**
+ * Send a test ticket: the agent checks it reaches the tracker through the
+ * connection on screen, saved or not. Read-only: nothing is created.
+ */
+function TestTicket({ tracker, server }: { tracker: Tracker; server: string }) {
+  const [checking, setChecking] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<UiError | null>(null);
+
+  async function check() {
+    setChecking(true);
+    setResult(null);
+    setError(null);
+    try {
+      setResult((await sendTestTicket(tracker, server)).message);
+    } catch (caught) {
+      setError(toUiError(caught));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <ButtonRow>
+        <Button
+          size="small"
+          icon={Send}
+          disabled={checking || server.length === 0}
+          onClick={() => void check()}
+        >
+          {checking ? "Sending a test ticket…" : "Send a test ticket"}
+        </Button>
+      </ButtonRow>
+      <p className="text-footnote text-fg-secondary" role="status" aria-live="polite">
+        {result ?? ""}
+      </p>
+      {error ? <InlineError error={error} /> : null}
+    </div>
+  );
+}
+
+/** Which agent sends tickets, or that there is none to send them. */
 function AgentLine({ harness }: { harness: Harness }) {
   if (harness === "none") {
     return (
       <p className="flex items-center gap-3 text-callout text-warning">
         <Icon icon={ListTodo} />
-        No agent is set up. Sync needs Claude Code or Codex to create issues.
+        No agent is set up. Sending tickets needs Claude Code or Codex.
       </p>
     );
   }
@@ -174,7 +239,8 @@ function AgentLine({ harness }: { harness: Harness }) {
     <p className="flex items-center gap-3 text-callout text-fg-secondary">
       <Icon icon={ListTodo} />
       <span>
-        Sync runs in <span className="font-medium text-fg-primary">{HARNESS_NAME[harness]}</span>.
+        Tickets are sent by{" "}
+        <span className="font-medium text-fg-primary">{HARNESS_NAME[harness]}</span>.
       </span>
     </p>
   );
