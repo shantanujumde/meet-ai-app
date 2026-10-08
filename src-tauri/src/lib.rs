@@ -170,6 +170,8 @@ pub fn run() {
             detection::call_start::start(_app.handle());
             // TUR-30: and remind a minute before each meeting on the calendar.
             detection::start_reminders(_app.handle(), detection_config.calendar);
+            // TUR-144: and for the call app hanging up while recording.
+            detection::call_end::start(_app.handle());
             // TUR-100: notice edits made to the meetings folder outside the app.
             watch::state(_app.handle()).restart(_app.handle());
             // TUR-113: tickets synced before suggestions existed move to Tickets.

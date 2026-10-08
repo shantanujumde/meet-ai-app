@@ -383,11 +383,15 @@ pub async fn answer_prompt_popup(
     id: u32,
     answer: PopupAnswer,
 ) -> Result<(), UiError> {
+    let shown = app
+        .try_state::<PromptPopup>()
+        .and_then(|state| state.with(|slot| slot.current()));
     // TUR-143: Not now on a call prompt starts that app's 10 minutes.
     let not_now = (answer == PopupAnswer::Dismiss)
-        .then(|| app.try_state::<PromptPopup>()?.with(|slot| slot.current()))
-        .flatten()
-        .and_then(|shown| not_now_app(&shown, id));
+        .then(|| shown.as_ref().and_then(|shown| not_now_app(shown, id)))
+        .flatten();
+    // TUR-144: the app a Record names, so its hang-up can end the recording.
+    let origin = super::call_end::prompted_app(shown.as_ref(), id, answer);
     let action = app
         .try_state::<PromptPopup>()
         .and_then(|state| state.with(|slot| slot.answer(id, answer)));
@@ -402,7 +406,9 @@ pub async fn answer_prompt_popup(
     if !matches!(action, Action::Join { .. }) {
         hide_after_fade(&app);
     }
-    run(&app, action).await
+    run(&app, action).await?;
+    super::call_end::started_from_prompt(&app, origin.as_deref());
+    Ok(())
 }
 
 async fn run(app: &AppHandle, action: Action) -> Result<(), UiError> {

@@ -21,6 +21,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   audioActivity: true,
   minAttendees: 2,
   callStart: true,
+  callEnd: true,
 };
 
 /** The `detection` section of `config.jsonc`, as the card shows it. */

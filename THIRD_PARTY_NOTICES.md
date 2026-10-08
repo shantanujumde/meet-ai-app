@@ -54,6 +54,14 @@ carries the full Apache-2.0 text, and any upstream `NOTICE` text goes into our
     known folders with `cmd`/`exe`/`bat`) and the folder lists in
     `crates/agent/src/platform/{macos,linux,windows}.rs`, from
     `crates/core/src/summarize.rs` (`resolve_agent_path`)
+  - At commit 9377cb71f215b552b955425dc928920c0648a09c (TUR-144):
+    `crates/detect/src/call_end.rs` (the call-end rules: the countdown that
+    defers while it runs and is cancelled by the call coming back, from
+    `decide_no_call_action` and the poll loop) and
+    `src-tauri/src/detection/call_end.rs` (`drive`: the countdown thread's
+    250 ms ticks that stop when the recording already stopped, report
+    cancelled or fired, and stop through the Stop button's path, from
+    `arm_call_end_countdown`), all from `tauri/src-tauri/src/call_detect.rs`
 
 ```
 MIT License
@@ -151,6 +159,10 @@ SOFTWARE.
     outputs' `application.name` in
     `crates/audio/src/platform/linux/activity.rs`, from
     `crates/detect/src/list/windows.rs` and `crates/detect/src/list/linux.rs`
+  - At commit 259a04ee2e1447dfed150ed08f0a1bb69909b836 (TUR-144):
+    `crates/detect/src/call_end.rs` (`diff_apps`: the apps that started and
+    stopped using the mic between two readings, by id) from `diff_apps` in
+    `crates/detect/src/mic/macos/app.rs`
 
 ```
 MIT License

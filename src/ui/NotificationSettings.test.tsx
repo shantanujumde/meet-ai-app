@@ -4,6 +4,7 @@ import { ipc } from "@/test/ipcMock";
 import {
   ATTENDEES_LABEL,
   AUDIO_LABEL,
+  CALL_END_LABEL,
   CALL_START_LABEL,
   LEAD_LABEL,
   leadLabel,
@@ -23,6 +24,7 @@ const DEFAULTS = {
   audioActivity: true,
   minAttendees: 2,
   callStart: true,
+  callEnd: true,
 };
 
 async function show() {
@@ -39,7 +41,13 @@ describe("NotificationSettings", () => {
   test("shows what config.jsonc says, with a one-minute lead time by default", async () => {
     await show();
     expect(screen.getByRole("heading", { name: "Notifications" })).toBeTruthy();
-    for (const label of [REMIND_LABEL, PROCESSES_LABEL, AUDIO_LABEL, CALL_START_LABEL]) {
+    for (const label of [
+      REMIND_LABEL,
+      PROCESSES_LABEL,
+      AUDIO_LABEL,
+      CALL_START_LABEL,
+      CALL_END_LABEL,
+    ]) {
       expect(screen.getByRole("switch", { name: label })).toHaveAttribute("aria-checked", "true");
     }
     expect(select(LEAD_LABEL).value).toBe("1");
@@ -58,6 +66,7 @@ describe("NotificationSettings", () => {
     [PROCESSES_LABEL, { processes: false }],
     [AUDIO_LABEL, { audioActivity: false }],
     [CALL_START_LABEL, { callStart: false }],
+    [CALL_END_LABEL, { callEnd: false }],
   ])("switching %s off writes its key", async (label, change) => {
     await show();
     const toggle = screen.getByRole("switch", { name: label });

@@ -547,6 +547,20 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A31 — 2026-10-09 · When the call app hangs up, a 10-second countdown asks before stopping; `detection.call_end` (amends §3.5; TUR-144)
+
+While recording, meet-ai follows one call app on the mic (TUR-142's `audio::mic_users`, read every 2 s, only while recording): the app of the prompt whose **Record** started it, or else the first call app or browser seen using the mic. When that app has been off the mic for 5 s straight, A27's countdown card shows "Zoom call ended" ("Call ended in Google Chrome" for a browser) counting down 10 s. Decisions:
+
+- **Zero or Stop now stops and saves**, through the Stop button's path (`Recorder::stop`); nothing else stops here.
+- **The app back on the mic** during the 5 s wait or the countdown cancels quietly; the recording goes on, the same recording.
+- **Keep recording** (or the card closing any other way) asks nothing more until that app starts and then stops using the mic again. A card that could not be shown never stops a recording.
+- **Stopping by hand** during the countdown closes the card.
+- **Not available** where the apps on the mic cannot be listed (macOS older than 14, no sound server) or no call app was seen: no end prompt, no error; only the backup stops apply.
+- **`detection.call_end`** (§3.5, default `true`): Settings → Notifications' "Ask to stop when a call ends". Off, the mic users are not read.
+- The rules are pure and OS-free in `crates/detect/src/call_end.rs`; the wiring is `src-tauri/src/detection/call_end.rs`. Adapted from silverstein/minutes and fastrepl/anarlog (MIT).
+
+Unchanged: nothing records without a click (L15), and the user can always keep the recording going.
+
 ### A30 — 2026-10-09 · A call app or a browser on the mic asks, naming it; "Never detect" list (amends §2.3's two detection rows and §3.5's `detection`; TUR-143)
 
 Where the OS can list the apps using a mic (`audio::mic_users`, TUR-142: macOS 14 and later, WASAPI on Windows, PulseAudio on Linux), a call is noticed by which app holds the mic, not by which apps are open:

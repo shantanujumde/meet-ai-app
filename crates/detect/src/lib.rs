@@ -14,10 +14,13 @@
 //!   a call starting (TUR-143), and [`mic_poll`], the loop that feeds it.
 //!   Where the OS can list the apps using the mic, this replaces "a meeting
 //!   app is open" ([`detector`]), which stays the fallback.
+//! - [`call_end`]: when the call being recorded has ended, and the countdown
+//!   that asks before stopping (TUR-144).
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 pub mod activity;
+pub mod call_end;
 pub mod call_start;
 pub mod detector;
 pub mod mic_poll;
