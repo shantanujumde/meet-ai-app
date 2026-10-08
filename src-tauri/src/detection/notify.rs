@@ -18,9 +18,11 @@
 //! card's "Send a test reminder".
 //!
 //! TUR-108: a reminder shows as the compact card window on every OS (title,
-//! time range, one split button; `super::popup`), and detection prompts do
-//! too on Windows and Linux ([`super::popup::uses_popup`]). The notification
-//! stays the fallback when the card cannot show.
+//! time range, one split button; `super::popup`). TUR-147: detection prompts
+//! do too, on every OS, macOS included, as a narrow card that names the app
+//! in one line ([`Prompt::headline`]) and offers "Never for <App>"
+//! ([`Prompt::app`]). The notification stays the fallback when the card
+//! cannot show ([`super::popup::uses_popup`]).
 
 use chrono::{DateTime, Utc};
 use detect::Signal;
@@ -67,6 +69,30 @@ pub struct Prompt {
     /// `"zoom"`, `"teams"` or `"other"` (`join_url::join_service`). `None`
     /// without a link.
     pub join_service: Option<String>,
+    /// The card's one line naming what was noticed (TUR-147): "Zoom call",
+    /// "Audio activity", or the meeting's title for a reminder.
+    pub headline: String,
+    /// The app the prompt is about, for the card's "Never for Zoom"
+    /// (TUR-147; TUR-143 keeps the list). `None` when no one app explains
+    /// it: audio activity, a reminder.
+    pub app: Option<String>,
+}
+
+/// The card's line for `signal` ([`Prompt::headline`]).
+pub fn headline(signal: &Signal) -> String {
+    match signal {
+        Signal::Calendar { title, .. } => title.clone(),
+        Signal::Process { process } => format!("{} call", detect::processes::label(process)),
+        Signal::AudioActivity => "Audio activity".to_string(),
+    }
+}
+
+/// The app `signal` names, as the user knows it ([`Prompt::app`]).
+pub fn app_name(signal: &Signal) -> Option<String> {
+    match signal {
+        Signal::Process { process } => Some(detect::processes::label(process).to_string()),
+        Signal::Calendar { .. } | Signal::AudioActivity => None,
+    }
 }
 
 /// The fake event a test reminder is about.
@@ -91,6 +117,8 @@ pub fn prompt_for(phase: Phase, signal: &Signal) -> Option<Prompt> {
         starts_at_ms: None,
         ends_at_ms: None,
         join_service: None,
+        headline: headline(signal),
+        app: app_name(signal),
     })
 }
 
@@ -279,9 +307,9 @@ fn deliver(
         ?delivery,
         "a meeting looks like it started; asking whether to record"
     );
-    // TUR-59, TUR-108: a reminder (every OS) and, on Windows and Linux, any
-    // prompt shows as the card window with the buttons on it; the
-    // notification is only the fallback when it can't show.
+    // TUR-59, TUR-108, TUR-147: every prompt, on every OS, shows as the card
+    // window with the buttons on it; the notification is only the fallback
+    // when it can't show.
     let in_popup = super::popup::uses_popup(signal) && super::popup::show(app, &prompt);
     if delivery == Delivery::New
         && !in_popup
@@ -360,9 +388,28 @@ mod tests {
                 "title": null,
                 "startsAtMs": null,
                 "endsAtMs": null,
-                "joinService": null
+                "joinService": null,
+                "headline": "Zoom call",
+                "app": "Zoom"
             })
         );
+    }
+
+    #[test]
+    fn the_card_names_the_app_in_one_line() {
+        let zoom = prompt_for(Phase::Idle, &zoom()).expect("asks");
+        assert_eq!(zoom.headline, "Zoom call");
+        assert_eq!(zoom.app.as_deref(), Some("Zoom"));
+        let audio = prompt_for(Phase::Idle, &Signal::AudioActivity).expect("asks");
+        assert_eq!(audio.headline, "Audio activity");
+        assert_eq!(audio.app, None, "no one app to never ask about");
+        let calendar = Signal::Calendar {
+            title: "Standup".to_string(),
+            attendees: 3,
+        };
+        let reminder = prompt_for(Phase::Idle, &calendar).expect("asks");
+        assert_eq!(reminder.headline, "Standup");
+        assert_eq!(reminder.app, None);
     }
 
     #[test]
