@@ -17,6 +17,8 @@
  *   ({@link NeverDetectList}).
  * * "Ask to stop when a call ends" is `detection.call_end` (TUR-144): when the
  *   call app hangs up, a 10-second countdown asks before stopping.
+ * * "Stop after 10 min of silence" is `detection.stop_after_silence`
+ *   (TUR-145). Sleep always stops a recording; it has no switch.
  *
  * A change saves the whole section through Rust's comment-keeping writer and
  * shows what was saved; the reminder and detection loops pick it up on their
@@ -32,6 +34,7 @@ import {
   Bell,
   FlaskConical,
   Settings as Gear,
+  Hourglass,
   PhoneIncoming,
   PhoneOff,
   Timer,
@@ -62,6 +65,7 @@ export const AUDIO_LABEL = "Ask when my mic and speakers are both in use";
 export const ATTENDEES_LABEL = "Only for meetings with at least";
 export const CALL_START_LABEL = "Ask to record when a call starts";
 export const CALL_END_LABEL = "Ask to stop when a call ends";
+export const SILENCE_LABEL = "Stop after 10 min of silence";
 
 /** The lead times the card offers, in minutes. */
 export const LEAD_MINUTES = [1, 2, 5, 10];
@@ -192,6 +196,14 @@ export function NotificationSettings() {
           label: `${count} ${count === 1 ? "person" : "people"}`,
         }))}
         onChange={(minAttendees) => void save({ minAttendees })}
+      />
+      <SwitchRow
+        icon={Hourglass}
+        label={SILENCE_LABEL}
+        detail="When no one has spoken for 10 minutes, asks, then stops in 10 seconds."
+        on={settings?.stopAfterSilence ?? false}
+        disabled={disabled}
+        onChange={(stopAfterSilence) => void save({ stopAfterSilence })}
       />
       {blocked ? (
         <SettingsRow

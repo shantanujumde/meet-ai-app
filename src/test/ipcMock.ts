@@ -343,6 +343,7 @@ export const ipc = {
     minAttendees: 2,
     callStart: true,
     callEnd: true,
+    stopAfterSilence: true,
   })),
   setNotificationSettings: vi.fn<typeof Client.setNotificationSettings>(
     async (settings) => settings,

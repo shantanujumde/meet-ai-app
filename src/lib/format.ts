@@ -6,6 +6,9 @@
  * date are exactly the details that make an interface feel hand-made or not.
  */
 
+import type { RecordingState } from "@/ipc/types";
+import { currentOs, type Os, osText } from "@/lib/osText";
+
 /**
  * Bytes as a person would say them.
  *
@@ -112,6 +115,18 @@ function wholeDaysBetween(earlier: Date, later: Date): number {
  * meeting either, and must not look like one.
  */
 export const INTERRUPTED_LABEL = "Interrupted";
+
+/**
+ * What a meeting that a backup stop ended says next to its length (TUR-145):
+ * the computer went to sleep, or no one spoke for 10 minutes. `null` for a
+ * meeting that ended any other way.
+ */
+export function backupStopLabel(state: RecordingState, os: Os = currentOs()): string | null {
+  if (state === "stopped-for-sleep")
+    return `Stopped when ${osText("thisComputer", os)} went to sleep`;
+  if (state === "stopped-for-silence") return "Stopped after 10 minutes of silence";
+  return null;
+}
 
 /**
  * How the meeting list marks a meeting whose notes were switched off
