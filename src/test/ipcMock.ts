@@ -307,6 +307,12 @@ export const ipc = {
   recordingStatus: vi.fn<typeof Client.recordingStatus>(async () => IDLE),
   toggleRecording: vi.fn<typeof Client.toggleRecording>(async () => IDLE),
   stopRecording: vi.fn<typeof Client.stopRecording>(async () => IDLE),
+  // TUR-146: pause and resume, and the recording overlay (on by default).
+  pauseRecording: vi.fn<typeof Client.pauseRecording>(async () => IDLE),
+  resumeRecording: vi.fn<typeof Client.resumeRecording>(async () => IDLE),
+  showRecordingOverlay: vi.fn<typeof Client.showRecordingOverlay>(async () => true),
+  setShowRecordingOverlay: vi.fn<typeof Client.setShowRecordingOverlay>(async (on) => on),
+  overlayShowMain: vi.fn<typeof Client.overlayShowMain>(async () => {}),
 
   liveTranscript: vi.fn<typeof Client.liveTranscript>(async () => EMPTY_SNAPSHOT),
 

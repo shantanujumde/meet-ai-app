@@ -451,6 +451,7 @@ fn the_recorder_status_maps_onto_the_meeting_being_written() {
         meeting_id: id.map(str::to_string),
         started_at_ms: None,
         error: None,
+        pause: Default::default(),
     };
     let id = "2026-09-30-1300-meeting";
     assert_eq!(Live::from_status(&status(Phase::Idle, None)), Live::Nothing);

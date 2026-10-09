@@ -547,6 +547,17 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A33 — 2026-10-09 · Pause and resume a recording; a small always-on-top recording overlay; `audio.show_recording_overlay` (amends §3.5; TUR-146)
+
+A recording could only start or stop, and its controls were only in the main window, which is usually behind the call. Decisions:
+
+- **Pause / Resume** (`pause_recording`, `resume_recording`; the main window's Pause button beside Stop, and the overlay's). While paused both channels are stopped, as for a segment reopen: no sample reaches `mic.wav` / `system.wav` or the live transcript, and the microphone is closed. The phase stays `recording`, so a paused recording is still one meeting and Stop still ends and saves it. Resume opens fresh sources on the default devices, appending to the same files, with a new segment whose reason is `resumed_after_pause` (`meeting_format::segments::reason::RESUMED_AFTER_PAUSE`); the gap shows only as the jump in that segment's `start_host_ns`. `segments.json` is written at the pause, so a crash mid-pause loses nothing. The window asks through a switch the ticker thread applies at its next tick (at most one tick later), as A25's system-audio drop does.
+- **Timer.** `recording_status` gains `pause: { pausedAtMs, pausedTotalMs }`; every window's timer is the time since `startedAtMs` less `pausedTotalMs`, frozen at `pausedAtMs` while a pause runs. A32's ten minutes of silence do not count a pause: the timer is held at zero while paused and starts again on resume.
+- **Overlay window** (label `overlay`), opened when a recording starts and closed when it ends, however it started or ended: about 320×90, undecorated, transparent with the OS blur where there is one (macOS popover material, Windows acrylic), always on top, no taskbar or Dock entry, on every Space; on macOS it is A27's non-activating panel, so it can show over a full-screen call and a click on it does not activate meet-ai. It shows the timer (`mm:ss`, `h:mm:ss` from an hour), the last line or two of the live transcript (no history), and Pause or Resume and Stop. Clicking the text brings the main window forward. Dragged by its card; where it was left is kept in `state.json` (`overlayPosition`) and used next time while still on a screen; the default spot is the top-right of the work area, under the prompt card's slot so a countdown card never covers it. Its capability (`capabilities/overlay.json`) allows only event listening and dragging. Linux: best effort; Wayland compositors may ignore always-on-top and placement.
+- **`audio.show_recording_overlay`** (§3.5, boolean, default `true`): Settings' "Show the recording window over other apps", next to the other recording settings. It applies at once, to a recording already running too.
+
+Unchanged: nothing records without a click (L15); the overlay sends nothing anywhere.
+
 ### A32 — 2026-10-09 · Backup stops: 10 minutes of silence asks to stop, sleep stops at once; `detection.stop_after_silence` (amends §3.5; TUR-145)
 
 A recording nobody stops (a call app that keeps the mic after hang-up, someone who walked away) used to run until someone pressed Stop. Two backup stops now end it, for every recording however it started:

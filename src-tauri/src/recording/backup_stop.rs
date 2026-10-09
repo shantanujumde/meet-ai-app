@@ -140,6 +140,13 @@ impl World for Live {
     }
 
     fn enabled(&mut self) -> bool {
+        // TUR-146: a pause is not silence; off while paused, so the ten
+        // minutes start again on resume and a card that is up goes.
+        if let Some(recorder) = self.app.try_state::<Recorder>()
+            && recorder.status().pause.is_paused()
+        {
+            return false;
+        }
         self.app
             .try_state::<Detection>()
             .is_none_or(|detection| detection.config().stop_after_silence)

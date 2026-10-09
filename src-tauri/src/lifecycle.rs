@@ -33,7 +33,7 @@ use crate::folder_move::FolderGate;
 use crate::platform;
 use crate::recording::{Phase, Recorder};
 
-mod notice;
+pub(crate) mod notice;
 
 /// The app menu's own Quit item (macOS), in place of the stock one.
 const QUIT_MENU_ITEM: &str = "app-quit";

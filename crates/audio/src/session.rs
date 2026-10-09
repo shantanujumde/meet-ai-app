@@ -23,7 +23,10 @@ use std::time::{Duration, Instant};
 
 mod segment;
 mod system_drop;
+// TUR-146: pause and resume.
+mod pause;
 
+pub use self::pause::PauseSwitch;
 use self::segment::{Paths, align_and_pad, reopen_segment, segment_open};
 pub use self::system_drop::SystemDrop;
 use crate::segments::{self, Anchor, CHECKPOINT_INTERVAL_S, SegmentsWriter};
@@ -208,6 +211,11 @@ pub struct RecordingSession {
     want_system: bool,
     /// Where another thread asks for [`RecordingSession::drop_system`].
     drop_request: SystemDrop,
+    /// Where another thread asks for a pause or a resume (TUR-146).
+    pause_switch: PauseSwitch,
+    /// The anchor the segment closed at when both channels stopped for a
+    /// pause; `Some` exactly while paused.
+    paused: Option<Anchor>,
 }
 
 impl RecordingSession {
@@ -325,6 +333,8 @@ impl RecordingSession {
             last_input_device,
             want_system,
             drop_request: SystemDrop::default(),
+            pause_switch: PauseSwitch::default(),
+            paused: None,
         })
     }
 
@@ -431,6 +441,11 @@ impl RecordingSession {
     /// one, run an ordinary checkpoint. The caller decides how often to call
     /// this; nothing here sleeps or blocks on a timer of its own.
     pub fn tick(&mut self) -> Result<(), String> {
+        // TUR-146: a pause or resume the window asked for, first; while
+        // paused nothing else in a tick has anything to do.
+        if self.apply_pause_request(default_mic_source, default_system_source)? {
+            return Ok(());
+        }
         // TUR-136: a drop the system-audio check asked for, first.
         self.apply_drop_request(default_mic_source)?;
         // The device reads fail on a platform without a device watch yet

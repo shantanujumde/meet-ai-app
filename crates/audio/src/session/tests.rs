@@ -807,3 +807,167 @@ fn dropping_a_system_track_that_is_already_gone_only_stops_wanting_it() {
     let report = session.stop().unwrap();
     assert_eq!(read_segments(&report.segments_path).segments.len(), 1);
 }
+
+/// The header frames of the WAV at `path`.
+fn header_frames(path: &Path) -> u64 {
+    crate::wav_writer::read_header_frames(path).expect("the WAV is playable")
+}
+
+/// TUR-146: a pause stops both channels, so nothing reaches the WAVs or the
+/// live-transcript tee until the resume; the resume carries on in the same
+/// files, one meeting with a new `resumed_after_pause` segment.
+#[test]
+fn a_pause_writes_nothing_and_a_resume_carries_on_in_the_same_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mic_tee, mic_feed) = crate::tee::tee();
+    let mut session = RecordingSession::start_with_tees(
+        tmp.path().to_path_buf(),
+        stub(Channel::Mic),
+        Some(stub(Channel::System)),
+        Tees {
+            mic: Some(mic_tee),
+            sys: None,
+        },
+    )
+    .expect("session starts cleanly");
+    let switch = session.pause_switch();
+
+    switch.set(true);
+    session.tick().expect("the tick carries out the pause");
+    assert!(session.is_paused());
+    let at_pause = read_segments(&session.segments_path);
+    assert_eq!(at_pause.segments.len(), 1, "a pause opens no segment");
+    let mic_at_pause = header_frames(&session.mic_path);
+    assert!(mic_at_pause > 0);
+    assert_eq!(
+        at_pause.segments[0].mic_frames, mic_at_pause,
+        "segments.json is written at the pause, so a crash mid-pause loses nothing"
+    );
+
+    // Paused, even a due checkpoint does nothing: there is nothing new.
+    session.last_checkpoint = Instant::now()
+        .checked_sub(Duration::from_secs(CHECKPOINT_INTERVAL_S))
+        .expect("the monotonic clock is past one checkpoint interval");
+    session.tick().expect("a paused tick is a no-op");
+    assert_eq!(read_segments(&session.segments_path), at_pause);
+    assert_eq!(header_frames(&session.mic_path), mic_at_pause);
+    assert_eq!(
+        drain(&mic_feed),
+        mic_at_pause,
+        "the tee got only what the WAV holds, nothing for the pause"
+    );
+
+    switch.set(false);
+    let paused = session
+        .apply_pause_request(|| stub(Channel::Mic), || Some(stub(Channel::System)))
+        .expect("the resume starts both channels again");
+    assert!(!paused && !session.is_paused());
+    assert!(session.status().has_system_audio);
+
+    let report = session.stop().expect("stops cleanly");
+    let written = read_segments(&report.segments_path);
+    let reasons: Vec<&str> = written.segments.iter().map(|s| s.reason.as_str()).collect();
+    assert_eq!(
+        reasons,
+        [
+            segments::reason::START,
+            segments::reason::RESUMED_AFTER_PAUSE
+        ]
+    );
+    assert!(written.segments.iter().all(|s| s.sys_rate > 0));
+    let mic_frames = header_frames(&report.mic_path);
+    assert!(mic_frames > mic_at_pause, "one mic.wav, appended to");
+    written
+        .check_wav_header(Channel::Mic, mic_frames)
+        .expect("segments.json accounts for every mic frame");
+    written
+        .check_wav_header(Channel::System, header_frames(&report.sys_path))
+        .expect("and every system frame");
+    assert_eq!(drain(&mic_feed), mic_frames - mic_at_pause);
+}
+
+/// Stop while paused finishes the files exactly as the pause left them.
+#[test]
+fn stopping_while_paused_finishes_the_files_as_the_pause_left_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut session = RecordingSession::start(
+        tmp.path().to_path_buf(),
+        stub(Channel::Mic),
+        Some(stub(Channel::System)),
+    )
+    .unwrap();
+    session.pause_switch().set(true);
+    session.tick().unwrap();
+    let mic_at_pause = header_frames(&session.mic_path);
+
+    let report = session.stop().expect("a paused session stops cleanly");
+    let written = read_segments(&report.segments_path);
+    assert_eq!(written.segments.len(), 1);
+    assert_eq!(header_frames(&report.mic_path), mic_at_pause);
+    written
+        .check_wav_header(Channel::Mic, mic_at_pause)
+        .expect("segments.json matches mic.wav");
+}
+
+/// TUR-136 meets TUR-146: a system-audio denial found during a pause is
+/// honoured at the resume, which builds no tap.
+#[test]
+fn a_system_drop_asked_for_during_a_pause_is_honoured_at_the_resume() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut session = RecordingSession::start(
+        tmp.path().to_path_buf(),
+        stub(Channel::Mic),
+        Some(stub(Channel::System)),
+    )
+    .unwrap();
+    let switch = session.pause_switch();
+    switch.set(true);
+    session.tick().unwrap();
+    session
+        .system_drop()
+        .request(segments::reason::SYSTEM_AUDIO_DENIED);
+
+    switch.set(false);
+    let mut built = false;
+    session
+        .apply_pause_request(
+            || stub(Channel::Mic),
+            || {
+                built = true;
+                Some(stub(Channel::System))
+            },
+        )
+        .unwrap();
+    assert!(!built, "no tap for a denied system track");
+    assert!(!session.status().has_system_audio && !session.wants_system_audio());
+    let report = session.stop().unwrap();
+    let written = read_segments(&report.segments_path);
+    let sys_rates: Vec<u32> = written.segments.iter().map(|s| s.sys_rate).collect();
+    assert_eq!(sys_rates, [crate::segments::SAMPLE_RATE_HZ, 0]);
+}
+
+/// A microphone that will not restart fails the resume, stops what it
+/// started, and leaves the session paused and still stoppable.
+#[test]
+fn a_microphone_that_will_not_restart_fails_the_resume_and_stays_paused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut session =
+        RecordingSession::start(tmp.path().to_path_buf(), stub(Channel::Mic), None).unwrap();
+    let switch = session.pause_switch();
+    switch.set(true);
+    session.tick().unwrap();
+
+    switch.set(false);
+    let silent = FakeSource::new(Channel::Mic, None);
+    let silent_stopped = Arc::clone(&silent.stopped);
+    assert!(
+        session
+            .apply_pause_request(move || Box::new(silent), || None)
+            .is_err()
+    );
+    assert!(stopped(&silent_stopped), "the new mic was stopped");
+    assert!(session.is_paused());
+
+    let report = session.stop().expect("the files still finish");
+    assert_eq!(read_segments(&report.segments_path).segments.len(), 1);
+}

@@ -84,6 +84,11 @@
           "description": "Warn when recording without headphones, since speakers can echo into the mic and the transcript may repeat lines. While recording, a quiet banner shows when the default output is speakers; headphones, a headset or an output that cannot be told apart never warn. false = no banner.",
           "default": true
         },
+        "show_recording_overlay": {
+          "type": "boolean",
+          "description": "While recording, show a small window that floats over other apps with the timer, the latest transcript line, and pause and stop buttons. It can be dragged and remembers where it was put. false = no window; the main window's controls still work.",
+          "default": true
+        },
         "use_builtin_mic_with_bluetooth": {
           "type": "boolean",
           "description": "When the Mac's input is Bluetooth headphones, record the Mac's own mic instead, so the headphones keep their full sound. Opening a Bluetooth mic switches the headphones to call mode, which is quieter. false = record the Bluetooth mic. macOS only; needs a Mac with a built-in mic.",

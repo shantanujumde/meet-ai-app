@@ -7,10 +7,13 @@ import { lockDocumentScroll } from "./lib/documentScroll";
 import "./index.css";
 import { applyOsAttribute } from "./lib/osAttribute";
 import { watchAppearance } from "./state/appearance";
+import { Overlay } from "./ui/Overlay";
 import { PromptPopup } from "./ui/PromptPopup";
 
 /** TUR-59, TUR-108: the "Record this meeting?" card window gets only its prompt. */
 const PROMPT_WINDOW = "prompt";
+/** TUR-146: the small always-on-top recording window gets only its card. */
+const OVERLAY_WINDOW = "overlay";
 
 function windowLabel(): string | null {
   try {
@@ -20,7 +23,8 @@ function windowLabel(): string | null {
     return null;
   }
 }
-const isPromptWindow = windowLabel() === PROMPT_WINDOW;
+const label = windowLabel();
+const isPromptWindow = label === PROMPT_WINDOW;
 
 const container = document.getElementById("root");
 if (!container) {
@@ -37,7 +41,16 @@ applyOsAttribute();
 // first paint; both windows (the popup too) follow the saved choice.
 watchAppearance();
 
-createRoot(container).render(<StrictMode>{isPromptWindow ? <PromptPopup /> : <App />}</StrictMode>);
+function Root() {
+  if (isPromptWindow) return <PromptPopup />;
+  return label === OVERLAY_WINDOW ? <Overlay /> : <App />;
+}
+
+createRoot(container).render(
+  <StrictMode>
+    <Root />
+  </StrictMode>,
+);
 
 // SPEC §2.2: frontend logs go into the same file as the Rust ones. This line
 // also doubles as proof that the webview loaded and the IPC bridge is up —

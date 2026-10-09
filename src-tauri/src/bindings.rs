@@ -54,6 +54,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             commands::recording_status,
             commands::toggle_recording,
             commands::stop_recording,
+            commands::pause_recording,
+            commands::resume_recording,
             commands::live_transcript,
             commands::list_tickets,
             commands::create_ticket,
@@ -122,6 +124,9 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::appearance::set_appearance,
             crate::headphone_warning::headphone_warning,
             crate::watch::meetings_watch_problem,
+            crate::overlay::show_recording_overlay,
+            crate::overlay::set_show_recording_overlay,
+            crate::overlay::overlay_show_main,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)

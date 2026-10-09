@@ -49,6 +49,7 @@ export function Shell() {
   const status = useRecordingStore((state) => state.status);
   const busy = useRecordingStore((state) => state.busy);
   const toggle = useRecordingStore((state) => state.toggle);
+  const togglePause = useRecordingStore((state) => state.togglePause);
   const error = useRecordingStore((state) => state.error);
 
   // Onboarding owns the whole window: a half-set-up app should not look
@@ -95,6 +96,7 @@ export function Shell() {
             permission={permission}
             busy={busy}
             onToggle={() => void toggle()}
+            onTogglePause={() => void togglePause()}
           />
         ) : null}
       </header>
