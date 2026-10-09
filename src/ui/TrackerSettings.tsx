@@ -9,6 +9,11 @@
  *
  * The app never holds a tracker token: the agent signs in to the tracker
  * itself, through its own MCP connection.
+ *
+ * Until the user saves, Rust answers with the shipped defaults and
+ * `chosen: false`. Those count as not saved: Save stays on and says so, or
+ * the defaults would look saved while no ticket is ever sent. A test ticket
+ * saves nothing (A28): only Save does.
  */
 
 import { ListTodo, RefreshCw, Send } from "lucide-react";
@@ -64,6 +69,8 @@ export function TrackerSettings() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<UiError | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  /** The values the last test ticket that got through checked. */
+  const [passed, setPassed] = useState<{ tracker: Tracker; server: string } | null>(null);
 
   useEffect(() => {
     let current = true;
@@ -84,8 +91,9 @@ export function TrackerSettings() {
   }, []);
 
   const name = server.trim();
-  const changed = saved === null || saved.tracker !== tracker || saved.trackerMcp !== name;
-  const canSave = name.length > 0 && changed && !saving;
+  const unsaved = name.length > 0 && !isSaved(saved, tracker, name);
+  const canSave = unsaved && !saving;
+  const testedOnScreen = passed?.tracker === tracker && passed.server === name;
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -135,6 +143,7 @@ export function TrackerSettings() {
 
         <ServerPicker
           value={server}
+          saved={saved?.chosen ? saved.trackerMcp : null}
           onChange={(value) => {
             setServer(value);
             setJustSaved(false);
@@ -153,13 +162,31 @@ export function TrackerSettings() {
             {saving ? "Saving…" : "Save"}
           </Button>
           <span className="text-footnote text-fg-secondary" role="status" aria-live="polite">
-            {justSaved ? "Saved" : ""}
+            {saveNote(saving, unsaved, testedOnScreen, justSaved)}
           </span>
         </ButtonRow>
-        <TestTicket tracker={tracker} server={name} />
+        <TestTicket
+          tracker={tracker}
+          server={name}
+          onPassed={(checkedTracker, checkedServer) =>
+            setPassed({ tracker: checkedTracker, server: checkedServer })
+          }
+        />
       </form>
     </SettingsSection>
   );
+}
+
+/** Whether `tracker` and `server` are what the user saved (not only the defaults). */
+function isSaved(saved: Settings | null, tracker: Tracker, server: string): boolean {
+  return saved?.chosen === true && saved.tracker === tracker && saved.trackerMcp === server;
+}
+
+/** The note beside Save. `tested`: a test ticket got through with the values on screen. */
+function saveNote(saving: boolean, unsaved: boolean, tested: boolean, justSaved: boolean): string {
+  if (saving) return "";
+  if (unsaved) return tested ? "Test passed. Press Save to keep it." : "Not saved yet";
+  return justSaved ? "Saved" : "";
 }
 
 /** What this card is for, and the three steps to make it work (TUR-113). */
@@ -186,8 +213,18 @@ function HowItWorks() {
 /**
  * Send a test ticket: the agent checks it reaches the tracker through the
  * connection on screen, saved or not. Read-only: nothing is created.
+ * `onPassed` gets the values it checked, which may no longer be on screen.
+ * It saves nothing.
  */
-function TestTicket({ tracker, server }: { tracker: Tracker; server: string }) {
+function TestTicket({
+  tracker,
+  server,
+  onPassed,
+}: {
+  tracker: Tracker;
+  server: string;
+  onPassed: (tracker: Tracker, server: string) => void;
+}) {
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<UiError | null>(null);
@@ -198,6 +235,7 @@ function TestTicket({ tracker, server }: { tracker: Tracker; server: string }) {
     setError(null);
     try {
       setResult((await sendTestTicket(tracker, server)).message);
+      onPassed(tracker, server);
     } catch (caught) {
       setError(toUiError(caught));
     } finally {
@@ -257,7 +295,16 @@ function tipFor(harness: Harness | null): string {
  * The server: a list of what the agent reports, and a text field for any
  * other name. Both edit the same value.
  */
-function ServerPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function ServerPicker({
+  value,
+  saved,
+  onChange,
+}: {
+  value: string;
+  /** The saved server name, or null when nothing is saved. */
+  saved: string | null;
+  onChange: (value: string) => void;
+}) {
   const [servers, setServers] = useState<TrackerServer[] | null>(null);
   const [error, setError] = useState<UiError | null>(null);
   const [checking, setChecking] = useState(true);
@@ -278,7 +325,11 @@ function ServerPicker({ value, onChange }: { value: string; onChange: (value: st
     void check();
   }, [check]);
 
-  const listed = servers?.some((each) => each.name === value.trim()) ?? false;
+  const name = value.trim();
+  const listed = servers?.some((each) => each.name === name) ?? false;
+  // A saved name the agent does not list still shows as picked. A name being
+  // typed does not get an entry of its own.
+  const unlisted = saved && !servers?.some((each) => each.name === saved) ? saved : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -287,12 +338,15 @@ function ServerPicker({ value, onChange }: { value: string; onChange: (value: st
           Server
           <select
             className={FIELD}
-            value={listed ? value.trim() : ""}
+            value={listed || name === unlisted ? name : ""}
             onChange={(event) => {
               if (event.target.value) onChange(event.target.value);
             }}
           >
             <option value="">Pick a server…</option>
+            {unlisted ? (
+              <option value={unlisted}>{`${unlisted} (not in your agent's list)`}</option>
+            ) : null}
             {servers.map((each) => (
               <option key={each.name} value={each.name}>
                 {`${each.name} (${STATUS_WORDS[each.status]})`}

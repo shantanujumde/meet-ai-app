@@ -393,6 +393,7 @@ export type TrackerSettings = {
   /** The name of the tracker's MCP server, as the agent lists it. */
   trackerMcp: string;
   harness: Harness;
+  chosen: boolean; // false: only the shipped defaults, not saved by the user
 };
 
 /** An MCP server's state, as `claude mcp list` / `codex mcp list` report it. */

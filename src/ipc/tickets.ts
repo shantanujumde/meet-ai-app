@@ -146,6 +146,7 @@ const DEFAULT_TRACKER_SETTINGS: TrackerSettings = {
   tracker: "linear",
   trackerMcp: "claude.ai Linear",
   harness: "claude-code",
+  chosen: false,
 };
 
 export async function trackerSettings(): Promise<TrackerSettings> {

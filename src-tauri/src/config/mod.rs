@@ -108,6 +108,11 @@ pub use file::update_agent;
 // TUR-101: the agent setup tests write and read `agent` back as text.
 #[cfg(test)]
 pub(crate) use {agent_section::parse_agent, file::with_agent};
+// The tracker settings tests read `tickets` back from text.
+#[cfg(test)]
+pub(crate) use {
+    agent_section::parse_tickets, agent_section::parse_tickets_chosen, file::with_tickets,
+};
 
 const FILE: &str = "config.jsonc";
 
