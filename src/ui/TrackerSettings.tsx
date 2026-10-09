@@ -9,6 +9,11 @@
  *
  * The app never holds a tracker token: the agent signs in to the tracker
  * itself, through its own MCP connection.
+ *
+ * Until the user saves, Rust answers with the shipped defaults and
+ * `chosen: false`. Those count as not saved: Save stays on and says so, or
+ * the defaults would look saved while no ticket is ever sent. A test ticket
+ * that gets through saves what it checked.
  */
 
 import { ListTodo, RefreshCw, Send } from "lucide-react";
@@ -84,26 +89,40 @@ export function TrackerSettings() {
   }, []);
 
   const name = server.trim();
-  const changed = saved === null || saved.tracker !== tracker || saved.trackerMcp !== name;
+  const changed = !isSaved(saved, tracker, name);
   const canSave = name.length > 0 && changed && !saving;
 
-  async function save(event: FormEvent) {
-    event.preventDefault();
-    if (!canSave) return;
+  /** Save `nextTracker` and `nextServer`. The saved settings, or null when it failed. */
+  async function persist(nextTracker: Tracker, nextServer: string): Promise<Settings | null> {
     setSaving(true);
     setSaveError(null);
     setJustSaved(false);
     try {
-      const settings = await setTracker(tracker, name);
+      const settings = await setTracker(nextTracker, nextServer);
       setSaved(settings);
-      setTrackerChoice(settings.tracker);
-      setServer(settings.trackerMcp);
       setJustSaved(true);
+      return settings;
     } catch (caught) {
       setSaveError(toUiError(caught));
+      return null;
     } finally {
       setSaving(false);
     }
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!canSave) return;
+    const settings = await persist(tracker, name);
+    if (settings) {
+      setTrackerChoice(settings.tracker);
+      setServer(settings.trackerMcp);
+    }
+  }
+
+  /** A test ticket got through: keep what it checked, unless that is saved already. */
+  function testPassed(checkedTracker: Tracker, checkedServer: string) {
+    if (!isSaved(saved, checkedTracker, checkedServer)) void persist(checkedTracker, checkedServer);
   }
 
   const harness = saved?.harness ?? null;
@@ -153,13 +172,25 @@ export function TrackerSettings() {
             {saving ? "Saving…" : "Save"}
           </Button>
           <span className="text-footnote text-fg-secondary" role="status" aria-live="polite">
-            {justSaved ? "Saved" : ""}
+            {statusWords(saving, changed && name.length > 0, justSaved)}
           </span>
         </ButtonRow>
-        <TestTicket tracker={tracker} server={name} />
+        <TestTicket tracker={tracker} server={name} onPassed={testPassed} />
       </form>
     </SettingsSection>
   );
+}
+
+/** Whether `tracker` and `server` are what the user saved (not only the defaults). */
+function isSaved(saved: Settings | null, tracker: Tracker, server: string): boolean {
+  return saved?.chosen === true && saved.tracker === tracker && saved.trackerMcp === server;
+}
+
+/** The note beside Save. */
+function statusWords(saving: boolean, unsaved: boolean, justSaved: boolean): string {
+  if (saving) return "";
+  if (unsaved) return "Not saved yet";
+  return justSaved ? "Saved" : "";
 }
 
 /** What this card is for, and the three steps to make it work (TUR-113). */
@@ -186,8 +217,17 @@ function HowItWorks() {
 /**
  * Send a test ticket: the agent checks it reaches the tracker through the
  * connection on screen, saved or not. Read-only: nothing is created.
+ * `onPassed` gets the values it checked, which may no longer be on screen.
  */
-function TestTicket({ tracker, server }: { tracker: Tracker; server: string }) {
+function TestTicket({
+  tracker,
+  server,
+  onPassed,
+}: {
+  tracker: Tracker;
+  server: string;
+  onPassed: (tracker: Tracker, server: string) => void;
+}) {
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<UiError | null>(null);
@@ -198,6 +238,7 @@ function TestTicket({ tracker, server }: { tracker: Tracker; server: string }) {
     setError(null);
     try {
       setResult((await sendTestTicket(tracker, server)).message);
+      onPassed(tracker, server);
     } catch (caught) {
       setError(toUiError(caught));
     } finally {
@@ -278,7 +319,8 @@ function ServerPicker({ value, onChange }: { value: string; onChange: (value: st
     void check();
   }, [check]);
 
-  const listed = servers?.some((each) => each.name === value.trim()) ?? false;
+  const name = value.trim();
+  const listed = servers?.some((each) => each.name === name) ?? false;
 
   return (
     <div className="flex flex-col gap-4">
@@ -287,12 +329,15 @@ function ServerPicker({ value, onChange }: { value: string; onChange: (value: st
           Server
           <select
             className={FIELD}
-            value={listed ? value.trim() : ""}
+            value={name}
             onChange={(event) => {
               if (event.target.value) onChange(event.target.value);
             }}
           >
             <option value="">Pick a server…</option>
+            {name && !listed ? (
+              <option value={name}>{`${name} (not in your agent's list)`}</option>
+            ) : null}
             {servers.map((each) => (
               <option key={each.name} value={each.name}>
                 {`${each.name} (${STATUS_WORDS[each.status]})`}

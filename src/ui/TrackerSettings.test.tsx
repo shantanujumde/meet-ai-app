@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import type { TrackerServer } from "@/ipc/types";
+import type { TrackerSettings as Settings, TrackerServer } from "@/ipc/types";
 import { ipc } from "@/test/ipcMock";
 import { TrackerSettings } from "./TrackerSettings";
 
@@ -15,6 +15,32 @@ const SERVERS: TrackerServer[] = [
   { name: "jira", status: "needs_auth" },
   { name: "github", status: "failed" },
 ];
+
+/** What Rust answers when the user never saved a tracker: the shipped defaults. */
+const NOTHING_SAVED: Settings = {
+  tracker: "linear",
+  trackerMcp: "claude.ai Linear",
+  harness: "claude-code",
+  chosen: false,
+};
+
+function saveButton(): HTMLButtonElement {
+  return screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+}
+
+function serverList(): HTMLSelectElement {
+  return screen.getByLabelText("Server") as HTMLSelectElement;
+}
+
+/** A config file in memory: what Save writes, the next load reads. */
+function savedOnDisk(start: Settings) {
+  let onDisk = start;
+  trackerSettings.mockImplementation(async () => onDisk);
+  setTracker.mockImplementation(async (tracker, trackerMcp) => {
+    onDisk = { ...onDisk, tracker, trackerMcp, chosen: true };
+    return onDisk;
+  });
+}
 
 function serverName(): HTMLInputElement {
   return screen.getByLabelText("Server name") as HTMLInputElement;
@@ -106,6 +132,7 @@ describe("TrackerSettings", () => {
       tracker: "github",
       trackerMcp: "github",
       harness: "none",
+      chosen: true,
     });
     render(<TrackerSettings />);
 
@@ -160,5 +187,132 @@ describe("TrackerSettings", () => {
     await waitFor(() => expect(serverName().value).toBe("claude.ai Linear"));
     fireEvent.click(screen.getByRole("button", { name: "Send a test ticket" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Your agent couldn't reach Linear.");
+  });
+});
+
+describe("TrackerSettings, saving what the user picked", () => {
+  test("the shipped defaults are not saved yet: Save is on and it says so", async () => {
+    trackerSettings.mockResolvedValue(NOTHING_SAVED);
+    render(<TrackerSettings />);
+
+    await waitFor(() => expect(serverName().value).toBe("claude.ai Linear"));
+    expect(saveButton().disabled).toBe(false);
+    expect(screen.getByText("Not saved yet")).toBeTruthy();
+
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(setTracker).toHaveBeenCalledWith("linear", "claude.ai Linear"));
+    expect(await screen.findByText("Saved")).toBeTruthy();
+    expect(saveButton().disabled).toBe(true);
+  });
+
+  test("picking the default server from the list, with nothing saved, turns Save on", async () => {
+    trackerSettings.mockResolvedValue(NOTHING_SAVED);
+    trackerServers.mockResolvedValue(SERVERS);
+    render(<TrackerSettings />);
+
+    const list = await screen.findByLabelText("Server");
+    fireEvent.change(list, { target: { value: "claude.ai Linear" } });
+
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  test("picking another server marks the form as changed", async () => {
+    trackerServers.mockResolvedValue(SERVERS);
+    render(<TrackerSettings />);
+    await waitFor(() => expect(serverList().value).toBe("claude.ai Linear"));
+    expect(saveButton().disabled).toBe(true);
+    expect(screen.queryByText("Not saved yet")).toBeNull();
+
+    fireEvent.change(serverList(), { target: { value: "jira" } });
+
+    expect(saveButton().disabled).toBe(false);
+    expect(screen.getByText("Not saved yet")).toBeTruthy();
+  });
+
+  test("a successful test ticket saves the tracker and server it checked", async () => {
+    trackerSettings.mockResolvedValue(NOTHING_SAVED);
+    render(<TrackerSettings />);
+    await waitFor(() => expect(serverName().value).toBe("claude.ai Linear"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Send a test ticket" }));
+
+    await waitFor(() => expect(setTracker).toHaveBeenCalledWith("linear", "claude.ai Linear"));
+    expect(await screen.findByText("Saved")).toBeTruthy();
+    expect(saveButton().disabled).toBe(true);
+  });
+
+  test("a failed test ticket saves nothing", async () => {
+    trackerSettings.mockResolvedValue(NOTHING_SAVED);
+    sendTestTicket.mockRejectedValueOnce({
+      domain: "app",
+      kind: "sync-unreachable",
+      message: "Your agent couldn't reach Linear.",
+    });
+    render(<TrackerSettings />);
+    await waitFor(() => expect(serverName().value).toBe("claude.ai Linear"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Send a test ticket" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your agent couldn't reach Linear.");
+    expect(setTracker).not.toHaveBeenCalled();
+    expect(screen.getByText("Not saved yet")).toBeTruthy();
+  });
+
+  test("a test of what is already saved does not save it again", async () => {
+    render(<TrackerSettings />);
+    await waitFor(() => expect(serverName().value).toBe("claude.ai Linear"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Send a test ticket" }));
+
+    expect(
+      await screen.findByText("Claude Code reached Linear. New tickets will go to Engineering."),
+    ).toBeTruthy();
+    expect(setTracker).not.toHaveBeenCalled();
+  });
+
+  test("a saved server is still picked after leaving Settings and coming back", async () => {
+    savedOnDisk(NOTHING_SAVED);
+    trackerServers.mockResolvedValue(SERVERS);
+    const first = render(<TrackerSettings />);
+    fireEvent.change(await screen.findByLabelText("Server"), { target: { value: "jira" } });
+    fireEvent.click(saveButton());
+    expect(await screen.findByText("Saved")).toBeTruthy();
+    first.unmount();
+
+    render(<TrackerSettings />);
+
+    await waitFor(() => expect(serverList().value).toBe("jira"));
+    expect(serverName().value).toBe("jira");
+    expect(saveButton().disabled).toBe(true);
+    expect(screen.queryByText("Not saved yet")).toBeNull();
+  });
+
+  test("the saved server is picked when the slow list arrives after the settings", async () => {
+    trackerSettings.mockResolvedValue({ ...NOTHING_SAVED, trackerMcp: "jira", chosen: true });
+    let finish: (servers: TrackerServer[]) => void = () => {};
+    trackerServers.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(<TrackerSettings />);
+    await waitFor(() => expect(serverName().value).toBe("jira"));
+
+    await act(async () => finish(SERVERS));
+
+    expect(serverList().value).toBe("jira");
+    expect(saveButton().disabled).toBe(true);
+  });
+
+  test("a saved server the agent does not list still shows in the list", async () => {
+    trackerSettings.mockResolvedValue({ ...NOTHING_SAVED, trackerMcp: "my-linear", chosen: true });
+    trackerServers.mockResolvedValue(SERVERS);
+    render(<TrackerSettings />);
+
+    expect(
+      await screen.findByRole("option", { name: "my-linear (not in your agent's list)" }),
+    ).toBeTruthy();
+    expect(serverList().value).toBe("my-linear");
   });
 });
