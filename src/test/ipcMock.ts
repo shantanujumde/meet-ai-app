@@ -237,11 +237,13 @@ export const ipc = {
     tracker: "linear",
     trackerMcp: "claude.ai Linear",
     harness: "claude-code",
+    chosen: true,
   })),
   setTracker: vi.fn<typeof Client.setTracker>(async (tracker, trackerMcp) => ({
     tracker,
     trackerMcp,
     harness: "claude-code",
+    chosen: true,
   })),
   trackerServers: vi.fn<typeof Client.trackerServers>(async () => []),
   // TUR-113: suggested tasks and sending on their own. No tracker set up.

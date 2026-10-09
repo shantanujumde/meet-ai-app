@@ -32,6 +32,10 @@ pub struct TrackerSettings {
     pub tracker_mcp: String,
     /// `agent.harness`: `claude-code`, `codex` or `none`.
     pub harness: String,
+    /// Whether `config.jsonc` names the tracker and server itself. False when
+    /// `tracker` and `tracker_mcp` are only the shipped defaults: then no
+    /// ticket is sent, and the window must not treat them as saved.
+    pub chosen: bool,
 }
 
 /// One MCP server the agent's CLI lists.
@@ -134,6 +138,7 @@ fn current() -> Result<TrackerSettings, UiError> {
         tracker: tickets.tracker,
         tracker_mcp: tickets.tracker_mcp,
         harness: config::agent()?.harness.as_str().to_owned(),
+        chosen: config::tickets_chosen()?,
     })
 }
 

@@ -1652,6 +1652,12 @@ export type meet_ai_lib_sync_tracker_TrackerSettings = {
 	trackerMcp: string,
 	/**  `agent.harness`: `claude-code`, `codex` or `none`. */
 	harness: string,
+	/**
+	 *  Whether `config.jsonc` names the tracker and server itself. False when
+	 *  `tracker` and `tracker_mcp` are only the shipped defaults: then no
+	 *  ticket is sent, and the window must not treat them as saved.
+	 */
+	chosen: boolean,
 };
 
 /**  One parsed transcript line. */
