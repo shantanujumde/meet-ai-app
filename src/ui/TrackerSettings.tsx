@@ -13,7 +13,7 @@
  * Until the user saves, Rust answers with the shipped defaults and
  * `chosen: false`. Those count as not saved: Save stays on and says so, or
  * the defaults would look saved while no ticket is ever sent. A test ticket
- * that gets through saves what it checked.
+ * saves nothing (A28): only Save does.
  */
 
 import { ListTodo, RefreshCw, Send } from "lucide-react";
@@ -69,6 +69,8 @@ export function TrackerSettings() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<UiError | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+  /** The values the last test ticket that got through checked. */
+  const [passed, setPassed] = useState<{ tracker: Tracker; server: string } | null>(null);
 
   useEffect(() => {
     let current = true;
@@ -89,40 +91,27 @@ export function TrackerSettings() {
   }, []);
 
   const name = server.trim();
-  const changed = !isSaved(saved, tracker, name);
-  const canSave = name.length > 0 && changed && !saving;
-
-  /** Save `nextTracker` and `nextServer`. The saved settings, or null when it failed. */
-  async function persist(nextTracker: Tracker, nextServer: string): Promise<Settings | null> {
-    setSaving(true);
-    setSaveError(null);
-    setJustSaved(false);
-    try {
-      const settings = await setTracker(nextTracker, nextServer);
-      setSaved(settings);
-      setJustSaved(true);
-      return settings;
-    } catch (caught) {
-      setSaveError(toUiError(caught));
-      return null;
-    } finally {
-      setSaving(false);
-    }
-  }
+  const unsaved = name.length > 0 && !isSaved(saved, tracker, name);
+  const canSave = unsaved && !saving;
+  const testedOnScreen = passed?.tracker === tracker && passed.server === name;
 
   async function save(event: FormEvent) {
     event.preventDefault();
     if (!canSave) return;
-    const settings = await persist(tracker, name);
-    if (settings) {
+    setSaving(true);
+    setSaveError(null);
+    setJustSaved(false);
+    try {
+      const settings = await setTracker(tracker, name);
+      setSaved(settings);
       setTrackerChoice(settings.tracker);
       setServer(settings.trackerMcp);
+      setJustSaved(true);
+    } catch (caught) {
+      setSaveError(toUiError(caught));
+    } finally {
+      setSaving(false);
     }
-  }
-
-  /** A test ticket got through: keep what it checked, unless that is saved already. */
-  function testPassed(checkedTracker: Tracker, checkedServer: string) {
-    if (!isSaved(saved, checkedTracker, checkedServer)) void persist(checkedTracker, checkedServer);
   }
 
   const harness = saved?.harness ?? null;
@@ -154,6 +143,7 @@ export function TrackerSettings() {
 
         <ServerPicker
           value={server}
+          saved={saved?.chosen ? saved.trackerMcp : null}
           onChange={(value) => {
             setServer(value);
             setJustSaved(false);
@@ -172,10 +162,16 @@ export function TrackerSettings() {
             {saving ? "Saving…" : "Save"}
           </Button>
           <span className="text-footnote text-fg-secondary" role="status" aria-live="polite">
-            {statusWords(saving, changed && name.length > 0, justSaved)}
+            {saveNote(saving, unsaved, testedOnScreen, justSaved)}
           </span>
         </ButtonRow>
-        <TestTicket tracker={tracker} server={name} onPassed={testPassed} />
+        <TestTicket
+          tracker={tracker}
+          server={name}
+          onPassed={(checkedTracker, checkedServer) =>
+            setPassed({ tracker: checkedTracker, server: checkedServer })
+          }
+        />
       </form>
     </SettingsSection>
   );
@@ -186,10 +182,10 @@ function isSaved(saved: Settings | null, tracker: Tracker, server: string): bool
   return saved?.chosen === true && saved.tracker === tracker && saved.trackerMcp === server;
 }
 
-/** The note beside Save. */
-function statusWords(saving: boolean, unsaved: boolean, justSaved: boolean): string {
+/** The note beside Save. `tested`: a test ticket got through with the values on screen. */
+function saveNote(saving: boolean, unsaved: boolean, tested: boolean, justSaved: boolean): string {
   if (saving) return "";
-  if (unsaved) return "Not saved yet";
+  if (unsaved) return tested ? "Test passed. Press Save to keep it." : "Not saved yet";
   return justSaved ? "Saved" : "";
 }
 
@@ -218,6 +214,7 @@ function HowItWorks() {
  * Send a test ticket: the agent checks it reaches the tracker through the
  * connection on screen, saved or not. Read-only: nothing is created.
  * `onPassed` gets the values it checked, which may no longer be on screen.
+ * It saves nothing.
  */
 function TestTicket({
   tracker,
@@ -298,7 +295,16 @@ function tipFor(harness: Harness | null): string {
  * The server: a list of what the agent reports, and a text field for any
  * other name. Both edit the same value.
  */
-function ServerPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function ServerPicker({
+  value,
+  saved,
+  onChange,
+}: {
+  value: string;
+  /** The saved server name, or null when nothing is saved. */
+  saved: string | null;
+  onChange: (value: string) => void;
+}) {
   const [servers, setServers] = useState<TrackerServer[] | null>(null);
   const [error, setError] = useState<UiError | null>(null);
   const [checking, setChecking] = useState(true);
@@ -321,6 +327,9 @@ function ServerPicker({ value, onChange }: { value: string; onChange: (value: st
 
   const name = value.trim();
   const listed = servers?.some((each) => each.name === name) ?? false;
+  // A saved name the agent does not list still shows as picked. A name being
+  // typed does not get an entry of its own.
+  const unlisted = saved && !servers?.some((each) => each.name === saved) ? saved : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -329,14 +338,14 @@ function ServerPicker({ value, onChange }: { value: string; onChange: (value: st
           Server
           <select
             className={FIELD}
-            value={name}
+            value={listed || name === unlisted ? name : ""}
             onChange={(event) => {
               if (event.target.value) onChange(event.target.value);
             }}
           >
             <option value="">Pick a server…</option>
-            {name && !listed ? (
-              <option value={name}>{`${name} (not in your agent's list)`}</option>
+            {unlisted ? (
+              <option value={unlisted}>{`${unlisted} (not in your agent's list)`}</option>
             ) : null}
             {servers.map((each) => (
               <option key={each.name} value={each.name}>

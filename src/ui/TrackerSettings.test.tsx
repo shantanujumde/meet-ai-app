@@ -229,16 +229,33 @@ describe("TrackerSettings, saving what the user picked", () => {
     expect(screen.getByText("Not saved yet")).toBeTruthy();
   });
 
-  test("a successful test ticket saves the tracker and server it checked", async () => {
+  test("a successful test ticket saves nothing: Save stays on and says to press it", async () => {
     trackerSettings.mockResolvedValue(NOTHING_SAVED);
     render(<TrackerSettings />);
     await waitFor(() => expect(serverName().value).toBe("claude.ai Linear"));
 
     fireEvent.click(screen.getByRole("button", { name: "Send a test ticket" }));
 
+    expect(await screen.findByText("Test passed. Press Save to keep it.")).toBeTruthy();
+    expect(setTracker).not.toHaveBeenCalled();
+    expect(saveButton().disabled).toBe(false);
+
+    fireEvent.click(saveButton());
     await waitFor(() => expect(setTracker).toHaveBeenCalledWith("linear", "claude.ai Linear"));
     expect(await screen.findByText("Saved")).toBeTruthy();
-    expect(saveButton().disabled).toBe(true);
+  });
+
+  test("a passed test speaks only for the values it checked", async () => {
+    trackerSettings.mockResolvedValue(NOTHING_SAVED);
+    render(<TrackerSettings />);
+    await waitFor(() => expect(serverName().value).toBe("claude.ai Linear"));
+    fireEvent.click(screen.getByRole("button", { name: "Send a test ticket" }));
+    expect(await screen.findByText("Test passed. Press Save to keep it.")).toBeTruthy();
+
+    fireEvent.change(serverName(), { target: { value: "other" } });
+
+    expect(screen.getByText("Not saved yet")).toBeTruthy();
+    expect(screen.queryByText("Test passed. Press Save to keep it.")).toBeNull();
   });
 
   test("a failed test ticket saves nothing", async () => {
@@ -314,5 +331,16 @@ describe("TrackerSettings, saving what the user picked", () => {
       await screen.findByRole("option", { name: "my-linear (not in your agent's list)" }),
     ).toBeTruthy();
     expect(serverList().value).toBe("my-linear");
+  });
+
+  test("a name being typed gets no entry of its own in the list", async () => {
+    trackerServers.mockResolvedValue(SERVERS);
+    render(<TrackerSettings />);
+    await waitFor(() => expect(serverList().value).toBe("claude.ai Linear"));
+
+    fireEvent.change(serverName(), { target: { value: "my-lin" } });
+
+    expect(screen.queryByRole("option", { name: /not in your agent's list/ })).toBeNull();
+    expect(serverList().value).toBe("");
   });
 });

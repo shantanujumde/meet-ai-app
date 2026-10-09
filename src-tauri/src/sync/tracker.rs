@@ -133,13 +133,21 @@ pub async fn tracker_servers() -> Result<Vec<TrackerServer>, UiError> {
 }
 
 fn current() -> Result<TrackerSettings, UiError> {
-    let tickets = config::tickets()?;
-    Ok(TrackerSettings {
+    Ok(settings_from(
+        config::tickets()?,
+        config::tickets_chosen()?,
+        config::agent()?.harness,
+    ))
+}
+
+/// The window's view of `tickets`, `chosen` and the agent.
+fn settings_from(tickets: TicketsConfig, chosen: bool, harness: HarnessChoice) -> TrackerSettings {
+    TrackerSettings {
         tracker: tickets.tracker,
         tracker_mcp: tickets.tracker_mcp,
-        harness: config::agent()?.harness.as_str().to_owned(),
-        chosen: config::tickets_chosen()?,
-    })
+        harness: harness.as_str().to_owned(),
+        chosen,
+    }
 }
 
 /// The window's values, checked: a known tracker and a plain server name.
@@ -168,4 +176,35 @@ pub(crate) fn checked(tracker: &str, tracker_mcp: &str) -> Result<TicketsConfig,
         tracker: tracker.to_owned(),
         tracker_mcp: server.to_owned(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{parse_tickets, parse_tickets_chosen, with_tickets};
+
+    fn settings_in(raw: &str) -> TrackerSettings {
+        settings_from(
+            parse_tickets(raw).unwrap(),
+            parse_tickets_chosen(raw).unwrap(),
+            HarnessChoice::ClaudeCode,
+        )
+    }
+
+    /// Before a save the window gets the defaults with `chosen: false`, so it
+    /// never shows them as saved; once `set_tracker` wrote them, `chosen: true`.
+    #[test]
+    fn chosen_is_false_for_the_defaults_and_true_once_saved() {
+        let defaults = settings_in("");
+        assert_eq!(defaults.tracker_mcp, "claude.ai Linear");
+        assert!(!defaults.chosen);
+        let json = serde_json::to_value(&defaults).unwrap();
+        assert_eq!(json["chosen"], serde_json::Value::Bool(false));
+
+        let raw = with_tickets("", &checked("linear", " claude.ai Linear ").unwrap()).unwrap();
+        let saved = settings_in(&raw);
+        assert_eq!(saved.tracker, "linear");
+        assert_eq!(saved.tracker_mcp, "claude.ai Linear");
+        assert!(saved.chosen, "{raw}");
+    }
 }
