@@ -221,15 +221,22 @@ pub(crate) fn is_plain_name(id: &str) -> bool {
 
 /// Is `name` one of Windows' reserved device names, in any case, with or
 /// without an extension? Windows reads only the part before the first dot,
-/// with trailing spaces dropped, so `Con .md` is the console too.
+/// with trailing spaces dropped, so `Con .md` is the console too. Microsoft's
+/// "Naming Files, Paths, and Namespaces" also lists `CONIN$`, `CONOUT$`, the
+/// superscript `COM¹²³`/`LPT¹²³`, and `COM0`/`LPT0`; refusing a name too many
+/// costs nothing, so they are all refused.
 fn is_windows_device(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
     let upper = stem.to_ascii_uppercase();
     match upper.as_str() {
-        "CON" | "PRN" | "AUX" | "NUL" => true,
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" => true,
         _ => ["COM", "LPT"].iter().any(|prefix| {
             upper.strip_prefix(prefix).is_some_and(|digit| {
-                matches!(digit, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+                let mut chars = digit.chars();
+                matches!(
+                    (chars.next(), chars.next()),
+                    (Some('0'..='9' | '¹' | '²' | '³'), None)
+                )
             })
         }),
     }
@@ -282,6 +289,13 @@ mod tests {
             "com9",
             "LPT1",
             "lpt9.log",
+            "COM0",
+            "lpt0",
+            "COM\u{b9}",
+            "lpt\u{b2}.txt",
+            "COM\u{b3}",
+            "CONIN$",
+            "conout$.log",
         ] {
             assert!(!is_plain_name(device), "{device:?} must be refused");
         }
@@ -291,7 +305,8 @@ mod tests {
             "2026-09-01-1430-con",
             "nul-call",
             "COM10",
-            "COM0",
+            "COM\u{b9}\u{b2}",
+            "CONIN",
             "LPT",
             "comx",
             "a.con",
