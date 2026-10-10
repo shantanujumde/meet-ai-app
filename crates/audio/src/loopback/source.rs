@@ -10,7 +10,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
 use ringbuf::traits::{Consumer, Split};
@@ -19,6 +19,7 @@ use ringbuf::{HeapCons, HeapRb};
 use super::capture::{Capture, CaptureStats};
 use super::clock::{GapRule, frames_to_ns, ns_to_frames};
 use super::splice::{GapMark, Piece, splice};
+use crate::capture_clock::{CaptureClock, Feed, time_marks};
 use crate::pipeline::Pipeline;
 use crate::rate_meter::{FixedRates, Rates};
 use crate::segments::SAMPLE_RATE_HZ;
@@ -172,7 +173,8 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
         let ring = RING_SECONDS * format.rate as usize * format.channels;
         let (producer, consumer) = HeapRb::<f32>::new(ring).split();
         let (mark_tx, marks) = HeapRb::<GapMark>::new(MARK_CAPACITY).split();
-        let last_ns = Arc::new(AtomicU64::new(0));
+        // Each packet's capture time rides next to its samples (TUR-151).
+        let (times, clock) = time_marks(format.channels);
         let stats = Arc::new(CaptureStats::default());
 
         // Before the capture, so its first packet does not wait for a sound.
@@ -193,7 +195,7 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
             producer,
             mark_tx,
             Arc::clone(&rates),
-            Arc::clone(&last_ns),
+            times,
             format.channels,
             Arc::clone(&stats),
         )
@@ -213,7 +215,7 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
             pipeline: Pipeline::new(LABEL, format.channels, format.rate),
             rates: Arc::clone(&rates),
             track: track.clone(),
-            last_ns,
+            clock,
             running: Arc::clone(&running),
             tee: self.tee.clone(),
             stats,
@@ -298,7 +300,7 @@ struct Worker {
     pipeline: Pipeline,
     rates: Arc<FixedRates>,
     track: TrackWriter,
-    last_ns: Arc<AtomicU64>,
+    clock: CaptureClock,
     running: Arc<AtomicBool>,
     tee: Option<Tee>,
     stats: Arc<CaptureStats>,
@@ -313,15 +315,14 @@ impl Worker {
             mut pipeline,
             rates,
             track,
-            last_ns,
+            clock,
             running,
             tee,
             stats,
             channels,
         } = self;
-        let mut sink = |frames: &[i16]| {
-            track.append(frames, last_ns.load(Ordering::Acquire), tee.as_ref());
-        };
+        // Every append timed by the capture of the frame it ends at (TUR-151).
+        let mut feed = Feed::new(track, clock, tee);
         let mut silence = Silence::new(channels);
         let mut pending: VecDeque<GapMark> = VecDeque::new();
         let mut consumed: u64 = 0;
@@ -333,23 +334,31 @@ impl Worker {
             pending.extend(marks.pop_iter());
             let rate = rates.effective();
             if popped > 0 {
-                pipeline.follow(&*rates, &mut sink);
+                pipeline.follow(&*rates, &mut |f: &[i16]| feed.extend(f));
             }
             splice(
                 consumed,
                 &scratch[..popped],
                 &mut pending,
                 |piece| match piece {
-                    Piece::Samples(samples) => pipeline.push(samples, &mut sink),
+                    Piece::Samples(samples) => {
+                        pipeline.push(samples, &mut |f: &[i16]| feed.extend(f));
+                        feed.consumed(samples.len());
+                    }
                     Piece::Silence(frames) => {
                         tracing::info!(
                             "{LABEL}: {} ms the device did not deliver, written as silence",
                             frames_to_ns(frames, rate) / 1_000_000
                         );
-                        silence.write(frames, rate, &mut pipeline, &mut sink);
+                        let rest =
+                            silence.write(frames, rate, &mut pipeline, &mut |f: &[i16]| {
+                                feed.extend(f)
+                            });
+                        feed.silence(rest, &pipeline);
                     }
                 },
             );
+            feed.flush(&pipeline);
             consumed += popped as u64;
             if popped == 0 {
                 if !running.load(Ordering::Acquire) {
@@ -362,14 +371,13 @@ impl Worker {
     }
 }
 
-/// Writes gap silence: the first part through the resampler, the rest
-/// straight to the sink at 16 kHz.
+/// Writes gap silence: the first part through the resampler, and says how
+/// much of the rest is owed straight at 16 kHz ([`Feed::silence`] writes it,
+/// timed, TUR-151).
 struct Silence {
     channels: usize,
     /// Device-rate zeros, a whole number of frames long.
     device: Vec<f32>,
-    /// 16 kHz zeros.
-    output: Vec<i16>,
 }
 
 impl Silence {
@@ -378,17 +386,18 @@ impl Silence {
         Self {
             channels,
             device: vec![0.0; (WORKER_POP_SAMPLES / channels).max(1) * channels],
-            output: vec![0; WORKER_POP_SAMPLES],
         }
     }
 
+    /// Push the start of a `frames`-long gap through `pipeline`; returns the
+    /// 16 kHz frames of silence still owed for the rest of it.
     fn write(
         &mut self,
         frames: u64,
         rate: u32,
         pipeline: &mut Pipeline,
         sink: &mut impl FnMut(&[i16]),
-    ) {
+    ) -> u64 {
         let flush = (u64::from(rate) * FLUSH_THROUGH_MS / 1000).max(FLUSH_THROUGH_MIN_FRAMES);
         let through = frames.min(flush);
         let mut samples = through as usize * self.channels;
@@ -398,12 +407,7 @@ impl Silence {
             samples -= n;
         }
         let rest = frames - through;
-        let mut out = ns_to_frames(frames_to_ns(rest, rate), SAMPLE_RATE_HZ) as usize;
-        while out > 0 {
-            let n = out.min(self.output.len());
-            sink(&self.output[..n]);
-            out -= n;
-        }
+        ns_to_frames(frames_to_ns(rest, rate), SAMPLE_RATE_HZ)
     }
 }
 

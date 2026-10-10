@@ -346,8 +346,11 @@ fn silent_and_non_finite_buffers_are_written_as_zeros() {
     );
 }
 
+/// TUR-151: the position names when its frame was captured, not when the
+/// latest packet was, so frame 0 reads back as the first packet's time
+/// (here counted back from the first one that came with a time).
 #[test]
-fn position_pairs_the_latest_capture_time_with_the_frames_written() {
+fn position_names_the_capture_time_of_the_frame_it_counts_to() {
     let dir = tempfile::tempdir().unwrap();
     let (backend, _log, slot) = FakeBackend::new(16_000, 1);
     let mut source = LoopbackSource::new(backend);
@@ -363,8 +366,14 @@ fn position_pairs_the_latest_capture_time_with_the_frames_written() {
     let last = 2_000 * MS;
     packet(&slot, &tone(1_600, 1_600), Some(last), false);
     let (host_ns, frames) = wait_for_position(&source);
-    assert_eq!(host_ns, last);
     assert!(frames > 0);
+    let zero = host_ns as f64 - frames as f64 * 1e9 / 16_000.0;
+    let expected = (last - 100 * MS) as f64;
+    assert!(
+        (zero - expected).abs() < 0.2e6,
+        "frame 0 read {:.3} ms from the first packet's capture",
+        (zero - expected) / 1e6
+    );
     source.stop().unwrap();
     let (_, final_frames) = source.position().unwrap();
     assert_eq!(

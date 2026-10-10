@@ -117,6 +117,10 @@ pub mod loopback;
 /// and the loopback source so the two cannot write a track differently.
 pub(crate) mod track;
 
+/// When each written frame was captured: the capture time each packet
+/// carries through the ring, and the worker's feed into [`track`] (TUR-151).
+pub(crate) mod capture_clock;
+
 /// The real audio-permission measurement: runs the [`chime`] positive control
 /// against a live [`macos::tap::SystemSource`], and a start/stop probe against
 /// [`mic::MicSource`]. This is the "measurement" `src-tauri/src/permission.rs`
@@ -164,10 +168,12 @@ pub trait AudioSource: Send {
     /// Which channel this source feeds.
     fn channel(&self) -> Channel;
 
-    /// The most recent (host_ns, wav_domain_frames) pair this channel has
-    /// processed — the `mHostTime` of the buffer that produced the most
-    /// recently *written* 16 kHz sample, paired with the WAV-domain frame
-    /// index that sample landed at. `None` before the first resampled chunk
+    /// The most recent (host_ns, frames) pair this channel has written:
+    /// `frames` 16 kHz frames are in this segment, and `host_ns` is when
+    /// frame `frames` (the next one) was captured, so frame 0 was captured
+    /// `frames / 16 kHz` before it (TUR-151: before, it was the latest
+    /// callback's time, ahead of the frames by the ring's backlog and the
+    /// resampler's pending input). `None` before the first resampled chunk
     /// has been written.
     ///
     /// This is deliberately *not* "frames flushed so far" sampled at whatever
@@ -196,14 +202,17 @@ pub trait AudioSource: Send {
     /// `segments.json` has been written for this checkpoint.
     fn patch_header(&mut self) -> Result<(), Error>;
 
-    /// Contract §6's head-pad: insert `frames` of silence at the very start
-    /// of this channel's WAV, so frame 0 lands on the recording's shared
-    /// `start_host_ns` instead of on whichever instant this channel's
-    /// hardware happened to come up.
+    /// Contract §6's head-pad: insert `frames` of silence at the start of
+    /// this segment on this channel's WAV, so the segment's frame 0 lands on
+    /// its shared `start_host_ns` instead of on whichever instant this
+    /// channel's hardware happened to come up. For the first segment that is
+    /// the start of the file; for a reopened one, where this source began
+    /// appending, so no earlier segment moves (TUR-151).
     ///
-    /// The orchestrator calls this once, immediately after both channels'
-    /// first real buffer has arrived, on whichever channel's first buffer
-    /// was later — never on the earlier one, and never more than once.
+    /// The orchestrator calls this once per segment, immediately after both
+    /// channels' first real buffer has arrived, on whichever channel's frame
+    /// 0 was captured later — never on the earlier one, and never more than
+    /// once.
     /// Implementations must serialize this against their own worker thread's
     /// concurrent [`AudioSource::position`]-reporting writes (e.g. by taking
     /// the same lock), since unlike the other methods here this one is not

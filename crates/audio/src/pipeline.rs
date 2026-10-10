@@ -63,9 +63,20 @@ impl Pipeline {
         }
     }
 
-    #[cfg(test)]
+    /// The input rate in use.
     pub(crate) fn rate(&self) -> u32 {
         self.rate
+    }
+
+    /// Input frames given to [`Self::push`] whose 16 kHz output has not come
+    /// out yet: the partial chunk waiting in `pending`, and what the
+    /// resampler holds back (its filter delay). Subtracted from the capture
+    /// time of the input taken so far, it gives the capture time of the next
+    /// frame out (TUR-151, [`crate::capture_clock`]).
+    pub(crate) fn buffered_input_frames(&self) -> f64 {
+        let pending = (self.pending.len() / self.channels) as f64;
+        let emitted = self.out_frames as f64 * f64::from(self.rate) / f64::from(SAMPLE_RATE_HZ);
+        pending + (self.in_frames as f64 - emitted).max(0.0)
     }
 
     fn chunk_raw_len(&self) -> usize {
