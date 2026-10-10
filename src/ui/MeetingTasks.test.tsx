@@ -160,3 +160,31 @@ describe("MeetingTasks", () => {
     expect(await screen.findByText("Task TICK-2")).toBeTruthy();
   });
 });
+
+/** TUR-150: switching meetings while a read is still out. */
+describe("MeetingTasks switching meetings", () => {
+  test("a slower read of the last meeting's tasks does not replace the next one's", async () => {
+    const NEXT = "2026-09-30-1100-meeting";
+    let answerFirst: (tasks: TicketSummary[]) => void = () => {};
+    meetingTasks.mockImplementation((id) =>
+      id === MEETING
+        ? new Promise<TicketSummary[]>((resolve) => {
+            answerFirst = resolve;
+          })
+        : Promise.resolve([task("TICK-9", { meeting: NEXT })]),
+    );
+    const { rerender } = renderTasks();
+    await waitFor(() => expect(meetingTasks).toHaveBeenCalledWith(MEETING));
+
+    rerender(
+      <MemoryRouter>
+        <MeetingTasks meetingId={NEXT} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Task TICK-9")).toBeTruthy();
+
+    await act(async () => answerFirst([task("TICK-1")]));
+    expect(screen.queryByText("Task TICK-1")).toBeNull();
+    expect(screen.getByText("Task TICK-9")).toBeTruthy();
+  });
+});

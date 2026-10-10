@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { Link, MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { AGENT_RUN_STATUS_EVENT } from "@/ipc/client";
 import type { MeetingDetail, RecordingStatus } from "@/ipc/types";
@@ -503,5 +503,119 @@ describe("Review's header", () => {
     const meta = await screen.findByTestId("meeting-meta");
     expect(meta).toHaveTextContent(/^Recording/);
     expect(meta).toHaveTextContent("12 min");
+  });
+});
+
+/**
+ * TUR-150: switching meetings, and re-reading one, while reads are still out.
+ * The screen shows only the newest answer for the meeting in the URL, and the
+ * notes typed into it are never put back to what was on disk.
+ */
+describe("Review switching and re-reading", () => {
+  const NEXT = "2026-09-30-1100-meeting";
+  const NOTES = /^What you want to remember/;
+
+  test("a slower read of the last meeting does not show under the next one's URL", async () => {
+    let answerFirst: (detail: MeetingDetail) => void = () => {};
+    readMeeting.mockImplementation((id) =>
+      id === ID
+        ? new Promise<MeetingDetail>((resolve) => {
+            answerFirst = resolve;
+          })
+        : Promise.resolve(
+            meetingDetail({
+              summary: { id: NEXT, title: "Planning" },
+              notes: "Planning notes.",
+              lines: [transcriptLine({ text: "Said in planning." })],
+            }),
+          ),
+    );
+    render(
+      <MemoryRouter initialEntries={[`/meetings/${ID}`]}>
+        <Link to={`/meetings/${NEXT}`}>Open planning</Link>
+        <Routes>
+          <Route path="/meetings/:id" element={<Review />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(readMeeting).toHaveBeenCalledWith(ID));
+
+    fireEvent.click(screen.getByRole("link", { name: "Open planning" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Planning" })).toBeTruthy();
+
+    await act(async () =>
+      answerFirst(
+        meetingDetail({
+          summary: { id: ID, title: "Standup" },
+          notes: "Standup notes.",
+          lines: [transcriptLine({ text: "Said in standup." })],
+        }),
+      ),
+    );
+    expect(screen.getByRole("heading", { level: 1, name: "Planning" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1, name: "Standup" })).toBeNull();
+    expect(screen.getByText("Said in planning.")).toBeTruthy();
+    expect(screen.queryByText("Said in standup.")).toBeNull();
+    expect(screen.getByPlaceholderText(NOTES)).toHaveValue("Planning notes.");
+
+    // Renaming the title on screen renames that meeting, not another.
+    fireEvent.click(screen.getByRole("button", { name: /^Rename meeting/ }));
+    const field = screen.getByRole<HTMLInputElement>("textbox", { name: "Meeting title" });
+    expect(field.value).toBe("Planning");
+    fireEvent.change(field, { target: { value: "Budget review" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(ipc.renameMeeting).toHaveBeenCalledWith(NEXT, "Budget review"));
+    expect(ipc.renameMeeting).toHaveBeenCalledTimes(1);
+  });
+
+  test("a read that started first and lands last does not replace a newer one", async () => {
+    recording({ phase: "recording", meetingId: ID, startedAtMs: 0 });
+    let answerFirst: (detail: MeetingDetail) => void = () => {};
+    readMeeting.mockImplementationOnce(
+      () =>
+        new Promise<MeetingDetail>((resolve) => {
+          answerFirst = resolve;
+        }),
+    );
+    readMeeting.mockResolvedValueOnce(detail([transcriptLine({ text: "The finished file." })]));
+    renderReview();
+    await waitFor(() => expect(readMeeting).toHaveBeenCalledTimes(1));
+
+    // The recording ends before the first read answers: a second read starts.
+    act(() => recording({ phase: "idle" }));
+    expect(await screen.findByText("The finished file.")).toBeTruthy();
+
+    await act(async () => answerFirst(detail([])));
+    expect(screen.getByText("The finished file.")).toBeTruthy();
+    expect(screen.queryByText("Nothing was transcribed")).toBeNull();
+  });
+
+  test("notes typed while the meeting stops are kept, and saved, when it is re-read", async () => {
+    recording({ phase: "recording", meetingId: ID, startedAtMs: 0 });
+    readMeeting.mockResolvedValueOnce(meetingDetail({ summary: { id: ID }, notes: "" }));
+    renderReview();
+
+    const notes = await screen.findByPlaceholderText(NOTES);
+    fireEvent.change(notes, { target: { value: "abc" } });
+    fireEvent.blur(notes);
+    await waitFor(() => expect(ipc.saveNotes).toHaveBeenCalledWith(ID, "abc"));
+    fireEvent.change(notes, { target: { value: "abcdef" } });
+
+    // Stopped before "def" was saved: the re-read finds only "abc" on disk.
+    readMeeting.mockResolvedValueOnce(
+      meetingDetail({
+        summary: { id: ID },
+        notes: "abc",
+        lines: [transcriptLine({ text: "From the re-read." })],
+      }),
+    );
+    act(() => recording({ phase: "stopping", meetingId: ID, startedAtMs: 0 }));
+    act(() => recording({ phase: "idle" }));
+    expect(await screen.findByText("From the re-read.")).toBeTruthy();
+
+    const after = screen.getByPlaceholderText(NOTES);
+    expect(after).toHaveValue("abcdef");
+    fireEvent.blur(after);
+    await waitFor(() => expect(ipc.saveNotes).toHaveBeenLastCalledWith(ID, "abcdef"));
   });
 });
