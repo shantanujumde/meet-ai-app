@@ -60,7 +60,9 @@ export function Review() {
       </div>
     );
   }
-  return <MeetingReview id={id} />;
+  // Keyed on the id (TUR-150): another meeting is a fresh screen, so nothing
+  // of the last one (its detail, a read still out) can show under this URL.
+  return <MeetingReview key={id} id={id} />;
 }
 
 function MeetingReview({ id }: { id: string }) {
@@ -108,17 +110,24 @@ function MeetingReview({ id }: { id: string }) {
   const cliFound = useCliFound(harnessIsNone === false);
   const copyPrompt = showsCopyPrompt({ harnessIsNone: harnessIsNone === true, cliFound });
 
+  // Bumped by every read, so only the newest one's answer is shown: an older
+  // read landing last must not put stale data back (TUR-150).
+  const reads = useRef(0);
   const load = useCallback(async (meetingId: string) => {
+    reads.current += 1;
+    const read = reads.current;
     setLoading(true);
     try {
-      setDetail(await readMeeting(meetingId));
+      const answer = await readMeeting(meetingId);
+      if (read !== reads.current) return;
+      setDetail(answer);
       setError(null);
     } catch (thrown) {
+      if (read !== reads.current) return;
       setError(toUiError(thrown));
       setDetail(null);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -339,7 +348,10 @@ function MeetingReview({ id }: { id: string }) {
 
       {isLive ? null : <MeetingTasks meetingId={summary.id} />}
 
+      {/* Keyed on the id: the notes on disk are read into a fresh pane, and a
+          re-read of this meeting never puts them back over what is typed. */}
       <NotesPane
+        key={summary.id}
         meetingId={summary.id}
         initialNotes={detail.notes}
         // A meeting that gains notes changes how it reads in the list.

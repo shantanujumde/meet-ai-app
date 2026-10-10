@@ -11,7 +11,7 @@
  */
 
 import { Check, ListTodo, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import {
   approveAllTasks,
@@ -40,11 +40,19 @@ export function MeetingTasks({ meetingId }: { meetingId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [rowErrors, setRowErrors] = useState<Record<string, UiError>>({});
 
+  // Bumped by every read, so only the newest one's answer is shown: an older
+  // read (of the meeting before, say) landing last must not replace it.
+  const reads = useRef(0);
   const load = useCallback(async () => {
+    reads.current += 1;
+    const read = reads.current;
     try {
-      setTasks(await meetingTasks(meetingId));
+      const answer = await meetingTasks(meetingId);
+      if (read !== reads.current) return;
+      setTasks(answer);
       setError(null);
     } catch (caught) {
+      if (read !== reads.current) return;
       setError(toUiError(caught));
     }
   }, [meetingId]);
