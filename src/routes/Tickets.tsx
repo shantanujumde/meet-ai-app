@@ -7,11 +7,13 @@
  * and a failure shows under the card's line with Retry.
  *
  * Local state rather than the global store: nothing else in the app reads
- * tickets, so the page loads them itself when it opens.
+ * tickets, so the page loads them itself when it opens, and reads them again,
+ * quietly, whenever the meetings folder changes (TUR-153). A meeting's
+ * suggested tasks are not listed here until approved (SPEC A26).
  */
 
 import { Plus, Settings as SettingsIcon, Ticket as TicketIcon } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { createTicket, listTickets, onMeetingsChanged, startWorkPrompt } from "@/ipc/client";
 import type { TicketStatus, TicketSummary, UiError } from "@/ipc/types";
@@ -57,11 +59,20 @@ export function Tickets() {
   }, []);
   const sync = useTicketSyncStates(replace);
 
+  // Bumped by every read, and by a ticket added here, so only the newest
+  // answer is shown: an older read landing last must not bring back a list
+  // from before a change (TUR-153).
+  const reads = useRef(0);
   const load = useCallback(async () => {
-    setError(null);
+    reads.current += 1;
+    const read = reads.current;
     try {
-      setTickets(await listTickets());
+      const answer = await listTickets();
+      if (read !== reads.current) return;
+      setTickets(answer);
+      setError(null);
     } catch (caught) {
+      if (read !== reads.current) return;
       setError(toUiError(caught));
     }
   }, []);
@@ -118,6 +129,7 @@ export function Tickets() {
       {formOpen ? (
         <NewTicketForm
           onCreated={(ticket) => {
+            reads.current += 1;
             setTickets((current) => [ticket, ...(current ?? [])]);
             setFormOpen(false);
           }}
