@@ -86,9 +86,9 @@ impl Fingerprint {
     }
 }
 
-/// Where a kept issue is filed: the ticket's meeting and number. Ticket
-/// numbers are only unique within one meeting plus the shared folder, so two
-/// meetings can both have a `TICK-0001`.
+/// Where a kept issue is filed: the ticket's meeting and number. New numbers
+/// are global (TUR-154), but an older folder or a copied meeting can still
+/// leave two meetings with a `TICK-0001`. [`super::SyncRuns`] uses it too.
 pub(super) type Key = (Option<String>, String);
 
 pub(super) fn key(ticket_id: &str, meeting_id: Option<&str>) -> Key {

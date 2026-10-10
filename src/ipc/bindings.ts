@@ -259,7 +259,7 @@ export const commands = {
 	 */
 	syncTask: (ticketId: string, meetingId: string | null) => typedError<meet_ai_lib_tickets_TicketSummary, meet_ai_lib_error_UiError>(__TAURI_INVOKE("sync_task", { ticketId, meetingId })),
 	/**  Stop a running Sync; its `sync_task` then fails with `agent-cancelled`. */
-	cancelSync: (ticketId: string) => __TAURI_INVOKE<void>("cancel_sync", { ticketId }),
+	cancelSync: (ticketId: string, meetingId: string | null) => __TAURI_INVOKE<void>("cancel_sync", { ticketId, meetingId }),
 	/**
 	 *  Forget the issue a Sync created but could not attach to this task
 	 *  (`sync-not-saved`, `sync-not-attached`), so the next Sync runs afresh. The

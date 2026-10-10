@@ -243,8 +243,9 @@ pub(crate) struct Busy {
     pub recording: Option<String>,
     /// Meetings stopped whose transcript is not final yet.
     pub transcribing: HashSet<String>,
-    /// Ticket ids with a Sync run going.
-    pub syncing_tickets: Vec<String>,
+    /// (meeting, ticket id) pairs with a Sync run going; `None` for a shared
+    /// ticket (TUR-154).
+    pub syncing_tickets: Vec<(Option<String>, String)>,
     /// Whether a meeting has a notes run going.
     pub notes_running: Box<dyn Fn(&str) -> bool + Send>,
 }
@@ -265,12 +266,13 @@ impl Busy {
             .collect()
     }
 
-    /// A Sync run is going for one of this meeting's own tickets.
+    /// A Sync run is going for one of this meeting's own tickets. Another
+    /// meeting's ticket with the same id does not count (TUR-154).
     fn syncing_in(&self, root: &Path, id: &str) -> bool {
         let tickets = root.join(id).join(store::TICKETS_DIR);
-        self.syncing_tickets
-            .iter()
-            .any(|ticket| tickets.join(format!("{ticket}.md")).is_file())
+        self.syncing_tickets.iter().any(|(meeting, ticket)| {
+            meeting.as_deref() == Some(id) && tickets.join(format!("{ticket}.md")).is_file()
+        })
     }
 }
 
@@ -471,7 +473,7 @@ mod tests {
         let busy = Busy {
             recording: Some(IDS[0].to_owned()),
             transcribing: HashSet::from([IDS[1].to_owned()]),
-            syncing_tickets: vec!["TICK-0007".to_owned()],
+            syncing_tickets: vec![(Some(IDS[3].to_owned()), "TICK-0007".to_owned())],
             notes_running: Box::new(|id| id == IDS[2]),
         };
 
@@ -484,6 +486,32 @@ mod tests {
         }
         assert!(tmp.path().join(IDS[4]).join("audio/segments.json").exists());
         assert!(tmp.path().join(IDS[4]).join("transcript.md").exists());
+    }
+
+    /// TUR-154: a Sync of one meeting's TICK-0007 does not keep another
+    /// meeting's audio just because it has a TICK-0007 too.
+    #[test]
+    fn a_sync_keeps_only_its_own_meeting_busy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (syncing, other) = (IDS[3], IDS[4]);
+        for id in [syncing, other] {
+            meeting(tmp.path(), id);
+            std::fs::write(
+                tmp.path().join(id).join("tickets/TICK-0007.md"),
+                "---\nid: TICK-0007\n---\n",
+            )
+            .unwrap();
+        }
+        let busy = Busy {
+            syncing_tickets: vec![(Some(syncing.to_owned()), "TICK-0007".to_owned())],
+            ..idle()
+        };
+
+        let report = run_in(tmp.path(), Retention::Days(0), SystemTime::now(), &busy).unwrap();
+
+        assert_eq!(report.deleted.len(), 1, "{report:?}");
+        assert!(mic(&tmp.path().join(syncing)).exists());
+        assert!(!mic(&tmp.path().join(other)).exists());
     }
 
     #[test]

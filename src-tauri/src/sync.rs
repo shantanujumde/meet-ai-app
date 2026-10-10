@@ -27,14 +27,13 @@ pub mod auto;
 pub mod check;
 mod errors;
 mod kept;
+mod runs;
 mod save;
 pub mod tracker;
 
-use std::collections::HashMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use agent::{AgentError, CancelHandle, ClaudeHarness, CodexHarness, Harness, Job};
@@ -49,83 +48,17 @@ use crate::config::{self, AgentConfig, Harness as HarnessChoice, TicketsConfig};
 use crate::error::{UiError, on_blocking_pool};
 use crate::folder_move::FolderGate;
 use crate::meetings;
-use crate::sync::save::{Created, Fingerprint, Unsaved};
+use crate::sync::save::{Created, Fingerprint};
 use crate::tickets::{self, TicketSummary};
 
 pub(crate) use errors::{agent_error, tracker_name};
+pub use runs::SyncRuns;
 
 /// The ticket's file is not where it should be.
 pub(crate) const TICKET_MISSING: &str = "ticket-missing";
 
 /// The ticket is already in the tracker.
 pub(crate) const ALREADY_SYNCED: &str = "sync-already-synced";
-
-/// The Sync runs in flight, by ticket id, so the window can cancel one and a
-/// second press on the same task is refused instead of making two issues.
-/// Also the issues a run created but could not save, so Retry saves them
-/// instead of making another (`save.rs`).
-#[derive(Debug, Default)]
-pub struct SyncRuns {
-    running: Mutex<HashMap<String, CancelHandle>>,
-    unsaved: Unsaved,
-}
-
-impl SyncRuns {
-    fn lock(&self) -> MutexGuard<'_, HashMap<String, CancelHandle>> {
-        // The map holds only cancel flags, so a panic mid-insert leaves
-        // nothing half-written worth refusing over.
-        self.running.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Marks `ticket_id` as syncing until the returned claim is dropped.
-    fn claim(&self, ticket_id: &str) -> Result<Claim<'_>, UiError> {
-        let mut runs = self.lock();
-        if runs.contains_key(ticket_id) {
-            return Err(UiError::app(
-                "sync-busy",
-                format!("{ticket_id} is already being synced."),
-            ));
-        }
-        let cancel = CancelHandle::new();
-        runs.insert(ticket_id.to_owned(), cancel.clone());
-        Ok(Claim {
-            runs: self,
-            ticket_id: ticket_id.to_owned(),
-            cancel,
-        })
-    }
-
-    /// Writes the kept issues a folder move kept from being written; for the
-    /// end of the move, which holds the gate itself (`save.rs`).
-    pub fn after_folder_move(&self) {
-        self.unsaved.flush(&meetings::root);
-    }
-
-    /// Stops the Sync run for `ticket_id`, if there is one.
-    fn cancel(&self, ticket_id: &str) {
-        if let Some(cancel) = self.lock().get(ticket_id) {
-            cancel.cancel();
-        }
-    }
-
-    /// The ticket ids with a Sync run going, for the retention job (TUR-45).
-    pub fn running_tickets(&self) -> Vec<String> {
-        self.lock().keys().cloned().collect()
-    }
-}
-
-/// One ticket's place in [`SyncRuns`]; dropping it frees the ticket.
-struct Claim<'a> {
-    runs: &'a SyncRuns,
-    ticket_id: String,
-    cancel: CancelHandle,
-}
-
-impl Drop for Claim<'_> {
-    fn drop(&mut self) {
-        self.runs.lock().remove(&self.ticket_id);
-    }
-}
 
 /// Everything a Sync run needs from the config.
 #[derive(Debug, Clone)]
@@ -201,8 +134,8 @@ pub async fn dismiss_unsaved_sync(
 /// Stop a running Sync; its `sync_task` then fails with `agent-cancelled`.
 #[tauri::command]
 #[specta::specta]
-pub fn cancel_sync(runs: State<'_, SyncRuns>, ticket_id: String) {
-    runs.cancel(&ticket_id);
+pub fn cancel_sync(runs: State<'_, SyncRuns>, ticket_id: String, meeting_id: Option<String>) {
+    runs.cancel(&ticket_id, meeting_id.as_deref());
 }
 
 /// A meeting's tasks: the ones in its own `tickets/` folder, where the notes
@@ -293,7 +226,7 @@ pub(crate) fn sync_in(
     meeting_id: Option<&str>,
     agent: impl FnOnce() -> Result<(Box<dyn Harness>, RunSettings), UiError>,
 ) -> Result<TicketSummary, UiError> {
-    let claim = runs.claim(ticket_id)?;
+    let claim = runs.claim(ticket_id, meeting_id)?;
     let created = match runs.unsaved.kept(gate, &root, ticket_id, meeting_id)? {
         Some(created) => created,
         None => {
