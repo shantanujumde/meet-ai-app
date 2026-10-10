@@ -23,6 +23,9 @@ mod tap_buffers;
 /// The IO proc's body: the tap's buffers into the shared capture ring (TUR-163).
 mod tap_io;
 
+/// Core Audio property reads, size-checked, for every file here (TUR-177).
+pub(crate) mod props;
+
 /// Which rate the tap's IO proc really runs at, and watching it change.
 mod tap_rate;
 

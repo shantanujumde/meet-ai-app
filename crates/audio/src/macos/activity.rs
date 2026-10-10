@@ -36,14 +36,13 @@
 // Adapted from github.com/island-io/mila/Mila/Audio/MeetingDetector.swift @ 605babbd5c2639841fc4ea366f9d3cf9f4a21118 (Apache-2.0)
 
 use std::ffi::c_void;
-use std::ptr::NonNull;
 use std::sync::OnceLock;
 
-use objc2_core_audio::{self as ca, AudioObjectID, AudioObjectPropertyAddress};
-use objc2_core_foundation::{CFBundle, CFRetained, CFString, CFURL};
+use objc2_core_audio::{self as ca, AudioObjectID};
+use objc2_core_foundation::{CFBundle, CFURL};
 
 use super::device_watch::{default_input_device, default_output_device};
-use super::tap_rate::read as read_property;
+use super::props::{self, read as read_property};
 use crate::Error;
 use crate::activity::DeviceActivity;
 use crate::mic_users::{MicUsers, ProcessFacts, name_apps, outermost_app_dir};
@@ -63,32 +62,16 @@ fn is_running_somewhere(device: AudioObjectID) -> Result<bool, Error> {
     if device == ca::kAudioObjectUnknown {
         return Ok(false);
     }
-    let mut address = AudioObjectPropertyAddress {
-        mSelector: ca::kAudioDevicePropertyDeviceIsRunningSomewhere,
-        mScope: ca::kAudioObjectPropertyScopeGlobal,
-        mElement: ca::kAudioObjectPropertyElementMain,
-    };
-    let mut size = std::mem::size_of::<u32>() as u32;
-    let mut value: u32 = 0;
-    // SAFETY: the property is a scalar `UInt32` of an audio device; `size`
-    // and `value` describe a `u32` that outlives the call, and no qualifier
-    // is passed (size 0, null pointer).
-    let status = unsafe {
-        ca::AudioObjectGetPropertyData(
-            device,
-            std::ptr::NonNull::from(&mut address),
-            0,
-            std::ptr::null(),
-            std::ptr::NonNull::from(&mut size),
-            std::ptr::NonNull::from(&mut value).cast(),
-        )
-    };
-    if status != 0 {
-        return Err(Error::DeviceRead(format!(
-            "AudioObjectGetPropertyData(DeviceIsRunningSomewhere) on device {device} failed: \
-             OSStatus {status}"
-        )));
-    }
+    let (selector, scope) = (
+        ca::kAudioDevicePropertyDeviceIsRunningSomewhere,
+        ca::kAudioObjectPropertyScopeGlobal,
+    );
+    // SAFETY: the property is a scalar `UInt32` of an audio device.
+    let value: u32 = unsafe { props::read(device, selector, scope) }.map_err(|e| {
+        Error::DeviceRead(format!(
+            "AudioObjectGetPropertyData(DeviceIsRunningSomewhere) on device {device} failed: {e}"
+        ))
+    })?;
     Ok(value != 0)
 }
 
@@ -149,51 +132,13 @@ fn facts(pid: u32, listed: Option<&AudioProcess>, with_responsible: bool) -> Pro
 /// object has no such property (macOS older than 14) or the read fails.
 fn process_objects() -> Option<Vec<AudioObjectID>> {
     let system = ca::kAudioObjectSystemObject as AudioObjectID;
-    let mut address = AudioObjectPropertyAddress {
-        mSelector: ca::kAudioHardwarePropertyProcessObjectList,
-        mScope: ca::kAudioObjectPropertyScopeGlobal,
-        mElement: ca::kAudioObjectPropertyElementMain,
-    };
-    let mut size = 0u32;
-    // SAFETY: `address` and `size` are valid for the call; no qualifier is
-    // passed (size 0, null pointer).
-    let status = unsafe {
-        ca::AudioObjectGetPropertyDataSize(
-            system,
-            NonNull::from(&mut address),
-            0,
-            std::ptr::null(),
-            NonNull::from(&mut size),
-        )
-    };
-    if status != 0 {
-        tracing::debug!(status, "no Core Audio process list (macOS older than 14?)");
-        return None;
-    }
-    let count = size as usize / std::mem::size_of::<AudioObjectID>();
-    let mut ids = vec![ca::kAudioObjectUnknown; count];
-    if count == 0 {
-        return Some(ids);
-    }
-    // SAFETY: `ids` holds `size` bytes of `AudioObjectID`s and outlives the
-    // call; Core Audio writes at most `size` bytes and updates `size`.
-    let status = unsafe {
-        ca::AudioObjectGetPropertyData(
-            system,
-            NonNull::from(&mut address),
-            0,
-            std::ptr::null(),
-            NonNull::from(&mut size),
-            NonNull::from(&mut ids[0]).cast(),
-        )
-    };
-    if status != 0 {
-        tracing::debug!(status, "reading the Core Audio process list failed");
-        return None;
-    }
-    // The list can shrink between the two calls.
-    ids.truncate(size as usize / std::mem::size_of::<AudioObjectID>());
-    Some(ids)
+    let (selector, scope) = (
+        ca::kAudioHardwarePropertyProcessObjectList,
+        ca::kAudioObjectPropertyScopeGlobal,
+    );
+    props::read_array(system, selector, scope)
+        .inspect_err(|e| tracing::debug!("no Core Audio process list (macOS older than 14?): {e}"))
+        .ok()
 }
 
 /// One process object's pid and running flags. `None` when it has gone (the
@@ -201,10 +146,10 @@ fn process_objects() -> Option<Vec<AudioObjectID>> {
 fn audio_process(object: AudioObjectID) -> Option<AudioProcess> {
     let global = ca::kAudioObjectPropertyScopeGlobal;
     // SAFETY: `kAudioProcessPropertyPID` is a `pid_t` (`i32`).
-    let pid: i32 = unsafe { read_property(object, ca::kAudioProcessPropertyPID, global) }?;
+    let pid: i32 = unsafe { read_property(object, ca::kAudioProcessPropertyPID, global) }.ok()?;
     // SAFETY: both running flags are `UInt32`s.
     let input: u32 =
-        unsafe { read_property(object, ca::kAudioProcessPropertyIsRunningInput, global) }?;
+        unsafe { read_property(object, ca::kAudioProcessPropertyIsRunningInput, global) }.ok()?;
     // SAFETY: as above.
     let output: u32 =
         unsafe { read_property(object, ca::kAudioProcessPropertyIsRunningOutput, global) }
@@ -220,19 +165,10 @@ fn audio_process(object: AudioObjectID) -> Option<AudioProcess> {
 /// `kAudioProcessPropertyBundleID`: a `CFStringRef` the caller owns (+1),
 /// released when the [`CFRetained`] drops. Empty for a process without one.
 fn bundle_id(object: AudioObjectID) -> Option<String> {
-    // SAFETY: the property's value is a `CFStringRef`, a pointer.
-    let raw: *const CFString = unsafe {
-        read_property(
-            object,
-            ca::kAudioProcessPropertyBundleID,
-            ca::kAudioObjectPropertyScopeGlobal,
-        )
-    }?;
-    // SAFETY: non-null, a `CFString`, and handed over with a +1 retain that
-    // this `CFRetained` now owns and releases.
-    let owned: CFRetained<CFString> =
-        unsafe { CFRetained::from_raw(NonNull::new(raw.cast_mut())?) };
-    Some(owned.to_string()).filter(|id| !id.is_empty())
+    let scope = ca::kAudioObjectPropertyScopeGlobal;
+    props::read_cf_string(object, ca::kAudioProcessPropertyBundleID, scope)
+        .ok()
+        .filter(|id| !id.is_empty())
 }
 
 /// The identifier in the `Info.plist` of the outermost app bundle `path` is

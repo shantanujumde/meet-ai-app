@@ -11,38 +11,22 @@
 //! [`crate::segments::CLOSE_ANCHOR_SLACK_MS`] (250 ms), the budget the
 //! on-disk format already allows a segment close to be late by.
 
-use objc2_core_audio::{self as ca, AudioObjectID, AudioObjectPropertyAddress};
+use objc2_core_audio::{self as ca, AudioObjectID};
 
+use super::props;
 use crate::Error;
 
 /// # Safety
 /// `selector` must be a scalar `AudioObjectID`-valued property of
 /// `kAudioObjectSystemObject` — true of both properties this module reads.
 unsafe fn system_object_device_id(selector: u32) -> Result<AudioObjectID, Error> {
-    let mut address = AudioObjectPropertyAddress {
-        mSelector: selector,
-        mScope: ca::kAudioObjectPropertyScopeGlobal,
-        mElement: ca::kAudioObjectPropertyElementMain,
-    };
-    let mut size = std::mem::size_of::<AudioObjectID>() as u32;
-    let mut value: AudioObjectID = ca::kAudioObjectUnknown;
-    let status = unsafe {
-        ca::AudioObjectGetPropertyData(
-            ca::kAudioObjectSystemObject as AudioObjectID,
-            std::ptr::NonNull::from(&mut address),
-            0,
-            std::ptr::null(),
-            std::ptr::NonNull::from(&mut size),
-            std::ptr::NonNull::from(&mut value).cast(),
-        )
-    };
-    if status != 0 {
-        return Err(Error::NoDevice(format!(
-            "AudioObjectGetPropertyData(0x{selector:08x}) on the system object failed: \
-             OSStatus {status}"
-        )));
-    }
-    Ok(value)
+    let system = ca::kAudioObjectSystemObject as AudioObjectID;
+    let scope = ca::kAudioObjectPropertyScopeGlobal;
+    unsafe { props::read(system, selector, scope) }.map_err(|e| {
+        Error::NoDevice(format!(
+            "AudioObjectGetPropertyData(0x{selector:08x}) on the system object failed: {e}"
+        ))
+    })
 }
 
 /// The current default output device id — what `SystemSource`'s tap rides

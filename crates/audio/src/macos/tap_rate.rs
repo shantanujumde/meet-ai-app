@@ -33,6 +33,8 @@ use objc2_core_audio_types::AudioStreamBasicDescription;
 pub(crate) use crate::rate_meter::{CallbackMeter, RateMeter, snap};
 pub(crate) use crate::rate_meter::{Measured, Rates, decide, plausible};
 
+use super::props::{address, read, read_array};
+
 /// Every rate Core Audio reports for one tap.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ReportedRates {
@@ -67,39 +69,6 @@ pub(crate) fn effective_rate(reported: ReportedRates, measured: Option<f64>) -> 
     decide(reported.chosen(), measured)
 }
 
-fn address(selector: u32, scope: u32) -> AudioObjectPropertyAddress {
-    AudioObjectPropertyAddress {
-        mSelector: selector,
-        mScope: scope,
-        mElement: ca::kAudioObjectPropertyElementMain,
-    }
-}
-
-/// # Safety
-/// `T` must match the C layout of `selector`'s value on `object_id`.
-pub(crate) unsafe fn read<T: Copy>(
-    object_id: AudioObjectID,
-    selector: u32,
-    scope: u32,
-) -> Option<T> {
-    let mut addr = address(selector, scope);
-    let mut size = std::mem::size_of::<T>() as u32;
-    let mut value = std::mem::MaybeUninit::<T>::uninit();
-    let status = unsafe {
-        ca::AudioObjectGetPropertyData(
-            object_id,
-            NonNull::from(&mut addr),
-            0,
-            std::ptr::null(),
-            NonNull::from(&mut size),
-            NonNull::new(value.as_mut_ptr().cast())?,
-        )
-    };
-    // SAFETY: `noErr` with the full size written means Core Audio filled a `T`.
-    (status == 0 && size as usize == std::mem::size_of::<T>())
-        .then(|| unsafe { value.assume_init() })
-}
-
 fn nominal_rate(device_id: AudioObjectID) -> Option<f64> {
     // SAFETY: `kAudioDevicePropertyNominalSampleRate` is a `Float64`.
     unsafe {
@@ -109,6 +78,7 @@ fn nominal_rate(device_id: AudioObjectID) -> Option<f64> {
             ca::kAudioObjectPropertyScopeGlobal,
         )
     }
+    .ok()
 }
 
 /// The virtual format rate of the aggregate's last input stream. The tap is
@@ -122,7 +92,8 @@ fn input_stream_rate(device_id: AudioObjectID) -> Option<f64> {
             *streams.last()?,
             ca::kAudioStreamPropertyVirtualFormat,
             ca::kAudioObjectPropertyScopeGlobal,
-        )?
+        )
+        .ok()?
     };
     Some(format.mSampleRate)
 }
@@ -130,44 +101,13 @@ fn input_stream_rate(device_id: AudioObjectID) -> Option<f64> {
 /// A device's input streams (`kAudioDevicePropertyStreams`, input scope), in
 /// the order the IO proc's buffer list carries them. `None` on a failed read.
 pub(crate) fn input_streams(device_id: AudioObjectID) -> Option<Vec<AudioObjectID>> {
-    let mut addr = address(
+    let (selector, scope) = (
         ca::kAudioDevicePropertyStreams,
         ca::kAudioObjectPropertyScopeInput,
     );
-    let mut size = 0u32;
-    // SAFETY: valid address and out-pointer for the duration of the call.
-    let status = unsafe {
-        ca::AudioObjectGetPropertyDataSize(
-            device_id,
-            NonNull::from(&mut addr),
-            0,
-            std::ptr::null(),
-            NonNull::from(&mut size),
-        )
-    };
-    let count = size as usize / std::mem::size_of::<AudioObjectID>();
-    if status != 0 || count == 0 {
-        return None;
-    }
-    let mut streams = vec![ca::kAudioObjectUnknown; count];
-    let mut size = (count * std::mem::size_of::<AudioObjectID>()) as u32;
-    // SAFETY: `streams` holds `size` bytes of `AudioStreamID`s.
-    let status = unsafe {
-        ca::AudioObjectGetPropertyData(
-            device_id,
-            NonNull::from(&mut addr),
-            0,
-            std::ptr::null(),
-            NonNull::from(&mut size),
-            NonNull::new(streams.as_mut_ptr().cast())?,
-        )
-    };
-    let written = size as usize / std::mem::size_of::<AudioObjectID>();
-    if status != 0 || written == 0 {
-        return None;
-    }
-    streams.truncate(written.min(count));
-    Some(streams)
+    read_array(device_id, selector, scope)
+        .ok()
+        .filter(|streams| !streams.is_empty())
 }
 
 /// The devices whose rates decide [`effective_rate`].

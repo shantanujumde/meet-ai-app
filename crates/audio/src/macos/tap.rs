@@ -33,13 +33,13 @@ use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2_core_audio::{
     self as ca, AudioDeviceIOProcID, AudioHardwareCreateAggregateDevice,
-    AudioHardwareCreateProcessTap, AudioObjectID, AudioObjectPropertyAddress, CATapDescription,
-    CATapMuteBehavior,
+    AudioHardwareCreateProcessTap, AudioObjectID, CATapDescription, CATapMuteBehavior,
 };
 use objc2_core_audio_types::{AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp};
 use objc2_core_foundation::{CFArray, CFBoolean, CFDictionary, CFRetained, CFString, CFType};
 use objc2_foundation::{NSArray, NSNumber, NSString, NSUUID};
 
+use super::props;
 use super::tap_buffers::{LayoutProbe, TapBuffers};
 use super::tap_guard::{AggregateDevice, IoProc, TapObject};
 use super::tap_io::TapCallback;
@@ -78,47 +78,32 @@ fn cf_bool_type(b: bool) -> CFRetained<CFType> {
     }
 }
 
+/// A global property of `object_id`, or the error naming the read.
+///
 /// # Safety
-/// `object_id` must name a live `AudioObject`, and `T` must match the
-/// property's actual C layout (`AudioObjectID` for a device-id property,
-/// `AudioStreamBasicDescription` for a format property, etc — exactly like
-/// the Swift probe's generic `audioObjectProperty<T>`).
+/// As [`props::read`]: `T` must match the property's C layout.
 unsafe fn get_property<T: Copy>(object_id: AudioObjectID, selector: u32) -> Result<T, Error> {
-    let mut address = AudioObjectPropertyAddress {
-        mSelector: selector,
-        mScope: ca::kAudioObjectPropertyScopeGlobal,
-        mElement: ca::kAudioObjectPropertyElementMain,
-    };
-    let mut size = std::mem::size_of::<T>() as u32;
-    let mut value = std::mem::MaybeUninit::<T>::uninit();
-    let status = unsafe {
-        ca::AudioObjectGetPropertyData(
-            object_id,
-            std::ptr::NonNull::from(&mut address),
-            0,
-            std::ptr::null(),
-            std::ptr::NonNull::from(&mut size),
-            std::ptr::NonNull::from(&mut value).cast(),
-        )
-    };
-    if status != 0 {
-        return Err(Error::NoDevice(format!(
-            "AudioObjectGetPropertyData(0x{selector:08x}) on object {object_id} failed: OSStatus {status}"
-        )));
-    }
-    // SAFETY: a `noErr` status guarantees Core Audio wrote a full `T`.
-    Ok(unsafe { value.assume_init() })
+    let scope = ca::kAudioObjectPropertyScopeGlobal;
+    unsafe { props::read(object_id, selector, scope) }.map_err(|e| {
+        Error::NoDevice(format!(
+            "AudioObjectGetPropertyData(0x{selector:08x}) on object {object_id} failed: {e}"
+        ))
+    })
 }
 
 fn output_device_uid(device_id: AudioObjectID) -> Result<String, Error> {
-    // SAFETY: `kAudioDevicePropertyDeviceUID` returns a `CFStringRef` the
-    // caller owns (the "Copy" naming convention) — read as a raw pointer,
-    // then immediately wrapped so it releases on drop rather than leaking.
-    let raw: *mut CFString = unsafe { get_property(device_id, ca::kAudioDevicePropertyDeviceUID)? };
-    let ptr = std::ptr::NonNull::new(raw)
-        .ok_or_else(|| Error::NoDevice("device has no UID".to_string()))?;
-    let uid: CFRetained<CFString> = unsafe { CFRetained::from_raw(ptr) };
-    Ok(uid.to_string())
+    let (scope, selector) = (
+        ca::kAudioObjectPropertyScopeGlobal,
+        ca::kAudioDevicePropertyDeviceUID,
+    );
+    props::read_cf_string(device_id, selector, scope).map_err(|e| {
+        Error::NoDevice(match e {
+            props::ReadError::Null => "device has no UID".to_string(),
+            e => format!(
+                "AudioObjectGetPropertyData(0x{selector:08x}) on object {device_id} failed: {e}"
+            ),
+        })
+    })
 }
 
 /// The signature Core Audio's `AudioDeviceIOBlock` requires: `(inNow,

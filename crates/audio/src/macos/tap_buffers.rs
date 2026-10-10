@@ -21,7 +21,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use objc2_core_audio::{self as ca, AudioObjectID};
 use objc2_core_audio_types::{AudioStreamBasicDescription, kAudioFormatFlagIsNonInterleaved};
 
-use super::tap_rate::{input_streams, read};
+use super::props::read;
+use super::tap_rate::input_streams;
 
 /// How many buffers at the end of the IO proc's list belong to the tap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +63,7 @@ impl TapBuffers {
                 ca::kAudioStreamPropertyVirtualFormat,
                 ca::kAudioObjectPropertyScopeGlobal,
             )
+            .ok()
         });
         let chosen = last
             .filter(|format| format.mChannelsPerFrame > 0)
