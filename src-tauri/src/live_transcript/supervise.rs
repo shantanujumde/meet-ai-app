@@ -37,11 +37,19 @@ pub(super) fn supervise(
 ) {
     // Kept alive until every session has finished. Nothing documents that a
     // session may outlive the engine that started it, so none is asked to.
-    let mut engine = match open() {
-        Ok(engine) => engine,
-        Err(reason) => {
+    // Guarded (TUR-161): a panic while loading the engine is a failure the
+    // window hears now, not an "engine loading" left up for the meeting.
+    let mut engine = match guarded(|| Ok(open())) {
+        Ok(Ok(engine)) => engine,
+        Ok(Err(reason)) | Err(stt::Error::Engine(reason)) => {
             scope.fail(format!(
                 "Live transcription could not start: {reason}. {STILL_RECORDING}"
+            ));
+            return;
+        }
+        Err(error) => {
+            scope.fail(format!(
+                "Live transcription could not start: {error}. {STILL_RECORDING}"
             ));
             return;
         }
@@ -69,7 +77,9 @@ pub(super) fn supervise(
             move |update: &LiveUpdate| scope.update(update)
         };
         let options = SessionOptions::new(speaker).with_seq(seq.clone());
-        match engine.start_session(options, Box::new(sink.clone()), Box::new(listener)) {
+        let started =
+            guarded(|| engine.start_session(options, Box::new(sink.clone()), Box::new(listener)));
+        match started {
             Ok(session) => sessions.push((speaker, session, feed)),
             Err(error) => {
                 scope.fail(format!(
@@ -78,7 +88,7 @@ pub(super) fn supervise(
                 ));
                 // Close whatever did start, so no sidecar is left running.
                 for (_, session, _) in sessions {
-                    let _ = session.finish();
+                    let _ = guarded(|| session.finish());
                 }
                 return;
             }
@@ -241,7 +251,7 @@ fn feed_track(
             abort.store(true, Ordering::Release);
             scope.fail(format!(
                 "Live transcription of {} did not finish cleanly: {error}. The recording itself \
-                 is complete, and the meeting can be transcribed from its saved audio.",
+                 is complete, and its audio is kept in the meeting folder.",
                 track_name(speaker)
             ));
         }

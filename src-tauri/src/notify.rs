@@ -92,3 +92,22 @@ fn notes_ready_body(title: &str, tasks: u32) -> String {
         n => format!("{title}: the notes and {n} tasks are written."),
     }
 }
+
+/// Tell the user live transcription stopped while the meeting is still
+/// recording (TUR-161). A ⌘⇧R recording usually has its window hidden, so
+/// the pane saying so is not enough; a failed tick is told the same way
+/// ([`interrupted`]). `detail` is the sentence the pane shows. Posted once
+/// per meeting: only the first failure is reported.
+pub fn transcription_failed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, detail: &str) {
+    use tauri_plugin_notification::NotificationExt as _;
+
+    if let Err(error) = app
+        .notification()
+        .builder()
+        .title("meet-ai stopped transcribing")
+        .body(detail)
+        .show()
+    {
+        tracing::warn!(%error, "could not show the transcription-failed notification");
+    }
+}

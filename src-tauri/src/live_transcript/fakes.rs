@@ -18,6 +18,8 @@ use super::*;
 pub(super) struct CollectingNotify {
     pub(super) updates: Mutex<Vec<LiveUpdate>>,
     pub(super) statuses: Mutex<Vec<Status>>,
+    /// Every desktop notification a failure posted (TUR-161).
+    pub(super) failures: Mutex<Vec<String>>,
 }
 
 impl CollectingNotify {
@@ -47,6 +49,9 @@ impl Notify for CollectingNotify {
     fn status(&self, status: &Status) {
         self.statuses.lock().unwrap().push(status.clone());
     }
+    fn failed(&self, detail: &str) {
+        self.failures.lock().unwrap().push(detail.to_string());
+    }
 }
 
 /// Passes everything on to a shared collector. Handing one meeting its own
@@ -61,6 +66,9 @@ impl Notify for Forward {
     }
     fn status(&self, status: &Status) {
         self.0.status(status);
+    }
+    fn failed(&self, detail: &str) {
+        self.0.failed(detail);
     }
 }
 
@@ -77,6 +85,9 @@ pub(super) enum Mode {
     PanicOnFeed(usize),
     /// As `Echo`, but opening this speaker's session fails.
     FailSessionFor(Speaker),
+    /// Opening this speaker's session panics, and every session that did
+    /// open panics in `finish`: the clean-up is engine code too (TUR-161).
+    PanicSessionFor(Speaker),
     /// As `Echo`, but the first feed blocks until the gate opens, and
     /// then settles a line — an engine that comes back far too late.
     WedgeOnFeed(Gate),
@@ -150,6 +161,11 @@ impl SttEngine for FakeEngine {
         {
             return Err(stt::Error::Engine("no session for this track".into()));
         }
+        if let Mode::PanicSessionFor(speaker) = self.0
+            && speaker == options.speaker
+        {
+            panic!("the fake engine has a bug in start_session");
+        }
         // Uncapped, so the test never depends on how fast it ran.
         let options = options.with_volatile_per_sec(f64::INFINITY);
         Ok(Box::new(FakeSession {
@@ -207,6 +223,9 @@ impl SttSession for FakeSession {
     fn finish(mut self: Box<Self>) -> Result<SessionOutcome, stt::Error> {
         if let Mode::WedgeOnFinish = &self.mode {
             std::thread::sleep(Duration::from_secs(30));
+        }
+        if let Mode::PanicSessionFor(_) = &self.mode {
+            panic!("the fake engine has a bug in finish");
         }
         let discarded_volatile = self.emitter.withdraw();
         self.sink.flush()?;

@@ -21,8 +21,8 @@
 //! started with a tee per channel, and [`crate::live_transcript`] turns those
 //! into lines. It starts only once the audio is already flowing, it cannot fail
 //! a start or a stop, and on stop it is finished *after* the audio is safely
-//! closed — so the worst an engine can do is leave `transcript.md` short, which
-//! the WAVs can always put right.
+//! closed — so the worst an engine can do is leave `transcript.md` short, with
+//! the WAVs still whole. Every ending goes through [`stop::close`] (TUR-161).
 //!
 //! While a recording is live, a ticker thread ([`ticker`], TUR-97) owns the
 //! `RecordingSession` and calls its `tick()` every
@@ -47,6 +47,8 @@ mod interrupted;
 pub(crate) mod pause;
 mod phase;
 mod start_check;
+// TUR-161: every way a recording ends, through one helper.
+mod stop;
 mod ticker;
 
 use std::sync::{Arc, Mutex};
@@ -368,13 +370,22 @@ impl Recorder {
             Err((session, error)) => {
                 drop(inner);
                 tracing::error!(%error, "could not spawn the recording ticker thread");
-                if let Err(message) = session.stop() {
-                    tracing::warn!(%message, "the session behind a failed start did not stop cleanly");
-                }
-                transcription.finish(live_transcript::STOP_TIMEOUT);
-                Err(UiError::app(
-                    "recorder-failed",
-                    format!("could not start the recorder's checkpoint thread: {error}"),
+                let (session, transcription) = (Some(session), Some(transcription));
+                let ending = stop::Ending::NeverStarted;
+                Err(stop::close(
+                    &stop::Live(app),
+                    session,
+                    transcription,
+                    ending,
+                    |stopped| {
+                        if let Some(Err(message)) = stopped {
+                            tracing::warn!(%message, "the session behind a failed start did not stop cleanly");
+                        }
+                        UiError::app(
+                            "recorder-failed",
+                            format!("could not start the recorder's checkpoint thread: {error}"),
+                        )
+                    },
                 ))
             }
         }
@@ -408,192 +419,6 @@ impl Recorder {
             }
         }
         error
-    }
-
-    pub fn stop(&self, app: &AppHandle) -> Result<Status, UiError> {
-        let (ticker, transcription) = match self.claim_stopping(app) {
-            Err(status) => return Ok(status),
-            Ok(taken) => taken,
-        };
-        // Audio first: it is the part that cannot be redone. Only once the
-        // WAVs are closed — which also means every frame is in the tees — is
-        // the transcript given its (bounded) chance to catch up. Its outcome
-        // reaches the window as a `transcript://status` event, never as an
-        // error from Stop: a short transcript is not a failed recording.
-        let finish_transcription = move || {
-            if let Some(transcription) = transcription {
-                crate::agent_run::finish_then_run(app, transcription);
-            }
-        };
-
-        let Some(ticker) = ticker else {
-            tracing::error!("phase was Recording with no session attached; recovering to idle");
-            finish_transcription();
-            return Ok(self.transition(app, |inner| inner.end(None)));
-        };
-
-        // TUR-97: end the ticker and join it *before* the session's own stop.
-        // The session only comes back out of the join, so no tick can be
-        // running, or start, once we hold it — a checkpoint can never race the
-        // final header patch and `segments.json` write below. The wait is at
-        // most one tick already in flight; the thread is woken, not polled.
-        let session = match ticker.stop() {
-            Ok(Some(session)) => session,
-            Ok(None) => {
-                // Only a failed tick's handler keeps the session, and it only
-                // does so after claiming `Stopping` itself — which would have
-                // made our claim above lose. Unreachable in practice; recover
-                // rather than stick in `Stopping`.
-                tracing::error!("the recording ticker kept the session; recovering to idle");
-                finish_transcription();
-                return Ok(self.transition(app, |inner| inner.end(None)));
-            }
-            Err(message) => {
-                tracing::error!(%message, "the recording ticker died; the session went with it");
-                finish_transcription();
-                let error = UiError::app("recorder-failed", message);
-                self.transition(app, |inner| inner.end(Some(error.clone())));
-                return Err(error);
-            }
-        };
-
-        let stopped = session.stop();
-        finish_transcription();
-
-        match stopped {
-            Ok(_report) => Ok(self.transition(app, |inner| inner.end(None))),
-            Err(message) => {
-                tracing::warn!(message = %message, "recording did not stop cleanly");
-                // On the status as well as the return value: a stop from ⌘⇧R
-                // or the menu bar has no caller that shows the error.
-                let error = UiError::app("recorder-failed", message);
-                self.transition(app, |inner| inner.end(Some(error.clone())));
-                Err(error)
-            }
-        }
-    }
-
-    /// Claim `Recording -> Stopping` and take the session (inside its ticker)
-    /// and its transcript with it, or report the phase that beat us to it.
-    #[allow(clippy::type_complexity)]
-    fn claim_stopping(
-        &self,
-        app: &AppHandle,
-    ) -> Result<(Option<Ticker<RecordingSession>>, Option<Transcription>), Status> {
-        let mut inner = self.lock();
-        if inner.status.phase != Phase::Recording {
-            return Err(inner.status.clone());
-        }
-        inner.status.phase = Phase::Stopping;
-        let ticker = inner.ticker.take();
-        let transcription = inner.transcription.take();
-        let status = inner.status.clone();
-        drop(inner);
-        emit_state(app, &status);
-        Ok((ticker, transcription))
-    }
-
-    /// What a failed `tick()` means (TUR-97): the recording is over. Stop the
-    /// session so what is on disk is finalised, go back to `Idle`, and tell
-    /// the user — never keep showing `Recording` over a session that has
-    /// stopped checkpointing.
-    ///
-    /// Why stop rather than log and keep ticking: every error `tick()` returns
-    /// leaves the session unable to carry on. A checkpoint error is a failed
-    /// fsync, header patch or `segments.json` write, or the microphone having
-    /// stopped delivering audio — retrying the same disk or device five
-    /// seconds later is not a plan, and ticking on would mean a recording the
-    /// UI calls live while nothing on disk is being made crash-safe. A reopen
-    /// error is worse: `reopen_segment` stops both channels before it rebuilds
-    /// them, so a failure part-way leaves the session holding stopped sources,
-    /// capturing nothing. `meet-rec` agrees that a tick error ends the
-    /// recording (its loop `?`s out of it), but it drops the session without
-    /// `stop()`, abandoning the header patch; the app stops it instead. That
-    /// is safe after either kind of failure: both sources' `stop()` are
-    /// idempotent (a second call on a stopped channel re-syncs and re-patches
-    /// what is there), so this still writes the contract §7 graceful-stop
-    /// anchor for whatever audio did land.
-    ///
-    /// Runs on the ticker thread, so it must never join that thread: it takes
-    /// its own ticker out of `Inner` and detaches it. If a user's stop has
-    /// already claimed `Stopping` — it is blocked joining this thread — the
-    /// session is handed back through the join so that stop finishes it
-    /// exactly as it would have without the failure.
-    fn fail_mid_recording(
-        &self,
-        app: &AppHandle,
-        session: RecordingSession,
-        message: String,
-    ) -> Option<RecordingSession> {
-        let Some((stopping, transcription)) = self.claim_interrupted(&message) else {
-            return Some(session);
-        };
-        emit_state(app, &stopping);
-
-        // A panic in `stop()` must not strand the recorder in `Stopping`,
-        // where every toggle is ignored: this thread is about to end, and
-        // nobody else would ever move the phase on.
-        let stopped =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || session.stop()))
-                .unwrap_or_else(|payload| {
-                    Err(format!(
-                        "stopping panicked: {}",
-                        ticker::panic_message(&*payload)
-                    ))
-                });
-        // Audio first, then the transcript, as in `stop`.
-        if let Some(transcription) = transcription {
-            transcription.finish(live_transcript::STOP_TIMEOUT);
-        }
-        let stop_error = stopped.as_ref().err();
-        if let Some(stop_message) = stop_error {
-            tracing::warn!(message = %stop_message, "the failed recording did not stop cleanly");
-        }
-        let (idle, error) = self.end_interrupted(&message, stop_error.map(String::as_str));
-        emit_state(app, &idle);
-        // The same `UiError` the idle status carries, so the window and the
-        // notification cannot tell two different stories. It goes out
-        // because the window may be hidden, which is the normal case for a
-        // recording started with ⌘⇧R.
-        crate::notify::interrupted(app, &error.message);
-        None
-    }
-
-    /// The first half of [`Recorder::fail_mid_recording`]: claim
-    /// `Recording -> Stopping` for a failed tick and take what the stop needs.
-    /// `None` means a user's stop got there first and owns the ending.
-    ///
-    /// Split out (with [`Recorder::end_interrupted`]) so the state changes a
-    /// failed tick makes are testable on a real `Ticker` thread without an
-    /// `AppHandle` or Core Audio; what stays in `fail_mid_recording` is only
-    /// stopping the session and telling the app.
-    fn claim_interrupted(&self, message: &str) -> Option<(Status, Option<Transcription>)> {
-        let mut inner = self.lock();
-        if inner.status.phase != Phase::Recording {
-            tracing::error!(
-                %message,
-                "a recording tick failed while it was already being stopped"
-            );
-            return None;
-        }
-        tracing::error!(%message, "a recording tick failed; stopping the recording");
-        inner.status.phase = Phase::Stopping;
-        // This runs on the ticker's own thread, which must never join itself.
-        if let Some(own) = inner.ticker.take() {
-            own.detach();
-        }
-        let transcription = inner.transcription.take();
-        Some((inner.status.clone(), transcription))
-    }
-
-    /// The second half: back to `Idle` with the reason on the status, once
-    /// the session is stopped (`stop_error` is how that went). Returns the
-    /// idle status to announce and the error it carries.
-    fn end_interrupted(&self, message: &str, stop_error: Option<&str>) -> (Status, UiError) {
-        let error = interrupted::interrupted(message, stop_error);
-        let mut inner = self.lock();
-        inner.end(Some(error.clone()));
-        (inner.status.clone(), error)
     }
 }
 
@@ -716,96 +541,6 @@ mod tests {
         assert_eq!(json["error"]["domain"], "app");
         assert_eq!(json["error"]["kind"], "recording-interrupted");
         assert_eq!(json["error"]["message"], "disk full");
-    }
-
-    /// TUR-97 end to end, minus Core Audio: a tick that fails on the ticker
-    /// thread leaves the recorder `Idle` with the reason on its status — the
-    /// status `recording://state` carries, and the only place it is said —
-    /// and the next start clears it.
-    #[test]
-    fn a_failing_tick_leaves_an_idle_status_that_says_why_until_the_next_start() {
-        let recorder = Arc::new(Recorder::default());
-        {
-            let mut inner = recorder.lock();
-            inner.enter_starting().expect("a fresh recorder is idle");
-            inner.status.phase = Phase::Recording;
-            inner.status.meeting_id = Some("2026-09-30-1300-meeting".into());
-        }
-
-        // `fail_mid_recording`'s own two halves, with the parts that need an
-        // `AppHandle` and a real session — stopping it, the emits and the
-        // notification — left out. The phase seen between them is recorded
-        // so the test also sees the `Stopping` the window is shown.
-        let between = Arc::new(Mutex::new(None));
-        let on_fail = {
-            let (recorder, between) = (Arc::clone(&recorder), Arc::clone(&between));
-            move |state: u32, message: String| {
-                let Some((stopping, transcription)) = recorder.claim_interrupted(&message) else {
-                    return Some(state);
-                };
-                assert!(transcription.is_none(), "this test starts no transcript");
-                *between.lock().unwrap() = Some(stopping.phase);
-                let (idle, error) = recorder.end_interrupted(&message, None);
-                assert_eq!(
-                    idle.error.as_ref().map(|e| &e.message),
-                    Some(&error.message)
-                );
-                None
-            }
-        };
-        let ticker = Ticker::spawn(
-            "recording-test-fail",
-            std::time::Duration::from_millis(1),
-            0u32,
-            |_state: &mut u32| Err("mic fsync: disk full".to_string()),
-            on_fail,
-        )
-        .expect("spawns");
-
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while recorder.status().phase != Phase::Idle {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the failed tick never ended the recording"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        assert_eq!(ticker.stop().expect("joins cleanly"), None);
-        assert_eq!(*between.lock().unwrap(), Some(Phase::Stopping));
-
-        let status = recorder.status();
-        assert!(status.meeting_id.is_none());
-        assert!(status.started_at_ms.is_none());
-        let error = status.error.expect("the idle status says why");
-        assert_eq!(error.kind, "recording-interrupted");
-        assert!(
-            error.message.contains("mic fsync: disk full"),
-            "{}",
-            error.message
-        );
-
-        let starting = recorder
-            .lock()
-            .enter_starting()
-            .expect("idle again, so a new start is allowed");
-        assert_eq!(starting.phase, Phase::Starting);
-        assert!(
-            starting.error.is_none(),
-            "a new start clears the old reason"
-        );
-    }
-
-    /// A tick that fails while a user's stop is already under way leaves the
-    /// ending to that stop: nothing is claimed, no error is set, and the
-    /// session goes back through the join.
-    #[test]
-    fn a_failed_tick_during_a_user_stop_leaves_the_ending_to_that_stop() {
-        let recorder = Recorder::default();
-        recorder.lock().status.phase = Phase::Stopping;
-        assert!(recorder.claim_interrupted("mic fsync: disk full").is_none());
-        let status = recorder.status();
-        assert_eq!(status.phase, Phase::Stopping);
-        assert!(status.error.is_none());
     }
 
     /// A start the folder gate turned away lands on the idle status like one

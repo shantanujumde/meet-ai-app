@@ -194,8 +194,9 @@ pub async fn set_meeting_notes(
 }
 
 /// Finish the meeting's transcription, then start its notes run if
-/// `agent.auto_run` is on. The recorder's Stop calls this in place of
-/// `Transcription::finish`.
+/// `agent.auto_run` is on. Every recording that ended with its audio saved
+/// gets this, whether the user stopped it or it stopped on its own
+/// (`recording::stop::Ending::after_stop`, TUR-161).
 ///
 /// Stop waits for the transcript as long as it always has; the rest happens
 /// on a thread of its own, so the next recording is never held up by it.
@@ -288,6 +289,35 @@ fn auto_runs(settings: &Result<crate::config::AgentConfig, crate::config::Config
         Ok(settings) => settings.auto_run && settings.harness != crate::config::Harness::None,
         Err(_) => true,
     }
+}
+
+/// What [`after_stop`] does for a meeting whose transcript is already final,
+/// with `settings` as `config.jsonc` gives them: true when it starts the
+/// notes run. For the recorder's tests (TUR-161), which cannot build the
+/// `AppHandle` [`finish_then_run`] needs.
+#[cfg(test)]
+pub(crate) fn starts_notes_after_stop(
+    root: &Path,
+    meeting_id: &str,
+    settings: &Result<crate::config::AgentConfig, crate::config::ConfigError>,
+) -> bool {
+    struct Quiet;
+    impl Sink for Quiet {
+        fn status(&self, _: &Status) {}
+        fn notes_ready(&self, _: &str, _: u32) {}
+    }
+    let started = std::cell::Cell::new(false);
+    let agent_runs = AgentRuns::default();
+    after_stop(
+        &agent_runs,
+        root,
+        meeting_id,
+        settings,
+        |_| true,
+        &Quiet,
+        || started.set(true),
+    );
+    started.get()
 }
 
 /// The app is quitting: start no more runs and stop the ones going.

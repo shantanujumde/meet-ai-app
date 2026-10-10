@@ -332,6 +332,7 @@ fn a_sealed_meeting_ignores_late_writes() {
         board: Arc::clone(&live.board),
         generation: lock_or_recover(&live.board).generation,
         notify: notify.clone(),
+        stopping: Arc::default(),
     };
     scope.update(&LiveUpdate::Final(line(0, Speaker::You, "In time.")));
     scope.seal();
@@ -356,6 +357,7 @@ fn a_failure_is_not_overwritten_by_a_later_clean_finish() {
         board: Arc::clone(&live.board),
         generation: lock_or_recover(&live.board).generation,
         notify: notify.clone(),
+        stopping: Arc::default(),
     };
     scope.running("fake");
     scope.fail("first".into());
@@ -1117,4 +1119,133 @@ fn a_new_meeting_starts_with_no_dropped_frames() {
         status.dropped_frames, 0,
         "the last meeting's gaps are its own"
     );
+}
+
+// --- TUR-161: an engine that panics while loading, and the notification ---
+
+/// A panic while the engine loads (a whisper model, the Apple sidecar) is a
+/// failure the window hears at once, while the meeting is still on, not an
+/// "engine loading" left up until Stop finds a dead thread.
+#[test]
+fn an_engine_that_panics_while_loading_fails_at_once() {
+    let path_dir = temp_transcript("panic-open");
+    let live = LiveTranscript::default();
+    let notify = Arc::new(CollectingNotify::default());
+    let (mic_tee, mic_feed) = audio::tee::tee();
+
+    let transcription = live.start(
+        notify.clone(),
+        path_dir.path.clone(),
+        vec![(Speaker::You, mic_feed)],
+        Plan::live(Box::new(|| panic!("the model file is not what it says"))),
+    );
+    wait_for("the panic to be reported", || {
+        live.snapshot().status.state == State::Failed
+    });
+    let detail = live.snapshot().status.detail.unwrap();
+    assert!(detail.contains("could not start"), "{detail}");
+    assert!(detail.contains("crashed"), "{detail}");
+    assert!(
+        detail.contains("the model file is not what it says"),
+        "{detail}"
+    );
+    assert!(detail.contains("Recording continues"), "{detail}");
+    assert_eq!(*notify.failures.lock().unwrap(), [detail]);
+
+    mic_tee.offer(&chunk());
+    drop(mic_tee);
+    assert_eq!(transcription.finish(STOP_TIMEOUT).state, State::Failed);
+}
+
+/// A panic opening one track's session, and in the clean-up `finish` of the
+/// session that did open, still ends as one reported failure.
+#[test]
+fn a_session_that_panics_while_starting_fails_at_once_and_is_cleaned_up() {
+    let path_dir = temp_transcript("panic-session");
+    let live = LiveTranscript::default();
+    let notify = Arc::new(CollectingNotify::default());
+    let (mic_tee, mic_feed) = audio::tee::tee();
+    let (sys_tee, sys_feed) = audio::tee::tee();
+
+    let transcription = live.start(
+        notify.clone(),
+        path_dir.path.clone(),
+        vec![(Speaker::You, mic_feed), (Speaker::Others, sys_feed)],
+        fake(Mode::PanicSessionFor(Speaker::Others)),
+    );
+    wait_for("the panic to be reported", || {
+        live.snapshot().status.state == State::Failed
+    });
+    let detail = live.snapshot().status.detail.unwrap();
+    assert!(detail.contains("the other people on the call"), "{detail}");
+    assert!(detail.contains("crashed"), "{detail}");
+    // The supervisor got past the clean-up's panic and said it ended.
+    drop((mic_tee, sys_tee));
+    let started = Instant::now();
+    assert_eq!(transcription.finish(STOP_TIMEOUT).state, State::Failed);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "Stop did not wait"
+    );
+    assert_eq!(notify.failures.lock().unwrap().len(), 1);
+}
+
+/// The first failure while recording posts one notification; a second one,
+/// and a failure once the recording has stopped, post none.
+#[test]
+fn only_the_first_failure_while_recording_posts_a_notification() {
+    let live = LiveTranscript::default();
+    let notify = Arc::new(CollectingNotify::default());
+    let scope = Scope {
+        board: Arc::clone(&live.board),
+        generation: lock_or_recover(&live.board).generation,
+        notify: notify.clone(),
+        stopping: Arc::default(),
+    };
+    scope.running("fake");
+    scope.fail("first".into());
+    scope.fail("second".into());
+    assert_eq!(*notify.failures.lock().unwrap(), ["first"]);
+
+    let after_stop = Scope {
+        board: Arc::clone(&live.board),
+        generation: lock_or_recover(&live.board).generation,
+        notify: notify.clone(),
+        stopping: Arc::new(AtomicBool::new(true)),
+    };
+    lock_or_recover(&live.board).status = Status::idle();
+    after_stop.fail("too slow at Stop".into());
+    assert_eq!(live.snapshot().status.state, State::Failed);
+    assert_eq!(
+        *notify.failures.lock().unwrap(),
+        ["first"],
+        "the recording was over: the meeting view says it"
+    );
+}
+
+/// A failure mid-meeting from a real engine thread posts the notification.
+#[test]
+fn a_mid_meeting_engine_failure_posts_one_notification() {
+    let path_dir = temp_transcript("notify-mid");
+    let live = LiveTranscript::default();
+    let notify = Arc::new(CollectingNotify::default());
+    let (mic_tee, mic_feed) = audio::tee::tee();
+    let (sys_tee, sys_feed) = audio::tee::tee();
+
+    let transcription = live.start(
+        notify.clone(),
+        path_dir.path.clone(),
+        vec![(Speaker::You, mic_feed), (Speaker::Others, sys_feed)],
+        fake(Mode::FailOnFeed(1)),
+    );
+    mic_tee.offer(&chunk());
+    sys_tee.offer(&chunk());
+    wait_for("the failure", || {
+        live.snapshot().status.state == State::Failed
+    });
+    drop((mic_tee, sys_tee));
+    let _ = transcription.finish(STOP_TIMEOUT);
+    let failures = notify.failures.lock().unwrap();
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(failures[0].contains("the fake engine fell over"));
 }

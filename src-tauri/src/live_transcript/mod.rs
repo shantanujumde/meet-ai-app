@@ -20,8 +20,9 @@
 //!
 //! # Transcription is never allowed to cost the recording
 //!
-//! Audio is the one thing that cannot be recovered later; a transcript can be
-//! re-run from the WAVs. So nothing here can stop, stall, or fail a recording:
+//! Audio is the one thing that cannot be recovered later, and the WAVs stay in
+//! the meeting folder whatever the transcript does. So nothing here can stop,
+//! stall, or fail a recording:
 //!
 //! * The tee never blocks capture (see `audio::tee`). If the engine falls
 //!   behind, transcription loses frames, the WAV does not. The count goes
@@ -47,8 +48,8 @@
 //!
 //! `start_sec` on a live line is the position in the tee, which is the position
 //! in the WAV — the tee pads its own gaps so the two never drift apart. That is
-//! the same WAV-frame timeline a batch re-run reads, so a re-transcribed
-//! meeting and the live one agree about when things were said.
+//! the same WAV-frame timeline the batch path after Stop reads ([`after_stop`]),
+//! so a meeting transcribed either way agrees about when things were said.
 
 mod board;
 #[cfg(test)]
@@ -144,6 +145,9 @@ pub struct Snapshot {
 pub trait Notify: Send + Sync + 'static {
     fn update(&self, update: &LiveUpdate);
     fn status(&self, status: &Status);
+    /// Transcription failed while the meeting is still recording; `detail`
+    /// is the sentence `status` carried. Once per meeting (TUR-161).
+    fn failed(&self, _detail: &str) {}
 }
 
 impl<R: tauri::Runtime> Notify for tauri::AppHandle<R> {
@@ -160,6 +164,10 @@ impl<R: tauri::Runtime> Notify for tauri::AppHandle<R> {
         if let Err(error) = self.emit(TRANSCRIPT_STATUS_EVENT, status) {
             tracing::warn!(%error, "could not tell the window about a transcription status change");
         }
+    }
+
+    fn failed(&self, detail: &str) {
+        crate::notify::transcription_failed(self, detail);
     }
 }
 
@@ -255,6 +263,8 @@ impl LiveTranscript {
         plan: impl Into<Plan>,
     ) -> Transcription {
         let Plan { open, live } = plan.into();
+        // Not transcribing live, nothing can fail while the meeting records.
+        let stopping = Arc::new(AtomicBool::new(!live));
         let generation = {
             let mut board = lock_or_recover(&self.board);
             board.generation += 1;
@@ -266,6 +276,7 @@ impl LiveTranscript {
             board: Arc::clone(&self.board),
             generation,
             notify,
+            stopping: Arc::clone(&stopping),
         };
         scope.notify.status(&Status::idle());
 
@@ -279,7 +290,6 @@ impl LiveTranscript {
             };
         }
 
-        let stopping = Arc::new(AtomicBool::new(false));
         let transcript_path = transcript.clone();
         let (done_tx, done) = mpsc::channel();
         let spawned = std::thread::Builder::new()
@@ -310,9 +320,11 @@ impl LiveTranscript {
 }
 
 /// Appended to every failure sentence, because it is the thing the user most
-/// needs to know and the thing a bare error message never says.
-pub(super) const STILL_RECORDING: &str = "Recording continues, and the meeting can be transcribed from its \
-                               saved audio afterwards.";
+/// needs to know and the thing a bare error message never says. Only what is
+/// true (TUR-161): there is no command that transcribes a meeting again from
+/// its audio, so this does not promise one.
+pub(super) const STILL_RECORDING: &str =
+    "Recording continues, and its audio is kept in the meeting folder.";
 
 /// One meeting's transcription, held by the recorder until Stop.
 pub struct Transcription {
