@@ -19,6 +19,7 @@ use crate::{Error, SttEngine};
 mod options;
 pub use options::{
     Availability, EngineOptions, PARAKEET_NEEDS_A_MODEL, WHISPER_NEEDS_A_MODEL, options,
+    options_and_resolve,
 };
 
 // Whether the chosen engine and model honour the spoken language (TUR-157).

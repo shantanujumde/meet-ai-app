@@ -201,6 +201,7 @@ export type EngineChoices = {
   honoursLanguage: boolean;
   /** Why the picker is disabled, in one sentence; null when `honoursLanguage`. */
   languageIgnoredReason: string | null;
+  selectionError: UiError | null; // Why the saved engine cannot run, from the same probe (TUR-171).
 };
 
 /** One language whisper can be told the audio is in. */

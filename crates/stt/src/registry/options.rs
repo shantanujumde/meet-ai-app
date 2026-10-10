@@ -59,6 +59,20 @@ pub fn options(environment: &Environment) -> EngineOptions {
     options_with(environment, &probe_apple(environment))
 }
 
+/// [`options`], and [`super::resolve`] for `preference`, from one probe
+/// (TUR-171). Settings needs both: the picker, and whether the saved engine
+/// can run. Asking for them apart ran `meet-stt --probe` twice.
+pub fn options_and_resolve(
+    preference: Preference,
+    environment: &Environment,
+) -> (EngineOptions, Result<super::Selection, Error>) {
+    let apple = probe_apple(environment);
+    (
+        options_with(environment, &apple),
+        decide(preference, environment, &apple),
+    )
+}
+
 fn options_with(environment: &Environment, apple: &Option<Result<Probe, Error>>) -> EngineOptions {
     let auto = decide(Preference::Auto, environment, apple)
         .ok()
@@ -226,5 +240,26 @@ mod tests {
                 .ok()
                 .map(|s| s.engine)
         );
+    }
+
+    #[test]
+    fn options_and_resolve_answer_like_the_two_calls_they_replace() {
+        // No sidecar, so no probe runs; the answers must match asking apart.
+        let mut env = environment();
+        for preference in [
+            Preference::AppleSpeech,
+            Preference::Whisper,
+            Preference::Auto,
+        ] {
+            let (found, resolved) = options_and_resolve(preference, &env);
+            assert_eq!(found, options(&env));
+            assert_eq!(
+                resolved.map_err(|error| error.to_string()),
+                super::super::resolve(preference, &env).map_err(|error| error.to_string())
+            );
+        }
+        env.whisper_model = Some(PathBuf::from("/tmp/ggml-small.en-q5_1.bin"));
+        let (_, resolved) = options_and_resolve(Preference::Whisper, &env);
+        assert_eq!(resolved.unwrap().engine, Kind::Whisper);
     }
 }
