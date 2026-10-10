@@ -145,7 +145,7 @@ fn a_rename_reaches_the_list_row_and_a_blank_one_is_refused() {
     meeting(root, id);
 
     let blank = rename_in(root, id, "  ").unwrap_err();
-    assert_eq!((blank.domain, blank.kind), ("app", "blank-title"));
+    assert_eq!((blank.domain.as_str(), blank.kind), ("app", "blank-title"));
     assert_eq!(summary_of(root, id, Live::Nothing).title, "Meeting");
 
     assert_eq!(
@@ -158,9 +158,12 @@ fn a_rename_reaches_the_list_row_and_a_blank_one_is_refused() {
 #[test]
 fn store_errors_keep_the_kinds_the_ui_already_branches_on() {
     let bad_id: UiError = store::Error::BadId("..".into()).into();
-    assert_eq!((bad_id.domain, bad_id.kind), ("app", "bad-meeting-id"));
+    assert_eq!(
+        (bad_id.domain.as_str(), bad_id.kind),
+        ("app", "bad-meeting-id")
+    );
     let io: UiError = store::Error::Io(std::io::Error::other("disk gone")).into();
-    assert_eq!((io.domain, io.kind), ("app", "io"));
+    assert_eq!((io.domain.as_str(), io.kind), ("app", "io"));
     assert!(io.message.contains("disk gone"), "{}", io.message);
 }
 

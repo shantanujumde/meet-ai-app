@@ -69,7 +69,7 @@ pub struct BriefTicket {
     pub id: String,
     pub title: String,
     /// `open` or `in_progress`; `None` when the file has no valid status.
-    pub status: Option<String>,
+    pub status: Option<Status>,
 }
 
 /// The repo the meeting is about and what landed in it since last time.
@@ -158,7 +158,7 @@ fn brief_from(
         .map(|ticket| BriefTicket {
             id: ticket.id().unwrap_or_default(),
             title: ticket.title().unwrap_or_default(),
-            status: ticket.status().map(|status| status.as_str().to_owned()),
+            status: ticket.status(),
         })
         .collect();
     let previous = PreviousMeeting {

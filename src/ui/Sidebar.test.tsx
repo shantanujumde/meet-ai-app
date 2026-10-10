@@ -9,7 +9,13 @@ vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
 );
 
-const IDLE: RecordingStatus = { phase: "idle", meetingId: null, startedAtMs: null, error: null };
+const IDLE: RecordingStatus = {
+  phase: "idle",
+  meetingId: null,
+  startedAtMs: null,
+  pause: { pausedAtMs: null, pausedTotalMs: 0 },
+  error: null,
+};
 
 const STANDUP = meetingSummary({ id: "a", title: "Platform standup", time: "09:00" });
 const REVIEW = meetingSummary({ id: "b", title: "Design review", time: "14:00" });

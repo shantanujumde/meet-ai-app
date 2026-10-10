@@ -5,10 +5,12 @@
  * Re-exported from `./client`; import from there.
  */
 
+import { writable } from "@/lib/writable";
 import {
   type meet_ai_lib_calendar_signin_CalendarAccount as CalendarAccount,
   type meet_ai_lib_calendar_sources_CalendarSources as CalendarSources,
   commands,
+  DEFAULT_CALENDAR_SOURCES as RUST_DEFAULTS,
   type meet_ai_lib_calendar_signin_SignInProvider as SignInProvider,
   type meet_ai_lib_calendar_read_UnreadableCalendar as UnreadableCalendar,
 } from "./bindings";
@@ -19,13 +21,8 @@ export type { CalendarAccount, CalendarSources, SignInProvider, UnreadableCalend
 /** Both sign-ins, in the order the screens list them. */
 export const SIGN_IN_PROVIDERS: readonly SignInProvider[] = ["google", "microsoft"];
 
-/** What a fresh Mac has: the Calendar app on, no sign-in set up. */
-export const DEFAULT_CALENDAR_SOURCES: CalendarSources = {
-  calendarAppAvailable: true,
-  calendarApp: true,
-  configured: [],
-  connected: [],
-};
+/** What a fresh Mac has: the Calendar app on, no sign-in set up. From Rust (TUR-173). */
+export const DEFAULT_CALENDAR_SOURCES: CalendarSources = writable(RUST_DEFAULTS);
 
 /** Which sources this OS offers and which are set up. A config read only. */
 export async function calendarSources(): Promise<CalendarSources> {

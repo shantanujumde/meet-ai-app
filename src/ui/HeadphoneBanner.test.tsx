@@ -15,10 +15,17 @@ const RECORDING: RecordingStatus = {
   phase: "recording",
   meetingId: "m1",
   startedAtMs: 1,
+  pause: { pausedAtMs: null, pausedTotalMs: 0 },
   error: null,
 };
 
-const IDLE: RecordingStatus = { phase: "idle", meetingId: null, startedAtMs: null, error: null };
+const IDLE: RecordingStatus = {
+  phase: "idle",
+  meetingId: null,
+  startedAtMs: null,
+  pause: { pausedAtMs: null, pausedTotalMs: 0 },
+  error: null,
+};
 
 function warn(show: boolean, meetingId = "m1") {
   act(() => {

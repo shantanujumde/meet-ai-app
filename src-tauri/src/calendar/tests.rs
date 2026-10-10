@@ -83,7 +83,7 @@ fn a_denied_calendar_is_an_error_not_an_empty_day() {
     assert!(matches!(error, Error::PermissionDenied));
 
     let ui: UiError = error.into();
-    assert_eq!((ui.domain, ui.kind), ("app", "calendar-denied"));
+    assert_eq!((ui.domain.as_str(), ui.kind), ("app", "calendar-denied"));
 }
 
 #[test]

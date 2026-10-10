@@ -32,12 +32,19 @@ vi.mock("@/ipc/client", async () => ({
 
 const { useRecordingStore, watchRecordingState } = await import("./recording");
 
-const IDLE: RecordingStatus = { phase: "idle", meetingId: null, startedAtMs: null, error: null };
+const IDLE: RecordingStatus = {
+  phase: "idle",
+  meetingId: null,
+  startedAtMs: null,
+  pause: { pausedAtMs: null, pausedTotalMs: 0 },
+  error: null,
+};
 const STARTING: RecordingStatus = { ...IDLE, phase: "starting" };
 const RECORDING: RecordingStatus = {
   phase: "recording",
   meetingId: "2026-09-30-1000-meeting",
   startedAtMs: 0,
+  pause: { pausedAtMs: null, pausedTotalMs: 0 },
   error: null,
 };
 const INTERRUPTED: UiError = {

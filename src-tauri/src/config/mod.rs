@@ -94,6 +94,7 @@ pub use app_section::{AppConfig, app, set_app};
 pub use appearance_section::appearance_checked;
 pub use appearance_section::{AppearanceConfig, Theme, appearance, set_appearance};
 pub use audio_headphones::warn_no_headphones;
+pub use audio_mic::DEFAULT as DEFAULT_BUILTIN_MIC_WITH_BLUETOOTH;
 pub use audio_mic::{set_use_builtin_mic_with_bluetooth, use_builtin_mic_with_bluetooth};
 pub use audio_overlay::{set_show_recording_overlay, show_recording_overlay};
 pub use audio_section::Policy as RetentionPolicy;

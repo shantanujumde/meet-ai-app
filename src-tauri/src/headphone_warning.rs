@@ -21,10 +21,11 @@ use std::time::Duration;
 
 use audio::headphones::{OutputKind, default_output_kind, should_warn};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter as _, Listener as _};
+use tauri::{AppHandle, Emitter as _, Listener as _, Manager as _};
 
 use crate::events::{HEADPHONE_WARNING_EVENT, RECORDING_STATE_EVENT};
 use crate::lock::lock_or_recover;
+use crate::recording::{Phase, Recorder};
 
 /// How often the output is read while recording. A few seconds of a missing
 /// banner after plugging speakers in costs nothing; the read is cheap
@@ -126,21 +127,23 @@ impl Tracker {
 
 static TRACKER: Mutex<Tracker> = Mutex::new(Tracker::new());
 
-/// The meeting a recorder status payload says is recording: `meetingId`
-/// when `phase` is `recording`, else `None`.
-pub(crate) fn recording_meeting(payload: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(payload).ok()?;
-    if value.get("phase")?.as_str()? != "recording" {
-        return None;
-    }
-    value.get("meetingId")?.as_str().map(str::to_owned)
+/// The meeting the recorder's status says is recording: its id when the
+/// phase is `Recording`, else `None`. Read from [`Recorder::status`], not
+/// from the event's JSON, so a renamed field is a compile error (TUR-173).
+pub(crate) fn recording_meeting(phase: Phase, meeting_id: Option<String>) -> Option<String> {
+    (phase == Phase::Recording).then_some(meeting_id).flatten()
 }
 
 /// Start following the recorder.
 pub fn init(app: &AppHandle) {
     let handle = app.clone();
-    app.listen_any(RECORDING_STATE_EVENT, move |event| {
-        let change = lock_or_recover(&TRACKER).recorder(recording_meeting(event.payload()));
+    app.listen_any(RECORDING_STATE_EVENT, move |_event| {
+        let Some(recorder) = handle.try_state::<Recorder>() else {
+            return;
+        };
+        let status = recorder.status();
+        let now = recording_meeting(status.phase, status.meeting_id);
+        let change = lock_or_recover(&TRACKER).recorder(now);
         match change {
             Change::Started(meeting_id) => start_watch(&handle, meeting_id),
             Change::Stopped(Some(cleared)) => send(&handle, &cleared),

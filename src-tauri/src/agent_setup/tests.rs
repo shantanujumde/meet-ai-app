@@ -446,7 +446,10 @@ fn saving_over_a_broken_config_is_refused() {
     )
     .unwrap_err();
     let error = UiError::from(error);
-    assert_eq!((error.domain, error.kind), ("app", "invalid-config"));
+    assert_eq!(
+        (error.domain.as_str(), error.kind),
+        ("app", "invalid-config")
+    );
 }
 
 #[test]
@@ -601,7 +604,11 @@ fn each_failed_run_has_its_own_kind() {
     ];
     for (behavior, kind) in cases {
         let error = run_fake(behavior.clone(), Duration::from_secs(30)).unwrap_err();
-        assert_eq!((error.domain, error.kind), ("app", kind), "{behavior:?}");
+        assert_eq!(
+            (error.domain.as_str(), error.kind),
+            ("app", kind),
+            "{behavior:?}"
+        );
     }
 }
 
@@ -641,7 +648,7 @@ fn every_agent_error_maps_to_a_kind_and_keeps_its_sentence() {
     for (error, kind) in cases {
         let message = error.to_string();
         let ui = agent_error(error, None);
-        assert_eq!((ui.domain, ui.kind), ("app", kind));
+        assert_eq!((ui.domain.as_str(), ui.kind), ("app", kind));
         assert_eq!(ui.message, message);
     }
 }
@@ -702,7 +709,7 @@ fn cancel_stops_a_running_test() {
 fn testing_with_no_agent_picked_is_refused_without_looking() {
     let error = super::test_run::run(&choice(AgentHarness::None, "", None), &CancelHandle::new())
         .unwrap_err();
-    assert_eq!((error.domain, error.kind), ("app", "agent-none"));
+    assert_eq!((error.domain.as_str(), error.kind), ("app", "agent-none"));
 }
 
 /// TUR-160: quitting mid-Test stops the CLI and everything it started, and a

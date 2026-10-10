@@ -147,7 +147,13 @@ async function press(name: string) {
 }
 
 async function setPhase(phase: RecordingStatus["phase"]) {
-  const status: RecordingStatus = { phase, meetingId: "m", startedAtMs: 1, error: null };
+  const status: RecordingStatus = {
+    phase,
+    meetingId: "m",
+    startedAtMs: 1,
+    pause: { pausedAtMs: null, pausedTotalMs: 0 },
+    error: null,
+  };
   await act(async () => fake.onRecording?.(status));
 }
 

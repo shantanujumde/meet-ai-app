@@ -5,7 +5,6 @@
  * backend, reads return nothing and writes reject with `no-backend`.
  */
 
-import { listen } from "@tauri-apps/api/event";
 import {
   commands,
   type meet_ai_lib_detection_popup_Card,
@@ -13,7 +12,7 @@ import {
   type meet_ai_lib_detection_popup_PopupPrompt,
   PROMPT_POPUP_EVENT,
 } from "./bindings";
-import { hasBackend } from "./client";
+import { hasBackend, subscribe } from "./client";
 import { NO_BACKEND } from "./errors";
 import { toUiError } from "./types";
 
@@ -43,19 +42,7 @@ export async function answerPromptPopup(id: number, answer: PopupAnswer): Promis
 
 /** A new prompt for the popup; returns the unsubscribe. */
 export function onPromptPopup(handler: (shown: PopupPrompt) => void): () => void {
-  if (!hasBackend()) return () => {};
-  let stop: (() => void) | undefined;
-  let cancelled = false;
-  listen<PopupPrompt>(PROMPT_POPUP_EVENT, (event) => handler(event.payload))
-    .then((unlisten) => {
-      if (cancelled) unlisten();
-      else stop = unlisten;
-    })
-    .catch(() => {
-      // Nothing to listen to; the popup shows what `promptPopupCurrent` said.
-    });
-  return () => {
-    cancelled = true;
-    stop?.();
-  };
+  // Nothing to listen to without a backend: the popup shows what
+  // `promptPopupCurrent` said. A failed listen is logged (TUR-173).
+  return subscribe(PROMPT_POPUP_EVENT, handler);
 }

@@ -20,7 +20,13 @@ vi.mock("@/ipc/client", async (importOriginal) =>
 );
 
 const ID = "2026-09-30-1015-meeting";
-const IDLE: RecordingStatus = { phase: "idle", meetingId: null, startedAtMs: null, error: null };
+const IDLE: RecordingStatus = {
+  phase: "idle",
+  meetingId: null,
+  startedAtMs: null,
+  pause: { pausedAtMs: null, pausedTotalMs: 0 },
+  error: null,
+};
 const LIST: MeetingList = {
   root: "/Users/test/Meetings",
   rootExists: true,

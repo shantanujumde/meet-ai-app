@@ -67,8 +67,25 @@ pub struct TranscriptLine {
     /// `HH:MM:SS`, the utterance *start* (SPEC §3.4).
     pub time: String,
     /// `You` or `Others` (L5). Kept as the literal spec string.
-    pub speaker: String,
+    pub speaker: SpeakerLabel,
     pub text: String,
+}
+
+/// A line's speaker as `transcript.md` writes it (L5): `You` or `Others`,
+/// capitalised, unlike the live pane's lower-case `meeting_format::Speaker`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+pub enum SpeakerLabel {
+    You,
+    Others,
+}
+
+impl From<meeting_format::Speaker> for SpeakerLabel {
+    fn from(speaker: meeting_format::Speaker) -> Self {
+        match speaker {
+            meeting_format::Speaker::You => Self::You,
+            meeting_format::Speaker::Others => Self::Others,
+        }
+    }
 }
 
 /// A finished meeting, opened for review.
@@ -100,7 +117,7 @@ pub fn detail(id: &str, live: Live<'_>) -> Result<MeetingDetail, UiError> {
                 .map(|line| TranscriptLine {
                     seq: line.seq,
                     time: line.time.clone(),
-                    speaker: line.speaker.label().to_string(),
+                    speaker: line.speaker.into(),
                     text: line.text.clone(),
                 })
                 .collect(),

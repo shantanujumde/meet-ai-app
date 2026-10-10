@@ -120,6 +120,7 @@ impl LiveLine {
 /// Tagged for serde so it can go straight over a Tauri event channel without a
 /// second translation layer inventing its own names.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum LiveUpdate {
     /// Replace this speaker's live hypothesis with this line.
@@ -130,7 +131,11 @@ pub enum LiveUpdate {
     /// Clear this speaker's tail without appending anything. Sent when a
     /// hypothesis is withdrawn and at [`SttSession::finish`] time, so a guess
     /// that never finalized cannot sit on screen for the rest of the meeting.
-    Dropped { speaker: Speaker, seq: u64 },
+    Dropped {
+        speaker: Speaker,
+        #[cfg_attr(feature = "specta", specta(type = u32))]
+        seq: u64,
+    },
 }
 
 impl LiveUpdate {

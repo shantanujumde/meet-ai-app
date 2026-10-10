@@ -9,21 +9,10 @@
  */
 
 import { commands, type meet_ai_lib_settings_snapshot_SettingsSnapshot } from "./bindings";
-import { hasBackend, narrow } from "./client";
-import type { TrackerSettings, UiError } from "./types";
+import { call, hasBackend } from "./client";
 
-/**
- * The generated shape, with Rust's plain strings narrowed as `./types` does
- * for the commands each field stands in for.
- */
-export type SettingsSnapshot = Omit<
-  meet_ai_lib_settings_snapshot_SettingsSnapshot,
-  "agentError" | "tracker" | "trackerError"
-> & {
-  agentError: UiError | null;
-  tracker: TrackerSettings | null;
-  trackerError: UiError | null;
-};
+/** Every saved setting, as each card's own command would answer it. */
+export type SettingsSnapshot = meet_ai_lib_settings_snapshot_SettingsSnapshot;
 
 /**
  * The snapshot, or null with no Rust behind the window: then each card asks
@@ -31,5 +20,5 @@ export type SettingsSnapshot = Omit<
  */
 export async function settingsSnapshot(): Promise<SettingsSnapshot | null> {
   if (!hasBackend()) return null;
-  return narrow(() => commands.settingsSnapshot());
+  return call(() => commands.settingsSnapshot());
 }

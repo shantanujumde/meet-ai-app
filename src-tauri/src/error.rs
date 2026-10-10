@@ -17,19 +17,44 @@ use serde::Serialize;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UiError {
-    /// Which error enum this came from: `stt`, `model`, or `app`.
-    pub domain: &'static str,
+    /// Which error enum this came from.
+    pub domain: ErrorDomain,
     /// The stable variant tag. Safe to `switch` on.
     pub kind: &'static str,
     /// The error's own sentence. Display it; do not parse it.
     pub message: String,
 }
 
+/// [`UiError::domain`]: an enum, so the window's type is the closed union
+/// it branches on (TUR-173) rather than a `string`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum ErrorDomain {
+    /// `stt::Error`.
+    Stt,
+    /// `modelfetch::Error`.
+    Model,
+    /// The app shell itself, and the crates it maps into it.
+    App,
+}
+
+#[cfg(test)]
+impl ErrorDomain {
+    /// The name on the wire: `stt`, `model` or `app`. For tests to compare with.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stt => "stt",
+            Self::Model => "model",
+            Self::App => "app",
+        }
+    }
+}
+
 impl UiError {
     /// An error raised by the app shell itself rather than by a domain crate.
     pub fn app(kind: &'static str, message: impl Into<String>) -> Self {
         Self {
-            domain: "app",
+            domain: ErrorDomain::App,
             kind,
             message: message.into(),
         }
@@ -51,7 +76,7 @@ impl From<stt::Error> for UiError {
             stt::Error::Io(_) => "io",
         };
         Self {
-            domain: "stt",
+            domain: ErrorDomain::Stt,
             kind,
             message: error.to_string(),
         }
@@ -67,7 +92,7 @@ impl From<modelfetch::Error> for UiError {
             modelfetch::ErrorKind::Checksum => "checksum",
         };
         Self {
-            domain: "model",
+            domain: ErrorDomain::Model,
             kind,
             message: error.to_string(),
         }
@@ -79,8 +104,8 @@ impl From<store::Error> for UiError {
         // Kept in the `app` domain, with the same kinds the old in-shell reader
         // produced (`io`, `bad-meeting-id`), so moving the reader into `store`
         // changed no error the webview receives. A separate `store` domain is
-        // the cleaner shape, but `UiError['domain']` in src/ipc/types.ts is a
-        // closed union; widening it belongs with the UI that needs to tell
+        // the cleaner shape, but [`ErrorDomain`] is the closed union the
+        // window switches on; widening it belongs with the UI that needs to tell
         // the cases apart (TUR-102), not with the move. The two new kinds fall
         // through to the generic copy until then.
         match error {
@@ -160,14 +185,20 @@ mod tests {
         }
         .into();
 
-        assert_eq!((engine.domain, engine.kind), ("stt", "engine-unavailable"));
-        assert_eq!((checksum.domain, checksum.kind), ("model", "checksum"));
+        assert_eq!(
+            (engine.domain.as_str(), engine.kind),
+            ("stt", "engine-unavailable")
+        );
+        assert_eq!(
+            (checksum.domain.as_str(), checksum.kind),
+            ("model", "checksum")
+        );
 
         // Same tag in two domains must not collide into one UI branch.
         let download: UiError = modelfetch::Error::Download("timed out".into()).into();
         assert_ne!(
-            (engine.domain, engine.kind),
-            (download.domain, download.kind)
+            (engine.domain.as_str(), engine.kind),
+            (download.domain.as_str(), download.kind)
         );
     }
 
@@ -180,7 +211,7 @@ mod tests {
             panic!("the work fell over");
         }))
         .unwrap_err();
-        assert_eq!((error.domain, error.kind), ("app", "task-failed"));
+        assert_eq!((error.domain.as_str(), error.kind), ("app", "task-failed"));
     }
 
     #[test]

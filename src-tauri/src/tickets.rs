@@ -41,7 +41,7 @@ pub struct TicketSummary {
     pub title: String,
     /// `open`, `in_progress`, `done` or `dropped`; `None` when missing or
     /// not one of those.
-    pub status: Option<String>,
+    pub status: Option<ticket::Status>,
     /// The meeting folder id it came from; `None` for a hand-made ticket.
     pub meeting: Option<String>,
     pub body: String,
@@ -273,7 +273,7 @@ fn summarize(stem: &str, ticket: &Ticket) -> TicketSummary {
     TicketSummary {
         id: ticket.id().unwrap_or_else(|| stem.to_owned()),
         title: ticket.title().unwrap_or_else(|| stem.to_owned()),
-        status: ticket.status().map(|s| s.as_str().to_owned()),
+        status: ticket.status(),
         meeting: ticket.meeting().filter(|m| !m.is_empty()),
         body: ticket.body.clone(),
         has_problems: !ticket.problems.is_empty(),
@@ -458,7 +458,7 @@ mod tests {
         let made = create_in(root, "  Fix the thing  ", "Some notes").expect("create");
         assert_eq!(made.id, "TICK-0001");
         assert_eq!(made.title, "Fix the thing");
-        assert_eq!(made.status.as_deref(), Some("open"));
+        assert_eq!(made.status, Some(ticket::Status::Open));
         assert_eq!(made.meeting, None);
         assert_eq!(made.body, "Some notes\n");
         assert!(!made.has_problems);
@@ -674,7 +674,7 @@ mod tests {
         assert_eq!(approved.title, "Move sessions to Redis");
         assert_eq!(approved.meeting.as_deref(), Some(MEETING));
         assert_eq!(approved.meeting_title.as_deref(), Some("Platform standup"));
-        assert_eq!(approved.status.as_deref(), Some("open"));
+        assert_eq!(approved.status, Some(ticket::Status::Open));
         assert!(!approved.suggested);
         assert!(
             approved.body.contains("From the call."),

@@ -120,7 +120,7 @@ fn an_unknown_harness_is_an_error_not_a_silent_default() {
         "{error:?}"
     );
     let ui: crate::error::UiError = error.into();
-    assert_eq!((ui.domain, ui.kind), ("app", "unknown-harness"));
+    assert_eq!((ui.domain.as_str(), ui.kind), ("app", "unknown-harness"));
     assert!(ui.message.contains("codx"), "{}", ui.message);
 }
 
@@ -204,7 +204,7 @@ fn a_top_level_null_reads_as_defaults_but_is_never_overwritten() {
 fn a_missing_meetings_folder_keeps_its_own_ui_error_kind() {
     let error = ConfigError::Root(crate::error::UiError::app("no-home-dir", "no home folder"));
     let ui: crate::error::UiError = error.into();
-    assert_eq!((ui.domain, ui.kind), ("app", "no-home-dir"));
+    assert_eq!((ui.domain.as_str(), ui.kind), ("app", "no-home-dir"));
     assert_eq!(ui.message, "no home folder");
 }
 

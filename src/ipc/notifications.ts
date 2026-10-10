@@ -5,25 +5,18 @@
  * Re-exported from `./client`; import from there.
  */
 
+import { writable } from "@/lib/writable";
 import {
   commands,
   type meet_ai_lib_detection_settings_NotificationSettings as NotificationSettings,
+  DEFAULT_NOTIFICATION_SETTINGS as RUST_DEFAULTS,
 } from "./bindings";
 import { call, hasBackend } from "./client";
 
 export type { NotificationSettings };
 
-/** SPEC §3.5's `detection` defaults, plus TUR-78's one-minute lead time. */
-export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
-  remind: true,
-  remindBeforeMinutes: 1,
-  processes: true,
-  audioActivity: true,
-  minAttendees: 2,
-  callStart: true,
-  callEnd: true,
-  stopAfterSilence: true,
-};
+/** SPEC §3.5's `detection` defaults, plus TUR-78's lead time, from Rust (TUR-173). */
+export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = writable(RUST_DEFAULTS);
 
 /** The `detection` section of `config.jsonc`, as the card shows it. */
 export async function notificationSettings(): Promise<NotificationSettings> {

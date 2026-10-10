@@ -423,7 +423,7 @@ fn only_a_chosen_tracker_and_agent_are_set_up() {
 #[test]
 fn a_settings_change_queues_only_root_tickets_not_in_the_tracker() {
     let row = |id: &str| TicketSummary {
-        status: Some("open".to_owned()),
+        status: Some(store::ticket::Status::Open),
         ..crate::tickets::unreadable(id)
     };
     let mut synced = row("TICK-0002");
@@ -432,7 +432,7 @@ fn a_settings_change_queues_only_root_tickets_not_in_the_tracker() {
     let mut suggestion = row("TICK-0003");
     suggestion.suggested = true;
     let mut dropped = row("TICK-0004");
-    dropped.status = Some("dropped".to_owned());
+    dropped.status = Some(store::ticket::Status::Dropped);
     let mut linked = row("TICK-0005");
     linked.external_url = Some(URL.to_owned());
     let rows = [

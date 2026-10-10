@@ -46,10 +46,22 @@ const ROOT = "/Users/test/Meetings";
 const STANDUP = meetingSummary({ id: "2026-09-30-0900-standup", title: "Platform standup" });
 const REVIEW = meetingSummary({ id: "2026-09-30-1400-review", title: "Design review" });
 
-const IDLE: RecordingStatus = { phase: "idle", meetingId: null, startedAtMs: null, error: null };
+const IDLE: RecordingStatus = {
+  phase: "idle",
+  meetingId: null,
+  startedAtMs: null,
+  pause: { pausedAtMs: null, pausedTotalMs: 0 },
+  error: null,
+};
 
 function recordingInto(id: string): RecordingStatus {
-  return { phase: "recording", meetingId: id, startedAtMs: 0, error: null };
+  return {
+    phase: "recording",
+    meetingId: id,
+    startedAtMs: 0,
+    pause: { pausedAtMs: null, pausedTotalMs: 0 },
+    error: null,
+  };
 }
 
 function Where() {

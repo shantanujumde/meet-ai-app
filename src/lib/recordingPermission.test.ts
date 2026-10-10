@@ -54,7 +54,13 @@ test("system audio off says what the live recording does, in plain words", () =>
 });
 
 test("Record is disabled while denied, busy, starting or stopping (TUR-170)", () => {
-  const idle = { phase: "idle", meetingId: null, startedAtMs: null, error: null } as const;
+  const idle = {
+    phase: "idle",
+    meetingId: null,
+    startedAtMs: null,
+    pause: { pausedAtMs: null, pausedTotalMs: 0 },
+    error: null,
+  } as const;
   const granted = status("granted", []);
   expect(recordDisabled(idle, granted, false)).toBe(false);
   expect(recordDisabled({ ...idle, phase: "recording" }, granted, false)).toBe(false);

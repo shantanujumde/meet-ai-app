@@ -1241,7 +1241,7 @@ fn make_notes_now_is_refused_until_the_transcript_is_final() {
             // The engine is still saving: a press now is refused.
             let refused = refuse_while_transcribing(&runs, STANDUP).unwrap_err();
             assert_eq!(
-                (refused.domain, refused.kind),
+                (refused.domain.as_str(), refused.kind),
                 ("app", TRANSCRIPT_NOT_FINAL)
             );
             assert_eq!(

@@ -26,7 +26,7 @@ use crate::events::{
     TRANSCRIPT_STATUS_EVENT, TRANSCRIPT_UPDATE_EVENT,
 };
 use crate::sync::{self, tracker};
-use crate::{commands, search};
+use crate::{commands, ipc_defaults, search};
 
 pub fn builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
@@ -160,6 +160,36 @@ pub fn builder() -> Builder<tauri::Wry> {
         .typ::<crate::lifecycle::NavigateTo>()
         .typ::<crate::hooks::app::HookFailed>()
         .typ::<crate::watch::WatchProblem>()
+        // TUR-173: every event payload is generated, so a renamed field
+        // fails `pnpm typecheck` instead of reading `undefined`.
+        .typ::<crate::engine::ProgressEvent>()
+        .typ::<crate::watch::Changed>()
+        .typ::<stt::session::LiveUpdate>()
+        // TUR-173: the defaults the window shows with no Rust side to ask.
+        .constant(
+            "DEFAULT_NOTIFICATION_SETTINGS",
+            ipc_defaults::notification_settings(),
+        )
+        .constant("DEFAULT_AUDIO_RETENTION", ipc_defaults::audio_retention())
+        .constant("DEFAULT_AGENT_CHOICE", ipc_defaults::agent_choice())
+        .constant("DEFAULT_NOTES_AUTO_RUN", ipc_defaults::notes_auto_run())
+        .constant(
+            "DEFAULT_BUILTIN_MIC_WITH_BLUETOOTH",
+            ipc_defaults::builtin_mic_with_bluetooth(),
+        )
+        .constant("DEFAULT_TODAYS_MEETINGS", ipc_defaults::todays_meetings())
+        .constant("DEFAULT_CALENDAR_SOURCES", ipc_defaults::calendar_sources())
+        .constant("DEFAULT_APP_SETTINGS", ipc_defaults::app_settings())
+        .constant(
+            "DEFAULT_MENU_BAR_COUNTDOWN",
+            ipc_defaults::menu_bar_countdown(),
+        )
+        .constant("DEFAULT_APPEARANCE", ipc_defaults::appearance())
+        .constant("DEFAULT_TRACKER_SETTINGS", ipc_defaults::tracker_settings())
+        .constant(
+            "DEFAULT_ENGINE_ENVIRONMENT",
+            ipc_defaults::engine_environment(),
+        )
 }
 
 #[cfg(test)]

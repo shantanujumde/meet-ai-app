@@ -12,12 +12,54 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager as _};
 
 use super::{agent_error, find_binary};
+use crate::agent_setup::AgentHarness;
 use crate::config::{self, Harness as HarnessChoice, TicketsConfig};
 use crate::error::{UiError, on_blocking_pool};
 use crate::folder_move::FolderGate;
 
-/// Trackers the Sync prompt knows how to name.
-pub const TRACKERS: [&str; 3] = ["linear", "jira", "github"];
+/// The trackers the Sync prompt knows how to name. An enum, so the window's
+/// type is the union it switches on (TUR-173); `config.jsonc` still holds the
+/// plain string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum Tracker {
+    Linear,
+    Jira,
+    Github,
+}
+
+impl Tracker {
+    const ALL: [Self; 3] = [Self::Linear, Self::Jira, Self::Github];
+
+    /// The name `config.jsonc` and the Sync prompt use.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Linear => "linear",
+            Self::Jira => "jira",
+            Self::Github => "github",
+        }
+    }
+
+    /// The exact name only; `None` for one meet-ai does not know.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|tracker| tracker.as_str() == name)
+    }
+
+    /// A saved `tickets.tracker` as the window shows it. A hand-edited name
+    /// meet-ai does not know reads as the default tracker, as other bad
+    /// config values read as their defaults.
+    pub(crate) fn shown(name: &str) -> Self {
+        Self::parse(name).unwrap_or_else(|| {
+            tracing::warn!(
+                tracker = name,
+                "config.jsonc's tickets.tracker is not one meet-ai knows; showing the default"
+            );
+            Self::parse(&TicketsConfig::default().tracker).unwrap_or(Self::Linear)
+        })
+    }
+}
 
 /// Longest MCP server name accepted from the window.
 const MAX_SERVER_NAME: usize = 200;
@@ -26,12 +68,11 @@ const MAX_SERVER_NAME: usize = 200;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TrackerSettings {
-    /// `linear`, `jira` or `github`.
-    pub tracker: String,
+    pub tracker: Tracker,
     /// The MCP server name as the agent's CLI lists it.
     pub tracker_mcp: String,
-    /// `agent.harness`: `claude-code`, `codex` or `none`.
-    pub harness: String,
+    /// `agent.harness`.
+    pub harness: AgentHarness,
     /// Whether `config.jsonc` names the tracker and server itself. False when
     /// `tracker` and `tracker_mcp` are only the shipped defaults: then no
     /// ticket is sent, and the window must not treat them as saved.
@@ -142,6 +183,12 @@ pub(crate) fn current() -> Result<TrackerSettings, UiError> {
     Ok(settings_from(tickets, chosen, harness))
 }
 
+/// The shipped defaults, not chosen: what the window shows with no Rust
+/// side to ask (TUR-173).
+pub(crate) fn defaults() -> TrackerSettings {
+    settings_from(TicketsConfig::default(), false, HarnessChoice::default())
+}
+
 /// What `set_tracker` hands back: the tickets it saved, which the user chose.
 fn saved_settings(tickets: TicketsConfig, harness: HarnessChoice) -> TrackerSettings {
     settings_from(tickets, true, harness)
@@ -150,9 +197,9 @@ fn saved_settings(tickets: TicketsConfig, harness: HarnessChoice) -> TrackerSett
 /// The window's view of `tickets`, `chosen` and the agent.
 fn settings_from(tickets: TicketsConfig, chosen: bool, harness: HarnessChoice) -> TrackerSettings {
     TrackerSettings {
-        tracker: tickets.tracker,
+        tracker: Tracker::shown(&tickets.tracker),
         tracker_mcp: tickets.tracker_mcp,
-        harness: harness.as_str().to_owned(),
+        harness: harness.into(),
         chosen,
     }
 }
@@ -160,7 +207,7 @@ fn settings_from(tickets: TicketsConfig, chosen: bool, harness: HarnessChoice) -
 /// The window's values, checked: a known tracker and a plain server name.
 pub(crate) fn checked(tracker: &str, tracker_mcp: &str) -> Result<TicketsConfig, UiError> {
     let tracker = tracker.trim();
-    if !TRACKERS.contains(&tracker) {
+    if Tracker::parse(tracker).is_none() {
         return Err(UiError::app(
             "bad-tracker",
             format!("{tracker:?} is not a tracker meet-ai knows. Pick Linear, Jira or GitHub."),
@@ -210,7 +257,7 @@ mod tests {
 
         let raw = with_tickets("", &checked("linear", " claude.ai Linear ").unwrap()).unwrap();
         let saved = settings_in(&raw);
-        assert_eq!(saved.tracker, "linear");
+        assert_eq!(saved.tracker, Tracker::Linear);
         assert_eq!(saved.tracker_mcp, "claude.ai Linear");
         assert!(saved.chosen, "{raw}");
     }
@@ -231,9 +278,9 @@ mod tests {
         assert_eq!(harness, HarnessChoice::Codex);
 
         let saved = saved_settings(tickets, harness);
-        assert_eq!(saved.tracker, "jira");
+        assert_eq!(saved.tracker, Tracker::Jira);
         assert_eq!(saved.tracker_mcp, "Atlassian");
-        assert_eq!(saved.harness, "codex");
+        assert_eq!(saved.harness, AgentHarness::Codex);
         assert!(saved.chosen);
 
         let unknown = r#"{ "agent": { "harness": "codx" } }"#;
