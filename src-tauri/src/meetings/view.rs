@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use audio::segments::duration_ms;
 use audio::wav_repair::classify_audio;
 use serde::Serialize;
-use store::folder_name::{prettify_slug, split_folder_name};
+use store::folder_name::split_folder_name;
 
 use super::list::{Live, live_id};
 use super::root::root;
@@ -192,7 +192,7 @@ fn existing_meeting_dir(id: &str) -> Result<PathBuf, UiError> {
 /// Build a list row from a folder's summary. The audio beside it is never
 /// read, only its two 44-byte headers and `segments.json` ([`classify_audio`]).
 pub(super) fn summarize(folder: &store::folder::FolderSummary, is_live: bool) -> MeetingSummary {
-    let (date, time, slug) = split_folder_name(&folder.id);
+    let (date, time, _) = split_folder_name(&folder.id);
 
     let (line_count, last_timestamp) = match &folder.transcript {
         Some(stats) => (stats.line_count, stats.last_time.clone()),
@@ -202,12 +202,7 @@ pub(super) fn summarize(folder: &store::folder::FolderSummary, is_live: bool) ->
     // meeting.md's title wins: the calendar's, the agent's or the user's
     // (TUR-103). A meeting.md with broken frontmatter has none and falls back
     // to the folder slug, which is never wrong, only less specific.
-    let title = folder
-        .meeting
-        .as_ref()
-        .and_then(|meeting| meeting.title())
-        .or_else(|| slug.map(prettify_slug))
-        .unwrap_or_else(|| folder.id.clone());
+    let title = store::meeting::display_title(folder.meeting.as_ref(), &folder.id);
 
     let audio = classify_audio(&folder.path.join(AUDIO));
     let recording_state = if is_live {

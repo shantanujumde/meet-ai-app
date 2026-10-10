@@ -31,15 +31,12 @@ mod runs;
 mod save;
 pub mod tracker;
 
-use std::fs;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent::{AgentError, CancelHandle, Harness, Job};
 use prompts::push_ticket::{PushTicketInput, Synced, parse_sync_reply, render_push_ticket_from};
-use store::folder_name::{prettify_slug, split_folder_name};
-use store::meeting::Meeting;
+use store::meeting::{Meeting, display_date, display_title};
 use store::ticket::{self, Ticket};
 use tauri::{AppHandle, Manager as _, State};
 use tauri_plugin_opener::OpenerExt as _;
@@ -346,17 +343,9 @@ fn push_ticket_input(
     let mut meeting_date = None;
     if let Some(id) = &meeting_id {
         let dir = store::folder::meeting_dir(root, id)?;
-        let file = dir.join(store::MEETING_FILE);
-        if let Some(meeting) = Meeting::read(&file)? {
-            meeting_title = meeting.title();
-            meeting_date = meeting.date();
-        }
-        let (day, time, slug) = split_folder_name(id);
-        meeting_title =
-            meeting_title.or_else(|| Some(slug.map(prettify_slug).unwrap_or_else(|| id.clone())));
-        meeting_date = meeting_date
-            .or_else(|| day.map(|day| format!("{day} {}", time.unwrap_or_default())))
-            .map(|date| date.trim().to_owned());
+        let meeting = Meeting::read(&dir.join(store::MEETING_FILE))?;
+        meeting_title = Some(display_title(meeting.as_ref(), id));
+        meeting_date = display_date(meeting.as_ref(), id);
     }
     Ok(PushTicketInput {
         ticket_id: found.id().unwrap_or_else(|| ticket_id.to_owned()),
@@ -383,31 +372,16 @@ pub(crate) fn due_in(body: &str) -> Option<String> {
 
 // --- finding tickets --------------------------------------------------------
 
-/// The ticket's file: in its meeting's `tickets/` folder first, then in the
-/// shared one at the root.
+/// The ticket's file ([`tickets::find`]). An id that is not a ticket id is
+/// refused as one; a file that is not there is [`TICKET_MISSING`].
 fn find_ticket(root: &Path, ticket_id: &str, meeting_id: Option<&str>) -> Result<PathBuf, UiError> {
-    // A ticket id, never a path: it comes from the window.
-    if ticket::parse_id(ticket_id).is_none() {
-        return Err(UiError::app(
-            "bad-ticket-id",
-            format!("{ticket_id:?} is not a ticket id."),
-        ));
-    }
-    let file = format!("{ticket_id}.md");
-    let mut dirs = Vec::new();
-    if let Some(id) = meeting_id.filter(|id| !id.is_empty()) {
-        dirs.push(store::folder::meeting_dir(root, id)?.join(store::TICKETS_DIR));
-    }
-    dirs.push(root.join(store::TICKETS_DIR));
-    dirs.into_iter()
-        .map(|dir| dir.join(&file))
-        .find(|path| path.is_file())
-        .ok_or_else(|| {
-            UiError::app(
-                TICKET_MISSING,
-                format!("Could not find the file for {ticket_id}."),
-            )
-        })
+    tickets::check_ticket_id(ticket_id)?;
+    tickets::find(root, ticket_id, meeting_id)?.ok_or_else(|| {
+        UiError::app(
+            TICKET_MISSING,
+            format!("Could not find the file for {ticket_id}."),
+        )
+    })
 }
 
 /// [`meeting_tasks`] under `root`.
@@ -417,11 +391,8 @@ pub(crate) fn meeting_tasks_in(
 ) -> Result<Vec<TicketSummary>, UiError> {
     let dir = store::folder::meeting_dir(root, meeting_id)?.join(store::TICKETS_DIR);
     let mut rows: Vec<TicketSummary> = Vec::new();
-    for (stem, path) in ticket_files(&dir)? {
-        let mut summary = match Ticket::read(&path) {
-            Ok(found) => tickets::summary_of(&stem, &found),
-            Err(_) => tickets::unreadable(&stem),
-        };
+    for (stem, path) in tickets::files(&dir)? {
+        let mut summary = tickets::summary_at(&stem, &path);
         // Written by the notes run inside the meeting's folder, so it is this
         // meeting's even if the file does not say so; and not approved yet.
         summary.meeting.get_or_insert_with(|| meeting_id.to_owned());
@@ -441,28 +412,6 @@ pub(crate) fn meeting_tasks_in(
     });
     tickets::name_meetings(root, &mut rows);
     Ok(rows)
-}
-
-/// The `.md` files in `dir` as `(file stem, path)`, by name. A missing folder
-/// is an empty list.
-fn ticket_files(dir: &Path) -> Result<Vec<(String, PathBuf)>, UiError> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error.into()),
-    };
-    let mut files = Vec::new();
-    for entry in entries {
-        let path = entry?.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") || !path.is_file() {
-            continue;
-        }
-        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            files.push((stem.to_owned(), path.clone()));
-        }
-    }
-    files.sort();
-    Ok(files)
 }
 
 /// The synced issue's address, checked the same way a Sync reply is.

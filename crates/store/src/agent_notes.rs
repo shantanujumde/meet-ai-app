@@ -68,7 +68,6 @@ use yaml_rust2::Yaml;
 use yaml_rust2::yaml::Hash;
 
 use crate::folder::meeting_dir;
-use crate::folder_name::{prettify_slug, split_folder_name};
 use crate::meeting::Meeting;
 use crate::meeting_title;
 use crate::ticket::{self, Status, Ticket};
@@ -319,12 +318,7 @@ pub(crate) fn notes_are_off(meeting: &Meeting) -> bool {
 
 /// The title a brand-new `meeting.md` gets: the folder's slug, prettified, or
 /// the id itself for a folder someone renamed by hand.
-pub(crate) fn default_title(meeting_id: &str) -> String {
-    match split_folder_name(meeting_id) {
-        (_, _, Some(slug)) => prettify_slug(slug),
-        _ => meeting_id.to_owned(),
-    }
-}
+pub(crate) use crate::meeting::folder_title as default_title;
 
 fn ticket_path(tickets_dir: &Path, id: &str) -> PathBuf {
     tickets_dir.join(format!("{id}.md"))

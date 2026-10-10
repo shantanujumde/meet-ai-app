@@ -195,10 +195,7 @@ fn approve_in(
     check_ticket_id(ticket_id)?;
     let path = suggested::approve(root, meeting_id, ticket_id, self_writes)
         .map_err(|error| suggestion_error(error, ticket_id))?;
-    let mut summary = match Ticket::read(&path) {
-        Ok(found) => summarize(ticket_id, &found),
-        Err(_) => unreadable(ticket_id),
-    };
+    let mut summary = summary_at(ticket_id, &path);
     summary.meeting.get_or_insert_with(|| meeting_id.to_owned());
     name_meetings(root, std::slice::from_mut(&mut summary));
     Ok(summary)
@@ -226,7 +223,7 @@ fn discard_in(
 }
 
 /// A ticket id, never a path: it comes from the window.
-fn check_ticket_id(ticket_id: &str) -> Result<(), UiError> {
+pub(crate) fn check_ticket_id(ticket_id: &str) -> Result<(), UiError> {
     if ticket::parse_id(ticket_id).is_some() {
         return Ok(());
     }
@@ -298,6 +295,15 @@ pub(crate) fn list_under(root: &Path) -> Result<Vec<TicketSummary>, UiError> {
     list_in(root)
 }
 
+/// The ticket file at `path`, named `stem`, as a list row; [`unreadable`]
+/// when it cannot be read.
+pub(crate) fn summary_at(stem: &str, path: &Path) -> TicketSummary {
+    match Ticket::read(path) {
+        Ok(found) => summarize(stem, &found),
+        Err(_) => unreadable(stem),
+    }
+}
+
 /// A ticket file that could not be read, still listed, flagged, so it is not
 /// silently lost.
 pub(crate) fn unreadable(stem: &str) -> TicketSummary {
@@ -343,22 +349,14 @@ fn meeting_title(root: &Path, meeting_id: &str) -> Option<String> {
         .flatten()
         .and_then(|meeting| meeting.title())
         .filter(|title| !title.trim().is_empty());
-    written.or_else(|| Some(folder_title(meeting_id)))
+    written.or_else(|| Some(store::meeting::folder_title(meeting_id)))
 }
 
-/// The folder's slug made readable, as a meeting with no `meeting.md` is
-/// titled.
-fn folder_title(meeting_id: &str) -> String {
-    match store::folder_name::split_folder_name(meeting_id) {
-        (_, _, Some(slug)) => store::folder_name::prettify_slug(slug),
-        _ => meeting_id.to_owned(),
-    }
-}
-
-/// The `.md` files in the tickets folder as `(file stem, path)`. A missing
-/// folder is an empty list.
-fn ticket_files(root: &Path) -> Result<Vec<(String, PathBuf)>, UiError> {
-    let entries = match fs::read_dir(tickets_dir(root)) {
+/// The `.md` files in the tickets folder `dir` (the shared one, or a
+/// meeting's) as `(file stem, path)`, by name. A missing folder is an empty
+/// list.
+pub(crate) fn files(dir: &Path) -> Result<Vec<(String, PathBuf)>, UiError> {
+    let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.into()),
@@ -373,16 +371,41 @@ fn ticket_files(root: &Path) -> Result<Vec<(String, PathBuf)>, UiError> {
             files.push((stem.to_owned(), path.clone()));
         }
     }
+    files.sort();
     Ok(files)
+}
+
+/// The file of ticket `ticket_id`: in meeting `meeting_id`'s `tickets/`
+/// folder first, then in the shared one at the root, where the Tickets
+/// screen keeps hand-made tickets. `None` when neither has it, and for an id
+/// that is not a plain file name (it comes from the window). Each caller
+/// says how it refuses an id or a missing file.
+pub(crate) fn find(
+    root: &Path,
+    ticket_id: &str,
+    meeting_id: Option<&str>,
+) -> Result<Option<PathBuf>, UiError> {
+    let plain =
+        !ticket_id.is_empty() && !ticket_id.starts_with('.') && !ticket_id.contains(['/', '\\']);
+    if !plain {
+        return Ok(None);
+    }
+    let file = format!("{ticket_id}.md");
+    let mut dirs = Vec::new();
+    if let Some(id) = meeting_id.filter(|id| !id.is_empty()) {
+        dirs.push(store::folder::meeting_dir(root, id)?.join(store::TICKETS_DIR));
+    }
+    dirs.push(tickets_dir(root));
+    Ok(dirs
+        .into_iter()
+        .map(|dir| dir.join(&file))
+        .find(|path| path.is_file()))
 }
 
 fn list_in(root: &Path) -> Result<Vec<TicketSummary>, UiError> {
     let mut rows: Vec<(Option<u32>, TicketSummary)> = Vec::new();
-    for (stem, path) in ticket_files(root)? {
-        let summary = match Ticket::read(&path) {
-            Ok(ticket) => summarize(&stem, &ticket),
-            Err(_) => unreadable(&stem),
-        };
+    for (stem, path) in files(&tickets_dir(root))? {
+        let summary = summary_at(&stem, &path);
         rows.push((ticket::parse_id(&summary.id), summary));
     }
     // Newest (highest number) first; ids that are not numbers go last.

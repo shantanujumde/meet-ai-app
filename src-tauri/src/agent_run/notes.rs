@@ -12,7 +12,6 @@ use std::time::Duration;
 use agent::{AgentError, CancelHandle, Harness, Job};
 use prompts::wrap_up::{Target, WrapUpInput, render_wrap_up_from};
 use store::agent_notes::{self, Analysis, AnalyzedBy};
-use store::folder_name::{prettify_slug, split_folder_name};
 use store::meeting::Meeting;
 use store::watcher::SelfWrites;
 
@@ -170,8 +169,8 @@ fn prepare(root: &Path, meeting_id: &str) -> Result<String, Failure> {
         failure::could_not_start(format!("{} could not be read: {error}", store::NOTES_FILE))
     })?;
     let input = WrapUpInput {
-        title: title(meeting.as_ref(), meeting_id),
-        date: date(meeting.as_ref(), meeting_id),
+        title: store::meeting::display_title(meeting.as_ref(), meeting_id),
+        date: store::meeting::display_date(meeting.as_ref(), meeting_id).unwrap_or_default(),
         transcript,
         notes,
     };
@@ -195,27 +194,6 @@ pub fn switched_off(root: &Path, meeting_id: &str) -> bool {
         .ok()
         .and_then(|dir| Meeting::read(&dir.join(store::MEETING_FILE)).ok().flatten())
         .is_some_and(|meeting| store::notes_switch::is_off(&meeting))
-}
-
-/// The meeting's title, or its folder name made readable, as Copy prompt
-/// does it.
-fn title(meeting: Option<&Meeting>, meeting_id: &str) -> String {
-    meeting.and_then(Meeting::title).unwrap_or_else(|| {
-        let (_, _, slug) = split_folder_name(meeting_id);
-        slug.map(prettify_slug)
-            .unwrap_or_else(|| meeting_id.to_owned())
-    })
-}
-
-/// The meeting's `date`, or the day and time from its folder name.
-fn date(meeting: Option<&Meeting>, meeting_id: &str) -> String {
-    let (day, time, _) = split_folder_name(meeting_id);
-    meeting
-        .and_then(Meeting::date)
-        .or_else(|| day.map(|day| format!("{day} {}", time.unwrap_or_default())))
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
 }
 
 #[cfg(test)]

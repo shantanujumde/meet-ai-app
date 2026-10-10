@@ -22,6 +22,10 @@ use std::path::Path;
 use crate::frontmatter::{self, Document, Frontmatter};
 use crate::{Error, MEETING_FILE, Problem, refusal};
 
+// TUR-176: the title and date fallbacks every reader of a meeting shares.
+mod display;
+pub use display::{display_date, display_title, folder_title};
+
 /// The fixed `##` headings, in the order a new file is written with.
 pub const SECTIONS: [&str; 4] = ["Summary", "Decisions", "Action Items", "Open Questions"];
 
