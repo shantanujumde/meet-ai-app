@@ -259,6 +259,32 @@ describe("AgentSetup", () => {
     expect(screen.getByRole("alert")).toBeInTheDocument();
   });
 
+  // TUR-168: a Test runs up to agent.timeout_sec; Cancel stops it.
+  test("Cancel stops a running Test and shows no error for it", async () => {
+    const { cancelAgentTest } = ipc;
+    await renderSetup();
+    let fail: (reason: unknown) => void = () => {};
+    testAgent.mockReturnValue(
+      new Promise((_, reject) => {
+        fail = reject;
+      }),
+    );
+    cancelAgentTest.mockImplementation(async () => {
+      fail({ domain: "app", kind: "agent-cancelled", message: "the run was cancelled" });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Test" }));
+    expect(await screen.findByText("Testing… this can take up to a minute.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Test" })).toBeNull();
+
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Cancel" })));
+
+    expect(cancelAgentTest).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Test" })).toBeEnabled());
+    expect(screen.queryByText(/this can take up to a minute/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   test("Test is off for an agent that is not installed", async () => {
     agentChoice.mockResolvedValue({ harness: "codex", model: "", binaryPath: null });
     await renderSetup();

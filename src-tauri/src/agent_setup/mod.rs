@@ -8,7 +8,11 @@
 //! - [`detect_agents`]: whether Claude Code and Codex are on this Mac and
 //!   signed in ([`view`]).
 //! - [`save_agent_choice`]: write the pick back, keeping the rest of the file.
-//! - [`test_agent`]: the real notes run on a sample transcript ([`test_run`]).
+//! - [`test_agent`]: the real notes run on a sample transcript ([`test_run`]),
+//!   which [`cancel_agent_test`] stops (TUR-168).
+//!
+//! Finding the CLI and naming its errors is [`harness`], shared with the
+//! notes run and Sync.
 //!
 //! Settings alone has two more (TUR-101): [`notes_auto_run`] and
 //! [`save_notes_auto_run`], whether notes start on their own after a call
@@ -30,6 +34,7 @@ use crate::config::{self, AgentConfig, ConfigError, Harness};
 use crate::error::{UiError, on_blocking_pool};
 use crate::folder_move::FolderGate;
 
+pub(crate) mod harness;
 mod test_run;
 mod view;
 
@@ -218,6 +223,15 @@ pub async fn test_agent(app: AppHandle, choice: AgentChoice) -> Result<AgentTest
         test_run::run(&choice, &claim.cancel)
     })
     .await?
+}
+
+/// Cancel on the Test screen: stop the Test runs going, which kills their
+/// CLIs; each `test_agent` then fails with `agent-cancelled`. A no-op when
+/// none is going.
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_agent_test(runs: tauri::State<'_, TestRuns>) {
+    runs.cancel_all();
 }
 
 // --- between the screen and the config -------------------------------------

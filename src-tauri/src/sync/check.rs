@@ -20,10 +20,11 @@ use agent::{CancelHandle, Harness, Job};
 use prompts::push_ticket::refused_reason;
 use serde::Serialize;
 use serde_json::Value;
+use tauri::{AppHandle, Manager as _};
 
 use super::errors::{self, SYNC_REFUSED, SYNC_UNREACHABLE};
 use super::tracker::checked;
-use super::{RunSettings, harness_for, tracker_name};
+use super::{RunSettings, SyncRuns, ready, tracker_name};
 use crate::config::{self, TicketsConfig};
 use crate::error::{UiError, on_blocking_pool};
 
@@ -65,18 +66,19 @@ pub struct TrackerCheck {
 #[tauri::command]
 #[specta::specta]
 pub async fn send_test_ticket(
+    app: AppHandle,
     tracker: String,
     tracker_mcp: String,
 ) -> Result<TrackerCheck, UiError> {
     on_blocking_pool(move || {
+        // Quitting stops the check's CLI like a Sync run's (TUR-168).
+        let runs = app.state::<SyncRuns>();
+        let claim = runs.claim_check()?;
         let tickets = checked(&tracker, &tracker_mcp)?;
         let agent = config::agent()?;
-        let harness = harness_for(&agent).map_err(again)?;
-        check(
-            harness.as_ref(),
-            &RunSettings::new(&agent, tickets),
-            &CancelHandle::new(),
-        )
+        let (harness, settings) =
+            ready(&agent, RunSettings::new(&agent, tickets)).map_err(again)?;
+        check(harness.as_ref(), &settings, &claim.cancel)
     })
     .await?
 }
@@ -101,7 +103,7 @@ pub(crate) fn check(
     job.cancel = cancel.clone();
     let reply = harness
         .run(&job)
-        .map_err(|error| again(errors::send_error(error)))?;
+        .map_err(|error| again(errors::send_error(error, settings.sign_in.as_deref())))?;
     read_reply(tickets, harness.id(), &reply)
 }
 

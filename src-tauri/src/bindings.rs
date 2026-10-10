@@ -68,6 +68,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             agent_setup::detect_agents,
             agent_setup::save_agent_choice,
             agent_setup::test_agent,
+            agent_setup::cancel_agent_test,
             agent_setup::notes_auto_run,
             agent_setup::save_notes_auto_run,
             search::search,

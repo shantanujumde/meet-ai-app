@@ -482,6 +482,8 @@ export async function calendarRefreshMinutes(): Promise<number> {
 
 // --- command groups in their own modules ------------------------------------
 
+// Cancel on the agent Test screen (TUR-168).
+export * from "./agentTest";
 // Settings' Light / Dark / System picker and glass switch (TUR-102).
 export * from "./appearance";
 export * from "./brief";

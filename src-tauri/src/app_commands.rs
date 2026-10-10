@@ -49,6 +49,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "detect_agents",
     "save_agent_choice",
     "test_agent",
+    "cancel_agent_test",
     "notes_auto_run",
     "save_notes_auto_run",
     "search",

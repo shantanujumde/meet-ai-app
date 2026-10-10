@@ -56,6 +56,7 @@
     "allow-detect-agents",
     "allow-save-agent-choice",
     "allow-test-agent",
+    "allow-cancel-agent-test",
     "allow-notes-auto-run",
     "allow-save-notes-auto-run",
     "allow-search",

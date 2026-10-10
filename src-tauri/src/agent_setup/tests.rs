@@ -5,7 +5,8 @@ use agent::fake::{FakeBehavior, FakeHarness};
 use agent::{AgentError, CancelHandle, Install};
 use serde_json::json;
 
-use super::test_run::{SAMPLE_TRANSCRIPT, agent_error, found, run_sample, sample_prompt};
+use super::harness::agent_error;
+use super::test_run::{SAMPLE_TRANSCRIPT, find, run_sample, sample_prompt};
 use super::view::{binary_paths, cli_view, sign_in_command_for};
 use super::*;
 use crate::platform::SignInShell;
@@ -52,6 +53,7 @@ fn good_notes() -> serde_json::Value {
 fn run_fake(behavior: FakeBehavior, timeout: Duration) -> Result<AgentTestResult, UiError> {
     run_sample(
         &FakeHarness::new(behavior),
+        None,
         Some("fake-small"),
         timeout,
         std::env::temp_dir(),
@@ -536,6 +538,7 @@ fn the_test_runs_the_picked_model_and_default_passes_none() {
     for model in [Some("haiku"), None, Some("  "), Some(" sonnet ")] {
         run_sample(
             &harness,
+            None,
             model,
             Duration::from_secs(5),
             std::env::temp_dir(),
@@ -567,6 +570,7 @@ fn a_failed_test_names_the_model_it_tried() {
 
     let error = run_sample(
         &FakeHarness::new(fail),
+        None,
         None,
         Duration::from_secs(30),
         std::env::temp_dir(),
@@ -636,7 +640,7 @@ fn every_agent_error_maps_to_a_kind_and_keeps_its_sentence() {
     ];
     for (error, kind) in cases {
         let message = error.to_string();
-        let ui = agent_error(error);
+        let ui = agent_error(error, None);
         assert_eq!((ui.domain, ui.kind), ("app", kind));
         assert_eq!(ui.message, message);
     }
@@ -644,7 +648,11 @@ fn every_agent_error_maps_to_a_kind_and_keeps_its_sentence() {
 
 #[test]
 fn a_cli_that_is_not_found_is_not_installed_by_name() {
-    let error = found(AgentCliId::Codex, None).unwrap_err();
+    let dir = temp_root("missing");
+    let missing = dir.path().join("codex").display().to_string();
+    let error = find(&choice(AgentHarness::Codex, "", Some(&missing)))
+        .err()
+        .unwrap();
     assert_eq!(error.kind, "agent-not-installed");
     assert!(
         error.message.starts_with("Codex is not installed"),
@@ -652,8 +660,42 @@ fn a_cli_that_is_not_found_is_not_installed_by_name() {
         error.message
     );
 
-    let ok = found(AgentCliId::ClaudeCode, Some(install("/bin/claude", true))).unwrap();
-    assert_eq!(ok.path, PathBuf::from("/bin/claude"));
+    let cli = test_support::FakeCli::install(dir.path(), "claude");
+    let path = cli.path().display().to_string();
+    let ok = find(&choice(AgentHarness::ClaudeCode, "", Some(&path)))
+        .unwrap_or_else(|_| panic!("the fake claude was not found"));
+    assert_eq!(ok.harness.id(), agent::claude::ID);
+}
+
+/// TUR-168: Cancel on the Test screen stops the CLI, and the Test ends as
+/// cancelled, long before its time limit.
+#[test]
+fn cancel_stops_a_running_test() {
+    let runs = TestRuns::default();
+    runs.cancel_all(); // nothing going: a no-op
+    std::thread::scope(|scope| {
+        let claim = runs.claim().unwrap();
+        let test = scope.spawn(move || {
+            let started = std::time::Instant::now();
+            let result = run_sample(
+                &FakeHarness::new(FakeBehavior::Sleep(Duration::from_secs(30))),
+                None,
+                None,
+                Duration::from_secs(60),
+                std::env::temp_dir(),
+                None,
+                &claim.cancel,
+            );
+            (result, started.elapsed())
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        runs.cancel_all();
+        let (result, took) = test.join().unwrap();
+        assert_eq!(result.unwrap_err().kind, "agent-cancelled");
+        assert!(took < Duration::from_secs(10), "took {took:?}");
+    });
+    // Cancel is not quitting: the next Test still runs.
+    assert!(runs.claim().is_ok());
 }
 
 #[test]
@@ -682,6 +724,7 @@ fn shutdown_stops_a_running_test_and_leaves_no_cli_behind() {
         let test = scope.spawn(move || {
             run_sample(
                 harness,
+                None,
                 None,
                 Duration::from_secs(60),
                 std::env::temp_dir(),
