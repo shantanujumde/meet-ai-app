@@ -50,7 +50,6 @@ const HALLUCINATION_PHRASES: &[&str] = &[
     "thank you for watching",
     "thanks for watching!",
     "you",
-    "bye",
     "bye bye",
     "thank you very much",
     "please subscribe",
@@ -61,11 +60,13 @@ const HALLUCINATION_PHRASES: &[&str] = &[
     "applause",
     "inaudible",
     "beep",
-    "so",
-    "okay",
-    "oh",
-    "hmm",
 ];
+
+/// One-word replies people really say on a call, which whisper also invents
+/// over quiet audio. Dropped from whisper's output only
+/// ([`is_whisper_hallucination`]): Parakeet does not make these up, so there a
+/// standalone "Okay." is a real answer and is kept (TUR-156).
+const WHISPER_BARE_WORDS: &[&str] = &["so", "okay", "bye", "oh", "hmm"];
 
 /// Is this segment nothing but a known hallucination?
 ///
@@ -116,6 +117,29 @@ pub fn is_hallucination(text: &str) -> bool {
     HALLUCINATION_PHRASES.contains(&normalized.as_str())
 }
 
+/// [`is_hallucination`], plus the bare one-word replies in
+/// [`WHISPER_BARE_WORDS`] that only whisper makes up.
+pub fn is_whisper_hallucination(text: &str) -> bool {
+    is_hallucination(text) || WHISPER_BARE_WORDS.contains(&bare(text.trim()).as_str())
+}
+
+/// One raw whisper segment as the line it becomes, or `None` when it is
+/// dropped. The order matters: a loop is cut to one copy first, so "Thank
+/// you. Thank you. Thank you." is judged as the "Thank you." it is, and only
+/// then are the hallucination and prompt-echo rules run on what is left.
+pub fn whisper_line(raw: &str, prompt: Option<&str>) -> Option<String> {
+    let text = crate::collapse_whitespace(&collapse_repeats(raw))?;
+    if is_whisper_hallucination(&text) {
+        tracing::debug!(text = %raw, "dropped: known hallucination phrase");
+        return None;
+    }
+    if prompt.is_some_and(|prompt| echoes_prompt(&text, prompt)) {
+        tracing::debug!(text = %text, "dropped: the prompt written back");
+        return None;
+    }
+    Some(text)
+}
+
 /// The longest phrase, in words, looked for as a loop.
 const MAX_PHRASE_WORDS: usize = 10;
 
@@ -126,18 +150,31 @@ const WORD_REPEATS: usize = 4;
 /// Copies of a phrase of two words or more in a row that make a loop.
 const PHRASE_REPEATS: usize = 3;
 
-/// Shorter lines are never treated as a prompt echo: "theek hai" is something
-/// people say, not only something the prompt contains.
-const MIN_ECHO_CHARS: usize = 16;
+/// A line is a prompt echo only when it covers more than this share of the
+/// prompt's words, in percent (or spans two of its sentences). The prompt is
+/// ordinary meeting talk, so people say its shorter phrases for real:
+/// "Main doc share kar deta hoon." is speech, not an echo (TUR-156).
+const MIN_ECHO_SHARE_PERCENT: usize = 60;
 
 /// `text` with every run of [`WORD_REPEATS`] words, or [`PHRASE_REPEATS`]
 /// phrases, cut to one copy. A run that ends in a cut-off copy of the phrase
-/// (whisper running out of tokens mid-word) loses that piece too, as does a
-/// word whisper ended with half a character (U+FFFD).
+/// (whisper running out of tokens mid-word) loses that piece too.
+///
+/// U+FFFD is half a character. On the last word it means whisper stopped
+/// mid-word, so that word goes. Anywhere else it is a character split across
+/// tokens; the word is real and is kept with the U+FFFD taken out.
 pub fn collapse_repeats(text: &str) -> String {
-    let words: Vec<&str> = text
-        .split_whitespace()
-        .filter(|word| !word.contains('\u{FFFD}'))
+    let mut owned: Vec<String> = text.split_whitespace().map(str::to_owned).collect();
+    if owned.last().is_some_and(|word| word.contains('\u{FFFD}')) {
+        owned.pop();
+    }
+    let words: Vec<&str> = owned
+        .iter_mut()
+        .map(|word| {
+            word.retain(|c| c != '\u{FFFD}');
+            word.as_str()
+        })
+        .filter(|word| !word.is_empty())
         .collect();
     let mut kept: Vec<&str> = Vec::with_capacity(words.len());
     let mut i = 0;
@@ -205,19 +242,38 @@ fn bare(word: &str) -> String {
         .to_lowercase()
 }
 
-/// Is `text` nothing but a piece of `prompt`?
+/// Is `text` the prompt written back? Only when it is a run of the prompt's
+/// words that covers more than [`MIN_ECHO_SHARE_PERCENT`] of them, or that
+/// crosses from one prompt sentence into the next. A shorter piece inside one
+/// sentence is something people say.
 pub fn echoes_prompt(text: &str, prompt: &str) -> bool {
-    let text = plain(text);
-    text.chars().count() >= MIN_ECHO_CHARS && plain(prompt).contains(&text)
-}
-
-/// Lowercase words with the punctuation dropped, one space apart.
-fn plain(text: &str) -> String {
-    text.split_whitespace()
+    let said: Vec<String> = text
+        .split_whitespace()
         .map(bare)
         .filter(|word| !word.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+        .collect();
+    // Each prompt word with the number of the sentence it is in.
+    let mut sentence = 0;
+    let mut words: Vec<(String, usize)> = Vec::new();
+    for raw in prompt.split_whitespace() {
+        let word = bare(raw);
+        if !word.is_empty() {
+            words.push((word, sentence));
+        }
+        if raw.ends_with(['.', '?', '!', '।']) {
+            sentence += 1;
+        }
+    }
+    if said.is_empty() || said.len() > words.len() {
+        return false;
+    }
+    let large = said.len() * 100 > words.len() * MIN_ECHO_SHARE_PERCENT;
+    words.windows(said.len()).any(|run| {
+        let matches = run.iter().zip(&said).all(|((word, _), s)| word == s);
+        let first = run.first().map(|(_, n)| *n);
+        let last = run.last().map(|(_, n)| *n);
+        matches && (large || first != last)
+    })
 }
 
 #[cfg(test)]
@@ -272,17 +328,72 @@ mod tests {
         }
     }
 
+    const PROMPT: &str = crate::languages::HINGLISH_PROMPT;
+
     #[test]
-    fn a_line_that_is_only_part_of_the_prompt_is_an_echo() {
-        let prompt = "Haan bhai, kal ki meeting mein kya decide hua tha? Mujhe lagta hai ye feature next week tak ship ho jayega.";
+    fn a_line_that_is_most_of_the_prompt_is_an_echo() {
+        assert!(echoes_prompt(PROMPT, PROMPT));
         assert!(echoes_prompt(
-            "Kal ki meeting mein kya decide hua tha?",
-            prompt
+            "Mujhe lagta hai ye feature next week tak ship ho jayega. Main doc share kar deta hoon, tum ek baar check kar lena.",
+            PROMPT
         ));
-        assert!(echoes_prompt(prompt, prompt));
-        // Short and common: said, not echoed.
-        assert!(!echoes_prompt("Haan bhai.", prompt));
+        assert_eq!(whisper_line(PROMPT, Some(PROMPT)), None);
+    }
+
+    #[test]
+    fn a_line_that_crosses_two_prompt_sentences_is_an_echo() {
+        assert!(echoes_prompt("kya decide hua tha? Mujhe lagta hai", PROMPT));
+    }
+
+    #[test]
+    fn a_hinglish_line_that_is_a_short_piece_of_the_prompt_is_kept() {
+        for line in [
+            "Main doc share kar deta hoon.",
+            "Tum ek baar check kar lena",
+            "next week tak ship ho jayega",
+            "Kal ki meeting mein kya decide hua tha?",
+            "Haan bhai.",
+        ] {
+            assert!(!echoes_prompt(line, PROMPT), "{line:?} should be kept");
+            assert_eq!(whisper_line(line, Some(PROMPT)).as_deref(), Some(line));
+        }
         // Shares words with the prompt but is its own sentence.
-        assert!(!echoes_prompt("Kal ki meeting cancel ho gayi thi.", prompt));
+        assert!(!echoes_prompt("Kal ki meeting cancel ho gayi thi.", PROMPT));
+    }
+
+    #[test]
+    fn a_repeated_hallucination_is_dropped_after_it_is_collapsed() {
+        for line in [
+            "Thank you. Thank you. Thank you.",
+            "Bye bye bye bye",
+            "you you you you",
+        ] {
+            assert!(!is_hallucination(line), "{line:?} is only caught collapsed");
+            assert_eq!(whisper_line(line, None), None, "{line:?} should be dropped");
+        }
+    }
+
+    #[test]
+    fn bare_one_word_replies_are_whisper_only_hallucinations() {
+        for word in ["Okay.", "So.", "Bye.", "Oh.", "Hmm.", " okay "] {
+            assert!(is_whisper_hallucination(word), "{word:?}");
+            assert!(!is_hallucination(word), "{word:?} is real on Parakeet");
+        }
+        assert_eq!(
+            whisper_line("Okay, let's ship it.", None).as_deref(),
+            Some("Okay, let's ship it.")
+        );
+    }
+
+    #[test]
+    fn a_mid_line_half_character_is_removed_and_the_word_kept() {
+        assert_eq!(
+            collapse_repeats("हम कल \u{FFFD}मीटिंग में बात करेंगे"),
+            "हम कल मीटिंग में बात करेंगे"
+        );
+        assert_eq!(collapse_repeats("हम कल मीटिं\u{FFFD} में"), "हम कल मीटिं में");
+        // On the last word it means whisper stopped mid-word: the stub goes.
+        assert_eq!(collapse_repeats("हम कल मीटिं\u{FFFD}"), "हम कल");
+        assert_eq!(collapse_repeats("\u{FFFD} हम"), "हम");
     }
 }

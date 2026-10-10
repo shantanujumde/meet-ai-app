@@ -18,6 +18,8 @@
 //!    so the model is never called and no line can be written.
 //! 2. **The phrase rule.** [`crate::whisper::is_hallucination`] drops a
 //!    sentence that is nothing but a sound annotation or a stock phrase.
+//!    Not whisper's bare one-word list ("Okay.", "So."): from Parakeet those
+//!    are real replies and are kept.
 //!
 //! # One model, two tracks
 //!
@@ -405,6 +407,15 @@ mod tests {
             ],
         );
         assert_eq!(found, vec![(1.0, "Thank you, that fixes it.".to_string())]);
+    }
+
+    #[test]
+    fn a_one_word_reply_is_kept() {
+        let found = lines(0.0, "", &[(0.0, "Okay.".into()), (1.0, "Hmm.".into())]);
+        assert_eq!(
+            found,
+            vec![(0.0, "Okay.".to_string()), (1.0, "Hmm.".to_string())]
+        );
     }
 
     #[test]
