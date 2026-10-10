@@ -473,7 +473,7 @@ fn an_issue_a_sync_press_kept_is_saved_not_made_again() {
         || Ok(world.root.path().to_path_buf()),
         "TICK-0001",
         Some(MEETING),
-        || Ok((harness_for(&setup.agent)?, setup.run.clone())),
+        || ready(&setup.agent, setup.run.clone()),
     )
     .unwrap_err();
     drop(moving);

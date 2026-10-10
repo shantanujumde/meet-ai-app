@@ -105,11 +105,11 @@ describe("agent and config errors have their own wording (TUR-118)", () => {
     "agent-timed-out",
     "agent-cancelled",
     "agent-failed",
-    "agent-bad-reply",
     "agent-invalid-json",
     "agent-schema-mismatch",
     "agent-could-not-start",
     "unknown-harness",
+    "transcript-not-final",
   ];
   const generic = copyFor(error("app", "a-kind-nobody-has-written-yet"));
 
@@ -120,10 +120,12 @@ describe("agent and config errors have their own wording (TUR-118)", () => {
     expect(`${copy.headline} ${copy.body}`).not.toContain("\u2014");
   });
 
-  test("the three bad-reply kinds share one wording", () => {
-    const a = copyFor(error("app", "agent-bad-reply"));
-    expect(copyFor(error("app", "agent-invalid-json"))).toEqual(a);
-    expect(copyFor(error("app", "agent-schema-mismatch"))).toEqual(a);
+  // TUR-168: every runner sends the specific kind now, each with its words.
+  test("a reply that is not JSON and one in the wrong shape are told apart", () => {
+    const json = copyFor(error("app", "agent-invalid-json"));
+    const shape = copyFor(error("app", "agent-schema-mismatch"));
+    expect(json.headline).not.toBe(shape.headline);
+    expect(json.body).not.toBe(shape.body);
   });
 });
 

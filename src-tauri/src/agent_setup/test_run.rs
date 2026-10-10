@@ -12,13 +12,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use agent::{AgentError, CancelHandle, ClaudeHarness, CodexHarness, Install, Job};
+use agent::{CancelHandle, Job};
 use prompts::notes::{Notes, notes_schema};
 use prompts::wrap_up::{DEFAULT_WRAP_UP, Target, WrapUpInput, render_wrap_up, render_wrap_up_from};
 
-use super::{AgentChoice, AgentCliId, AgentHarness, AgentTestResult, AgentTestTask};
+use super::harness::{self, ErrorKind, Found, NotFound, agent_error};
+use super::{AgentChoice, AgentTestResult, AgentTestTask};
 use crate::cancels::{Cancels, Claim};
-use crate::config;
+use crate::config::{self, AgentConfig};
 use crate::error::UiError;
 use crate::meetings;
 
@@ -55,6 +56,18 @@ impl TestRuns {
         })
     }
 
+    /// Cancel every Test run going (Cancel on the Test screen): each one's
+    /// CLI process tree is killed and its `test_agent` ends with
+    /// `agent-cancelled`. A no-op when none is going. Every run, not one by
+    /// key: the window does not know a run's key, and two Tests going at
+    /// once (onboarding and Settings) is rare enough that Cancel stopping
+    /// both is the plain answer.
+    pub(super) fn cancel_all(&self) {
+        for key in self.runs.keys() {
+            self.runs.cancel(&key);
+        }
+    }
+
     /// The app is quitting: start no more Test runs, cancel the ones going,
     /// which kills their CLIs' process trees, and wait up to `wait` for them
     /// to end. On unix the CLI leads its own process group, so without this
@@ -69,13 +82,14 @@ impl TestRuns {
 
 /// Find the picked CLI and run the sample through it; `cancel` stops it.
 pub(super) fn run(choice: &AgentChoice, cancel: &CancelHandle) -> Result<AgentTestResult, UiError> {
-    let harness = harness_for(choice)?;
+    let found = find(choice)?;
     let timeout = timeout();
     // No meetings folder yet (it is picked in the step before) only means
     // there is no saved template either; the built-in one is used.
     let root = meetings::root().ok();
     run_sample(
-        harness.as_ref(),
+        found.harness.as_ref(),
+        Some(&found.sign_in),
         choice.model().as_deref(),
         timeout,
         std::env::temp_dir(),
@@ -84,46 +98,23 @@ pub(super) fn run(choice: &AgentChoice, cancel: &CancelHandle) -> Result<AgentTe
     )
 }
 
-/// The harness for the picked CLI, pointed at the copy detection finds
-/// (`choice.binary_path` first). An error, without running anything, for
-/// `none` or a CLI that is not found.
-fn harness_for(choice: &AgentChoice) -> Result<Box<dyn agent::Harness>, UiError> {
-    let path = choice.binary_path();
-    let path = path.as_deref();
-    match choice.harness {
-        AgentHarness::None => Err(UiError::app(
+/// The picked CLI, found where `choice` says (`choice.binary_path` first).
+/// An error, without running anything, for `none` or a CLI that is not
+/// found. No sign-in check: the Test itself is the check, and a CLI that is
+/// signed out says so when it runs.
+pub(super) fn find(choice: &AgentChoice) -> Result<Found, UiError> {
+    let settings = AgentConfig {
+        harness: choice.harness.into(),
+        binary_path: choice.binary_path(),
+        ..AgentConfig::default()
+    };
+    harness::harness_for(&settings, false).map_err(|missing| match missing {
+        NotFound::NoAgent => UiError::app(
             "agent-none",
             "No agent is picked, so there is nothing to test.",
-        )),
-        AgentHarness::ClaudeCode => {
-            let install = found(AgentCliId::ClaudeCode, agent::detect::claude(path))?;
-            Ok(Box::new(claude_harness(&install.path)))
-        }
-        AgentHarness::Codex => {
-            let install = found(AgentCliId::Codex, agent::detect::codex(path))?;
-            Ok(Box::new(CodexHarness::with_binary(install.path)))
-        }
-    }
-}
-
-/// `install`, or the agent-not-installed error naming `id`.
-pub(super) fn found(id: AgentCliId, install: Option<Install>) -> Result<Install, UiError> {
-    install.ok_or_else(|| {
-        agent_error(AgentError::NotInstalled {
-            harness: id.name().to_owned(),
-        })
+        ),
+        NotFound::Agent { error, sign_in } => agent_error(error, Some(&sign_in)),
     })
-}
-
-/// Claude Code at `path`. Its own folder goes first on the child's `PATH`:
-/// an npm install is a node script, and an app opened from Finder does not
-/// have `node`'s folder on its `PATH`.
-fn claude_harness(path: &Path) -> ClaudeHarness {
-    let harness = ClaudeHarness::new().with_binary(path);
-    match path.parent().and_then(agent::process::search_path_with) {
-        Some(search_path) => harness.with_search_path(search_path),
-        None => harness,
-    }
 }
 
 /// `agent.timeout_sec`. A config the app cannot read (the screen is often
@@ -141,11 +132,14 @@ fn timeout() -> Duration {
 
 /// The notes run on the sample meeting, through `harness`.
 ///
-/// `model` blank lets the CLI pick its own. `work_root` is where the run's
-/// fresh folder is made. `meetings_root` is where a saved wrap-up template
-/// is looked for; `None` uses the built-in one. `cancel` stops the CLI.
+/// `sign_in` is what to type to sign the CLI in, for the error when it is
+/// signed out. `model` blank lets the CLI pick its own. `work_root` is where
+/// the run's fresh folder is made. `meetings_root` is where a saved wrap-up
+/// template is looked for; `None` uses the built-in one. `cancel` stops the
+/// CLI.
 pub(super) fn run_sample(
     harness: &dyn agent::Harness,
+    sign_in: Option<&str>,
     model: Option<&str>,
     timeout: Duration,
     work_root: PathBuf,
@@ -161,7 +155,7 @@ pub(super) fn run_sample(
 
     let started = Instant::now();
     let reply = harness.run(&job).map_err(|error| {
-        let error = with_model(agent_error(error), model);
+        let error = with_model(agent_error(error, sign_in), model);
         tracing::warn!(
             harness = harness.id(),
             kind = error.kind,
@@ -173,7 +167,7 @@ pub(super) fn run_sample(
     // The harness already checked the reply against this schema; this turns
     // it into the typed notes.
     let notes = Notes::from_value(reply)
-        .map_err(|error| UiError::app("agent-schema-mismatch", error.to_string()))?;
+        .map_err(|error| UiError::app(ErrorKind::SchemaMismatch.key(), error.to_string()))?;
     tracing::info!(
         harness = harness.id(),
         seconds,
@@ -232,24 +226,4 @@ fn with_model(mut error: UiError, model: Option<&str>) -> UiError {
         error.message = format!("{} (model: {model})", error.message);
     }
     error
-}
-
-/// An agent run's error as the screen gets it: one `app` kind per thing the
-/// user can do about it, and the error's own sentence.
-///
-/// A private function, not `impl From<AgentError> for UiError`: the notes
-/// run in the meeting view may want its own mapping, and two impls would
-/// clash.
-pub(super) fn agent_error(error: AgentError) -> UiError {
-    let kind = match &error {
-        AgentError::NotInstalled { .. } => "agent-not-installed",
-        AgentError::NotSignedIn { .. } => "agent-not-signed-in",
-        AgentError::TimedOut { .. } => "agent-timed-out",
-        AgentError::Cancelled => "agent-cancelled",
-        AgentError::CliFailed { .. } => "agent-failed",
-        AgentError::InvalidJson { .. } => "agent-invalid-json",
-        AgentError::SchemaMismatch { .. } => "agent-schema-mismatch",
-        AgentError::CouldNotStart { .. } => "agent-could-not-start",
-    };
-    UiError::app(kind, error.to_string())
 }

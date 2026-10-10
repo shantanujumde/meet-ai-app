@@ -32,7 +32,7 @@ use serde::Serialize;
 use store::ticket::{self, Ticket};
 use tauri::{AppHandle, Emitter as _, Manager as _};
 
-use super::{ALREADY_SYNCED, RunSettings, SyncRuns, TICKET_MISSING, harness_for, sync_in};
+use super::{ALREADY_SYNCED, RunSettings, SyncRuns, TICKET_MISSING, ready, sync_in};
 use crate::config::{self, AgentConfig, Harness as HarnessChoice, TicketsConfig};
 use crate::error::{UiError, on_blocking_pool};
 use crate::events::TICKET_SYNC_EVENT;
@@ -381,7 +381,7 @@ pub(crate) fn send_root(
 ) -> Result<TicketSummary, UiError> {
     let meeting = root().ok().and_then(|root| meeting_of(&root, ticket_id));
     sync_in(runs, gate, root, ticket_id, meeting.as_deref(), || {
-        Ok((harness_for(&setup.agent)?, setup.run.clone()))
+        ready(&setup.agent, setup.run.clone())
     })
 }
 

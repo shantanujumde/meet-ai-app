@@ -226,6 +226,12 @@ export const commands = {
 	 */
 	testAgent: (choice: meet_ai_lib_agent_setup_AgentChoice) => typedError<meet_ai_lib_agent_setup_AgentTestResult, meet_ai_lib_error_UiError>(__TAURI_INVOKE("test_agent", { choice })),
 	/**
+	 *  Cancel on the Test screen: stop the Test runs going, which kills their
+	 *  CLIs; each `test_agent` then fails with `agent-cancelled`. A no-op when
+	 *  none is going.
+	 */
+	cancelAgentTest: () => __TAURI_INVOKE<void>("cancel_agent_test"),
+	/**
 	 *  `agent.auto_run`: true when notes start on their own after a call, false
 	 *  when they start only from the meeting's "Make notes now" (TUR-101).
 	 */
@@ -247,6 +253,8 @@ export const commands = {
 	/**
 	 *  Start the notes run by hand: Retry, or the first run on a meeting that
 	 *  has none. Ignored while one is running; the answer is then that run.
+	 *  Refused while the meeting's transcript is still being finished after
+	 *  Stop, so the agent never gets one missing its last lines (TUR-168).
 	 */
 	startNotesRun: (meetingId: string) => typedError<meet_ai_lib_agent_run_Status, meet_ai_lib_error_UiError>(__TAURI_INVOKE("start_notes_run", { meetingId })),
 	/**  Cancel this meeting's running notes run. A no-op when none is running. */
@@ -857,8 +865,10 @@ export type meet_ai_lib_agent_run_FailureKind =
 "cancelled" | 
 /**  The CLI exited with an error. */
 "cli-failed" | 
-/**  The CLI's answer was not JSON, or not in the notes format. */
-"bad-reply" | 
+/**  The CLI's answer was not JSON. */
+"invalid-json" | 
+/**  The CLI's answer was JSON, but not in the notes format. */
+"schema-mismatch" | 
 /**
  *  The run could not be started (temp folder, launch, prompt template,
  *  config).

@@ -17,6 +17,7 @@ fn settings() -> RunSettings {
         model: None,
         timeout: Duration::from_secs(20),
         tickets: TicketsConfig::default(),
+        sign_in: None,
     }
 }
 
@@ -49,7 +50,7 @@ fn claude_reads_the_project_with_only_the_tracker_tools_and_no_task() {
         binary_path: Some(cli.path().to_path_buf()),
         ..AgentConfig::default()
     };
-    let harness = harness_for(&agent).unwrap();
+    let harness = harness_for(&agent).unwrap().harness;
 
     let found = check(harness.as_ref(), &settings(), &CancelHandle::new()).unwrap();
 
@@ -129,9 +130,12 @@ fn agent_failures_keep_their_kind_and_say_to_check_again() {
         "The check stopped before it finished. Send the test ticket again."
     );
 
-    let missing = again(errors::send_error(AgentError::NotInstalled {
-        harness: "Codex".to_owned(),
-    }));
+    let missing = again(errors::send_error(
+        AgentError::NotInstalled {
+            harness: "Codex".to_owned(),
+        },
+        None,
+    ));
     assert_eq!(missing.kind, "agent-not-installed");
     assert!(
         missing

@@ -7,9 +7,9 @@
  * reason when it failed.
  */
 
-import { FlaskConical } from "lucide-react";
-import { type ReactNode, useState } from "react";
-import { testAgent } from "@/ipc/client";
+import { FlaskConical, X } from "lucide-react";
+import { type ReactNode, useRef, useState } from "react";
+import { cancelAgentTest, testAgent } from "@/ipc/client";
 import type { AgentChoice, AgentTestResult, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { Button, Row, RowLabel, rowDetailVariants } from "@/ui/primitives";
@@ -29,17 +29,32 @@ export function AgentTest({
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<AgentTestResult | null>(null);
   const [error, setError] = useState<UiError | null>(null);
+  // Cancel was pressed for the run going: its `agent-cancelled` is the
+  // answer the user asked for, not an error to show (TUR-168).
+  const cancelled = useRef(false);
 
   async function run() {
+    cancelled.current = false;
     setRunning(true);
     setResult(null);
     setError(null);
     try {
       setResult(await testAgent(choice));
     } catch (thrown) {
-      setError(toUiError(thrown));
+      const failure = toUiError(thrown);
+      if (!(cancelled.current && failure.kind === "agent-cancelled")) setError(failure);
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function cancel() {
+    cancelled.current = true;
+    try {
+      await cancelAgentTest();
+    } catch (thrown) {
+      cancelled.current = false;
+      setError(toUiError(thrown));
     }
   }
 
@@ -54,15 +69,21 @@ export function AgentTest({
           }
           mono={false}
         />
-        <Button
-          size="small"
-          icon={FlaskConical}
-          className="shrink-0"
-          disabled={blocked !== null || running}
-          onClick={() => void run()}
-        >
-          Test
-        </Button>
+        {running ? (
+          <Button size="small" icon={X} className="shrink-0" onClick={() => void cancel()}>
+            Cancel
+          </Button>
+        ) : (
+          <Button
+            size="small"
+            icon={FlaskConical}
+            className="shrink-0"
+            disabled={blocked !== null}
+            onClick={() => void run()}
+          >
+            Test
+          </Button>
+        )}
       </div>
       {running ? <Checking label="Testing… this can take up to a minute." /> : null}
       {result ? <TestResult result={result} name={name} /> : null}

@@ -5,6 +5,7 @@
 //! `TICK-NNNN`. Keying by the pair, like [`super::save::Key`], keeps syncing
 //! one from refusing or cancelling the other.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use super::save::{Key, Unsaved, key};
@@ -20,6 +21,10 @@ use crate::meetings;
 pub struct SyncRuns {
     running: Cancels<Key>,
     pub(super) unsaved: Unsaved,
+    /// "Send a test ticket" checks going (`check.rs`), each press its own
+    /// key, so quitting stops their CLIs too (TUR-168).
+    checks: Cancels<u64>,
+    next_check: AtomicU64,
 }
 
 /// One ticket's place in [`SyncRuns`]; dropping it frees the ticket.
@@ -64,15 +69,30 @@ impl SyncRuns {
         self.running.keys()
     }
 
+    /// A place for one tracker check, refused once the app is quitting.
+    pub(super) fn claim_check(&self) -> Result<cancels::Claim<'_, u64>, UiError> {
+        let key = self.next_check.fetch_add(1, Ordering::Relaxed);
+        self.checks.claim(key).map_err(|_refused| {
+            UiError::app(
+                "app-quitting",
+                "meet-ai is quitting, so the test ticket was not sent.",
+            )
+        })
+    }
+
     /// The app is quitting (TUR-160): start no more Sync runs, cancel every
     /// one going, which kills its CLI's process tree, and wait up to `wait`
     /// for them to end. Without this the CLI outlived the app and still made
     /// the issue, with nobody left to save the link, so the next Sync made a
-    /// second one.
+    /// second one. Tracker checks are stopped the same way (TUR-168).
     pub fn shutdown(&self, wait: Duration) {
         let left = self.running.shutdown(wait);
         if left > 0 {
             tracing::warn!(left, "Sync runs still going at quit");
+        }
+        let left = self.checks.shutdown(wait);
+        if left > 0 {
+            tracing::warn!(left, "tracker checks still going at quit");
         }
     }
 }
@@ -126,5 +146,25 @@ mod tests {
             runs.claim("TICK-0002", Some("")).err().unwrap().kind,
             "sync-busy"
         );
+    }
+
+    /// TUR-168: "Send a test ticket" is stopped at quit like a Sync run, and
+    /// none starts after.
+    #[test]
+    fn quitting_stops_tracker_checks_too() {
+        let runs = SyncRuns::default();
+        let first = runs.claim_check().unwrap();
+        let second = runs.claim_check().unwrap();
+        std::thread::scope(|scope| {
+            for claim in [first, second] {
+                scope.spawn(move || {
+                    while !claim.cancel.is_cancelled() {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                });
+            }
+            runs.shutdown(Duration::from_secs(5));
+        });
+        assert_eq!(runs.claim_check().err().unwrap().kind, "app-quitting");
     }
 }

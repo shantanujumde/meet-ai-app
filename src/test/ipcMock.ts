@@ -415,6 +415,7 @@ export const ipc = {
     tasks: [{ title: "Write the release notes", owner: "Ben", due: "Thursday" }],
     seconds: 9.6,
   })),
+  cancelAgentTest: vi.fn<typeof Client.cancelAgentTest>(async () => {}),
 };
 
 type Handler = (payload: never) => void;

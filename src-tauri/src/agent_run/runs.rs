@@ -2,7 +2,7 @@
 //! thread of its own. No Tauri in here: what the window and the notification
 //! hear goes through a [`Sink`], so tests can stand in for both.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -39,8 +39,24 @@ struct Shared {
 #[derive(Default)]
 struct Inner {
     runs: HashMap<String, Entry>,
+    /// Meetings whose transcript is still being finished after Stop
+    /// ([`AgentRuns::transcript_pending`]).
+    pending: HashSet<String>,
     /// The app is quitting: start nothing, report nothing.
     closed: bool,
+}
+
+/// `meeting_id`'s transcript is still being finished after Stop, until this
+/// is dropped. "Make notes now" is refused meanwhile (TUR-168).
+pub struct Pending {
+    shared: Arc<Shared>,
+    meeting_id: String,
+}
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        self.shared.lock().pending.remove(&self.meeting_id);
+    }
 }
 
 struct Entry {
@@ -58,6 +74,21 @@ impl AgentRuns {
     /// The app is quitting.
     pub fn is_closed(&self) -> bool {
         self.shared.lock().closed
+    }
+
+    /// Mark `meeting_id`'s transcript as still being finished, from Stop
+    /// until the returned mark is dropped.
+    pub fn transcript_pending(&self, meeting_id: &str) -> Pending {
+        self.shared.lock().pending.insert(meeting_id.to_owned());
+        Pending {
+            shared: Arc::clone(&self.shared),
+            meeting_id: meeting_id.to_owned(),
+        }
+    }
+
+    /// Whether `meeting_id`'s transcript is still being finished after Stop.
+    pub fn is_transcript_pending(&self, meeting_id: &str) -> bool {
+        self.shared.lock().pending.contains(meeting_id)
     }
 
     /// Start `work` for `meeting_id` on a thread of its own and return the

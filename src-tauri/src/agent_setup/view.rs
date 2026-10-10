@@ -23,7 +23,7 @@ static CODEX_MODELS: LazyLock<ListCache> =
 
 impl AgentCliId {
     /// The name the user knows it by.
-    pub(super) fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::ClaudeCode => agent::claude::DISPLAY_NAME,
             Self::Codex => "Codex",

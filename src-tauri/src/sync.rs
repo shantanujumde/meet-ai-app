@@ -36,7 +36,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent::{AgentError, CancelHandle, ClaudeHarness, CodexHarness, Harness, Job};
+use agent::{AgentError, CancelHandle, Harness, Job};
 use prompts::push_ticket::{PushTicketInput, Synced, parse_sync_reply, render_push_ticket_from};
 use store::folder_name::{prettify_slug, split_folder_name};
 use store::meeting::Meeting;
@@ -44,13 +44,16 @@ use store::ticket::{self, Ticket};
 use tauri::{AppHandle, Manager as _, State};
 use tauri_plugin_opener::OpenerExt as _;
 
-use crate::config::{self, AgentConfig, Harness as HarnessChoice, TicketsConfig};
+use crate::agent_setup::harness::{self, Found, NotFound};
+use crate::config::{self, AgentConfig, TicketsConfig};
 use crate::error::{UiError, on_blocking_pool};
 use crate::folder_move::FolderGate;
 use crate::meetings;
 use crate::sync::save::{Created, Fingerprint};
 use crate::tickets::{self, TicketSummary};
 
+#[cfg(test)]
+pub(crate) use errors::send_error;
 pub(crate) use errors::{agent_error, tracker_name};
 pub use runs::SyncRuns;
 
@@ -66,6 +69,9 @@ pub(crate) struct RunSettings {
     pub model: Option<String>,
     pub timeout: Duration,
     pub tickets: TicketsConfig,
+    /// What to type to sign the agent in, as Setup shows it, for a run that
+    /// finds it signed out. `None`: its bare name.
+    pub sign_in: Option<String>,
 }
 
 impl RunSettings {
@@ -74,8 +80,19 @@ impl RunSettings {
             model: agent.model.clone(),
             timeout: Duration::from_secs(agent.timeout_sec.max(1)),
             tickets,
+            sign_in: None,
         }
     }
+}
+
+/// `agent`'s CLI, found ([`harness_for`]), and `settings` for a run of it.
+pub(crate) fn ready(
+    agent: &AgentConfig,
+    mut settings: RunSettings,
+) -> Result<(Box<dyn Harness>, RunSettings), UiError> {
+    let found = harness_for(agent)?;
+    settings.sign_in = Some(found.sign_in);
+    Ok((found.harness, settings))
 }
 
 // --- commands ---------------------------------------------------------------
@@ -100,8 +117,7 @@ pub async fn sync_task(
             meeting_id.as_deref(),
             || {
                 let agent = config::agent()?;
-                let settings = RunSettings::new(&agent, config::tickets()?);
-                Ok((harness_for(&agent)?, settings))
+                ready(&agent, RunSettings::new(&agent, config::tickets()?))
             },
         )
     })
@@ -166,46 +182,35 @@ pub async fn open_synced_issue(
 
 // --- the run ----------------------------------------------------------------
 
-/// The user's chosen agent CLI as a [`Harness`]. Finding the binary does not
-/// run a sign-in check: a signed-out CLI says so when the run starts.
-pub(crate) fn harness_for(agent: &AgentConfig) -> Result<Box<dyn Harness>, UiError> {
-    let path = locate(agent, errors::send_error)?;
-    Ok(match agent.harness {
-        HarnessChoice::Codex => Box::new(CodexHarness::with_binary(path)),
-        _ => {
-            let mut claude = ClaudeHarness::new().with_binary(&path);
-            if let Some(search_path) = path.parent().and_then(agent::process::search_path_with) {
-                claude = claude.with_search_path(search_path);
-            }
-            Box::new(claude)
-        }
+/// The user's chosen agent CLI, found (`agent_setup::harness`). Finding the
+/// binary does not run a sign-in check: a signed-out CLI says so when the
+/// run starts.
+pub(crate) fn harness_for(agent: &AgentConfig) -> Result<Found, UiError> {
+    harness::harness_for(agent, false).map_err(|missing| match missing {
+        NotFound::NoAgent => no_agent(),
+        NotFound::Agent { error, sign_in } => errors::send_error(error, Some(&sign_in)),
     })
 }
 
 /// Where the chosen agent CLI is: `agent.binary_path`, the login shell, then
 /// the usual install folders (`agent::detect::find`).
 pub(crate) fn find_binary(agent: &AgentConfig) -> Result<PathBuf, UiError> {
-    locate(agent, agent_error)
+    let id = harness::cli_of(agent.harness).ok_or_else(no_agent)?;
+    harness::locate(id, agent.binary_path.as_deref()).ok_or_else(|| {
+        harness::agent_error(
+            AgentError::NotInstalled {
+                harness: id.name().to_owned(),
+            },
+            None,
+        )
+    })
 }
 
-/// [`find_binary`], with `missing` wording the not-installed error.
-fn locate(agent: &AgentConfig, missing: fn(AgentError) -> UiError) -> Result<PathBuf, UiError> {
-    let (cli, display) = match agent.harness {
-        HarnessChoice::None => {
-            return Err(UiError::app(
-                "sync-no-agent",
-                "Sync needs an agent. Pick Claude Code or Codex in Settings.",
-            ));
-        }
-        HarnessChoice::ClaudeCode => (agent::detect::CLAUDE, agent::claude::DISPLAY_NAME),
-        HarnessChoice::Codex => (agent::detect::CODEX, "Codex"),
-    };
-    let lookup = agent::detect::Lookup::system(agent.binary_path.as_deref());
-    agent::detect::find(&cli, &lookup).ok_or_else(|| {
-        missing(AgentError::NotInstalled {
-            harness: display.to_owned(),
-        })
-    })
+fn no_agent() -> UiError {
+    UiError::app(
+        "sync-no-agent",
+        "Sync needs an agent. Pick Claude Code or Codex in Settings.",
+    )
 }
 
 /// [`sync_task`] without the `AppHandle`: `root` looks the meetings root up
@@ -280,7 +285,9 @@ pub(crate) fn run(
     job.model = settings.model.clone();
     job.timeout = settings.timeout;
     job.cancel = cancel.clone();
-    let reply = harness.run(&job).map_err(errors::send_error)?;
+    let reply = harness
+        .run(&job)
+        .map_err(|error| errors::send_error(error, settings.sign_in.as_deref()))?;
     parse_sync_reply(&reply).ok_or_else(|| errors::not_synced(tickets_config, harness.id(), &reply))
 }
 

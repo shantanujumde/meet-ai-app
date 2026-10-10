@@ -28,7 +28,7 @@ mod notes;
 mod runs;
 
 pub use runs::AgentRuns;
-use runs::{Sink, Work};
+use runs::{Pending, Sink, Work};
 
 /// How long quitting waits for running agents to be stopped.
 const QUIT_WAIT: Duration = Duration::from_secs(3);
@@ -37,6 +37,9 @@ const QUIT_WAIT: Duration = Duration::from_secs(3);
 /// run waits for `transcript.md` to be final before it gives up and says so.
 /// An engine still writing after this long is stuck.
 const FINAL_WAIT: Duration = Duration::from_secs(120);
+
+/// "Make notes now" pressed while the transcript is still being finished.
+pub(crate) const TRANSCRIPT_NOT_FINAL: &str = "transcript-not-final";
 
 /// Where one meeting's notes run stands, as the meeting view shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
@@ -98,8 +101,10 @@ pub enum FailureKind {
     Cancelled,
     /// The CLI exited with an error.
     CliFailed,
-    /// The CLI's answer was not JSON, or not in the notes format.
-    BadReply,
+    /// The CLI's answer was not JSON.
+    InvalidJson,
+    /// The CLI's answer was JSON, but not in the notes format.
+    SchemaMismatch,
     /// The run could not be started (temp folder, launch, prompt template,
     /// config).
     CouldNotStart,
@@ -141,14 +146,29 @@ pub async fn notes_run_status(app: AppHandle, meeting_id: String) -> Result<Stat
 
 /// Start the notes run by hand: Retry, or the first run on a meeting that
 /// has none. Ignored while one is running; the answer is then that run.
+/// Refused while the meeting's transcript is still being finished after
+/// Stop, so the agent never gets one missing its last lines (TUR-168).
 #[tauri::command]
 #[specta::specta]
 pub async fn start_notes_run(app: AppHandle, meeting_id: String) -> Result<Status, UiError> {
     on_blocking_pool(move || {
         let root = crate::meetings::root()?;
+        refuse_while_transcribing(&*runs(&app)?, &meeting_id)?;
         start(&app, root, &meeting_id)
     })
     .await?
+}
+
+/// An error while `meeting_id`'s transcript is still being finished after
+/// Stop ([`AgentRuns::transcript_pending`]).
+fn refuse_while_transcribing(agent_runs: &AgentRuns, meeting_id: &str) -> Result<(), UiError> {
+    if agent_runs.is_transcript_pending(meeting_id) {
+        return Err(UiError::app(
+            TRANSCRIPT_NOT_FINAL,
+            "The transcript is still being finished; try again in a moment.",
+        ));
+    }
+    Ok(())
 }
 
 /// Cancel this meeting's running notes run. A no-op when none is running.
@@ -216,6 +236,8 @@ pub fn finish_then_run(app: &AppHandle, transcription: Transcription) {
     let app = app.clone();
     // TUR-45: busy for the retention job until the transcript is final.
     let transcribing = crate::retention::Transcribing::begin(&app, &meeting_id);
+    // TUR-168: "Make notes now" is refused until the transcript is final too.
+    let pending = runs(&app).map(|agent_runs| agent_runs.transcript_pending(&meeting_id));
     let spawned = std::thread::Builder::new()
         .name("meet-ai-notes-wait".to_owned())
         .spawn(move || {
@@ -224,6 +246,7 @@ pub fn finish_then_run(app: &AppHandle, transcription: Transcription) {
             };
             after_stop(
                 &agent_runs,
+                pending.ok(),
                 &stop_root,
                 &meeting_id,
                 &crate::config::agent(),
@@ -255,8 +278,16 @@ pub fn finish_then_run(app: &AppHandle, transcription: Transcription) {
 /// transcript with its last lines still to come, and then calls `start`. A
 /// transcript that never becomes final starts no run: the meeting view says
 /// so, with Retry.
+///
+/// Either way it waits for the transcript before dropping `pending`, the
+/// mark that refuses "Make notes now" meanwhile (TUR-168).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each is one thing Stop hands over; tests pass their own"
+)]
 fn after_stop(
     agent_runs: &AgentRuns,
+    pending: Option<Pending>,
     root: &Path,
     meeting_id: &str,
     settings: &Result<crate::config::AgentConfig, crate::config::ConfigError>,
@@ -266,10 +297,14 @@ fn after_stop(
 ) {
     let skipped = || agent_runs.is_closed() || notes::switched_off(root, meeting_id);
     if !auto_runs(settings) || skipped() {
+        // No run follows, but one started by hand still waits for this.
+        wait_final(FINAL_WAIT);
+        drop(pending);
         return;
     }
     agent_runs.wait_for_transcript(meeting_id, sink);
     let transcript_final = wait_final(FINAL_WAIT);
+    drop(pending);
     // Notes may have been switched off, or the app told to quit, meanwhile.
     if skipped() {
         agent_runs.stop_waiting(meeting_id, sink);
@@ -310,6 +345,7 @@ pub(crate) fn starts_notes_after_stop(
     let agent_runs = AgentRuns::default();
     after_stop(
         &agent_runs,
+        None,
         root,
         meeting_id,
         settings,
