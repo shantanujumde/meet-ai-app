@@ -149,13 +149,15 @@ pub fn render_start_work_from(root: &Path, input: &StartWorkInput) -> Result<Str
 ///
 /// `transcript_ref` is `HH:MM:SS`; `H:MM:SS` and `MM:SS` are accepted too, as
 /// are brackets, quotes and spaces around it. A ref that is not a time gives
-/// `None`. Lines are copied verbatim; a line that does not start with a time
-/// in brackets and a space, `[HH:MM:SS] ` (SPEC §3.4), is skipped. At most [`EXCERPT_MAX_LINES`] lines
-/// are kept, the ones nearest the ref, in transcript order. A ref past the end
-/// of the transcript gives `Some("")`, which the caller treats as no excerpt.
+/// `None`. Lines are copied verbatim; a line that is not a SPEC §3.4 line is
+/// skipped. At most [`EXCERPT_MAX_LINES`] lines are kept, the ones nearest the
+/// ref, in transcript order. A ref past the end of the transcript gives
+/// `Some("")`, which the caller treats as no excerpt.
 ///
-/// `meeting_format` only writes the §3.4 line and `store`'s reader is not a
-/// dependency here, so the time is parsed in this module.
+/// Lines are read with `meeting_format::transcript::parse_line`, the parser
+/// the meeting view and search use too, so a line the user can see and find
+/// is never missing here (TUR-175). Only the ref, which an agent wrote, is
+/// read more loosely.
 pub fn transcript_excerpt(transcript: &str, transcript_ref: &str) -> Option<String> {
     let at = parse_ref(transcript_ref)?;
     let window = at.saturating_sub(EXCERPT_BEFORE_SECS)..=at.saturating_add(EXCERPT_AFTER_SECS);
@@ -186,12 +188,12 @@ fn parse_ref(raw: &str) -> Option<u64> {
 
 /// The start of a `[HH:MM:SS] ...` line in seconds.
 fn line_start(line: &str) -> Option<u64> {
-    let (time, _) = line.strip_prefix('[')?.split_once("] ")?;
-    seconds(time)
+    meeting_format::transcript::parse_line(line).map(|line| line.start_sec)
 }
 
-/// `HH:MM:SS`, `H:MM:SS` or `MM:SS` in seconds. Each part is one or two
-/// digits, and minutes and seconds are below 60.
+/// A ref's `HH:MM:SS`, `H:MM:SS` or `MM:SS` in seconds. Each part is one or
+/// two digits, and minutes and seconds are below 60. Transcript lines are not
+/// read with this; see [`line_start`].
 fn seconds(time: &str) -> Option<u64> {
     let parts: Vec<&str> = time.split(':').collect();
     let (h, m, s) = match parts.as_slice() {
@@ -347,6 +349,27 @@ not a transcript line
         ] {
             assert_eq!(transcript_excerpt(TRANSCRIPT, raw), exact, "{raw:?}");
         }
+    }
+
+    /// TUR-175: the excerpt reads lines with the parser the meeting view and
+    /// search use, so a line they keep (minutes past 59, as the §3.4 regex
+    /// allows) is kept here, and one they skip (a speaker that is not `You`
+    /// or `Others`, a short time) is skipped here too.
+    #[test]
+    fn excerpt_keeps_exactly_the_lines_the_meeting_view_parses() {
+        let transcript = "[00:59:50] You: before\n\
+                          [00:60:10] Others: odd but valid\n\
+                          [01:00:20] Priya: not a speaker\n\
+                          [1:00:30] You: short hours\n\
+                          [01:00:40] You: after\n";
+        assert_eq!(
+            transcript_excerpt(transcript, "01:00:00").as_deref(),
+            Some(
+                "[00:59:50] You: before\n\
+                 [00:60:10] Others: odd but valid\n\
+                 [01:00:40] You: after"
+            )
+        );
     }
 
     #[test]

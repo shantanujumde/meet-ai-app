@@ -67,33 +67,11 @@ pub fn parse_line(raw: &str) -> Option<(String, u64, Speaker, String)> {
     Some((time.to_string(), start_sec, speaker, text.to_string()))
 }
 
-/// [`parse_line`] without copying: the timestamp and text borrow `raw`.
+/// [`parse_line`] without copying: the timestamp and text borrow `raw`. The
+/// parser is `meeting_format`'s, shared with the Start Work excerpt (TUR-175).
 fn split_line(raw: &str) -> Option<(&str, u64, Speaker, &str)> {
-    // SPEC §3.4's regex, written out rather than compiled: the prefix is
-    // fixed-width and anchored, and the regex crate is not in the workspace.
-    let rest = raw.strip_prefix('[')?;
-    let (time, rest) = rest.split_once("] ")?;
-    let start_sec = hms_to_sec(time)?;
-
-    // Anchored on the literal labels rather than "everything up to the first
-    // colon", so a mangled speaker (`Priya:`) is reported as unparsed instead
-    // of inventing a third speaker.
-    let (speaker, after) = if let Some(after) = rest.strip_prefix("You:") {
-        (Speaker::You, after)
-    } else {
-        (Speaker::Others, rest.strip_prefix("Others:")?)
-    };
-
-    // `: (.*)$` — exactly one space after the colon, then the text verbatim. A
-    // bare `You:` is the empty-text case; `You:text` with no space is not the
-    // contract.
-    let text = if after.is_empty() {
-        after
-    } else {
-        after.strip_prefix(' ')?
-    };
-
-    Some((time, start_sec, speaker, text))
+    let line = meeting_format::transcript::parse_line(raw)?;
+    Some((line.time, line.start_sec, line.speaker, line.text))
 }
 
 fn serialize_label<S: serde::Serializer>(speaker: &Speaker, out: S) -> Result<S::Ok, S::Error> {
@@ -189,23 +167,6 @@ pub fn stats(path: &Path) -> Result<Option<Stats>, Error> {
     }
     stats.last_time = last.map(str::to_owned);
     Ok(Some(stats))
-}
-
-/// `\d{2}:\d{2}:\d{2}` and nothing longer, as seconds.
-///
-/// Minutes and seconds are not range-checked, because the §3.4 regex does not
-/// check them either: a hand-typed `00:75:00` is still a readable line.
-fn hms_to_sec(value: &str) -> Option<u64> {
-    let b = value.as_bytes();
-    let well_formed = b.len() == 8
-        && b[2] == b':'
-        && b[5] == b':'
-        && [0, 1, 3, 4, 6, 7].iter().all(|&i| b[i].is_ascii_digit());
-    if !well_formed {
-        return None;
-    }
-    let two = |i: usize| u64::from(b[i] - b'0') * 10 + u64::from(b[i + 1] - b'0');
-    Some(two(0) * 3600 + two(3) * 60 + two(6))
 }
 
 #[cfg(test)]
