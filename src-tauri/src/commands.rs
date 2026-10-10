@@ -68,6 +68,8 @@ pub async fn save_notes(app: AppHandle, id: String, body: String) -> Result<(), 
         if let Ok(root) = meetings::root() {
             watch::state(&app).note_own_write(&root.join(&id).join(store::NOTES_FILE));
         }
+        // The watcher skips that write, so search learns the notes here (TUR-152).
+        search::meeting_written(&app, &id);
         Ok(())
     })
     .await?

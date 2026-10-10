@@ -7,13 +7,15 @@
 //!
 //! The index is opened lazily, on the first search or the first folder change
 //! the watcher reports, and also once at launch ([`SearchIndex::warm`]) so the
-//! first search is not the one that pays for a full rescan.
+//! first search is not the one that pays for a full rescan. That launch call
+//! also catches a kept index up with edits made while the app was closed
+//! (TUR-152).
 //!
 //! The watcher skips the app's own writes, so code that changes a meeting's
-//! `meeting.md` itself calls [`meeting_written`] (TUR-107): the agent's notes
-//! and title, the calendar's title and a rename. Otherwise the pre-meeting
-//! brief, which finds past meetings by title, would not know the new name
-//! until the next rescan.
+//! files itself calls [`meeting_written`] (TUR-107, TUR-152): the agent's
+//! notes, title and tickets, the calendar's title, a rename and the user's
+//! `notes.md`. Otherwise search, and the pre-meeting brief, which finds past
+//! meetings by title, would not see them until the next rescan.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -32,10 +34,19 @@ pub struct SearchIndex {
 
 impl SearchIndex {
     /// Open (and, if the file is missing or old, build) the index for the
-    /// current meetings folder. Safe to call any time; does nothing when the
-    /// folder does not exist yet.
+    /// current meetings folder, then catch it up with edits made while the
+    /// app was closed (TUR-152). Safe to call any time; does nothing when the
+    /// folder does not exist yet. Reads the disk, so call it off the UI
+    /// thread (launch runs it on its own thread).
     pub fn warm(&self) {
-        if let Err(error) = self.with_index(|_, _| Ok(())) {
+        let result = self.with_index(|root, index| {
+            let changed = index
+                .catch_up(root)
+                .map_err(|error| UiError::app("search-index", error.to_string()))?;
+            tracing::info!(changed, "search index caught up with the meetings folder");
+            Ok(())
+        });
+        if let Err(error) = result {
             tracing::warn!(message = %error.message, "could not prepare the search index");
         }
     }
