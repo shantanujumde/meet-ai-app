@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, test, vi } from "vitest";
 import { useAppStore } from "@/state/app";
@@ -79,5 +79,31 @@ describe("Meetings list", () => {
 
     act(() => useRecordingStore.setState({ status: idle }));
     expect(button).toBeEnabled();
+  });
+});
+
+describe("Today on the meeting list (TUR-171)", () => {
+  test("one Today pane through loading and the list: the calendar is read once", async () => {
+    let answer: (list: Awaited<ReturnType<typeof ipc.listMeetings>>) => void = () => {};
+    ipc.listMeetings.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const loading = useAppStore.getState().loadMeetings();
+    render(
+      <MemoryRouter>
+        <Meetings />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Reading your meetings folder…")).toBeInTheDocument();
+    await waitFor(() => expect(ipc.todaysMeetings).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      answer({
+        root: "/Users/test/Meetings",
+        rootExists: true,
+        meetings: [meetingSummary({ id: "a", title: "Meeting" })],
+      });
+      await loading;
+    });
+    expect(await screen.findByText("Meeting")).toBeInTheDocument();
+    expect(ipc.todaysMeetings).toHaveBeenCalledTimes(1);
   });
 });

@@ -8,7 +8,7 @@
  */
 
 import { AudioLines, FileText } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { MeetingSummary } from "@/ipc/types";
 import { cn } from "@/lib/cn";
@@ -59,87 +59,91 @@ export function Meetings() {
     ? `Press ${shortcut.label} from anywhere, even with this window behind Zoom, and meet-ai starts recording.`
     : `Click Start recording and meet-ai starts recording. ${shortcut.label} is unavailable because another app is using it.`;
 
-  if (loading && list === null) {
-    return (
-      <div className="page">
-        <TodayPane />
-        <Checking label="Reading your meetings folder…" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="page">
-        <TodayPane />
-        <ErrorState error={error} onRemedy={() => void reload()} />
-      </div>
-    );
-  }
-
   const meetings = list?.meetings ?? [];
+  // Which of the three states shows. The list only once it has meetings.
+  const state =
+    loading && list === null
+      ? "loading"
+      : error
+        ? "error"
+        : meetings.length === 0
+          ? "empty"
+          : "list";
 
-  if (meetings.length === 0) {
-    return (
-      <div className="page page--narrow">
-        <TodayPane />
-        <EmptyState
-          title="No meetings yet"
-          body={
-            list?.rootExists
-              ? `${howToStart} Everything is saved as plain text files in ${list.root}, and nothing leaves this Mac.`
-              : `${howToStart} It creates ${list?.root ?? DEFAULT_ROOT_LABEL} for the first one. Everything is saved as plain text files, and nothing leaves this Mac.`
-          }
-          action={
-            <ButtonRow>
-              <Button
-                tone="primary"
-                disabled={recordDisabled(recording, permission, recordingBusy)}
-                onClick={() => void toggle()}
-              >
-                Start recording
+  let body: ReactNode;
+  if (state === "loading") {
+    body = <Checking label="Reading your meetings folder…" />;
+  } else if (error) {
+    body = <ErrorState error={error} onRemedy={() => void reload()} />;
+  } else if (state === "empty") {
+    body = (
+      <EmptyState
+        title="No meetings yet"
+        body={
+          list?.rootExists
+            ? `${howToStart} Everything is saved as plain text files in ${list.root}, and nothing leaves this Mac.`
+            : `${howToStart} It creates ${list?.root ?? DEFAULT_ROOT_LABEL} for the first one. Everything is saved as plain text files, and nothing leaves this Mac.`
+        }
+        action={
+          <ButtonRow>
+            <Button
+              tone="primary"
+              disabled={recordDisabled(recording, permission, recordingBusy)}
+              onClick={() => void toggle()}
+            >
+              Start recording
+            </Button>
+            {permission?.state === "denied" ? (
+              <Button onClick={() => openPermissionScreen(navigate)}>
+                Fix audio permission first
               </Button>
-              {permission?.state === "denied" ? (
-                <Button onClick={() => openPermissionScreen(navigate)}>
-                  Fix audio permission first
-                </Button>
-              ) : null}
-            </ButtonRow>
-          }
-        />
-      </div>
+            ) : null}
+          </ButtonRow>
+        }
+      />
+    );
+  } else {
+    body = (
+      <>
+        <SearchBox value={query} onChange={setQuery} />
+
+        {query.trim() ? (
+          <SearchResults query={query} onOpen={(id) => navigate(meetingPath(id))} />
+        ) : (
+          <section className={cardVariants({ flush: true })}>
+            {meetings.map((meeting) => (
+              <MeetingListRow
+                key={meeting.id}
+                meeting={meeting}
+                isRecording={recording.phase !== "idle" && recording.meetingId === meeting.id}
+                onOpen={() => navigate(meetingPath(meeting.id))}
+              />
+            ))}
+          </section>
+        )}
+      </>
     );
   }
 
+  // One TodayPane at one place in the tree for every state (TUR-171): a pane
+  // per state was a new one each time the state changed, so every launch
+  // read the calendar twice and showed "Reading your calendar…" twice.
   return (
-    <div className="page">
-      <header className="page__header">
-        <h1 className="page__title">Meetings</h1>
-        <p className="page__meta">
-          <span>{meetings.length === 1 ? "1 meeting" : `${meetings.length} meetings`}</span>
-          <span>{list?.root}</span>
-        </p>
-      </header>
-      <WatchProblemNote />
+    <div className={cn("page", state === "empty" && "page--narrow")}>
+      {state === "list" ? (
+        <header className="page__header">
+          <h1 className="page__title">Meetings</h1>
+          <p className="page__meta">
+            <span>{meetings.length === 1 ? "1 meeting" : `${meetings.length} meetings`}</span>
+            <span>{list?.root}</span>
+          </p>
+        </header>
+      ) : null}
+      {state === "list" ? <WatchProblemNote /> : null}
 
       <TodayPane />
 
-      <SearchBox value={query} onChange={setQuery} />
-
-      {query.trim() ? (
-        <SearchResults query={query} onOpen={(id) => navigate(meetingPath(id))} />
-      ) : (
-        <section className={cardVariants({ flush: true })}>
-          {meetings.map((meeting) => (
-            <MeetingListRow
-              key={meeting.id}
-              meeting={meeting}
-              isRecording={recording.phase !== "idle" && recording.meetingId === meeting.id}
-              onOpen={() => navigate(meetingPath(meeting.id))}
-            />
-          ))}
-        </section>
-      )}
+      {body}
     </div>
   );
 }
