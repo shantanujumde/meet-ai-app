@@ -57,7 +57,7 @@ use audio::AudioSource;
 use audio::session::{PauseSwitch, RecordingSession};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter as _, Manager as _};
-use {meeting_format::layout, stt::Speaker};
+use {::calendar::Event, meeting_format::layout, stt::Speaker};
 
 pub use self::phase::Phase;
 use self::ticker::Ticker;
@@ -230,7 +230,7 @@ impl Recorder {
     /// so all three cannot disagree about what "toggle" means.
     pub fn toggle(&self, app: &AppHandle) -> Result<Status, UiError> {
         match self.status().phase {
-            Phase::Idle => self.start(app),
+            Phase::Idle => self.start(app, None),
             Phase::Recording => self.stop(app),
             // Mid-transition. Returning the current state rather than an error
             // is correct: the user pressed a toggle and the answer is "already
@@ -246,7 +246,7 @@ impl Recorder {
         Ok(())
     }
 
-    pub fn start(&self, app: &AppHandle) -> Result<Status, UiError> {
+    pub fn start(&self, app: &AppHandle, pinned: Option<Event>) -> Result<Status, UiError> {
         if let Err(status) = self.claim_starting(app) {
             return Ok(status);
         }
@@ -309,7 +309,7 @@ impl Recorder {
                     live_transcript::Plan::configured(),
                 );
                 self.enter_recording(app, &id, started, session, transcription)
-                    .inspect(|_| auto_title::spawn(app, &id, started))
+                    .inspect(|_| auto_title::spawn(app, &id, started, pinned))
                     .inspect(|_| check.spawn(app))
                     .map_err(|error| self.fail_start(app, Some(&id), error))
             }

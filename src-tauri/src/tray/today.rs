@@ -33,7 +33,6 @@ use super::menu_model::{
 };
 use crate::config;
 use crate::lifecycle::{self, NavigateTo};
-use crate::recording::auto_title::PinnedEvent;
 
 /// "Calendar not connected".
 const CONNECT_ITEM: &str = "tray-today-connect";
@@ -390,12 +389,7 @@ fn record(app: &AppHandle, event_id: &str) {
     if let Err(error) = std::thread::Builder::new()
         .name("meet-ai-tray-record".to_string())
         .spawn(move || {
-            let pin = app.state::<PinnedEvent>();
-            pin.pin(event);
-            let started = crate::folder_move::start_recording(&app);
-            // Taken by the start if it got that far; never left for a later one.
-            pin.clear();
-            match started {
+            match crate::folder_move::start_recording(&app, Some(event)) {
                 Ok(status) => tracing::info!(phase = ?status.phase, "recording started from the menu bar's Today"),
                 Err(error) => {
                     tracing::warn!(message = %error.message, "recording from the menu bar refused");
