@@ -11,8 +11,10 @@
 //!   OS. The first two reach `RunEvent::ExitRequested`, where a quit while
 //!   recording is held and the window asks "Stop recording and quit?"
 //!   ([`QUIT_CONFIRM_EVENT`]); "Stop and quit" comes back as [`confirm_quit`].
-//!   Logout and shutdown go straight to `RunEvent::Exit`, which stops the
-//!   recording through the normal stop path (`lib.rs`) without asking.
+//!   That quit is held again while [`quit`] finishes the recording and stops
+//!   every agent CLI off the main thread, then goes through (TUR-160).
+//!   Logout and shutdown go straight to `RunEvent::Exit`, which does the same
+//!   work there, bounded, without asking.
 //! - **Reopen** is the menu-bar "Open meet-ai", a Dock click (`Reopen`), a
 //!   second launch (single-instance), all [`show_main_window`], and a new
 //!   detection or reminder prompt ([`reveal_for_prompt`]).
@@ -34,6 +36,8 @@ use crate::platform;
 use crate::recording::{Phase, Recorder};
 
 pub(crate) mod notice;
+// TUR-160: what quitting finishes first.
+pub(crate) mod quit;
 
 /// The app menu's own Quit item (macOS), in place of the stock one.
 const QUIT_MENU_ITEM: &str = "app-quit";
@@ -79,6 +83,11 @@ pub enum QuitAction {
     Quit,
     /// Hold the quit and ask "Stop recording and quit?" in the window.
     AskFirst,
+    /// Hold the quit, finish the recording and stop the agents off the main
+    /// thread, then quit again ([`quit::finish_then_quit`], TUR-160).
+    FinishFirst,
+    /// Hold the quit: [`QuitAction::FinishFirst`]'s work is still going.
+    Hold,
 }
 
 /// Ask first while anything is recording, so a meeting is never cut by a
@@ -101,13 +110,28 @@ pub struct ExitRequest {
     pub confirmed: bool,
     /// A recording is starting, running or stopping.
     pub recording: bool,
+    /// [`QuitAction::FinishFirst`]'s work is going.
+    pub finishing: bool,
+    /// [`QuitAction::FinishFirst`]'s work is done, bounds hit or not.
+    pub finished: bool,
 }
 
 /// The decision at `RunEvent::ExitRequested`, which every quit but the OS's
 /// passes: the menu-bar Quit, ⌘Q, and "Stop and quit" itself.
+///
+/// A confirmed quit with the recorder busy is held once more, so the
+/// recording is finished off the main thread before the app ends.
 pub fn on_exit_requested(request: ExitRequest) -> QuitAction {
-    if request.restart || request.confirmed {
+    if request.restart || request.finished {
         QuitAction::Quit
+    } else if request.finishing {
+        QuitAction::Hold
+    } else if request.confirmed {
+        if request.recording {
+            QuitAction::FinishFirst
+        } else {
+            QuitAction::Quit
+        }
     } else {
         on_quit_requested(request.recording)
     }
@@ -131,6 +155,10 @@ pub fn dock_visible_when_hidden(config: AppConfig) -> bool {
 pub struct Lifecycle {
     /// "Stop and quit" was clicked; the next exit request goes through.
     quit_confirmed: AtomicBool,
+    /// The quit thread was started ([`QuitAction::FinishFirst`]).
+    finishing: AtomicBool,
+    /// The quit thread is done; the next exit request goes through.
+    work_finished: AtomicBool,
 }
 
 // --- wiring -----------------------------------------------------------------
@@ -177,18 +205,36 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
 /// click.
 pub fn on_run_event(app: &AppHandle, event: &RunEvent) {
     if let RunEvent::ExitRequested { code, api, .. } = event {
+        let state = app.try_state::<Lifecycle>();
+        let flag = |pick: fn(&Lifecycle) -> &AtomicBool| {
+            state
+                .as_deref()
+                .is_some_and(|state| pick(state).load(Ordering::SeqCst))
+        };
         let request = ExitRequest {
             restart: *code == Some(tauri::RESTART_EXIT_CODE),
-            confirmed: app
-                .try_state::<Lifecycle>()
-                .is_some_and(|state| state.quit_confirmed.load(Ordering::SeqCst)),
+            confirmed: flag(|state| &state.quit_confirmed),
             recording: app
                 .try_state::<Recorder>()
                 .is_some_and(|recorder| is_recording(recorder.status().phase)),
+            finishing: flag(|state| &state.finishing),
+            finished: flag(|state| &state.work_finished),
         };
-        if on_exit_requested(request) == QuitAction::AskFirst {
-            api.prevent_exit();
-            ask_before_quitting(app);
+        match on_exit_requested(request) {
+            QuitAction::Quit => {}
+            QuitAction::AskFirst => {
+                api.prevent_exit();
+                ask_before_quitting(app);
+            }
+            QuitAction::FinishFirst => {
+                api.prevent_exit();
+                if let Some(state) = &state {
+                    state.finishing.store(true, Ordering::SeqCst);
+                }
+                tracing::info!("stop and quit: finishing the recording first");
+                quit::finish_then_quit(app);
+            }
+            QuitAction::Hold => api.prevent_exit(),
         }
     } else if platform::is_reopen(event) {
         show_main_window(app);
@@ -291,8 +337,9 @@ impl From<AppConfig> for AppSettings {
     }
 }
 
-/// "Stop and quit": let the held quit through. The exit hook in `lib.rs`
-/// stops the recording the same way the Stop button does.
+/// "Stop and quit": let the held quit through. The recording is then
+/// stopped the same way the Stop button does, off the main thread
+/// ([`QuitAction::FinishFirst`]).
 #[tauri::command]
 #[specta::specta]
 pub async fn confirm_quit(app: AppHandle) {
@@ -388,34 +435,63 @@ mod tests {
         }
     }
 
+    /// Nothing asked, nothing going: the fields every case starts from.
+    const QUIET: ExitRequest = ExitRequest {
+        restart: false,
+        confirmed: false,
+        recording: false,
+        finishing: false,
+        finished: false,
+    };
+
+    /// TUR-160: "Stop and quit" with the recorder busy is held once more,
+    /// while the recording is finished off the main thread, and goes through
+    /// once that is done.
     #[test]
-    fn an_exit_request_while_recording_is_held_until_confirmed() {
+    fn an_exit_request_while_recording_is_held_until_confirmed_and_finished() {
         let asked = ExitRequest {
-            restart: false,
-            confirmed: false,
             recording: true,
+            ..QUIET
         };
         assert_eq!(on_exit_requested(asked), QuitAction::AskFirst);
+        let confirmed = ExitRequest {
+            confirmed: true,
+            ..asked
+        };
+        assert_eq!(on_exit_requested(confirmed), QuitAction::FinishFirst);
+        assert_eq!(
+            on_exit_requested(ExitRequest {
+                finishing: true,
+                ..confirmed
+            }),
+            QuitAction::Hold,
+            "a second Quit while finishing waits for it"
+        );
+        assert_eq!(
+            on_exit_requested(ExitRequest {
+                finishing: true,
+                finished: true,
+                ..confirmed
+            }),
+            QuitAction::Quit,
+            "goes through once finished, even if the recorder never settled"
+        );
+    }
+
+    #[test]
+    fn a_confirmed_quit_with_the_recorder_idle_goes_through() {
         assert_eq!(
             on_exit_requested(ExitRequest {
                 confirmed: true,
-                ..asked
+                ..QUIET
             }),
-            QuitAction::Quit,
-            "Stop and quit goes through"
+            QuitAction::Quit
         );
     }
 
     #[test]
     fn an_exit_request_with_nothing_recording_quits_at_once() {
-        assert_eq!(
-            on_exit_requested(ExitRequest {
-                restart: false,
-                confirmed: false,
-                recording: false,
-            }),
-            QuitAction::Quit
-        );
+        assert_eq!(on_exit_requested(QUIET), QuitAction::Quit);
     }
 
     #[test]
@@ -423,8 +499,8 @@ mod tests {
         assert_eq!(
             on_exit_requested(ExitRequest {
                 restart: true,
-                confirmed: false,
                 recording: true,
+                ..QUIET
             }),
             QuitAction::Quit
         );

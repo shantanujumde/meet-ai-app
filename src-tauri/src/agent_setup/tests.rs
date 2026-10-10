@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent::fake::{FakeBehavior, FakeHarness};
-use agent::{AgentError, Install};
+use agent::{AgentError, CancelHandle, Install};
 use serde_json::json;
 
 use super::test_run::{SAMPLE_TRANSCRIPT, agent_error, found, run_sample, sample_prompt};
@@ -56,6 +56,7 @@ fn run_fake(behavior: FakeBehavior, timeout: Duration) -> Result<AgentTestResult
         timeout,
         std::env::temp_dir(),
         None,
+        &CancelHandle::new(),
     )
 }
 
@@ -539,6 +540,7 @@ fn the_test_runs_the_picked_model_and_default_passes_none() {
             Duration::from_secs(5),
             std::env::temp_dir(),
             None,
+            &CancelHandle::new(),
         )
         .unwrap();
     }
@@ -569,6 +571,7 @@ fn a_failed_test_names_the_model_it_tried() {
         Duration::from_secs(30),
         std::env::temp_dir(),
         None,
+        &CancelHandle::new(),
     )
     .unwrap_err();
     assert!(!error.message.contains("model:"), "{}", error.message);
@@ -655,6 +658,52 @@ fn a_cli_that_is_not_found_is_not_installed_by_name() {
 
 #[test]
 fn testing_with_no_agent_picked_is_refused_without_looking() {
-    let error = super::test_run::run(&choice(AgentHarness::None, "", None)).unwrap_err();
+    let error = super::test_run::run(&choice(AgentHarness::None, "", None), &CancelHandle::new())
+        .unwrap_err();
     assert_eq!((error.domain, error.kind), ("app", "agent-none"));
+}
+
+/// TUR-160: quitting mid-Test stops the CLI and everything it started, and a
+/// Test pressed after that is refused. On unix the CLI leads its own process
+/// group, so before this it outlived the app.
+#[test]
+fn shutdown_stops_a_running_test_and_leaves_no_cli_behind() {
+    let bin = temp_root("quit");
+    let cli = test_support::FakeCli::install(bin.path(), "claude");
+    let pid_file = bin.path().join("grandchild.pid");
+    cli.set("grandchild_pid_file", pid_file.display().to_string())
+        .set("sleep", "30");
+    let harness = agent::ClaudeHarness::new().with_binary(cli.path());
+    let runs = TestRuns::default();
+
+    std::thread::scope(|scope| {
+        let claim = runs.claim().unwrap();
+        let harness = &harness;
+        let test = scope.spawn(move || {
+            run_sample(
+                harness,
+                None,
+                Duration::from_secs(60),
+                std::env::temp_dir(),
+                None,
+                &claim.cancel,
+            )
+        });
+        // The CLI is up and has started a child of its own.
+        let grandchild = test_support::wait_for_pid_file(&pid_file);
+
+        let started = std::time::Instant::now();
+        runs.shutdown(Duration::from_secs(3));
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "the run did not end within the bound"
+        );
+        assert!(
+            test_support::process_is_gone(grandchild, Duration::from_secs(5)),
+            "the CLI's child is still running"
+        );
+        assert_eq!(test.join().unwrap().unwrap_err().kind, "agent-cancelled");
+    });
+
+    assert_eq!(runs.claim().unwrap_err().kind, "app-quitting");
 }
