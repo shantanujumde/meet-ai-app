@@ -22,11 +22,12 @@ import { useEffect, useState } from "react";
 import { isPaused } from "@/ipc/client";
 import type { PermissionStatus, RecordingStatus } from "@/ipc/types";
 import { formatElapsed } from "@/lib/format";
-import { osText, shortcutLabel } from "@/lib/osText";
+import { osText } from "@/lib/osText";
 import { recordingBlocked } from "@/lib/recordingPermission";
 import { Icon } from "./icons";
 import { IconButton } from "./primitives";
 import { useRecordedMs } from "./useRecordedMs";
+import { unavailableText, useRecordShortcut } from "./useRecordShortcut";
 
 /** Human wording for each phase. `Starting`/`Stopping` get their own. */
 function labelFor(phase: RecordingStatus["phase"]): string {
@@ -76,6 +77,9 @@ export function RecordControl({
   onTogglePause: () => void;
 }) {
   const elapsed = useRecordedMs(status);
+  // TUR-169: another app may own the shortcut; then it is not advertised.
+  const shortcut = useRecordShortcut();
+  const shortcutTitle = shortcut.available ? shortcut.label : unavailableText(shortcut.label);
   const live = status.phase === "recording";
   const paused = isPaused(status);
   const transitioning = status.phase === "starting" || status.phase === "stopping";
@@ -102,7 +106,7 @@ export function RecordControl({
         data-recording={live}
         disabled={disabled}
         aria-label={accessibleName}
-        title={denied ? `Fix audio permission in ${osText("settings")} first` : shortcutLabel()}
+        title={denied ? `Fix audio permission in ${osText("settings")} first` : shortcutTitle}
         onClick={onToggle}
       >
         {/* The pulse is the live signal (never the only one: the red fill, the
@@ -132,9 +136,16 @@ export function RecordControl({
       ) : null}
 
       {/* Beside the button it starts, not across the timer's empty room. */}
-      <span className="record__shortcut" aria-hidden="true">
-        {shortcutLabel()}
-      </span>
+      {shortcut.available ? (
+        <span className="record__shortcut" aria-hidden="true">
+          {shortcut.label}
+        </span>
+      ) : (
+        <span className="record__shortcut line-through" title={shortcutTitle}>
+          {shortcut.label}
+          <span className="sr-only"> is unavailable: another app is using it</span>
+        </span>
+      )}
 
       {/* Reserved whether or not it is running, so starting a recording does
           not shift the titlebar sideways. Last, so the empty room sits at the

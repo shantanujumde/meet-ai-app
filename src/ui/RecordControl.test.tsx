@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import type { RecordingStatus } from "@/ipc/types";
 import { RecordControl } from "./RecordControl";
@@ -8,6 +8,11 @@ import { RecordControl } from "./RecordControl";
 vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
 );
+
+const shortcut = vi.hoisted(() => ({ available: true }));
+vi.mock("@/ipc/shortcut", () => ({
+  recordShortcutAvailable: () => Promise.resolve(shortcut.available),
+}));
 
 const RECORDING: RecordingStatus = {
   phase: "recording",
@@ -58,5 +63,30 @@ describe("RecordControl pause", () => {
   test("Pause waits while a request is in flight", () => {
     renderControl(RECORDING, true);
     expect(screen.getByRole("button", { name: "Pause recording" })).toBeDisabled();
+  });
+});
+
+describe("RecordControl shortcut (TUR-169)", () => {
+  const IDLE: RecordingStatus = { ...RECORDING, phase: "idle", meetingId: null, startedAtMs: null };
+
+  test("a registered shortcut is advertised on the button", async () => {
+    shortcut.available = true;
+    await act(async () => {
+      renderControl(IDLE);
+    });
+    expect(screen.getByRole("button", { name: "Start recording" }).title).toBe("⌘⇧R");
+    expect(screen.queryByText(/unavailable/)).toBeNull();
+  });
+
+  test("a shortcut another app owns is shown as unavailable", async () => {
+    shortcut.available = false;
+    await act(async () => {
+      renderControl(IDLE);
+    });
+    const button = screen.getByRole("button", { name: "Start recording" });
+    expect(button.title).toBe(
+      "⌘⇧R is unavailable: another app is using it. Use the Record button instead.",
+    );
+    expect(screen.getByText(/is unavailable: another app is using it/)).toBeInTheDocument();
   });
 });

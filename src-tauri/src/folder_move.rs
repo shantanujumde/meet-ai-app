@@ -29,7 +29,7 @@ use std::sync::{Mutex, MutexGuard};
 use tauri::{AppHandle, Manager as _};
 
 use crate::error::UiError;
-use crate::recording::{Recorder, Status};
+use crate::recording::{Phase, Recorder, Status};
 
 /// `Recorder::toggle`, through the gate. The one way every surface — the
 /// button, ⌘⇧R, the menu bar — starts or stops a recording, so none of them can
@@ -48,15 +48,50 @@ pub fn toggle_recording(app: &AppHandle) -> Result<Status, UiError> {
     )
 }
 
-/// `Recorder::start`, through the gate: the menu bar's **Record** for one
-/// meeting (TUR-77). Starts only from idle; a recording already going is
-/// left alone rather than stopped, which a toggle would do.
-pub fn start_recording(app: &AppHandle) -> Result<Status, UiError> {
+/// `Recorder::start`, through the gate: a **Record** for one meeting (the
+/// menu bar's Today, a reminder or a prompt; TUR-77). `pinned` is the event
+/// it was clicked for, which names the recording; it travels with this start
+/// alone (TUR-169). Starts only from idle: a recording already going is left
+/// alone rather than stopped, which a toggle would do, and the click hears
+/// so ([`only_from_idle`]) instead of getting the running recording's status
+/// back as if it had started.
+pub fn start_recording(
+    app: &AppHandle,
+    pinned: Option<::calendar::Event>,
+) -> Result<Status, UiError> {
     let recorder = app.state::<Recorder>();
     gated_toggle(
         &app.state::<FolderGate>(),
-        || recorder.start(app),
+        || only_from_idle(recorder.status().phase, || recorder.start(app, pinned)),
         |refused| recorder.refuse_start(app, refused),
+    )
+}
+
+/// Run `start` only when the recorder was idle (`before`), and turn "a
+/// recording, or another start, got there first" into
+/// [`already_recording`]. `Recorder::start` answers a start that lost the
+/// race with the winner's status, still `Starting`; its own start ends
+/// `Recording`.
+fn only_from_idle(
+    before: Phase,
+    start: impl FnOnce() -> Result<Status, UiError>,
+) -> Result<Status, UiError> {
+    if before != Phase::Idle {
+        return Err(already_recording());
+    }
+    let status = start()?;
+    if status.phase == Phase::Recording {
+        Ok(status)
+    } else {
+        Err(already_recording())
+    }
+}
+
+/// A Record for one meeting while another recording runs (TUR-169).
+pub fn already_recording() -> UiError {
+    UiError::app(
+        "already-recording",
+        "A recording is already running. Stop it first to record this meeting.",
     )
 }
 
@@ -205,6 +240,35 @@ impl Drop for MoveGuard<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn status(phase: Phase) -> Status {
+        Status {
+            phase,
+            meeting_id: None,
+            started_at_ms: None,
+            error: None,
+            pause: Box::default(),
+        }
+    }
+
+    /// TUR-169: Record for meeting B while A records says so, rather than
+    /// answering with A's status as if B had started.
+    #[test]
+    fn a_record_while_recording_is_told_so_and_starts_nothing() {
+        for phase in [Phase::Starting, Phase::Recording, Phase::Stopping] {
+            let refused = only_from_idle(phase, || unreachable!("must not start"));
+            assert_eq!(refused.expect_err("refused").kind, "already-recording");
+        }
+        // Idle, but another start claimed the recorder first.
+        let lost = only_from_idle(Phase::Idle, || Ok(status(Phase::Starting)));
+        assert_eq!(lost.expect_err("lost the race").kind, "already-recording");
+        // Its own start.
+        let started = only_from_idle(Phase::Idle, || Ok(status(Phase::Recording)));
+        assert_eq!(started.expect("started").phase, Phase::Recording);
+        // A refusal of its own passes through.
+        let failed = only_from_idle(Phase::Idle, || Err(UiError::app("mic-denied", "no")));
+        assert_eq!(failed.expect_err("refused").kind, "mic-denied");
+    }
 
     #[test]
     fn a_recording_cannot_start_while_the_folder_is_moving() {

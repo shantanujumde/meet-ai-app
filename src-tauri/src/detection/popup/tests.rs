@@ -504,3 +504,57 @@ fn a_call_prompt_offers_never_for_its_app_and_not_now_names_it() {
         .expect("shown");
     assert_eq!(not_now_app(&countdown, countdown.id), None);
 }
+
+/// TUR-169: a Record keeps the window up until the recording has started;
+/// every other answer but Join hides it at once.
+#[test]
+fn only_record_and_join_keep_the_window_up_when_answered() {
+    let start = Action::Start {
+        event_id: None,
+        join: false,
+    };
+    assert!(!hides_at_once(&start));
+    assert!(!hides_at_once(&Action::Join {
+        event_id: "e".to_string()
+    }));
+    for action in [
+        Action::Nothing,
+        Action::OpenBrief {
+            title: "Standup".to_string(),
+        },
+        Action::NeverFor {
+            app: "Zoom".to_string(),
+        },
+    ] {
+        assert!(hides_at_once(&action), "{action:?}");
+    }
+}
+
+/// TUR-169: a Record from the popup that does not start is told with a
+/// notification (the window may be hidden in the tray), like ⌘⇧R's; one that
+/// starts hides the popup.
+#[test]
+fn a_failed_record_from_the_popup_posts_a_refusal() {
+    let refused = Err(UiError::app("mic-denied", "meet-ai may not use the mic."));
+    match after_run(true, &refused) {
+        AfterRun::Refuse(error) => assert_eq!(error.kind, "mic-denied"),
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(after_run(true, &Ok(())), AfterRun::Hide));
+    // Not a Start: nothing more to do, failed or not.
+    assert!(matches!(after_run(false, &refused), AfterRun::Done));
+    assert!(matches!(after_run(false, &Ok(())), AfterRun::Done));
+}
+
+#[test]
+fn the_window_stays_up_while_a_record_is_starting() {
+    let mut slot = Slot::default();
+    assert!(slot.may_hide());
+    let shown = slot.show(zoom().into(), 0, None).expect("shown");
+    assert!(!slot.may_hide(), "a card is up");
+    assert!(slot.answer(shown.id, PopupAnswer::Record).is_some());
+    slot.starting = true;
+    assert!(!slot.may_hide(), "the Record is still starting");
+    slot.starting = false;
+    assert!(slot.may_hide());
+}

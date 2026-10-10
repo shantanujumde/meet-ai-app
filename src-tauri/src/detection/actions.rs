@@ -4,10 +4,11 @@
 //! A reminder remembers its event ([`Reminded`]), and the banner sends back
 //! only that event's id, never a link: the link a click opens is the one the
 //! calendar gave, and only a safe video-call link ([`join_link`], the same
-//! check as the menu bar's Join). Record pins the event, so the recording is
-//! named after this meeting even when the reminder came ten minutes early,
-//! and goes through the normal start path (`folder_move::start_recording`,
-//! as the menu bar's Record does). Every one of these runs from a click (L15).
+//! check as the menu bar's Join). Record hands the event to its own start,
+//! so the recording is named after this meeting even when the reminder came
+//! ten minutes early, and goes through the normal start path
+//! (`folder_move::start_recording`, as the menu bar's Record does). Every one
+//! of these runs from a click (L15).
 
 use std::collections::VecDeque;
 
@@ -17,7 +18,6 @@ use tauri_plugin_opener::OpenerExt as _;
 use super::Detection;
 use crate::error::UiError;
 use crate::recording::Status;
-use crate::recording::auto_title::PinnedEvent;
 
 /// How many reminded events are kept for the banner: more than can be on
 /// screen at once, and few enough to never matter.
@@ -109,12 +109,7 @@ pub async fn record_reminded_meeting(
         tracing::warn!(message = %error.message, "could not join from the reminder; recording anyway");
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let pin = app.state::<PinnedEvent>();
-        pin.pin(event);
-        let started = crate::folder_move::start_recording(&app);
-        // Taken by the start if it got that far; never left for a later one.
-        pin.clear();
-        started
+        crate::folder_move::start_recording(&app, Some(event))
     })
     .await
     .map_err(|error| UiError::app("record-failed", error.to_string()))?

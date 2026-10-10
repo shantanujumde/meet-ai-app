@@ -12,13 +12,13 @@
 //!    under a meeting app's name. Its first sighting prompts once; it re-arms
 //!    only when every one of those pids has exited — quitting and reopening
 //!    Zoom asks again, dismissing does not.
-//! 3. **Slack and Discord need a call signal too** (`needs_call_signal` in
-//!    `processes.json`). They are open all day, so they only prompt when a
-//!    calendar event or audio activity was seen in the last
-//!    [`CALL_SIGNAL_WINDOW`]. Until a signal arrives they stay un-handled, so a
-//!    signal later in the same session can still prompt once. Until calendar
-//!    (TUR-26) and audio activity feed [`Detector::call_signal`], they never
-//!    prompt alone.
+//! 3. **Every meeting app needs a call signal too** (`needs_call_signal` in
+//!    `processes.json`). Slack and Discord are open all day, and so are Zoom,
+//!    Teams and Webex for many people, who start them at login (TUR-169). So
+//!    an app being open only prompts when a calendar event or audio activity
+//!    was seen in the last [`CALL_SIGNAL_WINDOW`]. Until a signal arrives the
+//!    app stays un-handled, so the real call later in the same session still
+//!    prompts once, naming the app. Being open alone never prompts.
 //! 4. **One prompt per call, from any signal.** Audio activity (TUR-31,
 //!    [`Detector::audio_activity`]) counts as a call signal first, so a Slack
 //!    call is named as Slack. It prompts on its own only when no meeting app
@@ -35,8 +35,8 @@ use std::time::{Duration, Instant};
 use crate::Signal;
 use crate::processes;
 
-/// How recent a calendar or audio-activity signal must be for Slack or
-/// Discord being open to count as a call.
+/// How recent a calendar or audio-activity signal must be for a meeting app
+/// being open to count as a call.
 pub const CALL_SIGNAL_WINDOW: Duration = Duration::from_secs(5 * 60);
 
 /// One running process, as the OS lists it.
@@ -174,6 +174,14 @@ mod tests {
         RunningProcess::new(pid, name_of("Zoom"))
     }
 
+    /// A detector that just heard a call signal (a calendar event, audio
+    /// activity) at `now`, so a meeting app being open counts as a call.
+    fn signalled(now: Instant) -> Detector {
+        let mut detector = Detector::new();
+        detector.call_signal(now);
+        detector
+    }
+
     fn process(name: &str) -> Signal {
         Signal::Process {
             process: name.to_string(),
@@ -182,8 +190,8 @@ mod tests {
 
     #[test]
     fn a_meeting_app_appearing_prompts_once_naming_it() {
-        let mut detector = Detector::new();
         let now = Instant::now();
+        let mut detector = signalled(now);
         let running = [RunningProcess::new(1, "Finder"), zoom(42)];
         assert_eq!(
             detector.observe(&running, false, now),
@@ -210,18 +218,19 @@ mod tests {
 
     #[test]
     fn matching_ignores_case() {
-        let mut detector = Detector::new();
+        let now = Instant::now();
+        let mut detector = signalled(now);
         let running = [RunningProcess::new(7, name_of("Zoom").to_uppercase())];
         assert_eq!(
-            detector.observe(&running, false, Instant::now()),
+            detector.observe(&running, false, now),
             [process(name_of("Zoom"))]
         );
     }
 
     #[test]
     fn a_dismissed_app_asks_again_only_after_it_quits() {
-        let mut detector = Detector::new();
         let now = Instant::now();
+        let mut detector = signalled(now);
         assert_eq!(detector.observe(&[zoom(42)], false, now).len(), 1);
         // Dismissed: still open, never again.
         assert!(detector.observe(&[zoom(42)], false, now).is_empty());
@@ -236,16 +245,16 @@ mod tests {
 
     #[test]
     fn a_restart_between_two_polls_is_a_new_session() {
-        let mut detector = Detector::new();
         let now = Instant::now();
+        let mut detector = signalled(now);
         assert_eq!(detector.observe(&[zoom(42)], false, now).len(), 1);
         assert_eq!(detector.observe(&[zoom(99)], false, now).len(), 1);
     }
 
     #[test]
     fn a_second_pid_under_the_same_name_is_the_same_session() {
-        let mut detector = Detector::new();
         let now = Instant::now();
+        let mut detector = signalled(now);
         assert_eq!(detector.observe(&[zoom(42)], false, now).len(), 1);
         assert!(
             detector
@@ -258,8 +267,8 @@ mod tests {
 
     #[test]
     fn two_apps_are_two_sessions() {
-        let mut detector = Detector::new();
         let now = Instant::now();
+        let mut detector = signalled(now);
         let running = [zoom(1), RunningProcess::new(2, name_of("Webex"))];
         assert_eq!(
             detector.observe(&running, false, now),
@@ -286,8 +295,8 @@ mod tests {
 
     #[test]
     fn an_app_seen_while_recording_does_not_prompt_when_the_recording_stops() {
-        let mut detector = Detector::new();
         let now = Instant::now();
+        let mut detector = signalled(now);
         assert!(detector.observe(&[zoom(42)], true, now).is_empty());
         assert!(detector.observe(&[zoom(42)], false, now).is_empty());
         // The next session, after it quits, asks as usual.
@@ -306,6 +315,45 @@ mod tests {
         for minute in 0..60 {
             let at = now + Duration::from_secs(minute * 60);
             assert!(detector.observe(&running, false, at).is_empty());
+        }
+    }
+
+    /// TUR-169: Zoom, Teams and Webex often start at login and stay open all
+    /// day. Being open says nothing; the call (audio activity, a calendar
+    /// event) does, and the prompt then names the app.
+    #[test]
+    fn resident_apps_open_at_login_ask_only_once_a_call_starts() {
+        let mut detector = Detector::new();
+        let login = Instant::now();
+        let mut running = vec![zoom(1), RunningProcess::new(2, name_of("Webex"))];
+        running.extend(every_teams_process());
+        for minute in 0..60 {
+            let at = login + Duration::from_secs(minute * 60);
+            assert!(
+                detector.observe(&running, false, at).is_empty(),
+                "minute {minute}"
+            );
+        }
+        // An hour later the Teams call starts: the mic and speakers light up.
+        let call = login + Duration::from_secs(3600);
+        let asked = detector.audio_activity(&running, false, call);
+        assert!(
+            asked.contains(&process(&every_teams_process()[0].name)),
+            "{asked:?}"
+        );
+        assert_eq!(asked.len(), 3, "each app named once: {asked:?}");
+        // Asked once for this session.
+        assert!(
+            detector
+                .observe(&running, false, call + Duration::from_secs(5))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn every_meeting_app_needs_a_call_signal() {
+        for known in crate::processes::meeting_processes() {
+            assert!(known.needs_call_signal, "{}", known.name);
         }
     }
 
@@ -384,8 +432,8 @@ mod tests {
 
     #[test]
     fn audio_activity_soon_after_an_app_prompt_stays_quiet() {
-        let mut detector = Detector::new();
         let now = Instant::now();
+        let mut detector = signalled(now);
         assert_eq!(detector.observe(&[zoom(42)], false, now).len(), 1);
         // Zoom's call starts a minute later: already asked.
         assert!(
@@ -450,8 +498,8 @@ mod tests {
 
     #[test]
     fn every_teams_process_together_asks_once() {
-        let mut detector = Detector::new();
         let now = Instant::now();
+        let mut detector = signalled(now);
         let teams = every_teams_process();
         assert!(!teams.is_empty());
         assert_eq!(
@@ -467,8 +515,8 @@ mod tests {
 
     #[test]
     fn the_teams_session_lasts_until_its_last_process_exits() {
-        let mut detector = Detector::new();
         let now = Instant::now();
+        let mut detector = signalled(now);
         let teams = every_teams_process();
         assert_eq!(detector.observe(&teams, false, now).len(), 1);
         let last = &teams[teams.len() - 1..];

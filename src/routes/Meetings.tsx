@@ -19,7 +19,6 @@ import {
   INTERRUPTED_LABEL,
   NOTES_OFF_LABEL,
 } from "@/lib/format";
-import { shortcutLabel } from "@/lib/osText";
 import { openPermissionScreen } from "@/lib/permissionRoute";
 import { recordingBlocked } from "@/lib/recordingPermission";
 import { meetingPath } from "@/lib/routes";
@@ -39,6 +38,7 @@ import { SearchBox } from "@/ui/SearchBox";
 import { SearchResults } from "@/ui/SearchResults";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 import { TodayPane } from "@/ui/TodayPane";
+import { useRecordShortcut } from "@/ui/useRecordShortcut";
 import { WatchProblemNote } from "@/ui/WatchProblemNote";
 
 export function Meetings() {
@@ -53,6 +53,11 @@ export function Meetings() {
   const toggle = useRecordingStore((state) => state.toggle);
   const recordingBusy = useRecordingStore((state) => state.busy);
   const recording = useRecordingStore((state) => state.status);
+  // TUR-169: a shortcut another app owns is not advertised.
+  const shortcut = useRecordShortcut();
+  const howToStart = shortcut.available
+    ? `Press ${shortcut.label} from anywhere, even with this window behind Zoom, and meet-ai starts recording.`
+    : `Click Start recording and meet-ai starts recording. ${shortcut.label} is unavailable because another app is using it.`;
 
   if (loading && list === null) {
     return (
@@ -82,8 +87,8 @@ export function Meetings() {
           title="No meetings yet"
           body={
             list?.rootExists
-              ? `Press ${shortcutLabel()} from anywhere, even with this window behind Zoom, and meet-ai starts recording. Everything is saved as plain text files in ${list.root}, and nothing leaves this Mac.`
-              : `Press ${shortcutLabel()} from anywhere, even with this window behind Zoom, and meet-ai starts recording. It creates ${list?.root ?? DEFAULT_ROOT_LABEL} for the first one. Everything is saved as plain text files, and nothing leaves this Mac.`
+              ? `${howToStart} Everything is saved as plain text files in ${list.root}, and nothing leaves this Mac.`
+              : `${howToStart} It creates ${list?.root ?? DEFAULT_ROOT_LABEL} for the first one. Everything is saved as plain text files, and nothing leaves this Mac.`
           }
           action={
             <ButtonRow>

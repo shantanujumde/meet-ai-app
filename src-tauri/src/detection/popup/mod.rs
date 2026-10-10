@@ -56,6 +56,12 @@ pub(crate) use platform::{hide as hide_floating, make_panel, show as show_floati
 /// records.
 pub const AUTO_HIDE: Duration = Duration::from_secs(20);
 
+/// How long a Record that failed keeps its card up, showing why, before the
+/// window hides (TUR-169). The notification says it too
+/// ([`crate::notify::refusal`]), for a popup the user already looked away
+/// from.
+pub const ERROR_LINGER: Duration = Duration::from_secs(8);
+
 /// How long the window stays up after its card closes, so the card can fade
 /// out first (the card's own transition is shorter; with Reduce Motion it
 /// does not fade at all).
@@ -143,6 +149,9 @@ pub struct Slot {
     /// Where the countdown on screen reports how it ended. Set only while a
     /// countdown is the current card.
     countdown: Option<Sender<CountdownEnd>>,
+    /// A Record pressed on this popup is still starting (TUR-169): the window
+    /// stays up, so a failure can show on its card.
+    starting: bool,
 }
 
 impl Slot {
@@ -178,6 +187,12 @@ impl Slot {
     /// The card on screen.
     pub fn current(&self) -> Option<PopupPrompt> {
         self.current.clone()
+    }
+
+    /// May the window hide now? Not with a card on screen, nor while a
+    /// Record pressed on it is still starting.
+    pub fn may_hide(&self) -> bool {
+        self.current.is_none() && !self.starting
     }
 
     /// Card `id`'s time ran out: close it if it is still the one on screen.
@@ -357,16 +372,51 @@ fn present(
 /// Hide the window once the card has faded out, unless a new card is up by
 /// then.
 fn hide_after_fade(app: &AppHandle) {
+    hide_after(app, FADE_OUT);
+}
+
+/// Hide the window after `delay`, unless by then a card is up or a Record
+/// is starting ([`Slot::may_hide`]).
+fn hide_after(app: &AppHandle, delay: Duration) {
     let app = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(FADE_OUT);
+        std::thread::sleep(delay);
         if app
             .try_state::<PromptPopup>()
-            .is_none_or(|state| state.with(|slot| slot.current().is_none()))
+            .is_none_or(|state| state.with(|slot| slot.may_hide()))
         {
             window::hide(&app);
         }
     });
+}
+
+/// Does `action` hide the window as soon as it is answered? Join keeps the
+/// question up; a Start hides only once the recording has started
+/// ([`after_run`], TUR-169).
+pub fn hides_at_once(action: &Action) -> bool {
+    !matches!(action, Action::Join { .. } | Action::Start { .. })
+}
+
+/// What the popup does once an answer's action has run.
+#[derive(Debug)]
+pub enum AfterRun {
+    /// Nothing more: it hid, or stayed up for Join, when the answer came.
+    Done,
+    /// The recording started: hide the window.
+    Hide,
+    /// The recording did not start: tell the user with a notification, as
+    /// ⌘⇧R and the menu bar's Record do, and hide once the card has shown
+    /// the reason for [`ERROR_LINGER`].
+    Refuse(UiError),
+}
+
+/// [`AfterRun`] for an action that was a Start (`starting`) and ran to `ran`.
+pub fn after_run(starting: bool, ran: &Result<(), UiError>) -> AfterRun {
+    match ran {
+        _ if !starting => AfterRun::Done,
+        Ok(()) => AfterRun::Hide,
+        Err(error) => AfterRun::Refuse(error.clone()),
+    }
 }
 
 /// The card the popup should show, for a window that just loaded.
@@ -405,10 +455,29 @@ pub async fn answer_prompt_popup(
         hide_after_fade(&app);
         return Ok(());
     };
-    if !matches!(action, Action::Join { .. }) {
+    let starting = matches!(action, Action::Start { .. });
+    if hides_at_once(&action) {
         hide_after_fade(&app);
     }
-    run(&app, action).await?;
+    if let Some(state) = app.try_state::<PromptPopup>() {
+        state.with(|slot| slot.starting = starting);
+    }
+    let ran = run(&app, action).await;
+    if let Some(state) = app.try_state::<PromptPopup>() {
+        state.with(|slot| slot.starting = false);
+    }
+    match after_run(starting, &ran) {
+        AfterRun::Done => {}
+        AfterRun::Hide => hide_after_fade(&app),
+        AfterRun::Refuse(error) => {
+            // TUR-169: the popup may be all the user saw; the main window may
+            // be hidden in the tray. Say why nothing records.
+            tracing::warn!(message = %error.message, "recording from the prompt refused");
+            crate::notify::refusal(&app, false, &error);
+            hide_after(&app, ERROR_LINGER);
+        }
+    }
+    ran?;
     super::call_end::started_from_prompt(&app, origin.as_deref());
     Ok(())
 }
@@ -435,10 +504,12 @@ async fn run(app: &AppHandle, action: Action) -> Result<(), UiError> {
             join: _,
         } => {
             let app = app.clone();
-            tauri::async_runtime::spawn_blocking(move || crate::folder_move::start_recording(&app))
-                .await
-                .map_err(|error| UiError::app("record-failed", error.to_string()))?
-                .map(drop)
+            tauri::async_runtime::spawn_blocking(move || {
+                crate::folder_move::start_recording(&app, None)
+            })
+            .await
+            .map_err(|error| UiError::app("record-failed", error.to_string()))?
+            .map(drop)
         }
     }
 }

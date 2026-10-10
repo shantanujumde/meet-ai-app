@@ -16,8 +16,6 @@
 //! [`EventSource`], so the rules are tested against
 //! `calendar::fake::FakeProvider` without Tauri or Calendar.app.
 
-use std::sync::Mutex;
-
 use chrono::{DateTime, Local, Utc};
 use store::meeting_event::{Applied, FromCalendar};
 use tauri::{AppHandle, Manager as _};
@@ -53,49 +51,23 @@ pub(crate) enum Outcome {
     NotWritten { event_id: String, reason: String },
 }
 
-/// Managed state: the event the menu bar's **Record** was clicked for
-/// (TUR-77).
-///
-/// That event may be hours away, which [`::calendar::matching::pick_event`]
-/// would never pick, so the next recording to start is named from it
-/// directly. Taken by the start it was pinned for; the menu bar clears it
-/// again once that start returns, so a start that failed or was refused
-/// cannot leave it for a later recording.
-#[derive(Debug, Default)]
-pub struct PinnedEvent(Mutex<Option<::calendar::Event>>);
-
-impl PinnedEvent {
-    /// Name the next recording that starts from `event`.
-    pub fn pin(&self, event: ::calendar::Event) {
-        *self.lock() = Some(event);
-    }
-
-    /// Forget the pinned event, if the start it was for did not take it.
-    pub fn clear(&self) {
-        self.lock().take();
-    }
-
-    fn take(&self) -> Option<::calendar::Event> {
-        self.lock().take()
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<::calendar::Event>> {
-        // A panic while holding this lock left an `Option` behind, which is
-        // still a valid value to read.
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
 /// Name meeting `meeting_id`, whose recording started at `started`, from the
 /// calendar, on a thread of its own. Returns at once.
-pub(super) fn spawn(app: &AppHandle, meeting_id: &str, started: DateTime<Local>) {
+///
+/// `pinned` is the event a **Record** was clicked for (the menu bar's Today,
+/// a reminder; TUR-77, TUR-78). That event may be hours away, which
+/// [`::calendar::matching::pick_event`] would never pick, so the recording is
+/// named from it directly. It comes with this start alone (TUR-169), so two
+/// Record clicks at once can never swap their meetings' titles.
+pub(super) fn spawn(
+    app: &AppHandle,
+    meeting_id: &str,
+    started: DateTime<Local>,
+    pinned: Option<::calendar::Event>,
+) {
     let app = app.clone();
     let id = meeting_id.to_owned();
     let now = started.with_timezone(&Utc);
-    // Taken here, before returning, so it belongs to this start alone.
-    let pinned = app.try_state::<PinnedEvent>().and_then(|pin| pin.take());
     tauri::async_runtime::spawn_blocking(move || {
         let min_attendees = crate::config::detection().min_attendees as usize;
         let write = |event: &FromCalendar<'_>| {
@@ -109,12 +81,9 @@ pub(super) fn spawn(app: &AppHandle, meeting_id: &str, started: DateTime<Local>)
             }
             Ok(applied)
         };
-        let outcome = match &pinned {
-            Some(event) => name_from(event, write),
-            None => with_source(&app, |source| {
-                name_meeting(source, now, min_attendees, write)
-            }),
-        };
+        let outcome = with_source(&app, |source| {
+            name_this(pinned.as_ref(), source, now, min_attendees, write)
+        });
         log(&id, &outcome);
     });
 }
@@ -136,8 +105,24 @@ impl EventSource for CalendarState {
     }
 }
 
+/// Name one recording: from `pinned`, the event its Record was clicked for,
+/// when there is one, without reading the calendar; otherwise from the event
+/// the calendar says it belongs to ([`name_meeting`]).
+pub(crate) fn name_this(
+    pinned: Option<&::calendar::Event>,
+    source: Option<&dyn EventSource>,
+    now: DateTime<Utc>,
+    min_attendees: usize,
+    write: impl FnOnce(&FromCalendar<'_>) -> Result<Applied, UiError>,
+) -> Outcome {
+    match pinned {
+        Some(event) => name_from(event, write),
+        None => name_meeting(source, now, min_attendees, write),
+    }
+}
+
 /// Look up the event a recording starting at `now` belongs to and hand it to
-/// `write`. Everything [`spawn`] does, minus Tauri.
+/// `write`. Everything [`spawn`] does, minus Tauri and a pinned event.
 pub(crate) fn name_meeting(
     source: Option<&dyn EventSource>,
     now: DateTime<Utc>,

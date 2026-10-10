@@ -547,6 +547,16 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A35 — 2026-10-10 · Zoom, Teams and Webex need a call signal too; a reminder held by a recording is asked when it stops (amends A30's fallback rule and the TUR-27/TUR-30 rules; TUR-169)
+
+Teams, and Zoom for many people, start at login and stay open, so "Zoom is open" asked at every login with no call, and once dismissed the real call later in that app session never asked. Decisions:
+
+- **Every app in `processes.json` needs a call signal** (`needs_call_signal: true`), Zoom, Microsoft Teams and Webex included, on every OS. Where the apps on the mic cannot be listed (A30's fallback), an open meeting app asks only when audio activity or a calendar event was seen in the last 5 minutes, and names the app then. Where the list can be read, A30's call-start rule is unchanged.
+- **A reminder due while a recording runs is held, not lost.** It is not asked then (no prompt while recording), and it is asked on the first idle tick after the recording stops, as long as the meeting has not ended and is still on the calendar at the same start. A moved meeting gets a new reminder at its new time; a cancelled one is never asked.
+- **A Record for one meeting while another recording runs is refused** (`already-recording`) with a notification, instead of answering with the running recording's status. The event a Record was clicked for travels with that start, so two Record clicks at once never swap titles.
+- **A failed Record from the prompt card posts the refusal notification**, as ⌘⇧R and the menu bar do; the card stays up until the recording has started, or shows why it did not.
+- **A record shortcut that could not be registered is shown as unavailable** in the window, not advertised.
+
 ### A34 — 2026-10-10 · On macOS the recording overlay is hidden when a recording ends, not closed (amends A33; TUR-180)
 
 Closing the overlay, A27's panel, aborted the app on every recording stop on macOS. Decision: on macOS the overlay window is made for the first recording, saves its position and is hidden when a recording ends, and is shown again at that spot for the next; it is never closed while the app runs. Windows and Linux still close it. The overlay never becomes the key window.

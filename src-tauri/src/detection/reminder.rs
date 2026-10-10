@@ -26,6 +26,13 @@
 //!   and a tick after a long gap re-reads the calendar first, since anything
 //!   may have changed while it slept. A lead time of `0` means "at the
 //!   start": due from the start for [`AT_START_GRACE`], no later.
+//! - **Held while recording, asked once it stops** (TUR-169). A reminder
+//!   due while a recording runs is not asked then (no prompt while
+//!   recording), and it does not count as fired: [`Reminders::hold`] keeps
+//!   it, and it is asked on the first tick with the recorder idle again, as
+//!   long as the meeting has not ended and is still on the calendar at the
+//!   same start. Back-to-back meetings: the 11:00 reminder that came while
+//!   10:00 was recording is asked when 10:00 stops, Join link and all.
 //!
 //! The clock and the calendar are traits, so the tests run on a fake clock and
 //! `calendar::fake::FakeProvider`.
@@ -124,6 +131,12 @@ pub struct Reminders {
     last_tick: Option<DateTime<Utc>>,
     /// Every reminded `Event.id`, with the start it was reminded for.
     fired: HashMap<String, DateTime<Utc>>,
+    /// Reminders held back by a recording ([`Self::hold`]), by `Event.id`,
+    /// with the start they were due for: asked once the recorder is idle.
+    held: HashMap<String, DateTime<Utc>>,
+    /// A recording is running ([`Self::set_recording`]): held reminders wait,
+    /// so the calendar is not re-read on every tick for them.
+    recording: bool,
     /// The last read failed and that was logged: an unreadable calendar is
     /// one log line until it reads again, not one per refresh.
     unreadable_logged: bool,
@@ -138,6 +151,8 @@ impl Reminders {
             read_at: None,
             last_tick: None,
             fired: HashMap::new(),
+            held: HashMap::new(),
+            recording: false,
             unreadable_logged: false,
         }
     }
@@ -151,7 +166,21 @@ impl Reminders {
         self.settings = settings;
     }
 
-    /// One tick at `now`: the events to remind about, each at most once.
+    /// Whether a recording is running now, for the next [`Self::tick`].
+    pub fn set_recording(&mut self, recording: bool) {
+        self.recording = recording;
+    }
+
+    /// `event`, just returned by [`Self::tick`], could not be asked about
+    /// because a recording is running: it is not fired, and is asked again
+    /// on the first tick with no recording, until the meeting ends.
+    pub fn hold(&mut self, event: &Event) {
+        self.fired.remove(&event.id);
+        self.held.insert(event.id.clone(), event.start);
+    }
+
+    /// One tick at `now`: the events to remind about, each at most once
+    /// unless the caller [`Self::hold`]s it.
     pub fn tick(&mut self, now: DateTime<Utc>, calendar: &dyn Upcoming) -> Vec<Event> {
         let woke = self
             .last_tick
@@ -182,9 +211,11 @@ impl Reminders {
             .cloned()
             .collect();
         for event in &due {
+            self.held.remove(&event.id);
             self.fired.insert(event.id.clone(), event.start);
         }
         self.fired.retain(|_, start| now - *start < FORGET_AFTER);
+        self.held.retain(|_, start| now - *start < FORGET_AFTER);
         due
     }
 
@@ -193,8 +224,12 @@ impl Reminders {
     }
 
     /// Enough attendees, inside its reminder window ([`due_window`]), and
-    /// not reminded about for this start yet.
+    /// not reminded about for this start yet. A reminder held for this start
+    /// is due once nothing records, until the meeting ends.
     fn is_due(&self, event: &Event, now: DateTime<Utc>) -> bool {
+        if self.held.get(&event.id) == Some(&event.start) {
+            return !self.recording && now < event.end;
+        }
         let (from, until) = due_window(event.start, self.settings.lead);
         event.attendees >= self.settings.min_attendees
             && from <= now
@@ -262,16 +297,30 @@ impl Drop for ReminderLoop {
     }
 }
 
+/// What [`spawn`]'s `fire` did with a due reminder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fired {
+    /// It went through the prompt path: asked, merged into a prompt already
+    /// up, or switched off. Never asked again for this start.
+    Asked,
+    /// A recording is running, so nothing was asked: held for the next idle
+    /// tick ([`Reminders::hold`]).
+    Held,
+}
+
 /// Tick `reminders` every `interval` on a thread of its own, handing each due
 /// event to `fire`. `settings` is asked on every tick: `None` (reminders
-/// switched off) skips the tick without reading the calendar.
+/// switched off) skips the tick without reading the calendar. `recording`
+/// is asked on every tick too, so a reminder held by a recording waits for
+/// it to stop.
 pub fn spawn(
     clock: impl Clock,
     calendar: impl Upcoming,
     mut reminders: Reminders,
     interval: std::time::Duration,
     mut settings: impl FnMut() -> Option<ReminderSettings> + Send + 'static,
-    mut fire: impl FnMut(Event) + Send + 'static,
+    recording: impl Fn() -> bool + Send + 'static,
+    mut fire: impl FnMut(&Event) -> Fired + Send + 'static,
 ) -> std::io::Result<ReminderLoop> {
     let (stop, stopped) = mpsc::channel::<()>();
     let thread = std::thread::Builder::new()
@@ -280,8 +329,11 @@ pub fn spawn(
             loop {
                 if let Some(settings) = settings() {
                     reminders.configure(settings);
+                    reminders.set_recording(recording());
                     for event in reminders.tick(clock.now(), &calendar) {
-                        fire(event);
+                        if fire(&event) == Fired::Held {
+                            reminders.hold(&event);
+                        }
                     }
                 }
                 // Only a timeout keeps going: a stop, or the handle dropped.

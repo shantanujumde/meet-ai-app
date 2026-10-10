@@ -118,6 +118,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::detection::actions::record_reminded_meeting,
             crate::detection::popup::prompt_popup_current,
             crate::detection::popup::answer_prompt_popup,
+            crate::shortcut::record_shortcut_available,
             crate::autostart::start_at_login,
             crate::autostart::set_start_at_login,
             crate::appearance::appearance_settings,

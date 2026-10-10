@@ -1,46 +1,46 @@
 [
-  { "os": "macos", "name": "zoom.us", "label": "Zoom", "needs_call_signal": false },
+  { "os": "macos", "name": "zoom.us", "label": "Zoom", "needs_call_signal": true },
   {
     "os": "macos",
     "name": "Microsoft Teams",
     "label": "Microsoft Teams",
-    "needs_call_signal": false
+    "needs_call_signal": true
   },
-  { "os": "macos", "name": "Webex", "label": "Webex", "needs_call_signal": false },
+  { "os": "macos", "name": "Webex", "label": "Webex", "needs_call_signal": true },
   { "os": "macos", "name": "Slack", "label": "Slack", "needs_call_signal": true },
   { "os": "macos", "name": "Discord", "label": "Discord", "needs_call_signal": true },
   { "os": "macos", "name": "WhatsApp", "label": "WhatsApp", "needs_call_signal": true },
   { "os": "macos", "name": "FaceTime", "label": "FaceTime", "needs_call_signal": true },
   { "os": "macos", "name": "Telegram", "label": "Telegram", "needs_call_signal": true },
   { "os": "macos", "name": "Signal", "label": "Signal", "needs_call_signal": true },
-  { "os": "windows", "name": "Zoom.exe", "label": "Zoom", "needs_call_signal": false },
+  { "os": "windows", "name": "Zoom.exe", "label": "Zoom", "needs_call_signal": true },
   {
     "os": "windows",
     "name": "ms-teams.exe",
     "label": "Microsoft Teams",
-    "needs_call_signal": false
+    "needs_call_signal": true
   },
   {
     "os": "windows",
     "name": "ms-teams_modulehost.exe",
     "label": "Microsoft Teams",
-    "needs_call_signal": false
+    "needs_call_signal": true
   },
-  { "os": "windows", "name": "Teams.exe", "label": "Microsoft Teams", "needs_call_signal": false },
-  { "os": "windows", "name": "Webex.exe", "label": "Webex", "needs_call_signal": false },
-  { "os": "windows", "name": "CiscoCollabHost.exe", "label": "Webex", "needs_call_signal": false },
+  { "os": "windows", "name": "Teams.exe", "label": "Microsoft Teams", "needs_call_signal": true },
+  { "os": "windows", "name": "Webex.exe", "label": "Webex", "needs_call_signal": true },
+  { "os": "windows", "name": "CiscoCollabHost.exe", "label": "Webex", "needs_call_signal": true },
   { "os": "windows", "name": "slack.exe", "label": "Slack", "needs_call_signal": true },
   { "os": "windows", "name": "Discord.exe", "label": "Discord", "needs_call_signal": true },
-  { "os": "linux", "name": "zoom", "label": "Zoom", "needs_call_signal": false },
+  { "os": "linux", "name": "zoom", "label": "Zoom", "needs_call_signal": true },
   {
     "os": "linux",
     "name": "teams-for-linux",
     "label": "Microsoft Teams",
-    "needs_call_signal": false
+    "needs_call_signal": true
   },
-  { "os": "linux", "name": "teams", "label": "Microsoft Teams", "needs_call_signal": false },
-  { "os": "linux", "name": "webex", "label": "Webex", "needs_call_signal": false },
-  { "os": "linux", "name": "CiscoCollabHost", "label": "Webex", "needs_call_signal": false },
+  { "os": "linux", "name": "teams", "label": "Microsoft Teams", "needs_call_signal": true },
+  { "os": "linux", "name": "webex", "label": "Webex", "needs_call_signal": true },
+  { "os": "linux", "name": "CiscoCollabHost", "label": "Webex", "needs_call_signal": true },
   { "os": "linux", "name": "slack", "label": "Slack", "needs_call_signal": true },
   { "os": "linux", "name": "discord", "label": "Discord", "needs_call_signal": true }
 ]

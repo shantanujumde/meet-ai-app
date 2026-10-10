@@ -257,19 +257,71 @@ fn a_pinned_event_names_the_meeting_whenever_it_is() {
     );
 }
 
+/// TUR-169: each start carries its own pinned event, so two Record clicks
+/// at once (the menu bar's Today and a reminder) each get their own title,
+/// and a start with none picks from the calendar as before.
 #[test]
-fn a_pin_is_taken_once_and_can_be_cleared() {
+fn each_start_is_named_from_its_own_pinned_event() {
+    let events = ::calendar::raw::to_events(
+        [
+            event("A", "Meeting A", at(10, 0), 30, &["A", "B"]),
+            event("B", "Meeting B", at(15, 0), 30, &["A", "B"]),
+        ],
+        at(0, 0),
+        at(23, 59),
+    );
+    let calendar =
+        FakeProvider::with_events(vec![event("A", "Meeting A", at(10, 0), 30, &["A", "B"])]);
+    let named_as = |pinned: Option<&::calendar::Event>| {
+        let mut title = None;
+        let outcome = name_this(
+            pinned,
+            Some(&calendar as &dyn EventSource),
+            at(10, 0),
+            2,
+            |fields| {
+                title = Some(fields.title.to_string());
+                Ok(Applied::default())
+            },
+        );
+        (outcome, title)
+    };
+    let (a, title_a) = named_as(Some(&events[0]));
+    let (b, title_b) = named_as(Some(&events[1]));
+    assert!(
+        matches!(a, Outcome::Named { ref event_id, .. } if event_id == "A"),
+        "{a:?}"
+    );
+    assert!(
+        matches!(b, Outcome::Named { ref event_id, .. } if event_id == "B"),
+        "{b:?}"
+    );
+    assert_eq!(title_a.as_deref(), Some("Meeting A"));
+    assert_eq!(
+        title_b.as_deref(),
+        Some("Meeting B"),
+        "hours away, still B's"
+    );
+    // No pin: the calendar's own pick for 10:00.
+    let (picked, title) = named_as(None);
+    assert!(
+        matches!(picked, Outcome::Named { ref event_id, .. } if event_id == "A"),
+        "{picked:?}"
+    );
+    assert_eq!(title.as_deref(), Some("Meeting A"));
+}
+
+#[test]
+fn a_pinned_event_needs_no_calendar() {
     let events = ::calendar::raw::to_events(
         [event("E", "Call", at(10, 0), 30, &["A", "B"])],
         at(0, 0),
         at(23, 59),
     );
-    let pin = PinnedEvent::default();
-    pin.pin(events[0].clone());
-    assert_eq!(pin.take().map(|e| e.id), Some("E".to_string()));
-    assert_eq!(pin.take(), None, "taken by one start only");
-
-    pin.pin(events[0].clone());
-    pin.clear();
-    assert_eq!(pin.take(), None, "a refused start leaves nothing behind");
+    let outcome = name_this(Some(&events[0]), None, at(10, 0), 2, |_| {
+        Ok(Applied::default())
+    });
+    assert!(matches!(outcome, Outcome::Named { .. }), "{outcome:?}");
+    let none = name_this(None, None, at(10, 0), 2, |_| unreachable!("no calendar"));
+    assert_eq!(none, Outcome::NoCalendar);
 }
