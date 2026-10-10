@@ -4,6 +4,8 @@
 //! test below (`just bindings`). It never needs the app to run, so it works in
 //! CI. Adding a command: put `#[specta::specta]` under its `#[tauri::command]`
 //! and list it here.
+//! Then list it in `app_commands.rs` and grant `allow-<command>` to the window
+//! that calls it in `capabilities/`, or Tauri refuses the call (TUR-158).
 
 use tauri_specta::{Builder, collect_commands};
 

@@ -111,6 +111,7 @@
     "allow-headphone-warning",
     "allow-meetings-watch-problem",
     "allow-show-recording-overlay",
-    "allow-set-show-recording-overlay"
+    "allow-set-show-recording-overlay",
+    "allow-config-problem"
   ]
 }

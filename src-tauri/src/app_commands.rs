@@ -108,6 +108,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "show_recording_overlay",
     "set_show_recording_overlay",
     "overlay_show_main",
+    "config_problem",
 ];
 
 #[cfg(test)]
@@ -194,10 +195,14 @@ mod tests {
             "a command is listed twice"
         );
         let bindings = manifest_dir().join("../src/ipc/bindings.ts");
-        assert_eq!(
-            listed,
-            invoked_in_bindings(&bindings),
-            "APP_COMMANDS and bindings.rs disagree (run `just bindings` after changing either)"
+        let registered = invoked_in_bindings(&bindings);
+        let unlisted: Vec<_> = registered.difference(&listed).collect();
+        let unregistered: Vec<_> = listed.difference(&registered).collect();
+        assert!(
+            unlisted.is_empty() && unregistered.is_empty(),
+            "APP_COMMANDS and bindings.rs disagree: add {unlisted:?} to APP_COMMANDS \
+             (and grant it in capabilities/), drop {unregistered:?} (run `just bindings` \
+             after changing bindings.rs)"
         );
     }
 
