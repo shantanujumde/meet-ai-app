@@ -204,7 +204,7 @@ impl MeetingsWatch {
             self.own_writes.clone(),
             move |paths| {
                 // TUR-101: keep the search index current before the window refreshes.
-                search::state(&handle).update(&paths);
+                search::folder_changed(&handle, &paths);
                 if let Err(error) =
                     handle.emit(crate::events::MEETINGS_CHANGED_EVENT, Changed::new(&paths))
                 {

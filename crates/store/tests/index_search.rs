@@ -87,6 +87,23 @@ fn transcript_lines_are_found_with_their_timestamp() {
     assert_eq!(retro[0].timestamp.as_deref(), Some("00:00:15"));
 }
 
+/// TUR-166, from a TUR-152 finding: "integration" finds nothing because the
+/// only line that says it is `[00:00:09] Priya: …`, which SPEC §3.4 does not
+/// parse (the fixture's deliberate bad speaker), so the meeting view does not
+/// show it either. Lines that parse are indexed.
+#[test]
+fn a_line_with_a_speaker_the_spec_does_not_allow_is_not_indexed() {
+    let fixture = FixtureCopy::new("unparsed");
+    let index = Index::open(&fixture.root).unwrap();
+    assert!(index.search("integration").unwrap().is_empty());
+    let parsed = index.search("sprint").unwrap();
+    assert!(
+        parsed
+            .iter()
+            .any(|hit| hit.timestamp.as_deref() == Some("00:00:02"))
+    );
+}
+
 #[test]
 fn notes_are_found_without_a_timestamp() {
     let fixture = FixtureCopy::new("notes");

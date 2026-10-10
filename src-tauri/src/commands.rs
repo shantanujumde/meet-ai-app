@@ -40,6 +40,8 @@ pub async fn list_meetings(app: AppHandle) -> Result<MeetingList, UiError> {
         // watching it now (TUR-122).
         watch::state(&app).ensure_running(&app);
         let status = app.state::<Recorder>().status();
+        // A recording that just stopped: index what was held back (TUR-166).
+        search::state(&app).set_live(Live::from_status(&status));
         meetings::list(Live::from_status(&status))
     })
     .await?
