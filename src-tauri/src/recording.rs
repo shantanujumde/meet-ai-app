@@ -46,12 +46,13 @@ mod interrupted;
 // TUR-146: pause and resume.
 pub(crate) mod pause;
 mod phase;
+mod settle; // TUR-160: quitting waits for a start or stop to finish.
 mod start_check;
 // TUR-161: every way a recording ends, through one helper.
 mod stop;
 mod ticker;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use audio::AudioSource;
 use audio::session::{PauseSwitch, RecordingSession};
@@ -66,7 +67,6 @@ use store::folder_name::create_meeting_folder;
 use crate::error::UiError;
 use crate::events::RECORDING_STATE_EVENT;
 use crate::live_transcript::{self, LiveTranscript, Transcription};
-use crate::lock::lock_or_recover;
 
 /// The ticker thread's name, so it is identifiable in a sample or a crash
 /// report next to `meet-ai-record-shortcut`.
@@ -176,13 +176,13 @@ impl Inner {
 /// Managed Tauri state. One recorder per app, because two would fight over the
 /// system audio tap — the same reason the single-instance plugin is wired up.
 pub struct Recorder {
-    inner: Mutex<Inner>,
+    inner: settle::Watched<Inner>,
 }
 
 impl Default for Recorder {
     fn default() -> Self {
         Self {
-            inner: Mutex::new(Inner::idle()),
+            inner: settle::Watched::new(Inner::idle()),
         }
     }
 }
@@ -206,8 +206,8 @@ impl Recorder {
     /// A poisoned lock here means a previous call panicked while holding it.
     /// Recovering is strictly better than taking the whole app down; the worst
     /// case is a stuck phase, not a half-broken invariant.
-    fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        lock_or_recover(&self.inner)
+    fn lock(&self) -> settle::Guard<'_, Inner> {
+        self.inner.lock()
     }
 
     /// Mutate the state and tell the whole app about it in one step, so a
