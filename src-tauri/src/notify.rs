@@ -1,6 +1,21 @@
 //! Desktop notifications for a recording that did not start or stopped on its
 //! own, on a surface that does not need the window to be open.
 
+use tauri_plugin_notification::NotificationExt as _;
+
+/// Show a desktop notification, logging when it could not be shown. The one
+/// place a notification is posted (TUR-176): every caller only says what.
+/// `false` when it was not shown.
+pub fn post<R: tauri::Runtime>(app: &tauri::AppHandle<R>, title: &str, body: &str) -> bool {
+    match app.notification().builder().title(title).body(body).show() {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(%error, title, "could not show a notification");
+            false
+        }
+    }
+}
+
 /// Tell the user why a ⌘⇧R or menu-bar toggle failed — a start refused, or a
 /// stop that could not close cleanly (`stopping`) — on a surface that does not
 /// need the window to be open. The window hears it too, from the idle status
@@ -14,17 +29,7 @@ pub fn refusal<R: tauri::Runtime>(
     stopping: bool,
     error: &crate::error::UiError,
 ) {
-    use tauri_plugin_notification::NotificationExt as _;
-
-    if let Err(notify_error) = app
-        .notification()
-        .builder()
-        .title(refusal_title(stopping))
-        .body(&error.message)
-        .show()
-    {
-        tracing::warn!(%notify_error, "could not show the refusal notification either");
-    }
+    post(app, refusal_title(stopping), &error.message);
 }
 
 /// The notification title for a toggle that failed, by which way it was going.
@@ -55,33 +60,13 @@ mod tests {
 /// Tell the user a recording stopped on its own, on a surface that does not
 /// need the window to be open — the same reasoning as [`refusal`] for the shortcut.
 pub fn interrupted(app: &tauri::AppHandle, message: &str) {
-    use tauri_plugin_notification::NotificationExt as _;
-
-    if let Err(error) = app
-        .notification()
-        .builder()
-        .title("meet-ai stopped recording")
-        .body(message)
-        .show()
-    {
-        tracing::warn!(%error, "could not show the interrupted-recording notification");
-    }
+    post(app, "meet-ai stopped recording", message);
 }
 
 /// Tell the user a meeting's notes are written, when the window is not in
 /// front to show it (TUR-10).
 pub fn notes_ready(app: &tauri::AppHandle, title: &str, tasks: u32) {
-    use tauri_plugin_notification::NotificationExt as _;
-
-    if let Err(error) = app
-        .notification()
-        .builder()
-        .title("Notes are ready")
-        .body(notes_ready_body(title, tasks))
-        .show()
-    {
-        tracing::warn!(%error, "could not show the notes-ready notification");
-    }
+    post(app, "Notes are ready", &notes_ready_body(title, tasks));
 }
 
 /// "Standup: the notes and 2 tasks are written."
@@ -99,15 +84,5 @@ fn notes_ready_body(title: &str, tasks: u32) -> String {
 /// ([`interrupted`]). `detail` is the sentence the pane shows. Posted once
 /// per meeting: only the first failure is reported.
 pub fn transcription_failed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, detail: &str) {
-    use tauri_plugin_notification::NotificationExt as _;
-
-    if let Err(error) = app
-        .notification()
-        .builder()
-        .title("meet-ai stopped transcribing")
-        .body(detail)
-        .show()
-    {
-        tracing::warn!(%error, "could not show the transcription-failed notification");
-    }
+    post(app, "meet-ai stopped transcribing", detail);
 }

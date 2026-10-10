@@ -33,6 +33,7 @@ use super::menu_model::{
 };
 use crate::config;
 use crate::lifecycle::{self, NavigateTo};
+use crate::lock::lock_or_recover;
 
 /// "Calendar not connected".
 const CONNECT_ITEM: &str = "tray-today-connect";
@@ -76,12 +77,12 @@ pub(super) struct Today {
 impl Today {
     /// The pane's events, if it read `day` less than `every` ago.
     fn pane_events(&self, every: StdDuration, day: NaiveDate) -> Option<Vec<Event>> {
-        let pane = self.pane.lock().unwrap_or_else(|e| e.into_inner());
+        let pane = lock_or_recover(&self.pane);
         fresh(pane.as_ref(), every, day).map(<[Event]>::to_vec)
     }
 
     fn event(&self, id: &str) -> Option<Event> {
-        let read = self.read.lock().unwrap_or_else(|e| e.into_inner());
+        let read = lock_or_recover(&self.read);
         match read.as_ref()? {
             CalendarRead::Events(events) => events.iter().find(|e| e.id == id).cloned(),
             _ => None,
@@ -89,12 +90,7 @@ impl Today {
     }
 
     fn send(&self, nudge: Nudge) {
-        if let Some(tx) = self
-            .nudge
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-        {
+        if let Some(tx) = lock_or_recover(&self.nudge).as_ref() {
             // A worker that has gone has nobody to wake.
             let _ = tx.send(nudge);
         }
@@ -161,10 +157,7 @@ fn submenu(app: &AppHandle, meeting: &MeetingEntry) -> tauri::Result<tauri::menu
 pub(super) fn start(app: &AppHandle, tray_id: &'static str, fixed: Fixed) {
     let (tx, rx) = mpsc::channel();
     app.manage(Today::default());
-    *app.state::<Today>()
-        .nudge
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = Some(tx);
+    *lock_or_recover(&app.state::<Today>().nudge) = Some(tx);
     let handle = app.clone();
     if let Err(error) = std::thread::Builder::new()
         .name("meet-ai-tray-today".to_string())
@@ -179,7 +172,7 @@ pub(super) fn start(app: &AppHandle, tray_id: &'static str, fixed: Fixed) {
 /// read of its own (TUR-90).
 pub fn reread_soon(app: &AppHandle, events: &[Event]) {
     if let Some(today) = app.try_state::<Today>() {
-        *today.pane.lock().unwrap_or_else(|e| e.into_inner()) = Some(PaneRead {
+        *lock_or_recover(&today.pane) = Some(PaneRead {
             at: Instant::now(),
             day: Local::now().date_naive(),
             events: events.to_vec(),
@@ -218,7 +211,7 @@ fn run(app: &AppHandle, tray_id: &str, fixed: &Fixed, rx: &mpsc::Receiver<Nudge>
                 good_day = Some(now.date_naive());
             }
             let today = app.state::<Today>();
-            let mut shown_read = today.read.lock().unwrap_or_else(|e| e.into_inner());
+            let mut shown_read = lock_or_recover(&today.read);
             let next = settle(
                 shown_read.as_ref(),
                 good_day == Some(now.date_naive()),
@@ -232,11 +225,7 @@ fn run(app: &AppHandle, tray_id: &str, fixed: &Fixed, rx: &mpsc::Receiver<Nudge>
 
         let min_attendees = config::detection().min_attendees as usize;
         let drawn = {
-            let read = app
-                .state::<Today>()
-                .read
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
+            let read = lock_or_recover(&app.state::<Today>().read)
                 .clone()
                 .unwrap_or(CalendarRead::Pending);
             let recording = app

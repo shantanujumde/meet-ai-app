@@ -291,8 +291,6 @@ fn deliver(
     prompt: Option<Prompt>,
     merge: impl FnOnce(&mut Merger, DateTime<Utc>) -> Delivery,
 ) {
-    use tauri_plugin_notification::NotificationExt as _;
-
     let Some(mut prompt) = prompt else {
         tracing::debug!("a meeting signal while recording; not asking");
         return;
@@ -320,17 +318,10 @@ fn deliver(
     // window with the buttons on it; the notification is only the fallback
     // when it can't show.
     let in_popup = super::popup::uses_popup(signal) && super::popup::show(app, &prompt);
-    if delivery == Delivery::New
-        && !in_popup
-        && let Err(error) = app
-            .notification()
-            .builder()
-            .title(TITLE)
-            .body(body(&prompt))
-            .show()
-    {
-        // The banner below still asks, whenever the window is looked at.
-        tracing::warn!(%error, "could not show the detection notification");
+    if delivery == Delivery::New && !in_popup {
+        // Not shown: the banner below still asks, whenever the window is
+        // looked at.
+        crate::notify::post(app, TITLE, &body(&prompt));
     }
     if let Err(error) = app.emit(DETECTION_PROMPT_EVENT, &prompt) {
         tracing::warn!(%error, "could not send the detection prompt to the window");
