@@ -77,6 +77,7 @@ pub fn create_app_dir(app_dir: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 pub mod retention;
+mod stamp;
 pub mod suggested;
 pub mod ticket;
 pub mod transcript;

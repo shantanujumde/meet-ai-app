@@ -5,16 +5,17 @@
 //! attendees, the notes switch, whether notes are written), whether
 //! `notes.md` has text, and the transcript's line count and last timestamp.
 //! Each summary is kept in a [`SummaryCache`] and made again only when one of
-//! those three files changed size or modified time, so a list refresh reads
+//! those three files changed size or modified time (or changed so recently
+//! that a second change could hide in the same clock tick), so a list refresh reads
 //! only the folders that changed (the ones a watcher event names) and no
 //! transcript at all while nothing changed.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
-use std::time::SystemTime;
 
 use crate::meeting::Meeting;
+use crate::stamp::Stamps;
 use crate::transcript::{self, Stats};
 use crate::{Error, MEETING_FILE, NOTES_FILE, TRANSCRIPT_FILE, notes};
 
@@ -48,40 +49,9 @@ impl From<&super::MeetingFolder> for FolderSummary {
     }
 }
 
-/// What a file looked like when it was read: `None` when it did not exist.
-/// A changed size or modified time means it is read again.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Stamp {
-    len: u64,
-    modified: Option<SystemTime>,
-}
-
-/// The stamps of `meeting.md`, `notes.md` and `transcript.md`, the only files
-/// a [`FolderSummary`] is made from.
-type Stamps = [Option<Stamp>; 3];
-
-/// `None` when the file does not exist; `Err` when it cannot be looked at,
-/// which is never cached.
-fn stamp(path: &Path) -> std::io::Result<Option<Stamp>> {
-    match std::fs::metadata(path) {
-        Ok(meta) => Ok(Some(Stamp {
-            len: meta.len(),
-            modified: meta.modified().ok(),
-        })),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
 fn stamps(dir: &Path) -> Option<Stamps> {
-    let mut out = [None; 3];
-    for (slot, name) in out
-        .iter_mut()
-        .zip([MEETING_FILE, NOTES_FILE, TRANSCRIPT_FILE])
-    {
-        *slot = stamp(&dir.join(name)).ok()?;
-    }
-    Some(out)
+    let paths = [MEETING_FILE, NOTES_FILE, TRANSCRIPT_FILE].map(|name| dir.join(name));
+    Stamps::of(&paths.each_ref().map(PathBuf::as_path)).ok()
 }
 
 /// Folder summaries kept between list refreshes, by folder path. A folder
@@ -116,9 +86,9 @@ pub fn load_summary(dir: &Path, cache: &SummaryCache) -> Result<FolderSummary, E
         )));
     }
     let stamps = stamps(dir);
-    if let Some(stamps) = stamps
+    if let Some(stamps) = &stamps
         && let Some((known, summary)) = cache.lock().get(dir)
-        && *known == stamps
+        && known.still(stamps)
     {
         return Ok(summary.clone());
     }
@@ -195,7 +165,20 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dir.join(NOTES_FILE), "mine").unwrap();
+        for name in [MEETING_FILE, TRANSCRIPT_FILE, NOTES_FILE] {
+            age(&dir.join(name));
+        }
         dir
+    }
+
+    /// Move a file's time a minute back, so the cache trusts its stamp.
+    fn age(path: &Path) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
     }
 
     #[test]
