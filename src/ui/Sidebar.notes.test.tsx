@@ -62,9 +62,8 @@ describe("Sidebar while notes are typed (TUR-166)", () => {
       </MemoryRouter>,
     );
     const nav = screen.getByRole("navigation", { name: "Sidebar" });
-    const notes = await screen.findByPlaceholderText<HTMLTextAreaElement>(
-      /What you want to remember/,
-    );
+    const notes =
+      await screen.findByPlaceholderText<HTMLTextAreaElement>(/What you want to remember/);
 
     // Any moment the store calls the list loading would put the spinner up.
     let flashed = false;
