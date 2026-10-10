@@ -17,6 +17,8 @@ mod calendar;
 mod cli;
 mod commands;
 mod config;
+// TUR-155: "this setting in config.jsonc was not valid", for the Settings cards.
+mod config_problem;
 mod copy_prompt;
 mod detection;
 mod engine;

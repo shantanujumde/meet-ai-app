@@ -8,6 +8,10 @@
  *
  * Drawn before the probe answers, with every radio held until it does, so
  * nothing below moves when it fills in.
+ *
+ * A `transcription` value in config.jsonc Rust could not use (such as
+ * `"engine": "whispr"`) is named under the heading (TUR-155): that value
+ * reads as its default, so the radio shows the default too.
  */
 
 import { Download, Mic } from "lucide-react";
@@ -17,7 +21,8 @@ import { formatBytes } from "@/lib/format";
 import { IconSquare } from "@/ui/icons";
 import { Button, Row, RowValue, rowDetailVariants } from "@/ui/primitives";
 import { Radio } from "@/ui/Radio";
-import { Checking, ErrorState } from "@/ui/states";
+import { configProblemError } from "@/ui/settings/useConfigProblem";
+import { Checking, ErrorState, InlineError } from "@/ui/states";
 import { DownloadProgress } from "./DownloadProgress";
 import type { ModelState } from "./ModelRow";
 import { languageNames } from "./tags";
@@ -83,6 +88,11 @@ export function EnginePicker({
           <span className="text-body font-semibold">Engine</span>
         </span>
       </Row>
+      {choices?.configProblem ? (
+        <Row>
+          <InlineError error={configProblemError(choices.configProblem)} />
+        </Row>
+      ) : null}
       <EngineOption
         group={group}
         value="auto"

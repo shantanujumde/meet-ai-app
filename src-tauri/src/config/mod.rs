@@ -40,6 +40,12 @@
 //! with the same rule.
 //! TUR-85 changed that one: a file that cannot be read or parsed, or a bad
 //! `audio` section, pauses the retention job rather than using the default.
+//!
+//! TUR-155 gave the Settings sections (`transcription`, `app`, `appearance`,
+//! `detection`) one rule, in [`keyed`]: each key is decoded on its own, so a
+//! bad value costs only that key (logged, read as its default), and the
+//! problem is also handed to the screen that shows the section. Setters
+//! write only the keys the user changed.
 
 use std::path::PathBuf;
 
@@ -64,6 +70,10 @@ mod detection_section;
 // TUR-143: `detection.never_detect`, the "Never detect" list.
 mod detection_never;
 mod file;
+#[cfg(test)]
+mod file_tests;
+// TUR-155: decoding a section key by key.
+mod keyed;
 // TUR-63: `hooks`, the user's own commands.
 mod hooks_section;
 // TUR-76: `app.show_in_dock_when_closed`.
@@ -74,7 +84,9 @@ mod appearance_section;
 mod transcription_tests;
 
 pub use agent_section::ConfigError;
+pub use app_section::app_checked;
 pub use app_section::{AppConfig, app, set_app};
+pub use appearance_section::appearance_checked;
 pub use appearance_section::{AppearanceConfig, Theme, appearance, set_appearance};
 pub use audio_headphones::warn_no_headphones;
 pub use audio_mic::{set_use_builtin_mic_with_bluetooth, use_builtin_mic_with_bluetooth};
@@ -83,6 +95,10 @@ pub use audio_section::Policy as RetentionPolicy;
 pub use audio_section::audio;
 #[cfg(test)]
 pub(crate) use audio_section::policy_at as retention_policy_at;
+pub use detection_section::{
+    MAX_ATTENDEES, MAX_REMIND_BEFORE_MINUTES, MIN_ATTENDEES, detection_checked, update_detection,
+};
+pub use keyed::Checked;
 // TUR-28 (calendar refresh loop) uses these.
 #[allow(unused_imports)]
 pub use calendar_section::{CalendarConfig, Provider, calendar, parse_calendar};
@@ -91,7 +107,7 @@ pub use hooks_section::{HooksConfig, hooks};
 // TUR-49: the Settings card connects and disconnects calendar sources.
 pub use calendar_section::set_providers as set_calendar_providers;
 // TUR-78: Settings → Notifications writes the section; the reminder reads the lead time.
-pub use detection_section::{DEFAULT_REMIND_BEFORE_MINUTES, DetectionConfig, set_detection};
+pub use detection_section::{DEFAULT_REMIND_BEFORE_MINUTES, DetectionConfig};
 // TUR-143: the "Never detect" list, from a prompt and from Settings → Notifications.
 pub use detection_never::{add_never_detect, never_detect, set_never_detect};
 // TUR-9 (Setup screens) adds the IPC commands that use these.
@@ -105,6 +121,10 @@ pub use file::{agent, set_agent, set_tickets, tickets};
 pub use file::{set_transcription, set_transcription_language};
 // TUR-90: the Setup screen's save merges under the config write lock.
 pub use file::update_agent;
+// TUR-155: the tracker settings, with the agent read best effort.
+#[cfg(test)]
+pub(crate) use file::tracker_view_of;
+pub use file::{harness_best_effort, tracker_view};
 // TUR-101: the agent setup tests write and read `agent` back as text.
 #[cfg(test)]
 pub(crate) use {agent_section::parse_agent, file::with_agent};
@@ -212,14 +232,27 @@ pub fn transcription() -> Transcription {
     parse(&raw)
 }
 
+/// [`transcription`], with what was not valid, for the engine picker.
+pub fn transcription_checked() -> Checked<Transcription> {
+    read_transcription(&raw_or_empty())
+}
+
 fn parse(raw: &str) -> Transcription {
-    match read_section::<Transcription>(raw, "transcription") {
-        Ok(transcription) => transcription.unwrap_or_default(),
-        Err(error) => {
-            tracing::warn!(%error, "config.jsonc's transcription block did not parse; using defaults");
-            Transcription::default()
-        }
-    }
+    read_transcription(raw).value
+}
+
+/// `transcription`, key by key (TUR-155): `"engine": "whispr"` is logged and
+/// read as auto, and the `model`, `language` and `live` beside it are kept.
+fn read_transcription(raw: &str) -> Checked<Transcription> {
+    let mut keys = keyed::Keys::read(raw, "transcription");
+    let defaults = Transcription::default();
+    let transcription = Transcription {
+        engine: keys.get("engine").unwrap_or(defaults.engine),
+        model: keys.get("model").unwrap_or(defaults.model),
+        language: keys.get("language").unwrap_or(defaults.language),
+        live: keys.get("live").unwrap_or(defaults.live),
+    };
+    keys.checked(transcription)
 }
 
 #[cfg(test)]
@@ -294,12 +327,19 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_engine_name_is_a_parse_error_not_a_silent_auto() {
+    fn an_unknown_engine_name_is_a_problem_and_keeps_the_other_keys() {
         // Distinguish "the key is absent" (defaults to auto, previous test)
-        // from "the key is present but wrong" (the whole block is rejected and
-        // logged, so a typo in config.jsonc is visible in the log rather than
-        // quietly behaving like auto).
-        let transcription = parse(r#"{ "transcription": { "engine": "whispr" } }"#);
-        assert_eq!(transcription, Transcription::default());
+        // from "the key is present but wrong": that one key reads as auto,
+        // and the problem is logged and handed to the picker (TUR-155), so a
+        // typo in config.jsonc is visible rather than quietly behaving like
+        // auto. The model and language beside it survive.
+        let read = read_transcription(
+            r#"{ "transcription": { "engine": "whispr", "model": "small.en-q5_1", "language": "mr" } }"#,
+        );
+        assert_eq!(read.value.engine, Preference::Auto);
+        assert_eq!(read.value.model, "small.en-q5_1");
+        assert_eq!(read.value.language, "mr");
+        let problem = read.problem.unwrap();
+        assert!(problem.contains("transcription.engine"), "{problem}");
     }
 }

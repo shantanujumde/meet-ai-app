@@ -6,17 +6,15 @@
 //! window unless this is `true`. `menu_bar_countdown` (TUR-77): the next
 //! meeting's countdown next to the menu-bar icon.
 //!
-//! Like `detection`, the app-facing reader [`app`] logs a bad section and
-//! runs with the defaults, so a typo never stops the app from starting.
-//! [`parse_app`] returns the error for a caller that wants to show it, and
-//! [`set_app`] writes the section back through the comment-keeping writer in
-//! `file.rs`.
-
-use serde::Deserialize;
+//! Like every Settings section (TUR-155, `keyed.rs`), a bad value costs
+//! only its own key: [`app`] logs it and reads that key as its default, and
+//! [`app_checked`] also returns the problem for the Settings screen.
+//! [`set_app`] writes only the keys its edit changed, through the
+//! comment-keeping writer in `file.rs`.
 
 use super::agent_section::ConfigError;
 use super::file::{read_in, with_section, write_in};
-use super::read_section;
+use super::keyed::{Checked, Keys};
 
 /// `app` in `config.jsonc`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -29,58 +27,64 @@ pub struct AppConfig {
     pub menu_bar_countdown: bool,
 }
 
-/// `app` as written. Every key optional, so a missing one is the default.
-#[derive(Debug, Default, Deserialize)]
-struct RawApp {
-    show_in_dock_when_closed: Option<bool>,
-    menu_bar_countdown: Option<bool>,
-}
-
-/// `app` from the text of `config.jsonc`. Empty text, or no `app` key, is
-/// all defaults.
-pub fn parse_app(raw: &str) -> Result<AppConfig, ConfigError> {
-    let app: RawApp = read_section(raw, "app")
-        .map_err(ConfigError::Invalid)?
-        .unwrap_or_default();
+/// `app` from the text of `config.jsonc`, key by key, with what was not
+/// valid. Empty text, or no `app` key, is all defaults.
+pub fn read_app(raw: &str) -> Checked<AppConfig> {
+    let mut keys = Keys::read(raw, "app");
     let defaults = AppConfig::default();
-    Ok(AppConfig {
-        show_in_dock_when_closed: app
-            .show_in_dock_when_closed
+    let app = AppConfig {
+        show_in_dock_when_closed: keys
+            .get("show_in_dock_when_closed")
             .unwrap_or(defaults.show_in_dock_when_closed),
-        menu_bar_countdown: app
-            .menu_bar_countdown
+        menu_bar_countdown: keys
+            .get("menu_bar_countdown")
             .unwrap_or(defaults.menu_bar_countdown),
-    })
+    };
+    keys.checked(app)
 }
 
-/// [`parse_app`], with a bad section logged and replaced by the defaults.
-fn app_or_defaults(raw: &str) -> AppConfig {
-    parse_app(raw).unwrap_or_else(|error| {
-        tracing::warn!(%error, "config.jsonc's app section is not valid; using defaults");
-        AppConfig::default()
-    })
+/// `app` from the text of `config.jsonc`, each bad key logged and read as
+/// its default.
+pub fn parse_app(raw: &str) -> AppConfig {
+    read_app(raw).value
 }
 
-/// `app` from `~/Meetings/.app/config.jsonc`, or the defaults if the file or
-/// section is missing or not valid (logged). Read on every window close, so
-/// an edit by hand needs no restart.
+/// `app` from `~/Meetings/.app/config.jsonc`, each bad key read as its
+/// default (logged). Read on every window close, so an edit by hand needs no
+/// restart.
 pub fn app() -> AppConfig {
-    app_or_defaults(&super::raw_or_empty())
+    parse_app(&super::raw_or_empty())
+}
+
+/// [`app`], with what was not valid, for the Settings screen.
+pub fn app_checked() -> Checked<AppConfig> {
+    read_app(&super::raw_or_empty())
 }
 
 /// `raw` with its `app` section set to `app`, comments and other keys kept.
+#[cfg(test)]
 pub fn with_app(raw: &str, app: &AppConfig) -> Result<String, ConfigError> {
-    with_section(
-        raw,
-        "app",
-        vec![
-            (
-                "show_in_dock_when_closed",
-                app.show_in_dock_when_closed.into(),
-            ),
-            ("menu_bar_countdown", app.menu_bar_countdown.into()),
-        ],
-    )
+    with_section(raw, "app", fields(app, None))
+}
+
+/// The keys of `app` to write: all of them, or only those that differ from
+/// `before`.
+fn fields(
+    app: &AppConfig,
+    before: Option<&AppConfig>,
+) -> Vec<(&'static str, jsonc_parser::cst::CstInputValue)> {
+    let mut fields = Vec::new();
+    let changed = |pick: fn(&AppConfig) -> bool| before.is_none_or(|old| pick(old) != pick(app));
+    if changed(|app| app.show_in_dock_when_closed) {
+        fields.push((
+            "show_in_dock_when_closed",
+            app.show_in_dock_when_closed.into(),
+        ));
+    }
+    if changed(|app| app.menu_bar_countdown) {
+        fields.push(("menu_bar_countdown", app.menu_bar_countdown.into()));
+    }
+    fields
 }
 
 /// Change the `app` section of `~/Meetings/.app/config.jsonc` with `edit`,
@@ -91,19 +95,19 @@ pub fn set_app(edit: impl FnOnce(&mut AppConfig)) -> Result<AppConfig, ConfigErr
 }
 
 /// [`set_app`] for the config folder `dir`. The section `edit` starts from is
-/// parsed from the file under the write lock, so the keys it leaves alone are
-/// the ones on disk. A section that does not parse is refused, never
-/// replaced by defaults, and the message reaches the Settings switch.
+/// read from the file under the write lock, and only the keys `edit` changed
+/// are written: a bad key it left alone stays as the user wrote it.
 fn set_app_in(
     dir: &std::path::Path,
     edit: impl FnOnce(&mut AppConfig),
 ) -> Result<AppConfig, ConfigError> {
     write_in(dir, |raw| {
-        let mut app = parse_app(raw)?;
+        let before = parse_app(raw);
+        let mut app = before;
         edit(&mut app);
-        with_app(raw, &app)
+        with_section(raw, "app", fields(&app, Some(&before)))
     })?;
-    parse_app(&read_in(dir)?)
+    Ok(parse_app(&read_in(dir)?))
 }
 
 #[cfg(test)]
@@ -114,7 +118,7 @@ mod tests {
     #[test]
     fn no_section_is_the_dock_icon_going_with_the_window() {
         for raw in ["", "{}", r#"{ "app": {} }"#, r#"{ "detection": {} }"#] {
-            assert_eq!(parse_app(raw).unwrap(), AppConfig::default(), "{raw:?}");
+            assert_eq!(parse_app(raw), AppConfig::default(), "{raw:?}");
         }
         assert!(!AppConfig::default().show_in_dock_when_closed);
     }
@@ -126,21 +130,26 @@ mod tests {
                 // JSONC: comments allowed
                 "app": { "show_in_dock_when_closed": true }
             }"#,
-        )
-        .unwrap();
+        );
         assert!(app.show_in_dock_when_closed);
     }
 
     #[test]
-    fn a_bad_section_is_an_error_and_the_app_reader_uses_defaults() {
+    fn a_bad_value_is_a_problem_and_reads_as_its_default_keeping_the_rest() {
         for raw in [
             r#"{ "app": { "show_in_dock_when_closed": "yes" } }"#,
             r#"{ "app": null }"#,
             "{ not json",
         ] {
-            assert!(parse_app(raw).is_err(), "{raw:?}");
-            assert_eq!(app_or_defaults(raw), AppConfig::default(), "{raw:?}");
+            let read = read_app(raw);
+            assert!(read.problem.is_some(), "{raw:?}");
+            assert_eq!(read.value, AppConfig::default(), "{raw:?}");
         }
+        let read = read_app(
+            r#"{ "app": { "show_in_dock_when_closed": "yes", "menu_bar_countdown": true } }"#,
+        );
+        assert!(read.value.menu_bar_countdown, "the good key is kept");
+        assert!(read.problem.is_some());
     }
 
     #[test]
@@ -156,11 +165,11 @@ mod tests {
         let written = with_app(raw, &on).unwrap();
         assert!(written.contains("// mine"), "{written}");
         assert!(written.contains(r#""processes": false"#), "{written}");
-        assert_eq!(parse_app(&written).unwrap(), on);
+        assert_eq!(parse_app(&written), on);
 
         // And back off, in place rather than as a second key.
         let off = with_app(&written, &AppConfig::default()).unwrap();
-        assert_eq!(parse_app(&off).unwrap(), AppConfig::default());
+        assert_eq!(parse_app(&off), AppConfig::default());
         assert_eq!(off.matches("show_in_dock_when_closed").count(), 1, "{off}");
     }
 
@@ -173,7 +182,7 @@ mod tests {
             ..AppConfig::default()
         };
         write_in(&dir, |raw| with_app(raw, &on)).unwrap();
-        assert_eq!(parse_app(&read_in(&dir).unwrap()).unwrap(), on);
+        assert_eq!(parse_app(&read_in(&dir).unwrap()), on);
     }
 
     #[test]
@@ -190,13 +199,17 @@ mod tests {
     #[test]
     fn the_countdown_is_off_by_default_and_on_with_a_config_edit() {
         assert!(!AppConfig::default().menu_bar_countdown);
-        let app = parse_app(r#"{ "app": { "menu_bar_countdown": true } }"#).unwrap();
+        let app = parse_app(r#"{ "app": { "menu_bar_countdown": true } }"#);
         assert!(app.menu_bar_countdown);
         assert!(
             !app.show_in_dock_when_closed,
             "the other key keeps its default"
         );
-        assert!(parse_app(r#"{ "app": { "menu_bar_countdown": 1 } }"#).is_err());
+        assert!(
+            read_app(r#"{ "app": { "menu_bar_countdown": 1 } }"#)
+                .problem
+                .is_some()
+        );
     }
 
     #[test]
@@ -206,7 +219,7 @@ mod tests {
             menu_bar_countdown: true,
         };
         let written = with_app("", &both).unwrap();
-        assert_eq!(parse_app(&written).unwrap(), both);
+        assert_eq!(parse_app(&written), both);
     }
 
     #[test]
@@ -234,11 +247,28 @@ mod tests {
     }
 
     #[test]
-    fn saving_over_a_bad_section_is_refused_and_the_file_kept() {
+    fn saving_beside_a_bad_key_writes_the_change_and_leaves_the_bad_key() {
         let temp = tempfile::tempdir().unwrap();
         let dir = temp.path().join("app-dir");
         std::fs::create_dir_all(&dir).unwrap();
         let bad = r#"{ "app": { "show_in_dock_when_closed": "yes" } }"#;
+        std::fs::write(dir.join(super::super::FILE), bad).unwrap();
+
+        let saved = set_app_in(&dir, |app| app.menu_bar_countdown = true).unwrap();
+        assert!(saved.menu_bar_countdown);
+        let written = read_in(&dir).unwrap();
+        assert!(
+            written.contains(r#""show_in_dock_when_closed": "yes""#),
+            "{written}"
+        );
+    }
+
+    #[test]
+    fn saving_into_a_file_that_does_not_parse_is_refused_and_the_file_kept() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("app-dir");
+        std::fs::create_dir_all(&dir).unwrap();
+        let bad = "{ not json";
         std::fs::write(dir.join(super::super::FILE), bad).unwrap();
 
         let error = set_app_in(&dir, |app| app.menu_bar_countdown = true).unwrap_err();
@@ -258,7 +288,7 @@ mod tests {
                 scope.spawn(|| set_app_in(&dir, |app| app.show_in_dock_when_closed = on).unwrap());
                 scope.spawn(|| set_app_in(&dir, |app| app.menu_bar_countdown = on).unwrap());
             });
-            let saved = parse_app(&read_in(&dir).unwrap()).unwrap();
+            let saved = parse_app(&read_in(&dir).unwrap());
             assert_eq!(
                 saved,
                 AppConfig {

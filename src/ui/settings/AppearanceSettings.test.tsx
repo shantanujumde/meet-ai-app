@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import { useAppearanceStore, watchAppearance } from "@/state/appearance";
 import { ipc } from "@/test/ipcMock";
 import { AppearanceSettings, GLASS_SETTING_LABEL } from "./AppearanceSettings";
+import { CONFIG_PROBLEM_LEAD } from "./useConfigProblem";
 
 vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
@@ -70,6 +71,19 @@ describe("Settings: Appearance", () => {
     expect(screen.getByRole("radio", { name: "System" })).toBeChecked();
     expect(root.dataset.theme).toBe("light");
     expect(screen.getByRole("alert")).toHaveTextContent("The meetings folder is moving.");
+    stop();
+  });
+
+  // TUR-155: `"appearance": { "theme": 3 }` shows System and says why.
+  test("a theme config.jsonc got wrong is named under the card", async () => {
+    ipc.appearanceSettings.mockResolvedValue({ theme: "system", glass: true });
+    ipc.configProblem.mockResolvedValue("appearance.theme 3 is not valid");
+    const { stop } = await show();
+    expect(ipc.configProblem).toHaveBeenCalledWith("appearance");
+    expect(screen.getByRole("alert").textContent).toBe(
+      `${CONFIG_PROBLEM_LEAD} appearance.theme 3 is not valid`,
+    );
+    ipc.configProblem.mockResolvedValue(null);
     stop();
   });
 });

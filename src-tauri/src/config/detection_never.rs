@@ -136,11 +136,7 @@ mod tests {
         let written = with_never_detect(raw, &apps).unwrap();
         assert!(written.contains("// mine"), "{written}");
         assert_eq!(parse(&written).unwrap(), apps);
-        assert!(
-            !super::super::detection_section::parse_detection(&written)
-                .unwrap()
-                .processes
-        );
+        assert!(!super::super::detection_section::parse_detection(&written).processes);
         // And the switches' writer keeps the list.
         let switches = super::super::detection_section::with_detection(
             &written,

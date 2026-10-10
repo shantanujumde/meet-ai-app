@@ -105,7 +105,10 @@ pub async fn set_tracker(
             .writing(|| Ok(config::set_tickets(&tickets)?))?;
         // TUR-113: every ticket not in the tracker yet gets one more try.
         super::auto::settings_changed(&app);
-        current()
+        // TUR-155: the save landed, so what goes back is what was saved, with
+        // the agent read best effort. A bad `agent` section must not turn a
+        // landed save into a failure the user retries.
+        Ok(saved_settings(tickets, config::harness_best_effort()))
     })
     .await?
 }
@@ -132,12 +135,16 @@ pub async fn tracker_servers() -> Result<Vec<TrackerServer>, UiError> {
     .await?
 }
 
+/// One read of `config.jsonc`; a bad `agent` section shows the default
+/// agent rather than failing (TUR-155).
 fn current() -> Result<TrackerSettings, UiError> {
-    Ok(settings_from(
-        config::tickets()?,
-        config::tickets_chosen()?,
-        config::agent()?.harness,
-    ))
+    let (tickets, chosen, harness) = config::tracker_view()?;
+    Ok(settings_from(tickets, chosen, harness))
+}
+
+/// What `set_tracker` hands back: the tickets it saved, which the user chose.
+fn saved_settings(tickets: TicketsConfig, harness: HarnessChoice) -> TrackerSettings {
+    settings_from(tickets, true, harness)
 }
 
 /// The window's view of `tickets`, `chosen` and the agent.
@@ -206,5 +213,31 @@ mod tests {
         assert_eq!(saved.tracker, "linear");
         assert_eq!(saved.tracker_mcp, "claude.ai Linear");
         assert!(saved.chosen, "{raw}");
+    }
+
+    /// TUR-155: with `"timeout_sec": 0` the save used to land and then the
+    /// command reported `invalid-config`. Now the saved tickets come back,
+    /// and the harness beside the bad key is still read.
+    #[test]
+    fn a_bad_agent_section_never_fails_a_tracker_save_or_view() {
+        let bad_agent = r#"{ "agent": { "harness": "codex", "timeout_sec": 0 } }"#;
+        assert!(crate::config::parse_agent(bad_agent).is_err());
+        let tickets = checked("jira", "Atlassian").unwrap();
+        let raw = with_tickets(bad_agent, &tickets).unwrap();
+
+        let (read, chosen, harness) = crate::config::tracker_view_of(&raw).unwrap();
+        assert_eq!(read, tickets);
+        assert!(chosen);
+        assert_eq!(harness, HarnessChoice::Codex);
+
+        let saved = saved_settings(tickets, harness);
+        assert_eq!(saved.tracker, "jira");
+        assert_eq!(saved.tracker_mcp, "Atlassian");
+        assert_eq!(saved.harness, "codex");
+        assert!(saved.chosen);
+
+        let unknown = r#"{ "agent": { "harness": "codx" } }"#;
+        let (_, _, harness) = crate::config::tracker_view_of(unknown).unwrap();
+        assert_eq!(harness, HarnessChoice::default());
     }
 }

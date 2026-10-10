@@ -290,6 +290,19 @@ const COPY: Record<string, ErrorCopy> = {
     actionLabel: "Open Tracker settings",
     remedy: { action: "open-tracker-settings" },
   },
+  // TUR-155: a value in config.jsonc that is not valid.
+  "app/invalid-config": {
+    headline: "A setting in config.jsonc is not valid",
+    body: "meet-ai shows that setting as its default and keeps every other setting. A file that cannot be read at all is never overwritten. Fix or remove the value named below in config.jsonc, in your meetings folder's .app folder.",
+    actionLabel: "Copy details",
+    remedy: { action: "copy-details" },
+  },
+  "app/invalid-setting": {
+    headline: "That value can't be saved",
+    body: "It is outside what this setting allows. Nothing was changed.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
   "app/unknown-harness": {
     headline: "meet-ai does not know that agent",
     body: "config.jsonc names an agent meet-ai cannot run. Pick Claude Code, Codex or None in Settings → Notes.",

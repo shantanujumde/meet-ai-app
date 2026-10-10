@@ -4,16 +4,18 @@
 //! uses, where `"system"` follows the OS. `glass` turns the see-through look
 //! of the sidebar and the record prompt on or off; off, both are solid.
 //!
-//! Like `app`, the reader [`appearance`] logs a bad section and uses the
-//! defaults, so a typo only costs the look, never a start. [`set_appearance`]
-//! refuses to save over a section that does not parse, so the user's file is
-//! never replaced by defaults.
+//! Like every Settings section (TUR-155, `keyed.rs`), a bad value costs
+//! only its own key: `"theme": 3` reads as the system theme and keeps
+//! `glass`, and [`appearance_checked`] tells the Settings screen why.
+//! [`set_appearance`] writes only the keys that changed, so a save never
+//! fails because of the other one, and a bad key it did not touch is left
+//! as the user wrote it.
 
 use serde::{Deserialize, Serialize};
 
 use super::agent_section::ConfigError;
 use super::file::{read_in, with_section, write_in};
-use super::read_section;
+use super::keyed::{Checked, Keys};
 
 /// The section's name in `config.jsonc`.
 const SECTION: &str = "appearance";
@@ -58,50 +60,55 @@ impl Default for AppearanceConfig {
     }
 }
 
-/// `appearance` as written. Every key optional, so a missing one is the default.
-#[derive(Debug, Default, Deserialize)]
-struct RawAppearance {
-    theme: Option<Theme>,
-    glass: Option<bool>,
-}
-
-/// `appearance` from the text of `config.jsonc`. Empty text, or no
-/// `appearance` key, is all defaults.
-pub fn parse_appearance(raw: &str) -> Result<AppearanceConfig, ConfigError> {
-    let section: RawAppearance = read_section(raw, SECTION)
-        .map_err(ConfigError::Invalid)?
-        .unwrap_or_default();
+/// `appearance` from the text of `config.jsonc`, key by key, with what was
+/// not valid. Empty text, or no `appearance` key, is all defaults.
+pub fn read_appearance(raw: &str) -> Checked<AppearanceConfig> {
+    let mut keys = Keys::read(raw, SECTION);
     let defaults = AppearanceConfig::default();
-    Ok(AppearanceConfig {
-        theme: section.theme.unwrap_or(defaults.theme),
-        glass: section.glass.unwrap_or(defaults.glass),
-    })
+    let appearance = AppearanceConfig {
+        theme: keys.get("theme").unwrap_or(defaults.theme),
+        glass: keys.get("glass").unwrap_or(defaults.glass),
+    };
+    keys.checked(appearance)
 }
 
-/// [`parse_appearance`], with a bad section logged and replaced by the defaults.
-fn appearance_or_defaults(raw: &str) -> AppearanceConfig {
-    parse_appearance(raw).unwrap_or_else(|error| {
-        tracing::warn!(%error, "config.jsonc's appearance section is not valid; using defaults");
-        AppearanceConfig::default()
-    })
+/// `appearance` from the text of `config.jsonc`, each bad key logged and
+/// read as its default.
+pub fn parse_appearance(raw: &str) -> AppearanceConfig {
+    read_appearance(raw).value
 }
 
-/// `appearance` from `~/Meetings/.app/config.jsonc`, or the defaults if the
-/// file or section is missing or not valid (logged).
+/// `appearance` from `~/Meetings/.app/config.jsonc`, each bad key read as
+/// its default (logged).
 pub fn appearance() -> AppearanceConfig {
-    appearance_or_defaults(&super::raw_or_empty())
+    parse_appearance(&super::raw_or_empty())
+}
+
+/// [`appearance`], with what was not valid, for the Settings screen.
+pub fn appearance_checked() -> Checked<AppearanceConfig> {
+    read_appearance(&super::raw_or_empty())
 }
 
 /// `raw` with its `appearance` section set, comments and other keys kept.
+#[cfg(test)]
 pub fn with_appearance(raw: &str, appearance: &AppearanceConfig) -> Result<String, ConfigError> {
-    with_section(
-        raw,
-        SECTION,
-        vec![
-            ("theme", appearance.theme.as_str().into()),
-            ("glass", appearance.glass.into()),
-        ],
-    )
+    with_section(raw, SECTION, fields(appearance, None))
+}
+
+/// The keys of `appearance` to write: all of them, or only those that differ
+/// from `before`.
+fn fields(
+    appearance: &AppearanceConfig,
+    before: Option<&AppearanceConfig>,
+) -> Vec<(&'static str, jsonc_parser::cst::CstInputValue)> {
+    let mut fields = Vec::new();
+    if before.is_none_or(|old| old.theme != appearance.theme) {
+        fields.push(("theme", appearance.theme.as_str().into()));
+    }
+    if before.is_none_or(|old| old.glass != appearance.glass) {
+        fields.push(("glass", appearance.glass.into()));
+    }
+    fields
 }
 
 /// Save `appearance` to `~/Meetings/.app/config.jsonc` and return it as read
@@ -111,17 +118,17 @@ pub fn set_appearance(appearance: AppearanceConfig) -> Result<AppearanceConfig, 
     set_appearance_in(&dir, appearance)
 }
 
-/// [`set_appearance`] for the config folder `dir`. A section that does not
-/// parse is refused, never replaced, and the message reaches the Settings row.
+/// [`set_appearance`] for the config folder `dir`: only the keys that differ
+/// from the file, read under the write lock, are written.
 fn set_appearance_in(
     dir: &std::path::Path,
     appearance: AppearanceConfig,
 ) -> Result<AppearanceConfig, ConfigError> {
     write_in(dir, |raw| {
-        parse_appearance(raw)?;
-        with_appearance(raw, &appearance)
+        let before = parse_appearance(raw);
+        with_section(raw, SECTION, fields(&appearance, Some(&before)))
     })?;
-    parse_appearance(&read_in(dir)?)
+    Ok(parse_appearance(&read_in(dir)?))
 }
 
 #[cfg(test)]
@@ -133,7 +140,7 @@ mod tests {
     fn no_section_is_the_system_theme_with_glass_on() {
         for raw in ["", "{}", r#"{ "appearance": {} }"#, r#"{ "app": {} }"#] {
             assert_eq!(
-                parse_appearance(raw).unwrap(),
+                parse_appearance(raw),
                 AppearanceConfig::default(),
                 "{raw:?}"
             );
@@ -150,7 +157,7 @@ mod tests {
             ("dark", Theme::Dark),
         ] {
             let raw = format!(r#"{{ "appearance": {{ "theme": "{word}" }} }}"#);
-            let read = parse_appearance(&raw).unwrap();
+            let read = parse_appearance(&raw);
             assert_eq!(read.theme, theme, "{word}");
             assert!(read.glass, "the other key keeps its default");
             assert_eq!(theme.as_str(), word);
@@ -164,27 +171,32 @@ mod tests {
                 // JSONC: comments allowed
                 "appearance": { "glass": false }
             }"#,
-        )
-        .unwrap();
+        );
         assert!(!read.glass);
         assert_eq!(read.theme, Theme::System);
     }
 
     #[test]
-    fn a_bad_section_is_an_error_and_the_reader_uses_defaults() {
+    fn a_bad_value_is_a_problem_and_reads_as_its_default() {
         for raw in [
             r#"{ "appearance": { "theme": "sepia" } }"#,
             r#"{ "appearance": { "glass": "yes" } }"#,
             r#"{ "appearance": null }"#,
             "{ not json",
         ] {
-            assert!(parse_appearance(raw).is_err(), "{raw:?}");
-            assert_eq!(
-                appearance_or_defaults(raw),
-                AppearanceConfig::default(),
-                "{raw:?}"
-            );
+            let read = read_appearance(raw);
+            assert!(read.problem.is_some(), "{raw:?}");
+            assert_eq!(read.value, AppearanceConfig::default(), "{raw:?}");
         }
+    }
+
+    #[test]
+    fn a_bad_theme_keeps_the_good_glass_and_says_why() {
+        let read = read_appearance(r#"{ "appearance": { "theme": 3, "glass": false } }"#);
+        assert_eq!(read.value.theme, Theme::System);
+        assert!(!read.value.glass, "the good key is kept");
+        let problem = read.problem.unwrap();
+        assert!(problem.starts_with("appearance.theme 3"), "{problem}");
     }
 
     #[test]
@@ -203,13 +215,10 @@ mod tests {
             written.contains(r#""menu_bar_countdown": true"#),
             "{written}"
         );
-        assert_eq!(parse_appearance(&written).unwrap(), dark);
+        assert_eq!(parse_appearance(&written), dark);
 
         let back = with_appearance(&written, &AppearanceConfig::default()).unwrap();
-        assert_eq!(
-            parse_appearance(&back).unwrap(),
-            AppearanceConfig::default()
-        );
+        assert_eq!(parse_appearance(&back), AppearanceConfig::default());
         assert_eq!(back.matches(r#""theme""#).count(), 1, "{back}");
         assert_eq!(back.matches(r#""glass""#).count(), 1, "{back}");
     }
@@ -223,20 +232,38 @@ mod tests {
             glass: true,
         };
         assert_eq!(set_appearance_in(&dir, light).unwrap(), light);
-        assert_eq!(parse_appearance(&read_in(&dir).unwrap()).unwrap(), light);
+        assert_eq!(parse_appearance(&read_in(&dir).unwrap()), light);
     }
 
     #[test]
-    fn saving_over_a_bad_section_is_refused_and_the_file_kept() {
+    fn saving_beside_a_bad_theme_lands_and_leaves_the_theme_as_written() {
         let temp = tempfile::tempdir().unwrap();
         let dir = temp.path().join("app-dir");
         std::fs::create_dir_all(&dir).unwrap();
         let bad = r#"{ "appearance": { "theme": 3 } }"#;
         std::fs::write(dir.join(super::super::FILE), bad).unwrap();
 
-        let error = set_appearance_in(&dir, AppearanceConfig::default()).unwrap_err();
-        assert!(matches!(error, ConfigError::Invalid(_)), "{error:?}");
-        assert_eq!(read_in(&dir).unwrap(), bad);
+        // Settings shows System with glass on; the user turns glass off.
+        let saved = set_appearance_in(
+            &dir,
+            AppearanceConfig {
+                glass: false,
+                ..AppearanceConfig::default()
+            },
+        )
+        .unwrap();
+        assert!(!saved.glass);
+        assert_eq!(saved.theme, Theme::System);
+        let written = read_in(&dir).unwrap();
+        assert!(written.contains(r#""theme": 3"#), "{written}");
+
+        // Picking a theme fixes the bad key.
+        let dark = AppearanceConfig {
+            theme: Theme::Dark,
+            glass: false,
+        };
+        assert_eq!(set_appearance_in(&dir, dark).unwrap(), dark);
+        assert_eq!(read_appearance(&read_in(&dir).unwrap()).problem, None);
     }
 
     #[test]

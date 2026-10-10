@@ -213,6 +213,23 @@ pub fn parse_agent(raw: &str) -> Result<AgentConfig, ConfigError> {
     })
 }
 
+/// `agent.harness` from the text of `config.jsonc`, whatever else in `agent`
+/// is wrong (TUR-155): the tracker settings only show which agent is picked,
+/// so a bad `timeout_sec` must not fail them. A bad or unknown `harness` is
+/// logged and read as the default.
+pub fn parse_harness_best_effort(raw: &str) -> Harness {
+    let mut keys = super::keyed::Keys::read(raw, "agent");
+    let name: Option<String> = keys.get("harness");
+    match name.as_deref().map(Harness::from_config) {
+        None => Harness::default(),
+        Some(Ok(harness)) => harness,
+        Some(Err(error)) => {
+            tracing::warn!(%error, "config.jsonc's agent.harness is not valid; showing the default");
+            Harness::default()
+        }
+    }
+}
+
 /// `tickets` from the text of `config.jsonc`. Empty text is all defaults.
 pub fn parse_tickets(raw: &str) -> Result<TicketsConfig, ConfigError> {
     let tickets: RawTickets = section(raw, "tickets")?;
