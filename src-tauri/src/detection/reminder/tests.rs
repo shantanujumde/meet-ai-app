@@ -320,8 +320,10 @@ fn the_loop_fires_each_reminder_once() {
         reminders(),
         std::time::Duration::from_millis(1),
         || Some(ReminderSettings::default()),
+        || false,
         move |event| {
-            let _ = tx.send(event.id);
+            let _ = tx.send(event.id.clone());
+            Fired::Asked
         },
     )
     .unwrap();
@@ -450,6 +452,7 @@ fn the_loop_with_reminders_switched_off_reads_nothing_and_fires_nothing() {
             counted.fetch_add(1, Ordering::SeqCst);
             None
         },
+        || false,
         |_| panic!("switched off: no reminder"),
     )
     .unwrap();
@@ -479,8 +482,10 @@ fn the_loop_reads_the_lead_time_on_every_tick() {
         reminders(),
         std::time::Duration::from_millis(1),
         move || Some(ReminderSettings::new(*setting.lock().unwrap(), 2)),
+        || false,
         move |event| {
-            let _ = tx.send(event.id);
+            let _ = tx.send(event.id.clone());
+            Fired::Asked
         },
     )
     .unwrap();
@@ -568,4 +573,115 @@ fn a_sign_in_next_to_an_unanswered_calendar_app_still_reminds() {
         Err(Error::PermissionDenied)
     ));
     assert!(reminders.tick(at(9, 59, 40), &calendar).is_empty());
+}
+
+// --- TUR-169: a reminder that fires while recording is held, not lost ------
+
+/// [`run`] with the recorder recording over `[from, to]`, holding every
+/// reminder that comes due, as the loop's `fire` does then.
+fn run_recording(
+    reminders: &mut Reminders,
+    calendar: &Calendar,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Vec<(DateTime<Utc>, String)> {
+    let step = Duration::from_std(TICK).unwrap();
+    let mut held = Vec::new();
+    let mut now = from;
+    reminders.set_recording(true);
+    while now <= to {
+        for event in reminders.tick(now, calendar) {
+            reminders.hold(&event);
+            held.push((now, event.id));
+        }
+        now += step;
+    }
+    reminders.set_recording(false);
+    held
+}
+
+#[test]
+fn a_reminder_held_by_a_recording_is_asked_when_it_stops() {
+    // Back to back: 10:00 records until 11:05; 11:00's reminder is due at 10:59.
+    let calendar = Calendar::with(vec![invite("eleven", at(11, 0, 0), 3)]);
+    let mut reminders = reminders();
+    let held = run_recording(&mut reminders, &calendar, at(10, 50, 0), at(11, 5, 0));
+    assert_eq!(
+        held,
+        [(at(10, 59, 0), "eleven".to_string())],
+        "held once, not re-tried while recording"
+    );
+    // The recording stops at 11:05, before 11:30's end: asked at once, once.
+    let asked = run(&mut reminders, &calendar, at(11, 5, 10), at(11, 40, 0));
+    assert_eq!(asked, [(at(11, 5, 10), "eleven".to_string())]);
+}
+
+#[test]
+fn a_held_reminder_is_dropped_once_its_meeting_ends() {
+    let calendar = Calendar::with(vec![invite("eleven", at(11, 0, 0), 3)]);
+    let mut reminders = reminders();
+    let held = run_recording(&mut reminders, &calendar, at(10, 50, 0), at(11, 30, 0));
+    assert_eq!(held.len(), 1);
+    // Stopped at 11:30: the meeting is over, nothing to ask.
+    assert!(run(&mut reminders, &calendar, at(11, 30, 10), at(12, 0, 0)).is_empty());
+}
+
+#[test]
+fn a_held_reminder_for_a_cancelled_meeting_is_never_asked() {
+    let calendar = Calendar::with(vec![invite("eleven", at(11, 0, 0), 3)]);
+    let mut reminders = reminders();
+    run_recording(&mut reminders, &calendar, at(10, 50, 0), at(11, 2, 0));
+    calendar.set(Vec::new());
+    assert!(run(&mut reminders, &calendar, at(11, 2, 10), at(11, 40, 0)).is_empty());
+}
+
+#[test]
+fn a_held_reminder_for_a_moved_meeting_waits_for_the_new_time() {
+    let calendar = Calendar::with(vec![invite("eleven", at(11, 0, 0), 3)]);
+    let mut reminders = reminders();
+    run_recording(&mut reminders, &calendar, at(10, 50, 0), at(11, 2, 0));
+    // Moved to 12:00 while recording: a new reminder at 11:59, not now.
+    calendar.set(vec![invite("eleven", at(12, 0, 0), 3)]);
+    assert_eq!(
+        run(&mut reminders, &calendar, at(11, 2, 10), at(12, 10, 0)),
+        [(at(11, 59, 0), "eleven".to_string())]
+    );
+}
+
+#[test]
+fn the_loop_holds_a_reminder_while_recording_and_asks_after() {
+    let calendar = Calendar::with(vec![invite("standup", at(10, 0, 0), 3)]);
+    let clock = FakeClock(Arc::new(Mutex::new(at(9, 59, 0))));
+    let recording = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let (flag, phase) = (Arc::clone(&recording), Arc::clone(&recording));
+    let (tx, fired) = mpsc::channel();
+    let running = spawn(
+        clock,
+        calendar.clone(),
+        reminders(),
+        std::time::Duration::from_millis(1),
+        || Some(ReminderSettings::default()),
+        move || flag.load(Ordering::SeqCst),
+        move |event| {
+            // What `notify::remind` does: nothing is asked while recording.
+            if phase.load(Ordering::SeqCst) {
+                return Fired::Held;
+            }
+            let _ = tx.send(event.id.clone());
+            Fired::Asked
+        },
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    assert!(fired.try_recv().is_err(), "nothing asked while recording");
+    recording.store(false, Ordering::SeqCst);
+    assert_eq!(
+        fired
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap(),
+        "standup"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    running.stop();
+    assert!(fired.try_recv().is_err(), "asked once");
 }

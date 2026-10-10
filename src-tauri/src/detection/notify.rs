@@ -31,6 +31,7 @@ use tauri::{AppHandle, Emitter as _, Manager as _};
 
 use super::Detection;
 use super::merge::{Delivery, Merger};
+use super::reminder::Fired;
 use crate::events::DETECTION_PROMPT_EVENT;
 use crate::recording::{Phase, Recorder};
 
@@ -237,22 +238,25 @@ pub fn notify(app: &AppHandle, signal: &Signal) {
 }
 
 /// Remind the user that `event` starts soon (TUR-30, TUR-78), and ask
-/// whether to join and record it.
-pub fn remind(app: &AppHandle, event: &::calendar::Event) {
-    let prompt = reminder_prompt(current_phase(app), event, Utc::now());
-    if !prompt
-        .as_ref()
-        .is_none_or(|prompt| switched_on(app, &prompt.signal))
-    {
-        return;
+/// whether to join and record it. While recording nothing is asked, and the
+/// reminder is [`Fired::Held`] for the reminder loop to ask again once the
+/// recording stops (TUR-169).
+pub fn remind(app: &AppHandle, event: &::calendar::Event) -> Fired {
+    let Some(prompt) = reminder_prompt(current_phase(app), event, Utc::now()) else {
+        tracing::debug!("a meeting reminder while recording; asking once it stops");
+        return Fired::Held;
+    };
+    if !switched_on(app, &prompt.signal) {
+        return Fired::Asked;
     }
-    if prompt.is_some()
-        && let Some(detection) = app.try_state::<Detection>()
-    {
+    if let Some(detection) = app.try_state::<Detection>() {
         detection.remember_reminded(event.clone());
     }
     let ends = event.end;
-    deliver(app, prompt, move |merger, now| merger.reminder(now, ends));
+    deliver(app, Some(prompt), move |merger, now| {
+        merger.reminder(now, ends)
+    });
+    Fired::Asked
 }
 
 /// "Send a test reminder" (TUR-78): the reminder for a fake meeting

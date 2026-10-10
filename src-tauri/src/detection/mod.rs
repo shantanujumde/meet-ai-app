@@ -12,7 +12,7 @@
 //!
 //! Calendar reminders (TUR-30, [`reminder`]) are a third loop: a minute
 //! before each meeting with enough attendees it asks through the same path,
-//! counts as a call signal for Slack and Discord, and [`merge`] makes a
+//! counts as a call signal for an open meeting app, and [`merge`] makes a
 //! reminder and an app prompt for the same call one prompt.
 //!
 //! TUR-78 made all three follow Settings → Notifications while they run: each
@@ -69,7 +69,7 @@ impl Detection {
     pub fn config(&self) -> crate::config::DetectionConfig {
         self.live.get()
     }
-    /// A calendar event was just seen: Slack or Discord being open now counts
+    /// A calendar event was just seen: a meeting app being open now counts
     /// as a call. A no-op when detection is off. (Audio activity goes through
     /// [`Self::audio_activity`], which counts as a call signal too.)
     pub fn call_signal(&self) {
@@ -165,7 +165,7 @@ pub fn start_audio_activity(app: &AppHandle, audio_activity: bool) {
 
 /// Remind before each meeting (TUR-30), as early as
 /// `detection.remind_before_minutes` says (TUR-78). Call it after [`start`]:
-/// a reminder counts as a call signal for Slack and Discord. The lead time,
+/// a reminder counts as a call signal for an open meeting app. The lead time,
 /// `detection.min_attendees` and the `detection.calendar` switch are read on
 /// every tick (`calendar` is the switch at launch); `calendar.refresh_minutes`
 /// once, here.
@@ -179,6 +179,7 @@ pub fn start_reminders(app: &AppHandle, calendar: bool) {
     }
     let fire_app = app.clone();
     let settings_app = app.clone();
+    let recording_app = app.clone();
     let initial = reminder_settings(&state.config()).unwrap_or_default();
     let reminders = spawn_reminders(
         reminder::AppCalendar(app.clone()),
@@ -191,13 +192,17 @@ pub fn start_reminders(app: &AppHandle, calendar: bool) {
                 .try_state::<Detection>()
                 .and_then(|state| reminder_settings(&state.config()))
         },
+        move || notify::recording(&recording_app),
         move |event| {
-            notify::remind(&fire_app, &event);
+            let fired = notify::remind(&fire_app, event);
             // After the reminder, so a Slack prompt this lets through is
             // merged into it rather than asked first.
-            if let Some(state) = fire_app.try_state::<Detection>() {
+            if fired == reminder::Fired::Asked
+                && let Some(state) = fire_app.try_state::<Detection>()
+            {
                 state.call_signal();
             }
+            fired
         },
     );
     *lock_or_recover(&state.reminders) = reminders;
@@ -217,7 +222,8 @@ fn spawn_reminders<C: reminder::Upcoming>(
     source: C,
     reminders: reminder::Reminders,
     settings: impl FnMut() -> Option<reminder::ReminderSettings> + Send + 'static,
-    fire: impl FnMut(::calendar::Event) + Send + 'static,
+    recording: impl Fn() -> bool + Send + 'static,
+    fire: impl FnMut(&::calendar::Event) -> reminder::Fired + Send + 'static,
 ) -> Option<reminder::ReminderLoop> {
     match reminder::spawn(
         reminder::SystemClock,
@@ -225,6 +231,7 @@ fn spawn_reminders<C: reminder::Upcoming>(
         reminders,
         reminder::TICK,
         settings,
+        recording,
         fire,
     ) {
         Ok(running) => {
@@ -470,6 +477,9 @@ mod tests {
         polled_rx
             .recv_timeout(Duration::from_secs(10))
             .expect("polled once");
+        // TUR-169: Zoom being open asks only with a call signal.
+        assert!(signals.try_recv().is_err(), "open alone does not ask");
+        running.call_signal();
         let signal = signals
             .recv_timeout(Duration::from_secs(10))
             .expect("Zoom prompts");
@@ -602,7 +612,8 @@ mod tests {
             CountingCalendar(Arc::clone(&reads)),
             reminders(),
             || Some(reminder::ReminderSettings::default()),
-            |_| {},
+            || false,
+            |_| reminder::Fired::Asked,
         )
         .expect("starts");
         // The first tick reads at once; the rules are `reminder`'s tests.
