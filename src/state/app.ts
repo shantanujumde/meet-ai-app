@@ -22,6 +22,7 @@ import {
   permissionQuick,
   resetOnboarding,
 } from "@/ipc/client";
+import { ROOT_POINTER_UNREADABLE } from "@/ipc/errors";
 import type { MeetingList, OnboardingState, PermissionStatus, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 
@@ -128,7 +129,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ onboardingLoading: true });
     try {
       set({ onboarding: await onboardingState() });
-    } catch {
+    } catch (thrown) {
+      // TUR-149: with the meetings-folder pointer damaged, whether setup was
+      // done is unknown, not "no": the flag lives in the folder the pointer
+      // names. Leaving `onboarding` null keeps the user out of the wizard,
+      // and the meetings screen shows the error and how to fix it.
+      const error = toUiError(thrown);
+      if (error.domain === "app" && error.kind === ROOT_POINTER_UNREADABLE) {
+        set({ onboarding: null });
+        return;
+      }
       // Unreadable means not onboarded. Seeing the steps twice is a small
       // annoyance; never seeing them means recording silence.
       set({ onboarding: { completedAt: null } });

@@ -9,8 +9,8 @@
 //! log folder as it always did (`~/Library/Logs/<id>` on macOS); the first
 //! launch after onboarding switches to `.app/logs`.
 
-use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use tauri::{AppHandle, Manager as _, Runtime};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, log};
@@ -47,17 +47,73 @@ pub fn meetings_logs_dir() -> Option<PathBuf> {
         .map(|root| meeting_format::layout::logs_dir(&root))
 }
 
-/// The folder the log is actually written to this launch: the meetings one,
-/// or the OS log folder before onboarding. Read once at startup, so a folder
-/// move or a finished onboarding takes effect on the next launch, the same
-/// as the plugin's file target.
+/// The folder the log plugin was pointed at when this launch started: the
+/// meetings one, or `None` for the OS log folder before onboarding. The
+/// plugin's file target cannot change while the app runs.
 pub struct LogsDir(pub Option<PathBuf>);
 
-/// Where this launch's log and crash files are.
+/// Where the logs and crash files are now, worked out each time it is asked
+/// rather than kept from startup: after a folder move, the startup folder is
+/// under a root the user moved away from, and opening it would make that
+/// folder again (TUR-149).
 pub fn resolve<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
-    app.try_state::<LogsDir>()
-        .and_then(|state| state.0.clone())
-        .or_else(|| app.path().app_log_dir().ok())
+    let launched_in_meetings = app
+        .try_state::<LogsDir>()
+        .is_some_and(|state| state.0.is_some());
+    pick_dir(
+        launched_in_meetings,
+        current_meetings_logs_dir(),
+        app.path().app_log_dir().ok(),
+    )
+}
+
+/// The logs folder under the meetings root as it is now, if that root is
+/// there. `None` before onboarding, or when the root is gone.
+fn current_meetings_logs_dir() -> Option<PathBuf> {
+    let dir = meetings_logs_dir()?;
+    crate::meetings::root()
+        .is_ok_and(|root| root.is_dir())
+        .then_some(dir)
+}
+
+/// The rule behind [`resolve`]. A launch that started before onboarding logs
+/// to the OS folder until it restarts, so that is where its log is. Otherwise
+/// the current meetings root's logs folder, falling back to the OS log folder
+/// when the root is not there; never a folder under an old root.
+fn pick_dir(
+    launched_in_meetings: bool,
+    meetings: Option<PathBuf>,
+    os: Option<PathBuf>,
+) -> Option<PathBuf> {
+    match (launched_in_meetings, meetings) {
+        (true, Some(dir)) => Some(dir),
+        _ => os,
+    }
+}
+
+/// Where crash files go after a folder move this launch. Read by the panic
+/// hook; `None` until a move.
+static MOVED_LOGS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// The meetings folder moved to `root`: send this launch's crash files to its
+/// logs folder from now on (TUR-149). Makes no folder; a crash with no logs
+/// folder there goes to the OS log folder instead (see `crash::panic_dir`).
+pub fn follow_root(root: &Path) {
+    let dir = meeting_format::layout::logs_dir(root);
+    *MOVED_LOGS_DIR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(dir);
+}
+
+/// The folder a panic's file goes in: the moved-to one after a move, else the
+/// one the handlers were installed with. `try_lock`, so a panic while the
+/// lock is held cannot deadlock the hook.
+fn panic_dir_now(installed: &Path) -> PathBuf {
+    MOVED_LOGS_DIR
+        .try_lock()
+        .ok()
+        .and_then(|moved| moved.clone())
+        .unwrap_or_else(|| installed.to_path_buf())
 }
 
 // Adapted from github.com/cjpais/Handy/src-tauri/src/lib.rs @ ffbc9504cbf004ce4819d2ca872fcea92be0fddf (MIT)
@@ -109,6 +165,8 @@ pub fn set_crash_fallback<R: Runtime>(app: &AppHandle<R>) {
     if let Err(error) = std::fs::create_dir_all(&dir) {
         tracing::warn!(%error, dir = %dir.display(), "could not create the OS log folder");
     }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    platform::set_fallback(&dir);
     let _ = CRASH_FALLBACK.set(dir);
 }
 
@@ -150,7 +208,11 @@ fn install_handlers(dir: &std::path::Path) {
         tracing::warn!(%error, dir = %dir.display(), "could not create the logs folder");
     }
     crash::prune(dir, MAX_CRASH_FILES);
-    install_panic_hook(dir.to_path_buf(), || CRASH_FALLBACK.get().cloned());
+    let installed = dir.to_path_buf();
+    install_panic_hook(
+        move || panic_dir_now(&installed),
+        || CRASH_FALLBACK.get().cloned(),
+    );
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     platform::attach(dir);
 }
@@ -167,6 +229,8 @@ pub async fn open_logs_folder(app: AppHandle) -> Result<(), UiError> {
                 "meet-ai could not work out where its logs folder is.",
             )
         })?;
+        // `resolve` only names a folder under a root that is there, or the
+        // OS log folder, so this never makes an old meetings root again.
         std::fs::create_dir_all(&dir)?;
         app.opener()
             .open_path(dir.display().to_string(), None::<&str>)

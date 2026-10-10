@@ -34,6 +34,14 @@ export const NO_BACKEND: UiError = {
     "change anything on disk. Run `pnpm tauri dev` instead of `pnpm dev`.",
 };
 
+/**
+ * The `app` kind for a damaged meetings-folder pointer (`root.json`, TUR-149).
+ * Where the meetings are is unknown, and so is whether setup was done (that
+ * flag lives in the meetings folder), so the app must not send the user back
+ * through setup on it.
+ */
+export const ROOT_POINTER_UNREADABLE = "root-pointer-unreadable";
+
 /** What the button does. The screen decides how; this decides which. */
 export type Remedy =
   | { action: "download-model" }
@@ -200,6 +208,31 @@ const COPY: Record<string, ErrorCopy> = {
   "app/no-config-dir": {
     headline: "meet-ai could not remember that choice",
     body: "It could not find a place on this Mac to save the folder you chose, so it kept the old one. Nothing moved.",
+    actionLabel: "Copy details",
+    remedy: { action: "copy-details" },
+  },
+  // TUR-149: the folder checks and the pointer file.
+  [`app/${ROOT_POINTER_UNREADABLE}`]: {
+    headline: "meet-ai lost track of your meetings folder",
+    body: "The file that remembers where your meetings are is damaged. Your meetings were not touched. Pick your meetings folder again under Settings, Files.",
+    actionLabel: "Copy details",
+    remedy: { action: "copy-details" },
+  },
+  "app/relative-folder": {
+    headline: "That folder won't work",
+    body: "meet-ai needs the folder's full location. Pick the folder again.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
+  "app/not-a-folder": {
+    headline: "That is a file, not a folder",
+    body: "Pick a folder to keep your meetings in. Nothing moved.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
+  "app/unsupported-folder-name": {
+    headline: "meet-ai can't remember that folder",
+    body: "Its name has characters meet-ai cannot save. Pick or rename a folder with ordinary letters. Nothing moved.",
     actionLabel: "Copy details",
     remedy: { action: "copy-details" },
   },

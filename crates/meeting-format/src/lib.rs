@@ -179,6 +179,14 @@ pub fn is_lock_violation(code: i32) -> bool {
     platform::is_lock_violation(code)
 }
 
+/// Make `dir`'s list of entries durable: the same folder flush
+/// [`write_atomic`] ends with, for a caller that creates files some other way
+/// (the meetings-folder move, TUR-149). A filesystem that cannot sync a folder
+/// counts as done, and Windows has no folder handle to flush.
+pub fn sync_dir(dir: &Path) -> io::Result<()> {
+    platform::sync_dir(dir)
+}
+
 /// Every temp name this process hands out is distinct, across threads.
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 

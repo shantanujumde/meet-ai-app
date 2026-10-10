@@ -2,15 +2,24 @@
 //!
 //! The one thing `store` deliberately does not know about: the root pointer
 //! file in the OS config folder, the environment override, and the move that
-//! carries every meeting to a new folder.
+//! carries every meeting to a new folder (`move_tree`, TUR-149).
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
 use super::list::{Live, MeetingList, list};
 use crate::error::UiError;
+
+mod move_tree;
+mod paths;
+
+/// The kind of error for a pointer file that is there but will not read. The
+/// webview keeps the user out of onboarding on it (TUR-149): whether setup was
+/// done is recorded inside the very folder this file names.
+pub(super) const POINTER_UNREADABLE: &str = "root-pointer-unreadable";
 
 /// Where meetings live.
 ///
@@ -30,7 +39,7 @@ pub fn root() -> Result<PathBuf, UiError> {
     {
         return Ok(PathBuf::from(custom));
     }
-    if let Some(configured) = configured_root() {
+    if let Some(configured) = configured_root()? {
         return Ok(configured);
     }
     dirs::home_dir()
@@ -56,42 +65,83 @@ fn pointer_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join("meet-ai").join("root.json"))
 }
 
+/// `root.json`. The path is a `PathBuf`, so it is written exactly or not at
+/// all: serde refuses a path that is not valid UTF-8 instead of saving a
+/// lossy copy of it that names some other folder.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct RootPointer {
-    pub(super) custom_root: Option<String>,
+    pub(super) custom_root: Option<PathBuf>,
 }
 
 /// The user's chosen folder, if they ever changed it from the default.
 ///
-/// Same failure rule as everywhere else in this module: a missing or corrupt
-/// pointer is not an error, it just means "no override", and the app falls
-/// back to `~/Meetings` rather than refusing to start.
-fn configured_root() -> Option<PathBuf> {
-    let raw = fs::read_to_string(pointer_path()?).ok()?;
-    let pointer: RootPointer = serde_json::from_str(&raw).ok()?;
-    pointer
-        .custom_root
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
+/// No pointer file means no override, and the app uses `~/Meetings`. A
+/// pointer that is there but will not read is an error, never a quiet fall
+/// back to `~/Meetings`: that would show an empty meetings list and the setup
+/// screens as if every meeting were gone (TUR-149).
+fn configured_root() -> Result<Option<PathBuf>, UiError> {
+    match pointer_path() {
+        Some(path) => read_pointer(&path),
+        None => Ok(None),
+    }
 }
 
-fn write_pointer(new_root: &Path) -> Result<(), UiError> {
-    let path = pointer_path().ok_or_else(|| {
+/// Logged once per launch: `root()` is asked on every command.
+static POINTER_ERROR_LOGGED: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn read_pointer(path: &Path) -> Result<Option<PathBuf>, UiError> {
+    let parsed = match fs::read(path) {
+        Ok(raw) => serde_json::from_slice::<RootPointer>(&raw).map_err(|error| error.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => Err(error.to_string()),
+    };
+    match parsed {
+        Ok(pointer) => Ok(pointer
+            .custom_root
+            .filter(|root| !root.as_os_str().is_empty())),
+        Err(error) => {
+            if !POINTER_ERROR_LOGGED.swap(true, Ordering::Relaxed) {
+                tracing::error!(%error, path = %path.display(), "the meetings folder pointer will not read");
+            }
+            Err(UiError::app(
+                POINTER_UNREADABLE,
+                format!(
+                    "The file that remembers where your meetings folder is ({}) is damaged: \
+                     {error}. Your meetings were not touched. Pick your meetings folder again \
+                     in Settings.",
+                    path.display()
+                ),
+            ))
+        }
+    }
+}
+
+/// The pointer's contents for `new_root`, worked out before anything moves so
+/// a path that cannot be saved stops the move at the start, not the end.
+fn pointer_body(new_root: &Path) -> Result<Vec<u8>, UiError> {
+    let pointer = RootPointer {
+        custom_root: Some(new_root.to_path_buf()),
+    };
+    serde_json::to_vec_pretty(&pointer).map_err(|error| {
         UiError::app(
-            "no-config-dir",
-            "meet-ai could not find a place on this Mac to remember your chosen folder.",
+            "unsupported-folder-name",
+            format!(
+                "meet-ai cannot remember \"{}\" as your meetings folder ({error}). Pick a folder \
+                 whose name has only ordinary letters.",
+                new_root.display()
+            ),
         )
-    })?;
-    if let Some(parent) = path.parent() {
+    })
+}
+
+/// Save the pointer through `write_atomic`: a crash or a full disk leaves the
+/// old pointer or the new one, never half of one.
+pub(super) fn write_pointer_at(pointer: &Path, body: &[u8]) -> Result<(), UiError> {
+    if let Some(parent) = pointer.parent() {
         fs::create_dir_all(parent)?;
     }
-    let pointer = RootPointer {
-        custom_root: Some(new_root.display().to_string()),
-    };
-    let body = serde_json::to_string_pretty(&pointer)
-        .map_err(|error| UiError::app("serialize", error.to_string()))?;
-    fs::write(&path, body)?;
+    meeting_format::write_atomic(pointer, body)?;
     Ok(())
 }
 
@@ -101,116 +151,48 @@ fn write_pointer(new_root: &Path) -> Result<(), UiError> {
 /// Existing files always move — they are never left behind at the old path.
 /// A meetings list that quietly stopped showing yesterday's standup the moment
 /// someone picked a new folder would look exactly like data loss, even though
-/// nothing was actually deleted.
+/// nothing was actually deleted. A move that fails at any step leaves every
+/// meeting in the old folder, and the app pointing at it (see `move_tree`).
+///
+/// With a damaged pointer there is no current folder to move from, so picking
+/// a folder only points the app at it: the way out of that error.
 pub fn change_root(new_root: PathBuf) -> Result<MeetingList, UiError> {
-    let old_root = root()?;
+    let pointer = pointer_path().ok_or_else(|| {
+        UiError::app(
+            "no-config-dir",
+            "meet-ai could not find a place on this computer to remember your chosen folder.",
+        )
+    })?;
+    let old_root = match root() {
+        Ok(old_root) => Some(old_root),
+        Err(error) if error.kind == POINTER_UNREADABLE => None,
+        Err(error) => return Err(error),
+    };
 
-    if new_root == old_root {
-        return Err(UiError::app(
-            "same-folder",
-            "That is already your meetings folder.",
-        ));
-    }
-    if new_root.starts_with(&old_root) || old_root.starts_with(&new_root) {
-        return Err(UiError::app(
-            "nested-folder",
-            "The new folder can't be inside your current meetings folder, or the other way \
-             around.",
-        ));
-    }
+    let new_root = match old_root {
+        Some(old_root) => {
+            let (old_root, new_root) = paths::checked(&old_root, &new_root)?;
+            let body = pointer_body(&new_root)?;
+            move_tree::move_root(&old_root, &new_root, &move_tree::RealFs, &|_| {
+                write_pointer_at(&pointer, &body)
+            })?;
+            new_root
+        }
+        None => {
+            let new_root = paths::checked_alone(&new_root)?;
+            let body = pointer_body(&new_root)?;
+            tracing::warn!(new = %new_root.display(), "replacing a damaged meetings folder pointer");
+            move_tree::point_at(&new_root, &|_| write_pointer_at(&pointer, &body))?;
+            new_root
+        }
+    };
 
-    if old_root.is_dir() {
-        move_contents(&old_root, &new_root)?;
-    } else {
-        fs::create_dir_all(&new_root)?;
-    }
-
-    write_pointer(&new_root)?;
+    // Crash files follow the folder (TUR-149).
+    crate::logs::follow_root(&new_root);
     // The IPC command refuses a move unless the recorder is idle, so nothing
     // under the new root is being written.
     list(Live::Nothing)
 }
 
-/// Move everything from `old_root` into `new_root`, merging rather than
-/// clobbering if `new_root` already exists (e.g. the user picked an existing
-/// folder inside an already-synced Dropbox or iCloud Drive location).
-pub(super) fn move_contents(old_root: &Path, new_root: &Path) -> Result<(), UiError> {
-    if !new_root.exists() {
-        if let Some(parent) = new_root.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        // The common case: one atomic rename, nothing to merge.
-        if fs::rename(old_root, new_root).is_ok() {
-            return Ok(());
-        }
-        // `rename(2)` refuses to jump filesystems (e.g. onto a different
-        // volume), so fall back to an explicit copy-then-delete.
-        copy_dir(old_root, new_root)?;
-        fs::remove_dir_all(old_root)?;
-        return Ok(());
-    }
-
-    // The destination already has something in it. Refuse outright on any
-    // name collision rather than guessing which of two same-named folders is
-    // the real meeting — silently overwriting one would be a straightforward
-    // way to lose a recording.
-    let mut conflicts = Vec::new();
-    for entry in fs::read_dir(old_root)? {
-        let name = entry?.file_name();
-        if new_root.join(&name).exists() {
-            conflicts.push(name.to_string_lossy().into_owned());
-        }
-    }
-    if !conflicts.is_empty() {
-        let noun = if conflicts.len() == 1 {
-            "item"
-        } else {
-            "items"
-        };
-        return Err(UiError::app(
-            "folder-conflict",
-            format!(
-                "\"{}\" already has {noun} named the same as something in your current meetings \
-                 folder: {}. Rename or remove {noun} there first, then try again.",
-                new_root.display(),
-                conflicts.join(", "),
-            ),
-        ));
-    }
-
-    for entry in fs::read_dir(old_root)? {
-        let entry = entry?;
-        let from = entry.path();
-        let to = new_root.join(entry.file_name());
-        if fs::rename(&from, &to).is_err() {
-            if entry.file_type()?.is_dir() {
-                copy_dir(&from, &to)?;
-                fs::remove_dir_all(&from)?;
-            } else {
-                fs::copy(&from, &to)?;
-                fs::remove_file(&from)?;
-            }
-        }
-    }
-    // Best-effort: the folder is empty at this point on every platform this
-    // ships on, but a leftover `.DS_Store` must not turn a successful move
-    // into a reported failure.
-    fs::remove_dir_all(old_root).ok();
-    Ok(())
-}
-
-/// A recursive copy for the cross-volume fallback path. Std has no
-/// `fs::copy` for directories.
-fn copy_dir(from: &Path, to: &Path) -> Result<(), UiError> {
-    fs::create_dir_all(to)?;
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        let dest = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir(&entry.path(), &dest)?;
-        } else {
-            fs::copy(entry.path(), &dest)?;
-        }
-    }
-    Ok(())
-}
+#[cfg(test)]
+mod tests;

@@ -75,7 +75,9 @@ fn write(state: &State) -> Result<(), UiError> {
     }
     let body = serde_json::to_string_pretty(state)
         .map_err(|error| UiError::app("serialize", error.to_string()))?;
-    std::fs::write(&path, body)?;
+    // TUR-149: whole or not at all, so a crash or a full disk mid-write
+    // cannot truncate the flag and show setup again.
+    meeting_format::write_atomic(&path, body.as_bytes())?;
     Ok(())
 }
 
