@@ -8,10 +8,15 @@
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useState } from "react";
 import { changeMeetingsFolder, hasBackend } from "@/ipc/client";
-import { NO_BACKEND } from "@/ipc/errors";
+import { NO_BACKEND, ROOT_POINTER_UNREADABLE } from "@/ipc/errors";
 import { toUiError, type UiError } from "@/ipc/types";
 import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
 import { useAppStore } from "@/state/app";
+
+/** The meetings list failed because meet-ai no longer knows where the folder is. */
+function isLostRoot(error: UiError | null): boolean {
+  return error?.domain === "app" && error.kind === ROOT_POINTER_UNREADABLE;
+}
 
 export function useChangeFolder() {
   const [busy, setBusy] = useState(false);
@@ -37,12 +42,18 @@ export function useChangeFolder() {
     }
     if (!picked || Array.isArray(picked)) return; // the user cancelled
 
+    // TUR-149: with the pointer to the meetings folder damaged there is no
+    // current folder to move from, so the pick only tells meet-ai where the
+    // meetings are. Saying they move from the default folder would be wrong.
+    const lost = isLostRoot(useAppStore.getState().meetingsError);
     const confirmed = await ask(
-      `All your meetings move from ${root} to ${picked}. Nothing is deleted. New recordings save there too.`,
+      lost
+        ? `meet-ai will keep your meetings in ${picked} from now on. Nothing is moved or deleted.`
+        : `All your meetings move from ${root} to ${picked}. Nothing is deleted. New recordings save there too.`,
       {
-        title: "Move your meetings folder?",
+        title: lost ? "Use this meetings folder?" : "Move your meetings folder?",
         kind: "warning",
-        okLabel: "Move meetings",
+        okLabel: lost ? "Use this folder" : "Move meetings",
         cancelLabel: "Cancel",
       },
     );
@@ -52,6 +63,11 @@ export function useChangeFolder() {
     try {
       await changeMeetingsFolder(picked);
       await useAppStore.getState().loadMeetings();
+      // Whether setup was done was unknown while the folder was; it is
+      // known again now.
+      if (useAppStore.getState().onboarding === null) {
+        await useAppStore.getState().loadOnboarding();
+      }
     } catch (thrown) {
       setError(toUiError(thrown));
     } finally {
