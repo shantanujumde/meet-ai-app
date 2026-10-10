@@ -59,20 +59,50 @@ headset, a slow disk or the signed app.
 
 ## TUR-180 suggestions (`docs/findings/tur-180-silent-system-track.md`)
 
-Not applied here; see Q1 in the PR body.
+Not applied here: the owner's answer (Q1) was to leave suspects A and C to a
+hardware run, with no behaviour change in this PR.
 
 - Suspect C, the check chime while another app is on the mic: skipping the
   chime during a call contradicts SPEC A7 ("plays every recording") and A25's
   during-recording check, and the findings mark the suspect unconfirmed until
-  their reproduction plan runs. A7 wins until the owner decides otherwise.
+  their reproduction plan runs.
 - Suspect A, the aggregate device on a Bluetooth output in call mode: building
   the aggregate with no main sub-device, or delaying the system track, cannot
   be verified headless and could leave the tap silent for every Bluetooth
-  output. It needs the findings' reproduction (runs 2 and 3) first.
+  output.
 - Suspect B (mic choice during a call) was not in this task's list.
 - What this PR does add for that incident: a system track whose IO proc stops
   is now noticed at the next checkpoint and reopened. A tap that keeps running
   but delivers exact zeros (the incident's `system.wav`) is not detected here.
+
+### Reproduction plan for suspects A and C (from the findings)
+
+Needs a Mac, a Bluetooth headset as both default input and output, a second
+phone or account for a WhatsApp or FaceTime call where the other side talks
+or plays music the whole time, and a dev build. For each run note: can you
+hear the other person before and after, the `system tap input rate changed`
+lines in `meet-ai.log`, and `system.wav`'s loudness per second
+(`ffmpeg -i system.wav -af astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level -f null -`).
+
+0. Baseline, no recording: call for 60 s. The other side stays audible and
+   the headset stays at its call rate (Audio MIDI Setup). If it goes silent
+   here, meet-ai is not the cause; stop.
+1. Full recording, as in the incident: call, wait 10 s, press Record. Three
+   times; count the runs that go silent.
+2. Suspect C off: during the call run
+   `cargo run -p audio --bin meet-rec -- --out <dir> --duration 60`, which
+   starts the same mic, tap and aggregate but never plays the chime. Audible
+   here but silent in run 1 points at C.
+3. Suspect A off: a local, uncommitted patch with `let sys = None;` at
+   `src-tauri/src/recording.rs` (the system source) and `check.spawn(app)`
+   skipped. Audible here points at A (or A with C); compare with run 2.
+4. Suspect B: turn off "Use the Mac's own mic when Bluetooth headphones are
+   connected" and repeat run 1; then run 3's patch with it back on.
+5. Wired or built-in output, headset disconnected: repeat run 1. Audible here
+   means the problem is specific to Bluetooth call mode.
+
+The findings' "Recommended fix per suspect" section says what to change once a
+run points at one.
 
 ## Known
 
