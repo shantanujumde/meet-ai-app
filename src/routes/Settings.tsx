@@ -32,6 +32,7 @@ import { NotificationSettings } from "@/ui/NotificationSettings";
 import { OverlaySetting } from "@/ui/OverlaySetting";
 import { Button } from "@/ui/primitives";
 import { StartAtLoginSetting } from "@/ui/StartAtLoginSetting";
+import { AppConfigProblem } from "@/ui/settings/AppConfigProblem";
 import { AppearanceSettings } from "@/ui/settings/AppearanceSettings";
 import { SettingsRow, SettingsSection } from "@/ui/settings/SettingsSection";
 import { ErrorState } from "@/ui/states";
@@ -98,7 +99,8 @@ export function Settings() {
       </SettingsSection>
 
       {/* TUR-76: closing the window keeps meet-ai running in the menu bar. */}
-      <SettingsSection title="Menu bar">
+      {/* TUR-170: the `app` section's invalid-config note, like the other cards. */}
+      <SettingsSection title="Menu bar" after={<AppConfigProblem />}>
         <DockSetting />
         {/* TUR-77: the next meeting's countdown next to the icon. */}
         <MenuBarCountdownSetting />
