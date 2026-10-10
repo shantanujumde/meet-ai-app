@@ -8,6 +8,8 @@ use crate::wav_writer::WavWriter;
 mod align;
 // TUR-162: headers never ahead of segments.json, and checkpoint retries.
 mod crash_safety;
+// TUR-163: a stalled or lost stream gets a new segment.
+mod stall;
 
 /// A hardware-free `AudioSource` for exercising [`align_and_pad`]'s
 /// alignment maths, which is the one piece of the device-change handling
@@ -138,6 +140,11 @@ struct StubSource {
     frames: u64,
     started: Option<Instant>,
     tee: Option<Tee>,
+    /// How far behind the host clock `position` reports, in ns: 0 for a
+    /// source that keeps writing, more than 2 s for a stalled one (TUR-163).
+    behind_ns: Arc<std::sync::atomic::AtomicU64>,
+    /// What `stream_lost` answers (TUR-163).
+    lost: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl StubSource {
@@ -148,6 +155,8 @@ impl StubSource {
             frames: 0,
             started: None,
             tee: None,
+            behind_ns: Arc::default(),
+            lost: Arc::default(),
         }
     }
 
@@ -196,9 +205,17 @@ impl AudioSource for StubSource {
         self.channel
     }
 
+    /// On the host clock, as a real source's is: the checkpoints compare it
+    /// with "now" (TUR-163).
     fn position(&self) -> Option<(u64, u64)> {
-        let started = self.started?;
-        Some((started.elapsed().as_nanos() as u64, self.frames))
+        self.started?;
+        let behind = self.behind_ns.load(std::sync::atomic::Ordering::SeqCst);
+        let host_ns = crate::platform::host_now_ns().saturating_sub(behind);
+        Some((host_ns, self.frames))
+    }
+
+    fn stream_lost(&self) -> bool {
+        self.lost.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn fsync_data(&mut self) -> Result<(), AudioError> {
@@ -514,7 +531,9 @@ fn a_silent_microphone_fails_the_start_and_stops_both_sources() {
 fn segments_json_records_both_device_rates() {
     let tmp = tempfile::tempdir().unwrap();
     let mic: Box<dyn AudioSource> = Box::new(StubSource::new(Channel::Mic));
-    let sys: Box<dyn AudioSource> = Box::new(FakeSource::new(Channel::System, Some((1, 0))));
+    // On the host clock, like the stub microphone's (TUR-163).
+    let at = Some((crate::platform::host_now_ns(), 0));
+    let sys: Box<dyn AudioSource> = Box::new(FakeSource::new(Channel::System, at));
     let session = RecordingSession::start(tmp.path().to_path_buf(), mic, Some(sys)).unwrap();
     let report = session.stop().unwrap();
 

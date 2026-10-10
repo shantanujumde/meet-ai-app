@@ -275,6 +275,24 @@ pub trait AudioSource: Send {
     fn device_rate(&self) -> Option<u32> {
         None
     }
+
+    /// Whether the running stream said it died: its device went away, or
+    /// the OS invalidated it (TUR-163). The session reads it at every tick
+    /// and opens a new segment, the way a default-device change does. A
+    /// stream error used to reach only the log, so a microphone removed
+    /// under a recording (a MacBook lid closed onto a dock while AirPods
+    /// stayed the default input) recorded nothing for the rest of the call.
+    fn stream_lost(&self) -> bool {
+        false
+    }
+
+    /// Whether this source delivers audio without pause while it runs, so
+    /// a position that stops moving means the stream stalled (TUR-163). A
+    /// loopback with no silence keepalive sends nothing while nothing plays,
+    /// and says `false`.
+    fn delivers_continuously(&self) -> bool {
+        true
+    }
 }
 
 /// Everything that can go wrong during capture.

@@ -351,23 +351,26 @@ fn a_single_failed_checkpoint_is_retried_and_the_recording_goes_on() {
     assert_finished(&report);
 }
 
-/// A disk that keeps failing still ends the recording, at the sixth
-/// failure in a row.
+/// A disk that keeps failing does not end the recording by itself: a run
+/// of failures, one per tick, is ridden out while the last good checkpoint
+/// is under 30 s old (TUR-163; TUR-162 gave up at the sixth in a row, about
+/// a second of ticks).
 #[test]
-fn checkpoints_that_keep_failing_end_the_recording() {
+fn checkpoints_that_keep_failing_are_ridden_out_until_thirty_seconds() {
     let rig = Rig::new();
     let mut session = rig.start();
     make_checkpoint_due(&mut session, DUE);
     rig.fail_fsyncs.store(u32::MAX, Ordering::SeqCst);
 
-    for attempt in 1..retry::MAX_CONSECUTIVE_FAILURES {
+    for attempt in 1..=20 {
         session
             .tick()
             .unwrap_or_else(|e| panic!("attempt {attempt} ended it early: {e}"));
     }
-    let error = session.tick().expect_err("the sixth failure ends it");
+    make_checkpoint_due(&mut session, retry::MAX_SINCE_GOOD);
+    let error = session.tick().expect_err("30 s without a good one ends it");
     assert!(error.starts_with("mic fsync"), "{error}");
-    assert!(error.contains("6 checkpoints in a row"), "{error}");
+    assert!(error.contains("21 checkpoints in a row"), "{error}");
     rig.assert_never_ahead();
 }
 
