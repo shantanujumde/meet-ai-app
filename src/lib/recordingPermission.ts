@@ -8,7 +8,7 @@
  * same call), and the window says "System audio is off" instead.
  */
 
-import type { PermissionStatus } from "@/ipc/types";
+import type { PermissionStatus, RecordingStatus } from "@/ipc/types";
 import { type Os, osText } from "./osText";
 
 /**
@@ -36,6 +36,21 @@ export function systemAudioOnlyOff(permission: PermissionStatus | null): boolean
 /** Whether Record must stay disabled: a denial that includes the microphone. */
 export function recordingBlocked(permission: PermissionStatus | null): boolean {
   return permission?.state === "denied" && !systemAudioOnlyOff(permission);
+}
+
+/**
+ * Whether a Record or Stop control is disabled (TUR-170): a denied
+ * microphone, a request from this window in flight, or Rust mid-way through
+ * a start or a stop. One rule for every such control, so a click during
+ * `starting` (after ⌘⇧R) cannot stop the recording that is starting.
+ */
+export function recordDisabled(
+  status: RecordingStatus,
+  permission: PermissionStatus | null,
+  busy: boolean,
+): boolean {
+  const transitioning = status.phase === "starting" || status.phase === "stopping";
+  return recordingBlocked(permission) || busy || transitioning;
 }
 
 /**

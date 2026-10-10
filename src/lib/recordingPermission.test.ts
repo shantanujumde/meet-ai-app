@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import type { PermissionStatus, PrivacyPane } from "@/ipc/types";
 import {
   permissionStepShown,
+  recordDisabled,
   recordingBlocked,
   systemAudioOffText,
   systemAudioOnlyOff,
@@ -50,4 +51,17 @@ test("system audio off says what the live recording does, in plain words", () =>
   expect(live).toContain("this recording goes on with your microphone only.");
   expect(systemAudioOffText(false)).toContain("recordings capture only your microphone.");
   for (const text of [live, systemAudioOffText(false)]) expect(text).not.toContain("\u2014");
+});
+
+test("Record is disabled while denied, busy, starting or stopping (TUR-170)", () => {
+  const idle = { phase: "idle", meetingId: null, startedAtMs: null, error: null } as const;
+  const granted = status("granted", []);
+  expect(recordDisabled(idle, granted, false)).toBe(false);
+  expect(recordDisabled({ ...idle, phase: "recording" }, granted, false)).toBe(false);
+  expect(recordDisabled({ ...idle, phase: "starting" }, granted, false)).toBe(true);
+  expect(recordDisabled({ ...idle, phase: "stopping" }, granted, false)).toBe(true);
+  expect(recordDisabled(idle, granted, true)).toBe(true);
+  expect(recordDisabled(idle, status("denied", ["microphone"]), false)).toBe(true);
+  expect(recordDisabled(idle, status("denied", ["audio-capture"]), false)).toBe(false);
+  expect(recordDisabled(idle, null, false)).toBe(false);
 });
