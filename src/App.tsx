@@ -32,6 +32,7 @@ import { Review } from "@/routes/Review";
 import { Settings } from "@/routes/Settings";
 import { Tickets } from "@/routes/Tickets";
 import { useAppStore, watchPermissionStatus } from "@/state/app";
+import { watchHookFailures } from "@/state/hookFailures";
 import { useRecordingStore, watchRecordingState } from "@/state/recording";
 import { watchLiveTranscript } from "@/state/transcript";
 import { DetectionPrompt } from "@/ui/DetectionPrompt";
@@ -98,10 +99,13 @@ function Bootstrap() {
     // The full check every recording start runs, which is the only one that
     // hears system audio after launch.
     const stopPermission = watchPermissionStatus();
+    // TUR-170: hook failures kept from launch, so a meeting opened later shows them.
+    const stopHookFailures = watchHookFailures();
     return () => {
       stopRecording();
       stopTranscript();
       stopPermission();
+      stopHookFailures();
     };
   }, [loadMeetings, loadPermission, loadOnboarding]);
 

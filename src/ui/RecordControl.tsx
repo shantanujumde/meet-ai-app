@@ -23,7 +23,7 @@ import { isPaused } from "@/ipc/client";
 import type { PermissionStatus, RecordingStatus } from "@/ipc/types";
 import { formatElapsed } from "@/lib/format";
 import { osText } from "@/lib/osText";
-import { recordingBlocked } from "@/lib/recordingPermission";
+import { recordDisabled, recordingBlocked } from "@/lib/recordingPermission";
 import { Icon } from "./icons";
 import { IconButton } from "./primitives";
 import { useRecordedMs } from "./useRecordedMs";
@@ -82,7 +82,6 @@ export function RecordControl({
   const shortcutTitle = shortcut.available ? shortcut.label : unavailableText(shortcut.label);
   const live = status.phase === "recording";
   const paused = isPaused(status);
-  const transitioning = status.phase === "starting" || status.phase === "stopping";
 
   // A denied microphone is the only state that disables the control (TUR-87:
   // with only system audio off it records the microphone). "Unknown" must not —
@@ -90,7 +89,7 @@ export function RecordControl({
   // (no output device, etc.), neither of which is evidence of a denial, and
   // locking the user out on a guess would be worse than letting them try.
   const denied = recordingBlocked(permission);
-  const disabled = denied || busy || transitioning;
+  const disabled = recordDisabled(status, permission, busy);
 
   const accessibleName = denied
     ? "Recording is unavailable because meet-ai is not allowed to record this Mac's audio"

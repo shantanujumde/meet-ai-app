@@ -46,17 +46,25 @@ export function useChangeFolder() {
     // current folder to move from, so the pick only tells meet-ai where the
     // meetings are. Saying they move from the default folder would be wrong.
     const lost = isLostRoot(useAppStore.getState().meetingsError);
-    const confirmed = await ask(
-      lost
-        ? `meet-ai will keep your meetings in ${picked} from now on. Nothing is moved or deleted.`
-        : `All your meetings move from ${root} to ${picked}. Nothing is deleted. New recordings save there too.`,
-      {
-        title: lost ? "Use this meetings folder?" : "Move your meetings folder?",
-        kind: "warning",
-        okLabel: lost ? "Use this folder" : "Move meetings",
-        cancelLabel: "Cancel",
-      },
-    );
+    // TUR-170: a dialog that fails says so, like `open` above, rather than
+    // an unhandled rejection that leaves the screen silent.
+    let confirmed: boolean;
+    try {
+      confirmed = await ask(
+        lost
+          ? `meet-ai will keep your meetings in ${picked} from now on. Nothing is moved or deleted.`
+          : `All your meetings move from ${root} to ${picked}. Nothing is deleted. New recordings save there too.`,
+        {
+          title: lost ? "Use this meetings folder?" : "Move your meetings folder?",
+          kind: "warning",
+          okLabel: lost ? "Use this folder" : "Move meetings",
+          cancelLabel: "Cancel",
+        },
+      );
+    } catch (thrown) {
+      setError(toUiError(thrown));
+      return;
+    }
     if (!confirmed) return;
 
     setBusy(true);

@@ -10,7 +10,7 @@
  * radios go back to what is on disk and the reason is shown.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteModel,
   downloadModel,
@@ -40,6 +40,20 @@ export function useSpeech() {
   const [listError, setListError] = useState<UiError | null>(null);
   const [downloads, setDownloads] = useState<Record<string, ModelState>>({});
 
+  // The latest choices, for picks that start from them. State alone is a
+  // render behind when two picks land close together (TUR-170).
+  const current = useRef<EngineChoices | null>(null);
+  // Only the newest save may write its answer: Whisper then a model picked
+  // quickly are two saves in flight, and the older answer landing last must
+  // not overwrite or revert the newer pick. Shared by engine, model and
+  // language, since each answer carries all three.
+  const saveRun = useRef(0);
+
+  const applyChoices = useCallback((next: EngineChoices) => {
+    current.current = next;
+    setChoices(next);
+  }, []);
+
   /**
    * The probe-backed half: the picker, and whether the saved engine can run.
    * The second is the old card's error row ("This Mac will use the
@@ -50,14 +64,14 @@ export function useSpeech() {
     setChecking(true);
     const [picked, selected] = await Promise.allSettled([engineChoices(), engineSelection()]);
     if (picked.status === "fulfilled") {
-      setChoices(picked.value);
+      applyChoices(picked.value);
       setChoicesError(null);
     } else {
       setChoicesError(toUiError(picked.reason));
     }
     setSelectionError(selected.status === "rejected" ? toUiError(selected.reason) : null);
     setChecking(false);
-  }, []);
+  }, [applyChoices]);
 
   // Catches its own failure: an unreadable catalogue used to be an unhandled
   // rejection that left "Reading the model list…" on screen for good.
@@ -95,31 +109,53 @@ export function useSpeech() {
     });
   }, []);
 
-  const save = useCallback(
-    async (engine: EngineChoice, model: string) => {
-      if (!choices) return;
-      const before = choices;
-      setChoices({ ...choices, engine, model });
+  /** Show `picked` at once, save it with `write`, and let only the newest save land. */
+  const saveWith = useCallback(
+    async (picked: EngineChoices, write: () => Promise<EngineChoices>, after?: () => void) => {
+      const before = current.current;
+      if (!before) return;
+      const run = ++saveRun.current;
+      applyChoices(picked);
       setSaveError(null);
       try {
-        setChoices(await setTranscription(engine, model));
-        // Whether the saved engine can run is the probe's answer, not ours.
-        engineSelection()
-          .then(() => setSelectionError(null))
-          .catch((thrown: unknown) => setSelectionError(toUiError(thrown)));
+        const saved = await write();
+        // A newer save started meanwhile: its answer is the one to show.
+        if (run !== saveRun.current) return;
+        applyChoices(saved);
+        after?.();
       } catch (thrown) {
-        setChoices(before);
+        if (run !== saveRun.current) return;
+        applyChoices(before);
         setSaveError(toUiError(thrown));
       }
     },
-    [choices],
+    [applyChoices],
+  );
+
+  const save = useCallback(
+    (engine: EngineChoice, model: string) => {
+      const was = current.current;
+      if (!was) return Promise.resolve();
+      return saveWith(
+        { ...was, engine, model },
+        () => setTranscription(engine, model),
+        () => {
+          // Whether the saved engine can run is the probe's answer, not ours.
+          engineSelection()
+            .then(() => setSelectionError(null))
+            .catch((thrown: unknown) => setSelectionError(toUiError(thrown)));
+        },
+      );
+    },
+    [saveWith],
   );
 
   /** Whisper also needs a model: the saved one if it is here, else the best one that is. */
   const pickEngine = useCallback(
     (engine: EngineChoice) => {
-      if (!choices) return;
-      let model = choices.model;
+      const was = current.current;
+      if (!was) return;
+      let model = was.model;
       // The model list may still be loading: then the saved model goes as
       // it is, and the backend refuses it if it is not downloaded, rather
       // than the click doing nothing (TUR-90).
@@ -133,32 +169,26 @@ export function useSpeech() {
       }
       void save(engine, model);
     },
-    [choices, models, save],
+    [models, save],
   );
 
   const pickModel = useCallback(
     (id: string) => {
-      if (!choices) return;
-      void save(choices.engine, id);
+      const was = current.current;
+      if (!was) return;
+      void save(was.engine, id);
     },
-    [choices, save],
+    [save],
   );
 
   /** Same as a pick: shown at once, saved behind it, put back if refused. */
   const pickLanguage = useCallback(
     async (language: string) => {
-      if (!choices) return;
-      const before = choices;
-      setChoices({ ...choices, spokenLanguage: language });
-      setSaveError(null);
-      try {
-        setChoices(await setSpokenLanguage(language));
-      } catch (thrown) {
-        setChoices(before);
-        setSaveError(toUiError(thrown));
-      }
+      const was = current.current;
+      if (!was) return;
+      await saveWith({ ...was, spokenLanguage: language }, () => setSpokenLanguage(language));
     },
-    [choices],
+    [saveWith],
   );
 
   const download = useCallback(

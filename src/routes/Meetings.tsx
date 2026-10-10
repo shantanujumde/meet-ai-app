@@ -20,7 +20,7 @@ import {
   NOTES_OFF_LABEL,
 } from "@/lib/format";
 import { openPermissionScreen } from "@/lib/permissionRoute";
-import { recordingBlocked } from "@/lib/recordingPermission";
+import { recordDisabled } from "@/lib/recordingPermission";
 import { meetingPath } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
@@ -94,7 +94,7 @@ export function Meetings() {
             <ButtonRow>
               <Button
                 tone="primary"
-                disabled={recordingBlocked(permission) || recordingBusy}
+                disabled={recordDisabled(recording, permission, recordingBusy)}
                 onClick={() => void toggle()}
               >
                 Start recording

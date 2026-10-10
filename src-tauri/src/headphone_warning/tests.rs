@@ -106,3 +106,51 @@ fn the_payload_is_camel_case() {
         serde_json::json!({ "meetingId": "m1", "show": true })
     );
 }
+
+/// TUR-170: the setting is re-read every poll. Switched off mid-recording,
+/// the banner goes at the next poll and the output is no longer read;
+/// switched on again, it comes back. The watch ends with the recording.
+#[test]
+fn switching_the_setting_mid_recording_takes_effect_at_the_next_poll() {
+    use std::cell::{Cell, RefCell};
+
+    let tracker = Mutex::new(Tracker::new());
+    lock_or_recover(&tracker).recorder(Some("m1".into()));
+
+    // One entry per poll: the setting then. The recording stops after the last.
+    let settings = [true, false, false, true];
+    let poll = Cell::new(0);
+    let reads = Cell::new(0);
+    let sent = RefCell::new(Vec::new());
+
+    watch_with(
+        &tracker,
+        "m1",
+        || settings.get(poll.get()).copied().unwrap_or(false),
+        || {
+            reads.set(reads.get() + 1);
+            OutputKind::Speakers
+        },
+        |warning| sent.borrow_mut().push(warning.clone()),
+        || {
+            poll.set(poll.get() + 1);
+            if poll.get() == settings.len() {
+                lock_or_recover(&tracker).recorder(None);
+            }
+        },
+    );
+
+    assert_eq!(
+        *sent.borrow(),
+        vec![
+            warning("m1", true),
+            warning("m1", false),
+            warning("m1", true)
+        ],
+    );
+    assert_eq!(
+        reads.get(),
+        2,
+        "the output is read only while the setting is on"
+    );
+}

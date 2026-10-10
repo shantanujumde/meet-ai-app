@@ -11,11 +11,16 @@
 import { Dock } from "lucide-react";
 import { appSettings, setShowInDockWhenClosed } from "@/ipc/client";
 import { SettingSwitch } from "./SettingSwitch";
+import { appSettingSaved } from "./settings/AppConfigProblem";
 
 export const DOCK_SETTING_LABEL = "Show in Dock when the window is closed";
 
 const load = async () => (await appSettings()).showInDockWhenClosed;
-const save = async (on: boolean) => (await setShowInDockWhenClosed(on)).showInDockWhenClosed;
+const save = async (on: boolean) => {
+  const saved = (await setShowInDockWhenClosed(on)).showInDockWhenClosed;
+  appSettingSaved();
+  return saved;
+};
 
 export function DockSetting() {
   return (

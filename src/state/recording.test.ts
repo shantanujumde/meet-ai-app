@@ -184,4 +184,57 @@ describe("the recording store", () => {
     expect(stopRecording).toHaveBeenCalledOnce();
     expect(useRecordingStore.getState().status).toEqual(IDLE);
   });
+
+  // TUR-170: a slow answer must not put the window back on an older state.
+  it("ignores a read that an event overtook", async () => {
+    const stop = watchRecordingState();
+    await Promise.resolve();
+    let answer: (status: RecordingStatus) => void = () => {};
+    recordingStatus.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const read = useRecordingStore.getState().refresh();
+    push(RECORDING);
+    answer(STARTING);
+    await read;
+    expect(useRecordingStore.getState().status).toEqual(RECORDING);
+    stop();
+  });
+
+  it("ignores a toggle answer that an event overtook, and applies one that none did", async () => {
+    let answer: (status: RecordingStatus) => void = () => {};
+    toggleRecording.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const stop = watchRecordingState();
+    const toggled = useRecordingStore.getState().toggle();
+    push(STARTING);
+    push(RECORDING);
+    push({ ...RECORDING, phase: "stopping" });
+    answer(RECORDING);
+    await toggled;
+    expect(useRecordingStore.getState().status.phase).toBe("stopping");
+    expect(useRecordingStore.getState().busy).toBe(false);
+
+    toggleRecording.mockResolvedValue(IDLE);
+    await useRecordingStore.getState().toggle();
+    expect(useRecordingStore.getState().status).toEqual(IDLE);
+    stop();
+  });
+
+  it("listens before it reads, so a change in between is heard", () => {
+    const order: string[] = [];
+    recordingStatus.mockImplementation(() => {
+      order.push(handlers.state ? "read after listening" : "read before listening");
+      return Promise.resolve(IDLE);
+    });
+    handlers.state = undefined;
+    const stop = watchRecordingState();
+    expect(order).toEqual(["read after listening"]);
+    stop();
+  });
 });

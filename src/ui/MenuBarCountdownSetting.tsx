@@ -11,8 +11,15 @@
 import { CalendarClock } from "lucide-react";
 import { menuBarCountdown, setMenuBarCountdown } from "@/ipc/client";
 import { SettingSwitch } from "./SettingSwitch";
+import { appSettingSaved } from "./settings/AppConfigProblem";
 
 export const MENU_BAR_COUNTDOWN_LABEL = "Show next meeting in the menu bar";
+
+const save = async (on: boolean) => {
+  const saved = await setMenuBarCountdown(on);
+  appSettingSaved();
+  return saved;
+};
 
 export function MenuBarCountdownSetting() {
   return (
@@ -21,7 +28,7 @@ export function MenuBarCountdownSetting() {
       label={MENU_BAR_COUNTDOWN_LABEL}
       detail="From an hour before it starts, like “Weekly sync in 12m”, next to the menu bar icon."
       load={menuBarCountdown}
-      save={setMenuBarCountdown}
+      save={save}
     />
   );
 }

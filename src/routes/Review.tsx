@@ -273,6 +273,7 @@ function MeetingReview({ id }: { id: string }) {
               on={notesOn}
               busy={notesRun.switching}
               error={notesRun.switchError}
+              manual={notesRun.manual}
               onChange={notesRun.setNotesOn}
             />
             {/* Not while recording: the transcript is not finished, so the

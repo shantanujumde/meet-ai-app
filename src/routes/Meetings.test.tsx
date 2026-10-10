@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, test, vi } from "vitest";
 import { useAppStore } from "@/state/app";
+import { useRecordingStore } from "@/state/recording";
 import { meetingSummary } from "@/test/fixtures";
 import { ipc } from "@/test/ipcMock";
 import { Meetings } from "./Meetings";
@@ -65,5 +66,18 @@ describe("Meetings list", () => {
       await screen.findByText(/⌘⇧R is unavailable because another app is using it/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/^Press ⌘⇧R/)).toBeNull();
+  });
+
+  // TUR-170: a click while a ⌘⇧R start is under way must not stop it.
+  test("Start recording waits while Rust is starting or stopping", async () => {
+    shortcut.available = true;
+    const idle = { phase: "idle", meetingId: null, startedAtMs: null, error: null } as const;
+    useRecordingStore.setState({ status: { ...idle, phase: "starting" }, busy: false });
+    await renderEmpty();
+    const button = await screen.findByRole("button", { name: "Start recording" });
+    expect(button).toBeDisabled();
+
+    act(() => useRecordingStore.setState({ status: idle }));
+    expect(button).toBeEnabled();
   });
 });

@@ -27,9 +27,15 @@ export function NotesSwitch({
   on,
   busy,
   error,
+  manual,
   onChange,
 }: {
   on: boolean;
+  /**
+   * Notes run only when asked (`agent.auto_run` off, TUR-101), from
+   * `useNotesRun`: the hint must not promise notes when the call ends.
+   */
+  manual: boolean;
   /** A switch is on its way to Rust: the control waits for the answer. */
   busy: boolean;
   /** Why the last switch could not be saved. */
@@ -47,9 +53,11 @@ export function NotesSwitch({
             {NOTES_SWITCH_LABEL}
           </label>
           <span id={hintId} className={rowDetailVariants({ mono: false })}>
-            {on
-              ? "On: your agent writes notes from the transcript when the call ends."
-              : "Off: the transcript is not sent to your agent. For private calls."}
+            {!on
+              ? "Off: the transcript is not sent to your agent. For private calls."
+              : manual
+                ? "On: your agent writes notes from the transcript when you click Make notes now."
+                : "On: your agent writes notes from the transcript when the call ends."}
           </span>
         </span>
         <Switch id={id} on={on} disabled={busy} describedBy={hintId} onChange={onChange} />

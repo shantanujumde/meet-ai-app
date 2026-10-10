@@ -60,6 +60,7 @@ function Page({
         on={run.notes ? !run.notes.notesOff : true}
         busy={run.switching}
         error={run.switchError}
+        manual={run.manual}
         onChange={run.setNotesOn}
       />
       {pane}
