@@ -317,7 +317,7 @@ Regex: `^\[(\d{2}:\d{2}:\d{2})\] (You|Others): (.*)$`. Deliberately plain — re
 | **Whitespace is collapsed** | `\n`, `\r`, `\t` and runs of spaces in recognized text all become a single space before writing |
 | **No escaping** | The prefix is fixed-width and anchored, so `]` or `:` inside speech is safe. `(.*)$` takes the rest of the line verbatim |
 | **Empty text is never written** | Whitespace-only results are dropped. This is the last line of defence for the whisper-hallucination guard |
-| **Timestamps are utterance *start*** | Derived from `segments.json` (`start_host_ns + frame/rate`), never wall-clock at write time |
+| **Timestamps are utterance *start*** | Derived from `segments.json` (`start_host_ns + frame/rate`), never wall-clock at write time. ⚠️ amended — the rate is corrected through the checkpoint anchors, live and batch alike, see **A37** |
 | **Append-only** | A line, once written, is never rewritten or reordered. See §2.5 on what is allowed to reach disk. ⚠️ amended — once the recording stops, the lines are put in time order a single time, see **A19** |
 
 `segments.json` records clock truth:
@@ -546,6 +546,10 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 ---
 
 ## Amendments
+
+### A37 — 2026-10-10 · Transcript timestamps go through the checkpoint anchors, live and batch alike (amends §3.4's timestamp rule and A5's "crates/stt needs no change"; TUR-164)
+
+§3.4 places a line at `start_host_ns + frame/rate` with the nominal rate. The mic and the output device run on two crystals, and 50-100 ppm apart (a built-in mic with AirPods or a USB headset) is 135-270 ms over 45 minutes, past §5's 200 ms gate. A5's anchors already record, per channel, the host time at which a known frame was captured. Decisions: within a segment, a frame is placed on the straight line between the two anchors around it (the segment start is the first point, frame 0 at `start_host_ns`), and past the last anchor at the nominal rate from it. An anchor that does not move both frames and time forward, or whose slope is more than a factor of two off nominal, is skipped. A file without anchors places every line at the nominal rate, as before. The batch path (`transcribe_meeting`, the transcription after Stop) now reads `segments.json` for this; until now neither path used it, so a device switch or a pause pulled every later line earlier. The live session does the same over the copy of `segments.json` the recorder hands each live feed every time it writes the file, through the same function, so a live line and a batch re-run of it agree. Lines are placed from their exact position and only then cut to whole seconds. The resamplers are not steered; the audio is unchanged.
 
 ### A36 — 2026-10-10 · Each window may call only what its own page uses; `tauri-plugin-fs` removed (amends §2.2; TUR-158)
 
