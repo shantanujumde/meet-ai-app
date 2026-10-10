@@ -4,26 +4,30 @@
 use agent::AgentError;
 
 use super::{Failure, FailureKind};
+use crate::agent_setup::harness::{self, ErrorKind};
 use crate::error::UiError;
 
 /// The most of the CLI's error text shown in the meeting view.
 const STDERR_LIMIT: usize = 400;
 
-/// The name the user knows a harness by.
+/// The name the user knows a harness by; a harness the app does not know
+/// (the fake one tests use) by its id.
 pub fn display_name(harness_id: &str) -> &str {
-    match harness_id {
-        agent::claude::ID => agent::claude::DISPLAY_NAME,
-        agent::codex::ID => "Codex",
-        other => other,
-    }
+    harness::display_name(harness_id).unwrap_or(harness_id)
 }
 
-/// What to type in Terminal to sign in to this harness.
-fn sign_in_command(harness_id: &str) -> &'static str {
-    if harness_id == agent::codex::ID {
-        "codex login"
-    } else {
-        "claude"
+impl From<ErrorKind> for FailureKind {
+    fn from(kind: ErrorKind) -> Self {
+        match kind {
+            ErrorKind::NotInstalled => Self::NotInstalled,
+            ErrorKind::NotSignedIn => Self::NotSignedIn,
+            ErrorKind::TimedOut => Self::TimedOut,
+            ErrorKind::Cancelled => Self::Cancelled,
+            ErrorKind::Failed => Self::CliFailed,
+            ErrorKind::InvalidJson => Self::InvalidJson,
+            ErrorKind::SchemaMismatch => Self::SchemaMismatch,
+            ErrorKind::CouldNotStart => Self::CouldNotStart,
+        }
     }
 }
 
@@ -36,41 +40,47 @@ fn failure(kind: FailureKind, message: impl Into<String>) -> Failure {
 }
 
 /// An error from the agent crate, for the harness with id `harness_id`.
-pub fn from_agent(error: &AgentError, harness_id: &str) -> Failure {
+/// `sign_in` is what to type to sign it in, as Setup shows it; `None` when
+/// where the CLI is is not known, which gives its bare name.
+pub fn from_agent(error: &AgentError, harness_id: &str, sign_in: Option<&str>) -> Failure {
     let name = display_name(harness_id);
+    let kind = FailureKind::from(ErrorKind::of(error));
     match error {
         AgentError::NotInstalled { .. } => failure(
-            FailureKind::NotInstalled,
+            kind,
             format!(
                 "{name} is not installed, or meet-ai cannot find it. Install it, or set where \
                  it is in Settings, then press Retry."
             ),
         ),
         AgentError::NotSignedIn { .. } => {
-            let command = sign_in_command(harness_id);
-            let how = if command == "claude" {
-                "Open Terminal, run claude and type /login".to_owned()
-            } else {
-                format!("Open Terminal and run {command}")
+            let command = sign_in
+                .map(str::to_owned)
+                .or_else(|| harness::bare_sign_in(harness_id));
+            let message = match &command {
+                Some(command) => format!(
+                    "{name} is not signed in. Open a terminal and run {command}, then press \
+                     Retry."
+                ),
+                None => format!(
+                    "{name} is not signed in. Sign in to it in a terminal, then press Retry."
+                ),
             };
             Failure {
-                kind: FailureKind::NotSignedIn,
-                message: format!("{name} is not signed in. {how}, then press Retry."),
-                command: Some(command.to_owned()),
+                kind,
+                message,
+                command,
             }
         }
         AgentError::TimedOut { after } => failure(
-            FailureKind::TimedOut,
+            kind,
             format!(
                 "The agent did not finish within {} seconds, so it was stopped. Press Retry, \
                  or give it longer with agent.timeout_sec in the config file.",
                 after.as_secs()
             ),
         ),
-        AgentError::Cancelled => failure(
-            FailureKind::Cancelled,
-            "You cancelled the notes, so nothing was written.",
-        ),
+        AgentError::Cancelled => failure(kind, "You cancelled the notes, so nothing was written."),
         AgentError::CliFailed { status, stderr } => {
             let said = short(stderr);
             let message = match (said.is_empty(), status) {
@@ -80,17 +90,21 @@ pub fn from_agent(error: &AgentError, harness_id: &str) -> Failure {
                 }
                 (true, None) => format!("{name} was stopped before it finished."),
             };
-            failure(FailureKind::CliFailed, message)
+            failure(kind, message)
         }
-        AgentError::InvalidJson { .. } | AgentError::SchemaMismatch { .. } => bad_reply(),
+        AgentError::InvalidJson { .. } => failure(
+            kind,
+            "The agent's answer was not JSON, so nothing was written. Press Retry to ask again.",
+        ),
+        AgentError::SchemaMismatch { .. } => bad_reply(),
         AgentError::CouldNotStart { reason } => could_not_start(reason),
     }
 }
 
-/// The reply was not notes JSON.
+/// The reply was JSON but not notes.
 pub fn bad_reply() -> Failure {
     failure(
-        FailureKind::BadReply,
+        FailureKind::SchemaMismatch,
         "The agent's answer did not match the notes format, so nothing was written. Press \
          Retry to ask again.",
     )

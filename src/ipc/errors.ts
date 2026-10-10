@@ -75,14 +75,6 @@ const GENERIC: ErrorCopy = {
   remedy: { action: "copy-details" },
 };
 
-/** One wording for the three ways an agent's reply can be unusable. */
-const AGENT_BAD_REPLY: ErrorCopy = {
-  headline: "The agent's answer could not be used",
-  body: "It replied, but not in the shape meet-ai asked for, so nothing was saved. Trying again usually works.",
-  actionLabel: "Copy details",
-  remedy: { action: "copy-details" },
-};
-
 /**
  * The agreed mapping, keyed by `domain/kind`.
  *
@@ -268,9 +260,25 @@ const COPY: Record<string, ErrorCopy> = {
     actionLabel: "Copy details",
     remedy: { action: "copy-details" },
   },
-  "app/agent-bad-reply": AGENT_BAD_REPLY,
-  "app/agent-invalid-json": AGENT_BAD_REPLY,
-  "app/agent-schema-mismatch": AGENT_BAD_REPLY,
+  "app/agent-invalid-json": {
+    headline: "The agent's answer could not be read",
+    body: "It replied, but not with the data meet-ai asked for, so nothing was saved. Trying again usually works.",
+    actionLabel: "Copy details",
+    remedy: { action: "copy-details" },
+  },
+  "app/agent-schema-mismatch": {
+    headline: "The agent's answer was missing parts",
+    body: "It replied, but some of what meet-ai asked for was missing or in the wrong shape, so nothing was saved. Trying again usually works.",
+    actionLabel: "Copy details",
+    remedy: { action: "copy-details" },
+  },
+  // TUR-168: "Make notes now" pressed while the last lines are still saving.
+  "app/transcript-not-final": {
+    headline: "The transcript is still being finished",
+    body: "Its last lines are still being saved. Try again in a moment.",
+    actionLabel: null,
+    remedy: { action: "none" },
+  },
   "app/agent-could-not-start": {
     headline: "The agent could not start",
     body: "meet-ai found it but could not run it. The details below say why.",

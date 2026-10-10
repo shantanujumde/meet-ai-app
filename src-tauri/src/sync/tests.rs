@@ -13,6 +13,7 @@ use serde_json::json;
 
 use super::tracker::checked;
 use super::*;
+use crate::config::Harness as HarnessChoice;
 
 const MEETING: &str = "2026-09-01-1430-standup";
 const SECRET: &str = "SECRET-TRANSCRIPT-WORDS";
@@ -52,6 +53,7 @@ fn settings() -> RunSettings {
         model: Some("haiku".into()),
         timeout: Duration::from_secs(20),
         tickets: TicketsConfig::default(),
+        sign_in: None,
     }
 }
 
@@ -147,11 +149,11 @@ fn agent_failures_keep_their_own_kind_and_write_nothing() {
         ),
         (
             FakeBehavior::Stdout("Sure! Done.".into()),
-            "agent-bad-reply",
+            "agent-invalid-json",
         ),
         (
             FakeBehavior::Reply(json!({ "external_id": "ENG-42" })),
-            "agent-bad-reply",
+            "agent-schema-mismatch",
         ),
     ];
     for (behavior, kind) in cases {
@@ -325,7 +327,7 @@ fn claude_gets_only_the_task_and_only_the_tracker_tools() {
     let cli = fake_cli(bin.path(), "claude");
     cli.set("stdout", envelope.to_string());
     let agent = agent_config(HarnessChoice::ClaudeCode, cli.path().to_path_buf());
-    let harness = harness_for(&agent).unwrap();
+    let harness = harness_for(&agent).unwrap().harness;
     assert_eq!(harness.id(), "claude-code");
 
     let summary = sync_with(root.path(), harness.as_ref()).unwrap();
@@ -392,7 +394,8 @@ fn a_refused_codex_sync_exits_0_and_is_not_synced() {
         HarnessChoice::Codex,
         cli.path().to_path_buf(),
     ))
-    .unwrap();
+    .unwrap()
+    .harness;
     assert_eq!(harness.id(), "codex");
 
     let err = run(
@@ -1192,7 +1195,7 @@ fn shutdown_stops_a_running_sync_and_leaves_no_cli_behind() {
             || Ok(root.path().to_path_buf()),
             "TICK-0001",
             Some(MEETING),
-            || Ok((harness_for(&agent)?, settings())),
+            || ready(&agent, settings()),
         )
     };
 

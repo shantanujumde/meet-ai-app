@@ -15,6 +15,7 @@ use agent::AgentError;
 use prompts::push_ticket::refused_reason;
 use serde_json::Value;
 
+use crate::agent_setup::harness::{self, ErrorKind};
 use crate::config::TicketsConfig;
 use crate::error::UiError;
 
@@ -38,29 +39,35 @@ pub(crate) fn tracker_name(tracker: &str) -> &str {
     }
 }
 
-/// An agent run's failure, worded by `crates/agent`, with a stable kind the
-/// window can switch on. For runs that are not a Sync, such as listing the
-/// agent's MCP servers.
+/// An agent run's failure, worded by `crates/agent`, with the kind every
+/// runner gives it (`agent_setup::harness`). For runs that are not a Sync,
+/// such as listing the agent's MCP servers.
 pub(crate) fn agent_error(error: AgentError) -> UiError {
-    UiError::app(agent_kind(&error), error.to_string())
+    harness::agent_error(error, None)
 }
 
 /// A Sync run's agent failure: the same kinds as [`agent_error`], worded as
-/// what happened to the ticket and what to do next.
-pub(crate) fn send_error(error: AgentError) -> UiError {
-    let kind = agent_kind(&error);
+/// what happened to the ticket and what to do next. `sign_in` is what to
+/// type to sign the agent in, as Setup shows it (`None`: its bare name).
+pub(crate) fn send_error(error: AgentError, sign_in: Option<&str>) -> UiError {
+    let kind = ErrorKind::of(&error).key();
     let message = match &error {
         AgentError::NotInstalled { harness } => format!(
             "Couldn't send: {harness} isn't installed, or meet-ai can't find it. Install it or pick another agent in Settings, Notes, then press Retry."
         ),
-        AgentError::NotSignedIn { harness } => match sign_in_command(harness) {
-            Some(command) => format!(
-                "Couldn't send: {harness} isn't signed in. Open a terminal, run `{command}`, sign in, then press Retry."
-            ),
-            None => format!(
-                "Couldn't send: {harness} isn't signed in. Sign in to it in a terminal, then press Retry."
-            ),
-        },
+        AgentError::NotSignedIn { harness } => {
+            match sign_in
+                .map(str::to_owned)
+                .or_else(|| harness::bare_sign_in(harness))
+            {
+                Some(command) => format!(
+                    "Couldn't send: {harness} isn't signed in. Open a terminal, run `{command}`, sign in, then press Retry."
+                ),
+                None => format!(
+                    "Couldn't send: {harness} isn't signed in. Sign in to it in a terminal, then press Retry."
+                ),
+            }
+        }
         AgentError::TimedOut { .. } | AgentError::Cancelled => STOPPED.to_owned(),
         _ => format!("Couldn't send: {error}."),
     };
@@ -94,35 +101,9 @@ pub(crate) fn not_synced(
     )
 }
 
-fn agent_kind(error: &AgentError) -> &'static str {
-    match error {
-        AgentError::NotInstalled { .. } => "agent-not-installed",
-        AgentError::NotSignedIn { .. } => "agent-not-signed-in",
-        AgentError::TimedOut { .. } => "agent-timed-out",
-        AgentError::Cancelled => "agent-cancelled",
-        AgentError::CliFailed { .. } => "agent-failed",
-        AgentError::InvalidJson { .. } | AgentError::SchemaMismatch { .. } => "agent-bad-reply",
-        AgentError::CouldNotStart { .. } => "agent-could-not-start",
-    }
-}
-
 /// The agent's name for messages, by `agent::Harness::id`.
 pub(super) fn harness_name(harness_id: &str) -> &'static str {
-    match harness_id {
-        agent::claude::ID => agent::claude::DISPLAY_NAME,
-        agent::codex::ID => "Codex",
-        _ => "your agent",
-    }
-}
-
-/// What to type to sign `harness` (its display name, as `AgentError` gives
-/// it) in, as Settings, Notes shows it (`agent_setup::view`).
-fn sign_in_command(harness: &str) -> Option<&'static str> {
-    match harness {
-        agent::claude::DISPLAY_NAME => Some("claude auth login"),
-        "Codex" => Some("codex login"),
-        _ => None,
-    }
+    harness::display_name(harness_id).unwrap_or("your agent")
 }
 
 #[cfg(test)]
@@ -187,33 +168,60 @@ mod tests {
 
     #[test]
     fn a_signed_out_agent_says_how_to_sign_in() {
-        let error = send_error(AgentError::NotSignedIn {
-            harness: agent::claude::DISPLAY_NAME.to_owned(),
-        });
+        let error = send_error(
+            AgentError::NotSignedIn {
+                harness: agent::claude::DISPLAY_NAME.to_owned(),
+            },
+            None,
+        );
         assert_eq!(error.kind, "agent-not-signed-in");
         assert_eq!(
             error.message,
             "Couldn't send: Claude Code isn't signed in. Open a terminal, run `claude auth login`, sign in, then press Retry."
         );
-        let codex = send_error(AgentError::NotSignedIn {
-            harness: "Codex".to_owned(),
-        });
+        let codex = send_error(
+            AgentError::NotSignedIn {
+                harness: "Codex".to_owned(),
+            },
+            None,
+        );
         assert!(codex.message.contains("`codex login`"), "{}", codex.message);
-        let other = send_error(AgentError::NotSignedIn {
-            harness: "Fake".to_owned(),
-        });
+        let other = send_error(
+            AgentError::NotSignedIn {
+                harness: "Fake".to_owned(),
+            },
+            None,
+        );
         assert!(
             other
                 .message
                 .starts_with("Couldn't send: Fake isn't signed in.")
         );
+        // TUR-168: the command Setup shows, such as Codex's full path inside
+        // ChatGPT.app, wins over the bare name.
+        let bundled = send_error(
+            AgentError::NotSignedIn {
+                harness: "Codex".to_owned(),
+            },
+            Some("/Applications/ChatGPT.app/Contents/Resources/codex login"),
+        );
+        assert!(
+            bundled
+                .message
+                .contains("run `/Applications/ChatGPT.app/Contents/Resources/codex login`"),
+            "{}",
+            bundled.message
+        );
     }
 
     #[test]
     fn a_missing_agent_names_it() {
-        let error = send_error(AgentError::NotInstalled {
-            harness: "Codex".to_owned(),
-        });
+        let error = send_error(
+            AgentError::NotInstalled {
+                harness: "Codex".to_owned(),
+            },
+            None,
+        );
         assert_eq!(error.kind, "agent-not-installed");
         assert!(
             error
@@ -234,7 +242,7 @@ mod tests {
             ),
             (AgentError::Cancelled, "agent-cancelled"),
         ] {
-            let ui = send_error(error);
+            let ui = send_error(error, None);
             assert_eq!(ui.kind, kind);
             assert_eq!(
                 ui.message,
@@ -245,22 +253,31 @@ mod tests {
 
     #[test]
     fn every_other_failure_keeps_its_kind_and_sentence() {
-        let ui = send_error(AgentError::CliFailed {
-            status: Some(2),
-            stderr: "bad flag".to_owned(),
-        });
+        let ui = send_error(
+            AgentError::CliFailed {
+                status: Some(2),
+                stderr: "bad flag".to_owned(),
+            },
+            None,
+        );
         assert_eq!(ui.kind, "agent-failed");
         assert_eq!(
             ui.message,
             "Couldn't send: the agent CLI failed (exit code 2): bad flag."
         );
-        let bad = send_error(AgentError::SchemaMismatch {
-            errors: vec!["x".to_owned()],
-        });
-        assert_eq!(bad.kind, "agent-bad-reply");
-        let start = send_error(AgentError::CouldNotStart {
-            reason: "no".to_owned(),
-        });
+        let bad = send_error(
+            AgentError::SchemaMismatch {
+                errors: vec!["x".to_owned()],
+            },
+            None,
+        );
+        assert_eq!(bad.kind, "agent-schema-mismatch");
+        let start = send_error(
+            AgentError::CouldNotStart {
+                reason: "no".to_owned(),
+            },
+            None,
+        );
         assert_eq!(start.kind, "agent-could-not-start");
         // The generic wording, for runs that are not a Sync, is unchanged.
         assert_eq!(

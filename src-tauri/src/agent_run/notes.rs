@@ -9,7 +9,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent::{AgentError, CancelHandle, ClaudeHarness, CodexHarness, Harness, Install, Job};
+use agent::{AgentError, CancelHandle, Harness, Job};
 use prompts::wrap_up::{Target, WrapUpInput, render_wrap_up_from};
 use store::agent_notes::{self, Analysis, AnalyzedBy};
 use store::folder_name::{prettify_slug, split_folder_name};
@@ -18,12 +18,16 @@ use store::watcher::SelfWrites;
 
 use super::Failure;
 use super::failure;
+use crate::agent_setup::harness::{self, NotFound};
 use crate::config;
 
 /// The agent a run uses, found and ready to start.
 pub struct Agent {
     /// A harness whose CLI was found and is signed in.
     pub harness: Box<dyn Harness>,
+    /// What to type to sign the CLI in, as Setup shows it, for a run that
+    /// finds it signed out. `None`: its bare name.
+    pub sign_in: Option<String>,
     /// `agent.model`; `None` lets the CLI pick.
     pub model: Option<String>,
     /// `agent.timeout_sec`.
@@ -63,7 +67,7 @@ pub fn run_notes(
     job.cancel = cancel.clone();
     let reply = agent.harness.run_reply(&job).map_err(|error| match error {
         AgentError::Cancelled => stopped(root, meeting_id, harness_id),
-        other => failure::from_agent(&other, harness_id),
+        other => failure::from_agent(&other, harness_id, agent.sign_in.as_deref()),
     })?;
     let ran_model = reply.model;
     let notes = prompts::Notes::from_value(reply.value).map_err(|_| failure::bad_reply())?;
@@ -95,66 +99,27 @@ pub fn configured() -> Result<Agent, Failure> {
     from_settings(&settings)
 }
 
-/// The agent `settings` names, found through its harness.
+/// The agent `settings` names, found and signed in
+/// (`agent_setup::harness::harness_for`).
 pub fn from_settings(settings: &config::AgentConfig) -> Result<Agent, Failure> {
-    let harness: Box<dyn Harness> = match settings.harness {
-        config::Harness::None => return Err(failure::no_agent()),
-        config::Harness::Codex => {
-            let finder = match &settings.binary_path {
-                Some(path) => CodexHarness::with_binary(path),
-                None => CodexHarness::new(),
+    let found = harness::harness_for(settings, true).map_err(|missing| match missing {
+        NotFound::NoAgent => failure::no_agent(),
+        NotFound::Agent { error, sign_in } => {
+            let id = match settings.harness {
+                config::Harness::Codex => agent::codex::ID,
+                _ => agent::claude::ID,
             };
-            // `CodexHarness` puts the CLI's own folder first on `PATH` itself.
-            Box::new(detected(finder, |install| {
-                CodexHarness::with_binary(install.path)
-            })?)
+            failure::from_agent(&error, id, Some(&sign_in))
         }
-        config::Harness::ClaudeCode => {
-            let mut finder = ClaudeHarness::new();
-            if let Some(path) = &settings.binary_path {
-                finder = finder.with_binary(path);
-            }
-            Box::new(detected(finder, |install| {
-                // The CLI's own folder first on `PATH`: an npm install is a
-                // `#!/usr/bin/env node` script, and an app opened from
-                // Finder does not have that folder on its `PATH`.
-                let search_path = install
-                    .path
-                    .parent()
-                    .and_then(agent::process::search_path_with);
-                let harness = ClaudeHarness::new().with_binary(install.path);
-                match search_path {
-                    Some(path) => harness.with_search_path(path),
-                    None => harness,
-                }
-            })?)
-        }
-    };
+    })?;
     Ok(Agent {
-        harness,
+        harness: found.harness,
+        sign_in: Some(found.sign_in),
         // Already trimmed, and `None` for blank, by the config reader.
         model: settings.model.clone(),
         timeout: Duration::from_secs(settings.timeout_sec),
         work_root: std::env::temp_dir(),
     })
-}
-
-/// Finds `harness`'s CLI with its own `detect` and builds the harness to run
-/// from what it found. Not there, or nobody signed in, is a failure.
-pub fn detected<H: Harness>(harness: H, run_with: impl FnOnce(Install) -> H) -> Result<H, Failure> {
-    let id = harness.id();
-    let name = failure::display_name(id).to_owned();
-    match harness.detect() {
-        None => Err(failure::from_agent(
-            &AgentError::NotInstalled { harness: name },
-            id,
-        )),
-        Some(install) if !install.signed_in => Err(failure::from_agent(
-            &AgentError::NotSignedIn { harness: name },
-            id,
-        )),
-        Some(install) => Ok(run_with(install)),
-    }
 }
 
 /// `analyzed_model`: the model the user picked, or with Default (no model
@@ -220,7 +185,7 @@ fn stopped(root: &Path, meeting_id: &str, harness_id: &str) -> Failure {
     if switched_off(root, meeting_id) {
         failure::notes_off()
     } else {
-        failure::from_agent(&AgentError::Cancelled, harness_id)
+        failure::from_agent(&AgentError::Cancelled, harness_id, None)
     }
 }
 
