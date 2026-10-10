@@ -2,18 +2,14 @@
 //! data source (built-in speakers or the headphone jack) and the output
 //! streams' terminal types. Property reads on the default output device
 //! only.
-//!
-//! `macos/` has its own property helpers, but that folder is another
-//! ticket's; these few reads stay here.
+//! The reads themselves are `macos/props.rs`'s (TUR-177).
 
-use std::ptr::NonNull;
-
-use objc2_core_audio::{self as ca, AudioObjectID, AudioObjectPropertyAddress};
-use objc2_core_foundation::{CFRetained, CFString};
+use objc2_core_audio::{self as ca, AudioObjectID};
 
 use super::parse;
 use crate::Error;
 use crate::headphones::{OutputDevice, Transport};
+use crate::platform::macos::props;
 
 /// The default output device, or `None` when there is none.
 pub(crate) fn default_output_info() -> Result<Option<OutputDevice>, Error> {
@@ -58,92 +54,27 @@ fn transport_of(raw: u32) -> Transport {
     }
 }
 
-fn address(selector: u32, scope: u32) -> AudioObjectPropertyAddress {
-    AudioObjectPropertyAddress {
-        mSelector: selector,
-        mScope: scope,
-        mElement: ca::kAudioObjectPropertyElementMain,
-    }
-}
-
 /// One fixed-size property, or `None` when the object does not have it.
 ///
 /// # Safety
 /// `selector` must name a property whose value is a `T`.
 unsafe fn read<T: Copy>(id: AudioObjectID, selector: u32, scope: u32) -> Option<T> {
-    let mut addr = address(selector, scope);
-    let mut size = std::mem::size_of::<T>() as u32;
-    let mut value = std::mem::MaybeUninit::<T>::uninit();
-    // SAFETY: valid address, size and out-pointer for the duration of the call.
-    let status = unsafe {
-        ca::AudioObjectGetPropertyData(
-            id,
-            NonNull::from(&mut addr),
-            0,
-            std::ptr::null(),
-            NonNull::from(&mut size),
-            NonNull::new(value.as_mut_ptr().cast())?,
-        )
-    };
-    // SAFETY: `noErr` with the full size written means Core Audio filled a `T`.
-    (status == 0 && size as usize == std::mem::size_of::<T>())
-        .then(|| unsafe { value.assume_init() })
+    unsafe { props::read(id, selector, scope) }.ok()
 }
 
 /// The device's name, a `CFString` Core Audio hands over with +1 retain.
 fn name(id: AudioObjectID) -> Option<String> {
-    // SAFETY: `kAudioObjectPropertyName` is a `CFStringRef`.
-    let raw: *mut CFString = unsafe {
-        read(
-            id,
-            ca::kAudioObjectPropertyName,
-            ca::kAudioObjectPropertyScopeGlobal,
-        )
-    }?;
-    // SAFETY: a non-null string Core Audio handed over with +1 retain.
-    let owned: CFRetained<CFString> = unsafe { CFRetained::from_raw(NonNull::new(raw)?) };
-    Some(owned.to_string())
+    let scope = ca::kAudioObjectPropertyScopeGlobal;
+    props::read_cf_string(id, ca::kAudioObjectPropertyName, scope).ok()
 }
 
 /// The device's output streams; empty when it has none or the read fails.
 fn output_streams(id: AudioObjectID) -> Vec<AudioObjectID> {
-    let mut addr = address(
+    let (selector, scope) = (
         ca::kAudioDevicePropertyStreams,
         ca::kAudioObjectPropertyScopeOutput,
     );
-    let mut size = 0u32;
-    // SAFETY: valid address and out-pointer for the duration of the call.
-    let status = unsafe {
-        ca::AudioObjectGetPropertyDataSize(
-            id,
-            NonNull::from(&mut addr),
-            0,
-            std::ptr::null(),
-            NonNull::from(&mut size),
-        )
-    };
-    let count = size as usize / std::mem::size_of::<AudioObjectID>();
-    if status != 0 || count == 0 {
-        return Vec::new();
-    }
-    let mut streams = vec![ca::kAudioObjectUnknown; count];
-    let mut size = (count * std::mem::size_of::<AudioObjectID>()) as u32;
-    // SAFETY: `streams` holds `size` bytes of `AudioStreamID`s.
-    let status = unsafe {
-        ca::AudioObjectGetPropertyData(
-            id,
-            NonNull::from(&mut addr),
-            0,
-            std::ptr::null(),
-            NonNull::from(&mut size),
-            NonNull::from(&mut streams[0]).cast(),
-        )
-    };
-    if status != 0 {
-        return Vec::new();
-    }
-    streams.truncate(size as usize / std::mem::size_of::<AudioObjectID>());
-    streams
+    props::read_array(id, selector, scope).unwrap_or_default()
 }
 
 #[cfg(test)]

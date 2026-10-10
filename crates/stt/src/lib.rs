@@ -46,6 +46,8 @@ pub mod segments;
 pub mod session;
 pub mod sink;
 mod span_assembler;
+/// The span pipeline whisper and Parakeet share (TUR-177).
+mod span_driver;
 /// The language each speaker talks, learned over a meeting on whisper.
 mod spoken_language;
 mod transcribe;

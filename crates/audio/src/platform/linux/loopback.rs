@@ -20,7 +20,7 @@
 use std::sync::{Mutex, PoisonError};
 
 use cpal::traits::{DeviceTrait, HostTrait};
-use cpal::{ErrorKind, HostId, SupportedStreamConfig};
+use cpal::{HostId, SupportedStreamConfig};
 
 use super::clock::input_callback_ns;
 use super::devices::note_stream_lost;
@@ -189,8 +189,10 @@ impl Backend for LinuxLoopback {
 
 /// The capture stream's errors. One whose device went away (the sink was
 /// removed) or that `cpal` gave up on asks the session for a new segment.
+/// `DeviceChanged` is not a loss: PipeWire moved the stream to the new
+/// default, and the device watch opens that segment.
 fn on_stream_error(error: cpal::Error) {
-    if stream_is_lost(error.kind()) {
+    if cpal_stream::stream_is_lost(error.kind()) {
         tracing::warn!("system loopback stream lost: {error}; opening a new segment");
         note_stream_lost();
     } else {
@@ -198,26 +200,9 @@ fn on_stream_error(error: cpal::Error) {
     }
 }
 
-/// `DeviceChanged` is not a loss: PipeWire moved the stream to the new
-/// default, and the device watch opens that segment.
-fn stream_is_lost(kind: ErrorKind) -> bool {
-    matches!(
-        kind,
-        ErrorKind::DeviceNotAvailable | ErrorKind::StreamInvalidated
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_a_dead_stream_asks_for_a_new_segment() {
-        assert!(stream_is_lost(ErrorKind::DeviceNotAvailable));
-        assert!(stream_is_lost(ErrorKind::StreamInvalidated));
-        assert!(!stream_is_lost(ErrorKind::DeviceChanged));
-        assert!(!stream_is_lost(ErrorKind::Xrun));
-    }
 
     #[test]
     fn each_sound_server_gets_its_gap_rule() {
