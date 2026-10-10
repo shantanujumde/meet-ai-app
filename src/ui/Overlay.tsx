@@ -7,8 +7,9 @@
  * paused stretches left out), the last line or two of the live transcript
  * (no speaker labels, no history), and Pause or Resume and Stop. A click on
  * the text brings the main window forward. Everything else about it is
- * Rust's (`src-tauri/src/overlay`): it opens the window when a recording
- * starts, closes it when it ends, and remembers where it was dragged.
+ * Rust's (`src-tauri/src/overlay`): it shows the window when a recording
+ * starts, takes it down when it ends (on macOS hidden and kept, so this page
+ * lives on between recordings), and remembers where it was dragged.
  *
  * The state is the same two mirrors the main window keeps
  * ({@link watchRecordingState}, {@link watchLiveTranscript}), so the two

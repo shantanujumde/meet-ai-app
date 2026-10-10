@@ -7,7 +7,8 @@
 //!   state); never the key window,
 //!   so showing it or clicking it never takes the keyboard from the call;
 //!   and TUR-147's non-activating panel ([`after_build`]), the one kind of
-//!   window that shows over another app's full-screen Space.
+//!   window that shows over another app's full-screen Space. Made once and
+//!   hidden between recordings, never closed ([`KEEP_WINDOW`]).
 //! - **Windows**: acrylic blur behind it (Windows 10 1903 and later). No OS
 //!   shadow: on an undecorated window it draws a 1px frame around the
 //!   transparent corners (TUR-108).
@@ -31,6 +32,17 @@ pub const SHADOW: bool = false;
 pub const FOCUSABLE: bool = false;
 #[cfg(not(target_os = "macos"))]
 pub const FOCUSABLE: bool = true;
+
+/// Is the overlay window kept between recordings, hidden when one ends and
+/// shown again for the next, rather than closed and made afresh? Yes on
+/// macOS: the window is the prompt card's panel, its class swapped under
+/// tao, and closing it aborted the app on every recording stop (TUR-180);
+/// the prompt card, never closed, never did. Elsewhere it is closed as
+/// before.
+#[cfg(target_os = "macos")]
+pub const KEEP_WINDOW: bool = true;
+#[cfg(not(target_os = "macos"))]
+pub const KEEP_WINDOW: bool = false;
 
 /// The card's corner radius, which the macOS material is cut to as well:
 /// `--radius-panel` in `design-system/meet-ai/tokens.css`.
@@ -71,6 +83,12 @@ pub fn after_build(window: &WebviewWindow) {
     crate::detection::popup::make_panel(window);
 }
 
+/// Take the overlay off screen and keep it ([`KEEP_WINDOW`]): the prompt
+/// card's hide, `orderOut:` on macOS, with any AppKit exception logged.
+pub fn hide(window: &WebviewWindow) -> tauri::Result<()> {
+    crate::detection::popup::hide_floating(window)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -80,6 +98,11 @@ mod tests {
         assert_eq!(effects.effects, [tauri::window::Effect::Popover]);
         assert_eq!(effects.state, Some(tauri::window::EffectState::Active));
         const { assert!(!super::FOCUSABLE) };
+    }
+
+    #[test]
+    fn only_macos_keeps_the_window_between_recordings() {
+        assert_eq!(super::KEEP_WINDOW, cfg!(target_os = "macos"));
     }
 
     #[test]

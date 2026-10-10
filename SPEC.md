@@ -547,6 +547,10 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 
 ## Amendments
 
+### A34 — 2026-10-10 · On macOS the recording overlay is hidden when a recording ends, not closed (amends A33; TUR-180)
+
+Closing the overlay, A27's panel, aborted the app on every recording stop on macOS. Decision: on macOS the overlay window is made for the first recording, saves its position and is hidden when a recording ends, and is shown again at that spot for the next; it is never closed while the app runs. Windows and Linux still close it. The overlay never becomes the key window.
+
 ### A33 — 2026-10-09 · Pause and resume a recording; a small always-on-top recording overlay; `audio.show_recording_overlay` (amends §3.5; TUR-146)
 
 A recording could only start or stop, and its controls were only in the main window, which is usually behind the call. Decisions:
