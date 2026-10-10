@@ -72,7 +72,7 @@ fn the_agent_written_title_wins_over_the_folder_slug() {
             b"---\nid: 2026-09-01-1430-standup\ntitle: Platform Standup\n---\n\n## Summary\n\nShipped.\n",
         )],
     );
-    let summary = summarize(&folder, false);
+    let summary = summarize(&(&folder).into(), false);
     assert_eq!(summary.title, "Platform Standup");
     assert!(summary.has_analysis);
 }
@@ -86,12 +86,12 @@ fn the_attendees_in_meeting_md_reach_the_list_row() {
             b"---\nid: 2026-09-01-1430-meeting\ntitle: Platform Standup\nattendees: [Shantanu, Priya]\n---\n",
         )],
     );
-    let summary = summarize(&folder, false);
+    let summary = summarize(&(&folder).into(), false);
     assert_eq!(summary.attendees, ["Shantanu", "Priya"]);
     assert!(!summary.has_analysis, "a title and attendees are not notes");
 
     let bare = load_fixture("no-attendees", &[]);
-    assert!(summarize(&bare, false).attendees.is_empty());
+    assert!(summarize(&(&bare).into(), false).attendees.is_empty());
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn broken_frontmatter_falls_back_to_the_slug_instead_of_failing_the_list() {
         "broken-title",
         &[("meeting.md", b"---\ntitle: \"unclosed\n---\n")],
     );
-    let summary = summarize(&folder, false);
+    let summary = summarize(&(&folder).into(), false);
     assert_eq!(summary.title, "Platform standup");
     assert!(folder.needs_attention());
 }
@@ -119,7 +119,7 @@ fn line_counts_and_the_unparsed_count_come_from_the_store_parser() {
             ("notes.md", b"remember the Redis ticket"),
         ],
     );
-    let summary = summarize(&folder, false);
+    let summary = summarize(&(&folder).into(), false);
     assert_eq!(summary.line_count, 2);
     assert_eq!(summary.last_timestamp.as_deref(), Some("00:01:10"));
     assert!(summary.has_notes);
@@ -130,7 +130,7 @@ fn line_counts_and_the_unparsed_count_come_from_the_store_parser() {
 #[test]
 fn an_empty_folder_is_a_meeting_with_nothing_in_it_yet() {
     let folder = load_fixture("empty", &[]);
-    let summary = summarize(&folder, false);
+    let summary = summarize(&(&folder).into(), false);
     assert_eq!(summary.line_count, 0);
     assert_eq!(summary.last_timestamp, None);
     assert!(!summary.has_notes);
@@ -579,7 +579,7 @@ fn notes_written_without_analyzed_by_still_count_as_wrapped_up() {
               ## Summary\n\n## Decisions\n\n- Redis.\n\n## Action Items\n\n## Open Questions\n",
         )],
     );
-    let summary = summarize(&folder, false);
+    let summary = summarize(&(&folder).into(), false);
     assert!(summary.has_analysis);
     assert!(summary.notes_off);
 }

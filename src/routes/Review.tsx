@@ -171,7 +171,7 @@ function MeetingReview({ id }: { id: string }) {
           ? { ...current, summary: { ...current.summary, title: saved } }
           : current,
       );
-      void reloadMeetings();
+      void reloadMeetings({ silent: true });
     },
     [id, reloadMeetings],
   );
@@ -203,7 +203,7 @@ function MeetingReview({ id }: { id: string }) {
   // reads in the list (its "Notes off" marker, say), and a run may give it
   // the agent's title (TUR-103).
   const notesRun = useNotesRun(id, () => {
-    void reloadMeetings();
+    void reloadMeetings({ silent: true });
     void refreshSummary(id);
   });
 
@@ -232,7 +232,7 @@ function MeetingReview({ id }: { id: string }) {
         <ErrorState
           error={error}
           onRemedy={() => {
-            void reloadMeetings();
+            void reloadMeetings({ silent: true });
             navigate(MEETINGS);
           }}
         />
@@ -355,7 +355,7 @@ function MeetingReview({ id }: { id: string }) {
         meetingId={summary.id}
         initialNotes={detail.notes}
         // A meeting that gains notes changes how it reads in the list.
-        onSaved={() => void reloadMeetings()}
+        onSaved={() => void reloadMeetings({ silent: true })}
       />
     </div>
   );

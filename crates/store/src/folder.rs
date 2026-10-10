@@ -15,6 +15,9 @@ use crate::ticket::Ticket;
 use crate::transcript::{self, Transcript};
 use crate::{Error, MEETING_FILE, NOTES_FILE, Problem, TICKETS_DIR, TRANSCRIPT_FILE, notes};
 
+mod summary;
+pub use summary::{FolderSummary, SummaryCache, load_summary, scan_summaries};
+
 /// A problem, and the file it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,6 +118,14 @@ pub fn load(dir: &Path) -> Result<MeetingFolder, Error> {
         tickets,
         problems,
     })
+}
+
+/// Every ticket in meeting folder `dir`'s `tickets/`, sorted by file name,
+/// without reading anything else in the folder. A ticket that cannot be read
+/// is left out, as [`load`] leaves it out (TUR-166: the brief needs only these
+/// and `meeting.md`).
+pub fn tickets(dir: &Path) -> Vec<Ticket> {
+    load_tickets(&dir.join(TICKETS_DIR), &mut Vec::new())
 }
 
 /// Every `*.md` in a meeting's `tickets/` folder, sorted by file name.

@@ -112,7 +112,7 @@ pub fn detail(id: &str, live: Live<'_>) -> Result<MeetingDetail, UiError> {
     let is_live = live_id(live).as_deref() == Some(folder.id.as_str());
 
     Ok(MeetingDetail {
-        summary: summarize(&folder, is_live),
+        summary: summarize(&store::folder::FolderSummary::from(&folder), is_live),
         path: dir.display().to_string(),
         lines,
         transcript_missing: folder.transcript.is_none(),
@@ -172,16 +172,13 @@ fn existing_meeting_dir(id: &str) -> Result<PathBuf, UiError> {
     Ok(dir)
 }
 
-/// Build a list row from a loaded folder. The audio beside it is never read,
-/// only its two 44-byte headers and `segments.json` ([`classify_audio`]).
-pub(super) fn summarize(folder: &store::folder::MeetingFolder, is_live: bool) -> MeetingSummary {
+/// Build a list row from a folder's summary. The audio beside it is never
+/// read, only its two 44-byte headers and `segments.json` ([`classify_audio`]).
+pub(super) fn summarize(folder: &store::folder::FolderSummary, is_live: bool) -> MeetingSummary {
     let (date, time, slug) = split_folder_name(&folder.id);
 
     let (line_count, last_timestamp) = match &folder.transcript {
-        Some(transcript) => (
-            transcript.lines.len(),
-            transcript.lines.last().map(|line| line.time.clone()),
-        ),
+        Some(stats) => (stats.line_count, stats.last_time.clone()),
         None => (0, None),
     };
 
@@ -218,7 +215,7 @@ pub(super) fn summarize(folder: &store::folder::MeetingFolder, is_live: bool) ->
         time,
         line_count,
         last_timestamp,
-        has_notes: !folder.notes.is_empty(),
+        has_notes: folder.has_notes,
         has_analysis: folder.meeting.as_ref().is_some_and(is_wrapped_up),
         notes_off: folder
             .meeting

@@ -29,8 +29,8 @@
 //! anywhere under the meetings root, plus one. [`write()`] holds
 //! [`lock_meeting_writers`] from that scan until its last file lands, so two
 //! notes runs finishing together cannot hand out the same number. Anything
-//! else that numbers tickets, or writes `meeting.md`'s title or notes, takes
-//! the same lock.
+//! else that numbers tickets takes the same lock; whatever writes `meeting.md`
+//! takes [`lock_meeting_md`] (TUR-166), a run both, numbers first.
 //!
 //! **Re-running notes** replaces the four sections. A ticket from an earlier
 //! run is replaced only while the user has not touched it: still `open`, not
@@ -67,7 +67,7 @@ use sha2::{Digest, Sha256};
 use yaml_rust2::Yaml;
 use yaml_rust2::yaml::Hash;
 
-use crate::folder::{self, meeting_dir};
+use crate::folder::meeting_dir;
 use crate::folder_name::{prettify_slug, split_folder_name};
 use crate::meeting::Meeting;
 use crate::meeting_title;
@@ -76,11 +76,13 @@ use crate::watcher::SelfWrites;
 use crate::{Error, MEETING_FILE, TICKETS_DIR};
 
 mod actions;
+mod locks;
 mod numbering;
 mod retired;
 mod text;
 
-pub use numbering::next_ticket_number;
+pub use locks::lock_meeting_md;
+pub use numbering::{highest_ticket_number, next_ticket_number};
 pub use retired::{RETIRED_TICKETS_KEY, RETIRED_TITLES_KEY, highest_recorded_ticket_number};
 pub(crate) use retired::{retire, retire_title};
 
@@ -164,7 +166,7 @@ pub fn write(
     self_writes: &SelfWrites,
 ) -> Result<Outcome, Error> {
     let _writers = lock_meeting_writers();
-
+    let _meeting_md = lock_meeting_md();
     let dir = meeting_dir(root, meeting_id)?;
     if !dir.is_dir() {
         return Err(Error::Io(io::Error::new(
@@ -266,15 +268,11 @@ pub fn write(
     Ok(outcome)
 }
 
-/// The lock the app's writers of meeting files hold, so none lands in the
-/// middle of another:
-///
-/// * ticket numbering: a notes run or a hand-made ticket holds it from
-///   choosing the number until the file is on disk;
-/// * `meeting.md`'s title and notes: a notes run, the calendar's title
-///   ([`crate::meeting_event::apply`]), a rename
-///   ([`crate::meeting_title::set_by_user`]) and the notes switch
-///   ([`crate::notes_switch::set`]) hold it for the whole read and write.
+/// The ticket-number lock: a notes run, a hand-made ticket and the
+/// suggested-task moves hold it from choosing a number (or moving a ticket
+/// file) until the file is on disk. Writers of `meeting.md` alone take
+/// [`lock_meeting_md`] instead (TUR-166); one that needs both takes this one
+/// first.
 ///
 /// The guard protects no data, so a panic elsewhere leaves nothing torn and a
 /// poisoned lock is taken as is.
@@ -282,48 +280,6 @@ pub fn lock_meeting_writers() -> MutexGuard<'static, ()> {
     MEETING_WRITERS
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// The highest ticket number anywhere under `root`: every meeting's
-/// `tickets/` and the root's own `tickets/` (hand-made tickets, TUR-102).
-///
-/// Judged by file name, so a ticket with broken frontmatter still holds its
-/// number. A `tickets/` that cannot be listed is logged and skipped rather
-/// than failing every meeting's notes for one broken folder (SPEC §7); the
-/// writer still refuses to replace a file that exists.
-///
-/// # Errors
-///
-/// [`Error::Io`] when `root` itself cannot be listed.
-pub fn highest_ticket_number(root: &Path) -> Result<u32, Error> {
-    let mut dirs = vec![root.join(TICKETS_DIR)];
-    dirs.extend(
-        folder::meeting_dirs(root)?
-            .into_iter()
-            .map(|dir| dir.join(TICKETS_DIR)),
-    );
-    let mut highest = 0;
-    for dir in dirs {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                tracing::warn!(path = %dir.display(), %error, "skipping a tickets folder that could not be listed");
-                continue;
-            }
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            if let Some(n) = name
-                .to_string_lossy()
-                .strip_suffix(".md")
-                .and_then(ticket::parse_id)
-            {
-                highest = highest.max(n);
-            }
-        }
-    }
-    Ok(highest)
 }
 
 fn read_if_there(path: &Path) -> Result<Option<Vec<u8>>, Error> {

@@ -31,7 +31,7 @@ use std::path::Path;
 use meeting_format::meeting_md::{ATTENDEES, CALENDAR_EVENT_ID};
 use yaml_rust2::Yaml;
 
-use crate::agent_notes::{default_title, lock_meeting_writers};
+use crate::agent_notes::{default_title, lock_meeting_md};
 use crate::folder::meeting_dir;
 use crate::meeting::Meeting;
 use crate::meeting_title::{self, TitleSource, is_untitled};
@@ -71,7 +71,7 @@ impl Applied {
 /// sections empty) when the meeting has none yet, which is the normal case
 /// for a recording that has just started.
 ///
-/// Holds [`lock_meeting_writers`] for the whole read and write, so it cannot
+/// Holds [`lock_meeting_md`] for the whole read and write, so it cannot
 /// land in the middle of a notes run or the notes switch writing the same
 /// file.
 ///
@@ -84,7 +84,7 @@ impl Applied {
 ///   is left as it was.
 /// * [`Error::Io`] when the file cannot be read or written.
 pub fn apply(root: &Path, meeting_id: &str, event: &FromCalendar<'_>) -> Result<Applied, Error> {
-    let _writers = lock_meeting_writers();
+    let _meeting_md = lock_meeting_md();
 
     let dir = meeting_dir(root, meeting_id)?;
     if !dir.is_dir() {

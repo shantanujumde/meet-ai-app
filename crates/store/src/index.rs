@@ -22,13 +22,17 @@ use crate::{Error, TICKETS_DIR, is_plain_name};
 use meeting_format::layout::{MEETING_FILE, NOTES_FILE, TRANSCRIPT_FILE, app_dir};
 
 mod catch_up;
+mod live;
 mod titled;
+pub use live::LIVE_REINDEX_EVERY;
 pub use titled::{IndexedMeeting, same_title_key};
 
 /// Bump when the tables below change. A file with another number is dropped
 /// and rebuilt, never migrated: the markdown is the truth, so rebuilding is
-/// always safe. 2: `tickets` keyed by (meeting, ticket) (TUR-154).
-pub const SCHEMA_VERSION: i32 = 2;
+/// always safe. 2: `tickets` keyed by (meeting, ticket) (TUR-154). 3: each
+/// meeting's `transcript_fts` rowid range, so its rows are deleted by rowid
+/// (TUR-166).
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// Markers [`Hit::snippet`] puts around each matched word.
 pub const MATCH_START: char = '\u{ab}';
@@ -40,6 +44,11 @@ const MAX_HITS: i64 = 50;
 const INDEX_FILE: &str = "index.db";
 
 /// Rows for the tables in SPEC §3.6, minus `transcript_vec` (v1.1).
+///
+/// `meeting_id` in `transcript_fts` is `UNINDEXED`, so a `WHERE meeting_id`
+/// delete would read every row of every meeting. One meeting's rows are
+/// inserted together and so hold consecutive rowids; `meetings` keeps that
+/// range (`fts_first`..=`fts_last`) and a meeting's rows are deleted by it.
 const SCHEMA: &str = "
 CREATE TABLE meetings(
     id TEXT PRIMARY KEY,
@@ -48,7 +57,9 @@ CREATE TABLE meetings(
     duration_sec INTEGER,
     path TEXT NOT NULL,
     has_analysis INTEGER NOT NULL,
-    mtime INTEGER NOT NULL
+    mtime INTEGER NOT NULL,
+    fts_first INTEGER,
+    fts_last INTEGER
 );
 CREATE TABLE tickets(
     id TEXT NOT NULL,
@@ -85,6 +96,8 @@ pub struct Hit {
 /// The open index.
 pub struct Index {
     conn: Connection,
+    /// The meeting being recorded, whose reindexing is throttled (TUR-166).
+    live: live::LiveThrottle,
 }
 
 /// Where the index for the meetings folder `root` lives.
@@ -128,7 +141,10 @@ impl Index {
             row.get::<_, i64>(0)
         })
         .ok()?;
-        Some(Self { conn })
+        Some(Self {
+            conn,
+            live: live::LiveThrottle::default(),
+        })
     }
 
     fn create(path: &Path) -> Result<Self, Error> {
@@ -141,7 +157,10 @@ impl Index {
         conn.execute_batch(SCHEMA).map_err(index_error)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)
             .map_err(index_error)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            live: live::LiveThrottle::default(),
+        })
     }
 
     /// Throw away every row and index the whole folder again.
@@ -164,6 +183,10 @@ impl Index {
     /// watcher reports real paths, so a symlinked root (an iCloud or Dropbox
     /// `~/Meetings`) or macOS's `/var` (really `/private/var`) still matches
     /// (TUR-152).
+    ///
+    /// A change to the meeting being recorded ([`Index::set_live`]) is
+    /// indexed at most once per [`LIVE_REINDEX_EVERY`]; the rest wait
+    /// for the next batch after that, or for the recording to stop.
     pub fn update(&mut self, root: &Path, paths: &[PathBuf]) -> Result<usize, Error> {
         // dunce: std's Windows canonical form `\\?\C:\…` never prefixes the
         // `C:\…` paths notify reports (as in `watcher.rs`).
@@ -177,6 +200,11 @@ impl Index {
                         .and_then(|real| meeting_id_of(real, path))
                 })
             })
+            .collect();
+        let now = std::time::Instant::now();
+        let ids: Vec<String> = ids
+            .into_iter()
+            .filter(|id| self.live.admit(id, now))
             .collect();
         let tx = self.conn.transaction().map_err(index_error)?;
         let mut changed = 0;
@@ -320,12 +348,25 @@ fn reindex(
 
 /// Delete every row of one meeting. `true` if it had any.
 fn delete_meeting(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<bool, Error> {
+    let range: Option<(Option<i64>, Option<i64>)> = tx
+        .query_row(
+            "SELECT fts_first, fts_last FROM meetings WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(index_error)?;
+    if let Some((Some(first), Some(last))) = range {
+        tx.execute(
+            "DELETE FROM transcript_fts WHERE rowid BETWEEN ?1 AND ?2",
+            [first, last],
+        )
+        .map_err(index_error)?;
+    }
     let removed = tx
         .execute("DELETE FROM meetings WHERE id = ?1", [id])
         .map_err(index_error)?;
     tx.execute("DELETE FROM tickets WHERE meeting_id = ?1", [id])
-        .map_err(index_error)?;
-    tx.execute("DELETE FROM transcript_fts WHERE meeting_id = ?1", [id])
         .map_err(index_error)?;
     Ok(removed > 0)
 }
@@ -356,6 +397,9 @@ fn insert_folder(
     )
     .map_err(index_error)?;
 
+    // The first and last rowid this meeting's text rows get, for
+    // `delete_meeting`.
+    let range = std::cell::Cell::new(None::<(i64, i64)>);
     let text_row = |ts: Option<&str>, speaker: &str, text: &str| -> Result<(), Error> {
         if text.trim().is_empty() {
             return Ok(());
@@ -365,6 +409,12 @@ fn insert_folder(
             params![folder.id, ts, speaker, text],
         )
         .map_err(index_error)?;
+        let rowid = tx.last_insert_rowid();
+        range.set(Some(
+            range
+                .get()
+                .map_or((rowid, rowid), |(first, _)| (first, rowid)),
+        ));
         Ok(())
     };
 
@@ -404,6 +454,13 @@ fn insert_folder(
         .map_err(index_error)?;
         text_row(None, "ticket", &ticket_title)?;
         text_row(None, "ticket", &ticket.body)?;
+    }
+    if let Some((first, last)) = range.get() {
+        tx.execute(
+            "UPDATE meetings SET fts_first = ?2, fts_last = ?3 WHERE id = ?1",
+            params![folder.id, first, last],
+        )
+        .map_err(index_error)?;
     }
     Ok(())
 }
@@ -512,5 +569,141 @@ mod tests {
         std::fs::remove_dir_all(root.path().join(a)).expect("remove a");
         index.refresh_meeting(root.path(), a).expect("refresh");
         assert_eq!(ticket_rows(&index), vec![row(b)]);
+    }
+
+    fn plan(index: &Index, sql: &str) -> String {
+        let mut stmt = index
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .expect("prepare");
+        stmt.query_map([1, 2], |row| row.get::<_, String>(3))
+            .expect("query")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("rows")
+            .join("; ")
+    }
+
+    fn fts_rows(index: &Index) -> Vec<(String, String)> {
+        let mut stmt = index
+            .conn
+            .prepare("SELECT meeting_id, text FROM transcript_fts ORDER BY rowid")
+            .expect("prepare");
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows")
+    }
+
+    /// Write `transcript.md`, then move its time forward so the mtime check
+    /// sees the change even on a coarse clock.
+    fn write_meeting(root: &Path, id: &str, transcript: &str) {
+        static AHEAD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let dir = root.join(id);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join(TRANSCRIPT_FILE);
+        std::fs::write(&path, transcript).expect("transcript");
+        let ahead = AHEAD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .and_then(|file| {
+                file.set_modified(
+                    std::time::SystemTime::now() + std::time::Duration::from_secs(ahead),
+                )
+            })
+            .expect("mtime");
+    }
+
+    /// TUR-166: a meeting's FTS rows are deleted by their rowid range, which
+    /// SQLite answers from the rowid, not by reading every row.
+    #[test]
+    fn a_meetings_text_rows_are_deleted_by_rowid() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let (a, b) = ("2026-10-01-1000-a", "2026-10-02-1000-b");
+        write_meeting(
+            root.path(),
+            a,
+            "[00:00:01] You: alpha one\n[00:00:02] Others: alpha two\n",
+        );
+        write_meeting(root.path(), b, "[00:00:01] You: beta\n");
+        let mut index = Index::open(root.path()).expect("open");
+
+        // FTS5 names the rowid bounds it was given in the plan (`>`, `<`); a
+        // full scan has none.
+        let by_rowid = plan(
+            &index,
+            "DELETE FROM transcript_fts WHERE rowid BETWEEN ?1 AND ?2",
+        );
+        assert!(by_rowid.ends_with(":><"), "{by_rowid}");
+        let by_meeting = plan(
+            &index,
+            "DELETE FROM transcript_fts WHERE meeting_id = ?1 AND ?2",
+        );
+        assert!(
+            by_meeting.ends_with(':'),
+            "a meeting_id delete scans: {by_meeting}"
+        );
+
+        write_meeting(root.path(), a, "[00:00:01] You: gamma\n");
+        index.refresh_meeting(root.path(), a).expect("refresh a");
+        assert_eq!(
+            fts_rows(&index),
+            [
+                (b.to_owned(), b.to_owned()),
+                (b.to_owned(), "beta".to_owned()),
+                (a.to_owned(), a.to_owned()),
+                (a.to_owned(), "gamma".to_owned()),
+            ]
+        );
+        index.refresh_meeting(root.path(), b).expect("refresh b");
+        std::fs::remove_dir_all(root.path().join(b)).expect("remove b");
+        index.refresh_meeting(root.path(), b).expect("drop b");
+        assert!(fts_rows(&index).iter().all(|(m, _)| m == a));
+        assert_eq!(index.search("gamma").expect("search").len(), 1);
+        assert!(index.search("alpha").expect("search").is_empty());
+    }
+
+    /// TUR-166: the meeting being recorded is indexed at its first change,
+    /// then held back, and indexed in full once it stops.
+    #[test]
+    fn the_recording_meeting_is_throttled_and_caught_up_when_it_stops() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let id = "2026-10-03-1000-live";
+        write_meeting(root.path(), id, "[00:00:01] You: first\n");
+        let mut index = Index::open(root.path()).expect("open");
+        let transcript = root.path().join(id).join(TRANSCRIPT_FILE);
+
+        assert_eq!(index.set_live(root.path(), Some(id)).expect("live"), 0);
+        std::fs::write(
+            &transcript,
+            "[00:00:01] You: first\n[00:00:02] You: second\n",
+        )
+        .expect("grow");
+        assert_eq!(
+            index
+                .update(root.path(), std::slice::from_ref(&transcript))
+                .expect("update"),
+            1
+        );
+        assert_eq!(index.search("second").expect("search").len(), 1);
+
+        write_meeting(
+            root.path(),
+            id,
+            "[00:00:01] You: first\n[00:00:02] You: second\n[00:00:03] You: third\n",
+        );
+        assert_eq!(
+            index
+                .update(root.path(), std::slice::from_ref(&transcript))
+                .expect("update"),
+            0
+        );
+        assert!(
+            index.search("third").expect("search").is_empty(),
+            "held back"
+        );
+
+        assert_eq!(index.set_live(root.path(), None).expect("stop"), 1);
+        assert_eq!(index.search("third").expect("search").len(), 1);
     }
 }

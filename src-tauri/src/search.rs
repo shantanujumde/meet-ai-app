@@ -24,7 +24,8 @@ use store::index::{Hit, Index, IndexedMeeting};
 use tauri::{AppHandle, Manager as _};
 
 use crate::error::{UiError, on_blocking_pool};
-use crate::meetings;
+use crate::meetings::{self, Live};
+use crate::recording::Recorder;
 
 /// The open index and the meetings folder it was built for.
 #[derive(Default)]
@@ -52,10 +53,27 @@ impl SearchIndex {
     }
 
     /// Re-read the meetings behind `paths` (the watcher's changed files).
-    pub fn update(&self, paths: &[PathBuf]) {
+    /// `live` is the meeting being recorded, re-read at most every
+    /// [`store::index::LIVE_REINDEX_EVERY`] (TUR-166).
+    pub fn update(&self, paths: &[PathBuf], live: Live<'_>) {
         let result = self.with_index(|root, index| {
             index
-                .update(root, paths)
+                .set_live(root, live_id(live))
+                .and_then(|_| index.update(root, paths))
+                .map(|_| ())
+                .map_err(|error| UiError::app("search-index", error.to_string()))
+        });
+        if let Err(error) = result {
+            tracing::warn!(message = %error.message, "could not update the search index");
+        }
+    }
+
+    /// Tell the index which meeting is recording. When one stops, its
+    /// changes held back while it recorded are indexed now (TUR-166).
+    pub fn set_live(&self, live: Live<'_>) {
+        let result = self.with_index(|root, index| {
+            index
+                .set_live(root, live_id(live))
                 .map(|_| ())
                 .map_err(|error| UiError::app("search-index", error.to_string()))
         });
@@ -129,6 +147,20 @@ impl SearchIndex {
     fn lock(&self) -> MutexGuard<'_, Option<(PathBuf, Index)>> {
         self.open.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+fn live_id<'a>(live: Live<'a>) -> Option<&'a str> {
+    match live {
+        Live::Nothing => None,
+        Live::Meeting(id) => Some(id),
+    }
+}
+
+/// The watcher saw `paths` change: bring the index up to date, holding back
+/// the meeting being recorded (TUR-166).
+pub fn folder_changed(app: &AppHandle, paths: &[PathBuf]) {
+    let status = app.state::<Recorder>().status();
+    state(app).update(paths, Live::from_status(&status));
 }
 
 /// The app's [`SearchIndex`], from managed state.

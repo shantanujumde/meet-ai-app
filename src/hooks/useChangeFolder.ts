@@ -62,7 +62,7 @@ export function useChangeFolder() {
     setBusy(true);
     try {
       await changeMeetingsFolder(picked);
-      await useAppStore.getState().loadMeetings();
+      await useAppStore.getState().loadMeetings({ silent: true });
       // Whether setup was done was unknown while the folder was; it is
       // known again now.
       if (useAppStore.getState().onboarding === null) {
