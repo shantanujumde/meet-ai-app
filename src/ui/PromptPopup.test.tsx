@@ -16,6 +16,8 @@ const fake = vi.hoisted(() => ({
   onRecording: null as ((status: unknown) => void) | null,
   menus: [] as { items: MenuItem[]; popups: unknown[]; closed: boolean }[],
   menuFails: false,
+  answerFails: null as string | null,
+  answerGate: null as Promise<void> | null,
 }));
 
 vi.mock("@/ipc/client", () => ({
@@ -29,7 +31,10 @@ vi.mock("@/ipc/promptPopup", () => ({
   promptPopupCurrent: () => Promise.resolve(fake.current),
   answerPromptPopup: (id: number, answer: PopupAnswer) => {
     fake.answers.push([id, answer]);
-    return Promise.resolve();
+    if (fake.answerFails !== null) {
+      return Promise.reject({ domain: "app", kind: "mic-denied", message: fake.answerFails });
+    }
+    return fake.answerGate ?? Promise.resolve();
   },
   onPromptPopup: (handler: (shown: unknown) => void) => {
     fake.onPrompt = handler;
@@ -159,6 +164,8 @@ beforeEach(() => {
   fake.current = null;
   fake.menus = [];
   fake.menuFails = false;
+  fake.answerFails = null;
+  fake.answerGate = null;
 });
 afterEach(() => {
   cleanup();
@@ -442,6 +449,31 @@ describe("every card", () => {
     await showPopup(ended(16, NINE + 10_000));
     await act(async () => vi.advanceTimersByTime(10_000));
     expect(screen.queryByRole("region")).toBeNull();
+  });
+
+  test("with motion, a Record stays up until it has started, then fades", async () => {
+    reduceMotion(false);
+    let started: () => void = () => {};
+    fake.answerGate = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    await showPopup(ask(3, ZOOM));
+    await press("Record Zoom call");
+    expect(screen.getByRole("region").dataset.leaving).toBeUndefined();
+    await act(async () => started());
+    expect(screen.getByRole("region").dataset.leaving).toBe("");
+  });
+
+  test("a Record that fails keeps the card up with the reason (TUR-169)", async () => {
+    reduceMotion(false);
+    fake.answerFails = "meet-ai is not allowed to use the microphone.";
+    await showPopup(ask(3, ZOOM));
+    await press("Record Zoom call");
+    expect(fake.answers).toEqual([[3, "record"]]);
+    expect(screen.getByRole("region").dataset.leaving).toBeUndefined();
+    expect(screen.getByRole("alert").textContent).toBe(
+      "meet-ai is not allowed to use the microphone.",
+    );
   });
 
   test("a new card while one fades out shows in full", async () => {

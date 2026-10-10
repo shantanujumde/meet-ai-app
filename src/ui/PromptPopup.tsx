@@ -112,13 +112,19 @@ export function PromptPopup() {
   };
 
   const answer = (on: PopupPrompt, pressed: PopupAnswer) => {
-    // Join opens the meeting and leaves the question up.
-    if (pressed !== "join") leave();
-    answerPromptPopup(on.id, pressed).catch((thrown: unknown) => {
-      setLeaving(false);
-      setShown(on);
-      setError(toUiError(thrown).message);
-    });
+    // Join opens the meeting and leaves the question up. A Record stays up
+    // until it has started (TUR-169), so a refusal shows on this card.
+    const starts = pressed === "record" || pressed === "joinAndRecord";
+    if (pressed !== "join" && !starts) leave();
+    answerPromptPopup(on.id, pressed)
+      .then(() => {
+        if (starts && shownRef.current?.id === on.id) leave();
+      })
+      .catch((thrown: unknown) => {
+        setLeaving(false);
+        setShown(on);
+        setError(toUiError(thrown).message);
+      });
   };
 
   useEffect(() => {
