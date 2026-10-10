@@ -5,6 +5,7 @@
 //! guarantee of `ensure` holds per file: lazy, resumable, verified, pinned.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 use stt::model::ModelSpec;
 
@@ -16,17 +17,19 @@ use crate::{Error, Progress};
 /// Returns `dir`. `on_progress` sees the whole folder: `total_bytes` is every
 /// file together and `downloaded_bytes` counts the files already finished. It
 /// reads `verifying` while one file is being hashed, so a UI shows the same
-/// indeterminate bar it shows for a single-file model.
+/// indeterminate bar it shows for a single-file model. `cancel` stops it as it
+/// stops [`crate::ensure`].
 pub async fn ensure_folder(
     files: &[ModelSpec],
     dir: &Path,
+    cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<PathBuf, Error> {
     let total: u64 = files.iter().map(|file| file.bytes).sum();
     let mut finished = 0;
     for file in files {
         let mut forward = |progress: Progress| on_progress(overall(finished, total, progress));
-        crate::ensure(file, dir, &mut forward).await?;
+        crate::ensure(file, dir, cancel, &mut forward).await?;
         finished += file.bytes;
     }
     Ok(dir.to_path_buf())
@@ -44,6 +47,7 @@ fn overall(finished: u64, total: u64, file: Progress) -> Progress {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::NEVER;
 
     /// Eight zero bytes, the same stand-in `lib.rs`'s tests use.
     const ZEROS: &str = "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc";
@@ -97,7 +101,7 @@ mod tests {
             std::fs::write(tmp.path().join(file.filename), b"verified").unwrap();
         }
         let mut calls = 0;
-        let dir = ensure_folder(FILES, tmp.path(), &mut |_| calls += 1)
+        let dir = ensure_folder(FILES, tmp.path(), &NEVER, &mut |_| calls += 1)
             .await
             .unwrap();
         assert_eq!(dir, tmp.path());
@@ -114,9 +118,11 @@ mod tests {
             std::fs::write(tmp.path().join(format!("{}.part", file.filename)), [0u8; 8]).unwrap();
         }
         let mut seen = Vec::new();
-        ensure_folder(FILES, tmp.path(), &mut |progress| seen.push(progress))
-            .await
-            .unwrap();
+        ensure_folder(FILES, tmp.path(), &NEVER, &mut |progress| {
+            seen.push(progress)
+        })
+        .await
+        .unwrap();
 
         assert!(seen.iter().all(|progress| progress.total_bytes == 16));
         let downloaded: Vec<_> = seen
@@ -138,7 +144,7 @@ mod tests {
             b"notzeros",
         )
         .unwrap();
-        match ensure_folder(FILES, tmp.path(), &mut |_| {}).await {
+        match ensure_folder(FILES, tmp.path(), &NEVER, &mut |_| {}).await {
             Err(Error::Checksum { model, .. }) => assert_eq!(model, "test-folder two"),
             other => panic!("expected a checksum error, got {other:?}"),
         }

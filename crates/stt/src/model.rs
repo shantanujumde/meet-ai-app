@@ -114,14 +114,22 @@ pub fn whisper_language_for_file(path: &Path) -> Option<&'static str> {
     }
 }
 
+/// The `ggerganov/whisper.cpp` commit every whisper URL is pinned to. Its
+/// files match every digest in [`MODELS`] (checked with the Hugging Face API
+/// on 2026-10-10).
+pub const WHISPER_COMMIT: &str = "5359861c739e955e79d9a303bcbc70fb988958b1";
+
 /// The models SPEC §2.4 names, plus Medium and Large (TUR-94).
 ///
-/// URLs point at `resolve/main` on Hugging Face, which is the canonical
-/// distribution point for `whisper.cpp` GGML weights. The digests are the LFS
-/// object ids Hugging Face publishes for these exact files, read from its API
-/// on 2026-09-27 (small, large turbo) and 2026-10-04 (medium, large), not
-/// computed from a local download, which would only prove the bytes matched
-/// themselves.
+/// URLs point at Hugging Face, the canonical distribution point for
+/// `whisper.cpp` GGML weights, pinned to commit [`WHISPER_COMMIT`] rather than
+/// `main` (TUR-159): a re-upload upstream must not turn every new download
+/// into a checksum failure, or stitch two versions into one resumed `.part`.
+/// The digests are the LFS object ids Hugging Face publishes for these exact
+/// files, read from its API on 2026-09-27 (small, large turbo) and 2026-10-04
+/// (medium, large), not computed from a local download, which would only prove
+/// the bytes matched themselves. On 2026-10-10 the API's `paths-info` at
+/// [`WHISPER_COMMIT`] gave the same size and LFS id for all four.
 ///
 /// Reading an id: `.en` means English only, no `.en` means multilingual (99
 /// languages, 100 for large-v3 and its turbo; see [`crate::languages`]);
@@ -135,7 +143,7 @@ pub const MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: "small.en-q5_1",
         filename: "ggml-small.en-q5_1.bin",
-        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.en-q5_1.bin",
         sha256: "bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30",
         bytes: 190_098_681,
         facts: ModelFacts {
@@ -149,7 +157,7 @@ pub const MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: "medium-q5_0",
         filename: "ggml-medium-q5_0.bin",
-        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-medium-q5_0.bin",
         sha256: "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
         bytes: 539_212_467,
         facts: ModelFacts {
@@ -163,7 +171,7 @@ pub const MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: "large-v3-turbo-q5_0",
         filename: "ggml-large-v3-turbo-q5_0.bin",
-        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin",
         sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
         // SPEC §2.4 estimates ~1.6 GB for this file. The real q5_0 turbo build
         // is 574 MB; the 1.6 GB figure belongs to an unquantized large-v3.
@@ -179,7 +187,7 @@ pub const MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: "large-v3-q5_0",
         filename: "ggml-large-v3-q5_0.bin",
-        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-q5_0.bin",
         sha256: "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1",
         bytes: 1_081_140_203,
         facts: ModelFacts {
@@ -340,10 +348,31 @@ fn fallback_meetings_root(
 
 /// Is this model already present and verified?
 ///
-/// Only checks for the finished file. A stale `.part` is not "present"; it is
-/// the thing `modelfetch::ensure` resumes.
+/// Checks for the finished file, and that the digest it was verified against
+/// (its [`digest_file`]) is still the one the catalogue pins. A changed
+/// catalogue entry therefore reads as "not downloaded", and the next
+/// `modelfetch::ensure` fetches the new file. A finished file with no digest
+/// file was verified by a build before TUR-159, against the same catalogue,
+/// and still counts. A stale `.part` is not "present"; it is the thing
+/// `modelfetch::ensure` resumes.
 pub fn is_installed(spec: &ModelSpec, dir: &Path) -> bool {
-    dir.join(spec.filename).is_file()
+    let file = dir.join(spec.filename);
+    file.is_file() && verified_digest(&file).is_none_or(|digest| digest == spec.sha256)
+}
+
+/// Where the digest a model file was verified against is kept:
+/// `<filename>.sha256` beside it.
+pub fn digest_file(model_file: &Path) -> PathBuf {
+    let mut name = model_file.file_name().unwrap_or_default().to_os_string();
+    name.push(".sha256");
+    model_file.with_file_name(name)
+}
+
+/// The digest recorded beside `model_file`, if there is one to read.
+pub fn verified_digest(model_file: &Path) -> Option<String> {
+    std::fs::read_to_string(digest_file(model_file))
+        .ok()
+        .map(|text| text.trim().to_string())
 }
 
 #[cfg(test)]
@@ -365,8 +394,38 @@ mod tests {
                 "{} is not pinned to the expected host",
                 spec.id
             );
+            // A commit, never a branch (TUR-159).
+            assert!(
+                spec.url.contains(&format!("/resolve/{WHISPER_COMMIT}/")),
+                "{} is not pinned to a commit",
+                spec.id
+            );
             assert!(spec.bytes > 0);
         }
+    }
+
+    #[test]
+    fn a_changed_catalogue_digest_reads_as_not_installed() {
+        let scratch = tempfile::tempdir().unwrap();
+        let spec = &MODELS[0];
+        let file = scratch.path().join(spec.filename);
+        assert_eq!(
+            digest_file(&file),
+            scratch.path().join(format!("{}.sha256", spec.filename))
+        );
+        assert!(!is_installed(spec, scratch.path()));
+
+        // Verified before digest files existed: still installed.
+        std::fs::write(&file, b"weights").unwrap();
+        assert!(is_installed(spec, scratch.path()));
+
+        std::fs::write(digest_file(&file), format!("{}\n", spec.sha256)).unwrap();
+        assert!(is_installed(spec, scratch.path()));
+        assert_eq!(verified_digest(&file).as_deref(), Some(spec.sha256));
+
+        // Verified against another digest: the catalogue moved on.
+        std::fs::write(digest_file(&file), "0".repeat(64)).unwrap();
+        assert!(!is_installed(spec, scratch.path()));
     }
 
     #[test]

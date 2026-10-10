@@ -3,13 +3,19 @@
 //! A failed attempt leaves its bytes in the `.part` file, so each retry
 //! re-measures the file and `download` resumes with a `Range` request (or
 //! restarts from zero if the server ignores ranges).
+//!
+//! Only a failure another attempt could fix is retried: a dropped connection,
+//! a stall, a short body, a 5xx or a 429 (TUR-159). A 404, a 403, a 416 or a
+//! full disk is reported at once rather than after seconds of backoff.
 
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use stt::model::ModelSpec;
 
-use crate::{Error, Progress, STALL_TIMEOUT, download, part_size, remove_if_present};
+use crate::attempt::{Failure, download, or_cancel};
+use crate::{Error, Progress, STALL_TIMEOUT, part_size, remove_if_present};
 
 /// How many times to retry after the first failure.
 const MAX_RETRIES: u32 = 3;
@@ -45,11 +51,13 @@ impl RetryPolicy {
     }
 }
 
-/// Run [`download`] until it succeeds or the retries are used up.
+/// Run [`download`] until it succeeds, fails in a way no retry fixes, is
+/// cancelled, or the retries are used up.
 pub(crate) async fn download_with_retry(
     spec: &ModelSpec,
     part_path: &Path,
     policy: &RetryPolicy,
+    cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<u64, Error> {
     let mut retry = 0;
@@ -65,15 +73,23 @@ pub(crate) async fn download_with_retry(
             return Ok(have);
         }
 
-        match download(spec, part_path, have, policy.stall_timeout, on_progress).await {
+        let attempt = download(
+            spec,
+            part_path,
+            have,
+            policy.stall_timeout,
+            cancel,
+            on_progress,
+        );
+        match attempt.await {
             Ok(total) => return Ok(total),
-            Err(error) if retry < policy.max_retries => {
+            Err(Failure::Retry(error)) if retry < policy.max_retries => {
                 let delay = policy.delay(retry);
                 tracing::warn!(%error, retry = retry + 1, ?delay, "download failed; retrying");
-                tokio::time::sleep(delay).await;
+                or_cancel(spec.id, cancel, tokio::time::sleep(delay)).await?;
                 retry += 1;
             }
-            Err(error) => return Err(error),
+            Err(Failure::Retry(error) | Failure::Stop(error)) => return Err(error),
         }
     }
 }
@@ -87,6 +103,7 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     use super::*;
+    use crate::tests::NEVER;
     use crate::{ensure_with, hex};
 
     const FAST: RetryPolicy = RetryPolicy {
@@ -108,6 +125,11 @@ mod tests {
         /// Gap between single-byte writes on a full send. Zero sends the body
         /// in one write.
         trickle: Duration,
+        /// Answer every request with this status and no body.
+        status: Option<u16>,
+        /// Answer a range request with a 206 that starts this many bytes
+        /// before the byte asked for.
+        misalign: usize,
     }
 
     const PLAIN: Script = Script {
@@ -116,6 +138,8 @@ mod tests {
         ranges: true,
         stall: false,
         trickle: Duration::ZERO,
+        status: None,
+        misalign: 0,
     };
 
     struct Server {
@@ -152,13 +176,24 @@ mod tests {
                     .find_map(|l| l.strip_prefix("range: ").or(l.strip_prefix("Range: ")))
                     .map(str::to_string);
                 log.lock().unwrap().push(range.clone());
+                if let Some(status) = script.status {
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 {status} Nope\r\nContent-Length: 0\r\n\
+                             Connection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    );
+                    continue;
+                }
 
                 let start = range
                     .as_deref()
                     .filter(|_| script.ranges)
                     .and_then(|r| r.strip_prefix("bytes="))
                     .and_then(|r| r.strip_suffix('-'))
-                    .and_then(|r| r.parse::<usize>().ok());
+                    .and_then(|r| r.parse::<usize>().ok())
+                    .map(|s| s.saturating_sub(script.misalign));
                 let tail = &body[start.unwrap_or(0)..];
                 let head = match start {
                     Some(s) => format!(
@@ -228,7 +263,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_path_buf();
         let s = spec(&server.url, &data, &data);
-        let path = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap();
+        let path = ensure_with(&s, &dir, &FAST, &NEVER, &mut |_| {})
+            .await
+            .unwrap();
         assert_eq!(std::fs::read(path).unwrap(), data);
         assert_eq!(server.seen.lock().unwrap().len(), 3);
     }
@@ -248,7 +285,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_path_buf();
         let s = spec(&server.url, &data, &data);
-        let path = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap();
+        let path = ensure_with(&s, &dir, &FAST, &NEVER, &mut |_| {})
+            .await
+            .unwrap();
         assert_eq!(std::fs::read(path).unwrap(), data);
         let seen = server.seen.lock().unwrap().clone();
         assert_eq!(seen, vec![None, Some("bytes=5-".to_string())]);
@@ -269,7 +308,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_path_buf();
         let s = spec(&server.url, &data, &data);
-        let path = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap();
+        let path = ensure_with(&s, &dir, &FAST, &NEVER, &mut |_| {})
+            .await
+            .unwrap();
         assert_eq!(std::fs::read(path).unwrap(), data);
         assert_eq!(server.seen.lock().unwrap().len(), 2);
     }
@@ -289,7 +330,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_path_buf();
         let s = spec(&server.url, &data, &data);
-        let error = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap_err();
+        let error = ensure_with(&s, &dir, &FAST, &NEVER, &mut |_| {})
+            .await
+            .unwrap_err();
         assert!(matches!(error, Error::Download(_)), "got {error:?}");
         assert_eq!(server.seen.lock().unwrap().len(), 4, "1 try + 3 retries");
         assert!(!dir.join("retry.bin").exists());
@@ -302,7 +345,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_path_buf();
         let s = spec(&server.url, &data, b"some other bytes");
-        let error = ensure_with(&s, &dir, &FAST, &mut |_| {}).await.unwrap_err();
+        let error = ensure_with(&s, &dir, &FAST, &NEVER, &mut |_| {})
+            .await
+            .unwrap_err();
         assert!(matches!(error, Error::Checksum { .. }), "got {error:?}");
         assert_eq!(server.seen.lock().unwrap().len(), 1);
         assert!(!dir.join("retry.bin").exists());
@@ -337,7 +382,7 @@ mod tests {
         };
         let path = within(
             Duration::from_secs(10),
-            ensure_with(&s, &dir, &policy, &mut |_| {}),
+            ensure_with(&s, &dir, &policy, &NEVER, &mut |_| {}),
         )
         .await
         .unwrap();
@@ -368,7 +413,7 @@ mod tests {
         };
         let error = within(
             Duration::from_secs(10),
-            ensure_with(&s, &dir, &policy, &mut |_| {}),
+            ensure_with(&s, &dir, &policy, &NEVER, &mut |_| {}),
         )
         .await
         .unwrap_err();
@@ -400,12 +445,163 @@ mod tests {
         };
         let path = within(
             Duration::from_secs(10),
-            ensure_with(&s, &dir, &policy, &mut |_| {}),
+            ensure_with(&s, &dir, &policy, &NEVER, &mut |_| {}),
         )
         .await
         .unwrap();
         assert_eq!(std::fs::read(path).unwrap(), data);
         assert_eq!(server.seen.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_resume_answered_with_another_range_starts_over_instead_of_corrupting() {
+        // The first attempt keeps 5 bytes; the resume asks for `bytes=5-` and
+        // the server answers a 206 that starts at byte 2. Appending that would
+        // fail the checksum and throw the `.part` away as tampering.
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                fail_first: 1,
+                partial: 5,
+                misalign: 3,
+                ..PLAIN
+            },
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let s = spec(&server.url, &data, &data);
+        let path = ensure_with(&s, &dir, &FAST, &NEVER, &mut |_| {})
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), data);
+        let seen = server.seen.lock().unwrap().clone();
+        assert_eq!(
+            seen,
+            vec![None, Some("bytes=5-".to_string()), None],
+            "the wrong range is dropped and the file fetched from the start"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_404_is_reported_at_once_without_retrying() {
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                status: Some(404),
+                ..PLAIN
+            },
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let s = spec(&server.url, &data, &data);
+        // Seconds of backoff per retry: a retry would blow the time limit.
+        let slow = RetryPolicy {
+            base_delay: Duration::from_secs(5),
+            ..FAST
+        };
+        let error = within(
+            Duration::from_secs(4),
+            ensure_with(&s, &dir, &slow, &NEVER, &mut |_| {}),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, Error::Download(_)), "got {error:?}");
+        assert!(error.to_string().contains("404"), "got {error}");
+        assert_eq!(server.seen.lock().unwrap().len(), 1, "no retry");
+    }
+
+    #[tokio::test]
+    async fn a_503_is_retried() {
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                status: Some(503),
+                ..PLAIN
+            },
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let s = spec(&server.url, &data, &data);
+        let error = ensure_with(&s, &dir, &FAST, &NEVER, &mut |_| {})
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("503"), "got {error}");
+        assert_eq!(server.seen.lock().unwrap().len(), 4, "1 try + 3 retries");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_mid_download_stops_it_and_keeps_the_part() {
+        // 16 bytes, 100 ms apart: the cancel lands well before the end.
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                trickle: Duration::from_millis(100),
+                ..PLAIN
+            },
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let s = spec(&server.url, &data, &data);
+        let cancel = AtomicBool::new(false);
+        let error = within(
+            Duration::from_secs(5),
+            ensure_with(&s, &dir, &FAST, &cancel, &mut |progress| {
+                if progress.downloaded_bytes >= 2 {
+                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, Error::Cancelled("test-retry")),
+            "got {error:?}"
+        );
+        assert_eq!(
+            server.seen.lock().unwrap().len(),
+            1,
+            "a cancel is not retried"
+        );
+        let kept = std::fs::metadata(dir.join("retry.bin.part")).unwrap().len();
+        assert!((2..16).contains(&kept), "kept {kept} bytes");
+        assert!(!dir.join("retry.bin").exists());
+    }
+
+    #[tokio::test]
+    async fn progress_is_reported_per_percentage_not_per_chunk() {
+        // 16 one-byte chunks are 16 different percentages, so all may pass;
+        // what must not happen is a report with no change and no tick.
+        let data = body();
+        let server = serve(
+            data.clone(),
+            Script {
+                trickle: Duration::from_millis(1),
+                ..PLAIN
+            },
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let s = spec(&server.url, &data, &data);
+        let mut seen = Vec::new();
+        ensure_with(&s, &dir, &FAST, &NEVER, &mut |progress| seen.push(progress))
+            .await
+            .unwrap();
+        let downloading: Vec<_> = seen.iter().filter(|p| !p.verifying).collect();
+        let mut percents: Vec<_> = downloading
+            .iter()
+            .map(|p| (p.fraction() * 100.0) as u64)
+            .collect();
+        percents.dedup();
+        assert_eq!(
+            percents.len(),
+            downloading.len(),
+            "a repeated percentage: {seen:?}"
+        );
+        assert!(seen.last().unwrap().verifying);
     }
 
     #[test]
