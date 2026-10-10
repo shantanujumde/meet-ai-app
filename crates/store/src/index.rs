@@ -31,8 +31,9 @@ pub use titled::{IndexedMeeting, same_title_key};
 /// and rebuilt, never migrated: the markdown is the truth, so rebuilding is
 /// always safe. 2: `tickets` keyed by (meeting, ticket) (TUR-154). 3: each
 /// meeting's `transcript_fts` rowid range, so its rows are deleted by rowid
-/// (TUR-166).
-pub const SCHEMA_VERSION: i32 = 3;
+/// (TUR-166). 4: each meeting's file sizes beside its newest time, so an edit
+/// within a coarse clock's tick is still seen (TUR-175).
+pub const SCHEMA_VERSION: i32 = 4;
 
 /// Markers [`Hit::snippet`] puts around each matched word.
 pub const MATCH_START: char = '\u{ab}';
@@ -58,6 +59,7 @@ CREATE TABLE meetings(
     path TEXT NOT NULL,
     has_analysis INTEGER NOT NULL,
     mtime INTEGER NOT NULL,
+    size INTEGER NOT NULL,
     fts_first INTEGER,
     fts_last INTEGER
 );
@@ -170,7 +172,7 @@ impl Index {
         tx.execute_batch("DELETE FROM meetings; DELETE FROM tickets; DELETE FROM transcript_fts;")
             .map_err(index_error)?;
         for folder in &folders {
-            insert_folder(&tx, folder, folder_mtime(&folder.path))?;
+            insert_folder(&tx, folder, folder_stamp(&folder.path))?;
         }
         tx.commit().map_err(index_error)
     }
@@ -324,15 +326,22 @@ fn reindex(
     if !dir.is_dir() {
         return delete_meeting(tx, id);
     }
-    let mtime = folder_mtime(&dir);
+    let stamp = folder_stamp(&dir);
     if !force {
-        let known: Option<i64> = tx
-            .query_row("SELECT mtime FROM meetings WHERE id = ?1", [id], |row| {
-                row.get(0)
-            })
+        let known: Option<Stamp> = tx
+            .query_row(
+                "SELECT mtime, size FROM meetings WHERE id = ?1",
+                [id],
+                |row| {
+                    Ok(Stamp {
+                        mtime: row.get(0)?,
+                        size: row.get(1)?,
+                    })
+                },
+            )
             .optional()
             .map_err(index_error)?;
-        if known == Some(mtime) {
+        if known == Some(stamp) {
             return Ok(false);
         }
     }
@@ -340,7 +349,7 @@ fn reindex(
     // A folder that cannot be read right now (deleted mid-batch) is treated
     // like a deleted one; the next event brings it back.
     if let Ok(folder) = folder::load(&dir) {
-        insert_folder(tx, &folder, mtime)?;
+        insert_folder(tx, &folder, stamp)?;
         return Ok(true);
     }
     Ok(removed)
@@ -375,7 +384,7 @@ fn delete_meeting(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<bool, Erro
 fn insert_folder(
     tx: &rusqlite::Transaction<'_>,
     folder: &MeetingFolder,
-    mtime: i64,
+    stamp: Stamp,
 ) -> Result<(), Error> {
     let meeting = folder.meeting.as_ref();
     let title = meeting
@@ -383,8 +392,8 @@ fn insert_folder(
         .filter(|title| !title.trim().is_empty())
         .unwrap_or_else(|| folder.id.clone());
     tx.execute(
-        "INSERT INTO meetings(id, title, date, duration_sec, path, has_analysis, mtime)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO meetings(id, title, date, duration_sec, path, has_analysis, mtime, size)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             folder.id,
             title,
@@ -392,7 +401,8 @@ fn insert_folder(
             meeting.and_then(|m| m.duration_sec()),
             folder.id,
             meeting.is_some_and(|m| m.is_analyzed()),
-            mtime,
+            stamp.mtime,
+            stamp.size,
         ],
     )
     .map_err(index_error)?;
@@ -465,30 +475,57 @@ fn insert_folder(
     Ok(())
 }
 
-/// The newest change among the files the index reads from one meeting folder.
-/// The `tickets/` folder counts too, so deleting a ticket moves it, and so
-/// does the meeting folder itself, so deleting `notes.md` (or any file that
-/// was not the newest) moves it as well (TUR-152).
-fn folder_mtime(dir: &Path) -> i64 {
+/// What says a meeting folder changed since it was indexed: the newest
+/// modified time among the files the index reads, and their total size.
+///
+/// The size is there for filesystems whose clock is coarse (FAT and exFAT
+/// keep 2 s, some SMB shares 1 s): a second edit inside one tick leaves the
+/// time as it was, but rarely the size too (TUR-175). An edit that keeps
+/// both (one letter swapped for another, inside one tick) is still missed
+/// until the next change or rebuild.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Stamp {
+    mtime: i64,
+    size: i64,
+}
+
+/// The [`Stamp`] of one meeting folder. The `tickets/` folder's time counts
+/// too, so deleting a ticket moves it, and so does the meeting folder's own,
+/// so deleting `notes.md` (or any file that was not the newest) moves it as
+/// well (TUR-152).
+fn folder_stamp(dir: &Path) -> Stamp {
     let tickets = dir.join(TICKETS_DIR);
-    let mut newest = [MEETING_FILE, TRANSCRIPT_FILE, NOTES_FILE]
+    let mut files: Vec<PathBuf> = [MEETING_FILE, TRANSCRIPT_FILE, NOTES_FILE]
         .iter()
-        .map(|name| modified_ms(&dir.join(name)))
-        .chain([modified_ms(&tickets), modified_ms(dir)])
-        .max()
-        .unwrap_or(0);
+        .map(|name| dir.join(name))
+        .collect();
     if let Ok(entries) = std::fs::read_dir(&tickets) {
-        for entry in entries.flatten() {
-            newest = newest.max(modified_ms(&entry.path()));
-        }
+        files.extend(entries.flatten().map(|entry| entry.path()));
     }
-    newest
+    let mut stamp = Stamp {
+        mtime: modified_ms(&tickets).max(modified_ms(dir)),
+        size: 0,
+    };
+    for file in &files {
+        let Ok(meta) = std::fs::metadata(file) else {
+            continue;
+        };
+        stamp.mtime = stamp.mtime.max(meta_ms(&meta));
+        stamp.size = stamp
+            .size
+            .saturating_add(i64::try_from(meta.len()).unwrap_or(i64::MAX));
+    }
+    stamp
 }
 
 /// Last-modified time in milliseconds since the epoch; 0 when missing.
 fn modified_ms(path: &Path) -> i64 {
-    std::fs::metadata(path)
-        .and_then(|meta| meta.modified())
+    std::fs::metadata(path).map_or(0, |meta| meta_ms(&meta))
+}
+
+/// [`modified_ms`] for metadata already read.
+fn meta_ms(meta: &std::fs::Metadata) -> i64 {
+    meta.modified()
         .ok()
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |since| {
@@ -612,6 +649,49 @@ mod tests {
                 )
             })
             .expect("mtime");
+    }
+
+    /// TUR-175: on a filesystem whose clock is coarse, a second edit can
+    /// leave the modified time exactly as it was. The size still moves, so
+    /// the edit is indexed.
+    #[test]
+    fn an_edit_that_keeps_the_modified_time_is_still_indexed() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let id = "2026-10-04-1000-coarse";
+        let dir = root.path().join(id);
+        let transcript = dir.join(TRANSCRIPT_FILE);
+        let tick = std::time::SystemTime::now() + std::time::Duration::from_secs(1_000);
+        let write_at_tick = |body: &str| {
+            std::fs::create_dir_all(&dir).expect("dir");
+            std::fs::write(&transcript, body).expect("transcript");
+            // Ahead of the folder's own time, so this is the newest one.
+            std::fs::File::options()
+                .write(true)
+                .open(&transcript)
+                .and_then(|file| file.set_modified(tick))
+                .expect("mtime");
+        };
+        write_at_tick("[00:00:01] You: first\n");
+        let mut index = Index::open(root.path()).expect("open");
+        let before = folder_stamp(&dir);
+
+        write_at_tick("[00:00:01] You: first\n[00:00:02] You: zebra\n");
+        assert_eq!(folder_stamp(&dir).mtime, before.mtime, "same tick");
+        assert_eq!(
+            index
+                .update(root.path(), std::slice::from_ref(&transcript))
+                .expect("update"),
+            1
+        );
+        assert_eq!(index.search("zebra").expect("search").len(), 1);
+
+        // Nothing changed since: the meeting is not read again.
+        assert_eq!(
+            index
+                .update(root.path(), std::slice::from_ref(&transcript))
+                .expect("update"),
+            0
+        );
     }
 
     /// TUR-166: a meeting's FTS rows are deleted by their rowid range, which
