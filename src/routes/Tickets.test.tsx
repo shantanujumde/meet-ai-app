@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { describe, expect, test, vi } from "vitest";
-import { TICKET_SYNC_EVENT, type TicketSyncStatus } from "@/ipc/client";
+import { MEETINGS_CHANGED_EVENT, TICKET_SYNC_EVENT, type TicketSyncStatus } from "@/ipc/client";
 import type { TicketSummary } from "@/ipc/types";
 import { copyText } from "@/lib/clipboard";
 import { emit, ipc, listening } from "@/test/ipcMock";
@@ -291,5 +291,75 @@ describe("Tickets, sending to the tracker (TUR-113)", () => {
     expect(screen.getByText("Owner: Sam")).toBeTruthy();
     expect(screen.getByText("Due: Friday")).toBeTruthy();
     expect(screen.getByText("No description")).toBeTruthy();
+  });
+});
+
+describe("Tickets, refreshing on a folder change (TUR-153)", () => {
+  /** A promise and the function that settles it, for a read held in flight. */
+  function deferred<T>() {
+    let resolve: (value: T) => void = () => {};
+    const promise = new Promise<T>((settle) => {
+      resolve = settle;
+    });
+    return { promise, resolve };
+  }
+
+  test("a meetings change reloads the list without the loading state", async () => {
+    listTickets.mockResolvedValue([ticket()]);
+    renderTickets();
+    expect(await screen.findByText("Write the docs")).toBeTruthy();
+    await waitFor(() => expect(listening(MEETINGS_CHANGED_EVENT)).toBe(true));
+
+    // An approve on a meeting page moved a task into Tickets.
+    const approved = ticket({
+      id: "TUR-9",
+      title: "Load test",
+      meeting: "2026-09-01-1430-standup",
+      meetingTitle: "Platform standup",
+    });
+    listTickets.mockResolvedValue([approved, ticket()]);
+    act(() => emit(MEETINGS_CHANGED_EVENT, { paths: [] }));
+
+    // The old list stays on screen while it reads: no spinner.
+    expect(screen.queryByText("Reading your tickets…")).toBeNull();
+    expect(screen.getByText("Write the docs")).toBeTruthy();
+    expect(await screen.findByText("Load test")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "From: Platform standup" })).toBeTruthy();
+    expect(screen.getByText("Write the docs")).toBeTruthy();
+    expect(screen.queryByText("Reading your tickets…")).toBeNull();
+  });
+
+  test("a failed reload keeps the list it had", async () => {
+    listTickets.mockResolvedValue([ticket()]);
+    renderTickets();
+    expect(await screen.findByText("Write the docs")).toBeTruthy();
+    await waitFor(() => expect(listening(MEETINGS_CHANGED_EVENT)).toBe(true));
+
+    listTickets.mockRejectedValue({ domain: "app", kind: "x", message: "Disk went away." });
+    act(() => emit(MEETINGS_CHANGED_EVENT, { paths: [] }));
+
+    await waitFor(() => expect(listTickets).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Write the docs")).toBeTruthy();
+    expect(screen.queryByText("Disk went away.")).toBeNull();
+  });
+
+  test("an older read that lands last does not replace a newer one", async () => {
+    listTickets.mockResolvedValue([ticket()]);
+    renderTickets();
+    expect(await screen.findByText("Write the docs")).toBeTruthy();
+    await waitFor(() => expect(listening(MEETINGS_CHANGED_EVENT)).toBe(true));
+
+    const older = deferred<TicketSummary[]>();
+    const newer = deferred<TicketSummary[]>();
+    listTickets.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    act(() => emit(MEETINGS_CHANGED_EVENT, { paths: [] }));
+    act(() => emit(MEETINGS_CHANGED_EVENT, { paths: [] }));
+
+    await act(async () => newer.resolve([ticket({ id: "TUR-9", title: "Newest list" })]));
+    expect(await screen.findByText("Newest list")).toBeTruthy();
+    await act(async () => older.resolve([ticket({ id: "TUR-8", title: "Stale list" })]));
+
+    expect(screen.getByText("Newest list")).toBeTruthy();
+    expect(screen.queryByText("Stale list")).toBeNull();
   });
 });

@@ -808,6 +808,55 @@ mod tests {
     }
 
     #[test]
+    fn tickets_lists_the_shared_folder_and_no_meetings_suggestions() {
+        const OTHER: &str = "2026-09-02-0900-planning";
+        let root_dir = temp_root("meeting-folders");
+        let root = root_dir.path();
+        meeting_folder(root);
+        fs::create_dir_all(root.join(OTHER)).expect("other meeting folder");
+        let by_hand = create_in(root, "By hand", "").expect("create");
+        write_notes(root, &["Load test", "Runbook"]);
+        let analysis = agent_notes::Analysis {
+            by: agent_notes::AnalyzedBy::ClaudeCode,
+            model: "sonnet".to_owned(),
+            at: "2026-09-02T09:30:00+05:30".to_owned(),
+        };
+        let other = agent_notes::write(
+            root,
+            OTHER,
+            &notes_with(&["Draft the plan"]),
+            &analysis,
+            &SelfWrites::default(),
+        )
+        .expect("notes")
+        .written;
+        assert_eq!(other.len(), 1, "{other:?}");
+
+        // Suggestions wait in their meeting until approved (SPEC A26).
+        let ids: Vec<String> = list_in(root)
+            .expect("list")
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids, [by_hand.id.as_str()]);
+
+        // Approved, the other meeting's task is listed, keeping its meeting.
+        approve_in(root, OTHER, &other[0], &SelfWrites::default()).expect("approve");
+        let listed = list_in(root).expect("list");
+        let rows: Vec<(&str, Option<&str>, bool)> = listed
+            .iter()
+            .map(|t| (t.id.as_str(), t.meeting.as_deref(), t.suggested))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                (other[0].as_str(), Some(OTHER), false),
+                (by_hand.id.as_str(), None, false),
+            ]
+        );
+    }
+
+    #[test]
     fn a_ticket_lists_its_owner_and_due_date() {
         let root_dir = temp_root("owner-due");
         let root = root_dir.path();
