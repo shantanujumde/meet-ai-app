@@ -158,8 +158,11 @@ mod tests {
         assert_eq!(next_ticket_number(root.path()).expect("next"), 13);
     }
 
+    /// A file only: Windows opens no folder for writing its time.
     fn age(path: &Path) {
-        std::fs::File::open(path)
+        std::fs::File::options()
+            .write(true)
+            .open(path)
             .and_then(|file| {
                 file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
             })
@@ -185,10 +188,9 @@ mod tests {
             "2026-10-01-1000-a",
             "retired_tickets:\n  - TICK-0004\n",
         );
+        // No `tickets/` yet: a missing folder needs no time to settle.
         let tickets = a.join(TICKETS_DIR);
-        std::fs::create_dir_all(&tickets).expect("tickets");
         age(&a.join(MEETING_FILE));
-        age(&tickets);
         assert_eq!(next_ticket_number(root.path()).expect("next"), 5);
 
         let meeting_md = a.join(MEETING_FILE);
@@ -197,13 +199,16 @@ mod tests {
             .expect("mtime");
         let text = std::fs::read_to_string(&meeting_md).expect("read");
         std::fs::write(&meeting_md, text.replace("TICK-0004", "TICK-0009")).expect("swap");
-        std::fs::File::open(&meeting_md)
+        std::fs::File::options()
+            .write(true)
+            .open(&meeting_md)
             .and_then(|file| file.set_modified(modified))
             .expect("same mtime");
         assert_eq!(next_ticket_number(root.path()).expect("cached"), 5);
 
         age(&meeting_md);
         assert_eq!(next_ticket_number(root.path()).expect("re-read"), 10);
+        std::fs::create_dir_all(&tickets).expect("tickets");
         std::fs::write(tickets.join("TICK-0011.md"), "x").expect("ticket");
         assert_eq!(next_ticket_number(root.path()).expect("new ticket"), 12);
         assert_eq!(
