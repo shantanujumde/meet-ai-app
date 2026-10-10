@@ -16,14 +16,6 @@ use crate::config::{self, DetectionConfig};
 use crate::error::{UiError, on_blocking_pool};
 use crate::folder_move::FolderGate;
 
-/// The fewest attendees the card offers for "Only for meetings with at
-/// least N people".
-pub const MIN_ATTENDEES_FLOOR: u32 = 1;
-/// The most.
-pub const MIN_ATTENDEES_CEILING: u32 = 10;
-/// The longest lead time, as `config.schema.json` has it.
-pub const LONGEST_LEAD_MINUTES: u32 = 15;
-
 /// What the Notifications card shows and saves: `detection` in
 /// `config.jsonc`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -31,14 +23,16 @@ pub const LONGEST_LEAD_MINUTES: u32 = 15;
 pub struct NotificationSettings {
     /// "Remind me before meetings": `detection.calendar`.
     pub remind: bool,
-    /// The lead time: `detection.remind_before_minutes`, 0 to 15.
+    /// The lead time: `detection.remind_before_minutes`, 0 to
+    /// [`config::MAX_REMIND_BEFORE_MINUTES`].
     pub remind_before_minutes: u32,
     /// "Ask when a meeting app is running": `detection.processes`.
     pub processes: bool,
     /// "Ask when my mic and speakers are both in use":
     /// `detection.audio_activity`.
     pub audio_activity: bool,
-    /// "Only for meetings with at least N people": `detection.min_attendees`.
+    /// "Only for meetings with at least N people": `detection.min_attendees`,
+    /// [`config::MIN_ATTENDEES`] to [`config::MAX_ATTENDEES`].
     pub min_attendees: u32,
     /// "Ask to record when a call starts": `detection.call_start` (TUR-143).
     pub call_start: bool,
@@ -65,18 +59,31 @@ impl From<DetectionConfig> for NotificationSettings {
 }
 
 impl NotificationSettings {
-    /// The `detection` section to save, or why these cannot be saved.
-    pub fn to_config(self) -> Result<DetectionConfig, UiError> {
-        if self.remind_before_minutes > LONGEST_LEAD_MINUTES {
+    /// The `detection` section to save over `on_disk`, or why these cannot be
+    /// saved. Only a value that differs from `on_disk` is checked (TUR-155):
+    /// a hand-edited value the card did not change never blocks a toggle.
+    pub fn to_config(self, on_disk: &DetectionConfig) -> Result<DetectionConfig, UiError> {
+        if self.remind_before_minutes != on_disk.remind_before_minutes
+            && self.remind_before_minutes > config::MAX_REMIND_BEFORE_MINUTES
+        {
             return Err(UiError::app(
                 "invalid-setting",
-                "The reminder can be at most 15 minutes before the meeting.",
+                format!(
+                    "The reminder can be at most {} minutes before the meeting.",
+                    config::MAX_REMIND_BEFORE_MINUTES
+                ),
             ));
         }
-        if !(MIN_ATTENDEES_FLOOR..=MIN_ATTENDEES_CEILING).contains(&self.min_attendees) {
+        if self.min_attendees != on_disk.min_attendees
+            && !(config::MIN_ATTENDEES..=config::MAX_ATTENDEES).contains(&self.min_attendees)
+        {
             return Err(UiError::app(
                 "invalid-setting",
-                "The number of people must be from 1 to 10.",
+                format!(
+                    "The number of people must be from {} to {}.",
+                    config::MIN_ATTENDEES,
+                    config::MAX_ATTENDEES
+                ),
             ));
         }
         Ok(DetectionConfig {
@@ -107,12 +114,11 @@ pub async fn set_notification_settings(
     app: AppHandle,
     settings: NotificationSettings,
 ) -> Result<NotificationSettings, UiError> {
-    let wanted = settings.to_config()?;
     let handle = app.clone();
     let saved = on_blocking_pool(move || {
         handle
             .state::<FolderGate>()
-            .writing(|| Ok(config::set_detection(&wanted)?))
+            .writing(|| config::update_detection(|on_disk| settings.to_config(on_disk)))
     })
     .await??;
     if let Some(detection) = app.try_state::<Detection>() {
@@ -229,8 +235,9 @@ mod tests {
             call_end: false,
             stop_after_silence: false,
         };
+        let on_disk = DetectionConfig::default();
         assert_eq!(
-            changed.to_config().unwrap(),
+            changed.to_config(&on_disk).unwrap(),
             DetectionConfig {
                 calendar: false,
                 processes: false,
@@ -243,7 +250,7 @@ mod tests {
             }
         );
         assert_eq!(
-            NotificationSettings::from(changed.to_config().unwrap()),
+            NotificationSettings::from(changed.to_config(&on_disk).unwrap()),
             changed
         );
     }
@@ -264,7 +271,8 @@ mod tests {
                 ..settings()
             },
         ] {
-            assert!(bad.to_config().is_err(), "{bad:?}");
+            let error = bad.to_config(&DetectionConfig::default()).unwrap_err();
+            assert_eq!(error.kind, "invalid-setting", "{bad:?}");
         }
         for ok in [0, 15] {
             assert!(
@@ -272,10 +280,50 @@ mod tests {
                     remind_before_minutes: ok,
                     ..settings()
                 }
-                .to_config()
+                .to_config(&DetectionConfig::default())
                 .is_ok()
             );
         }
+    }
+
+    #[test]
+    fn the_refusals_name_the_range_from_the_constants() {
+        let error = NotificationSettings {
+            min_attendees: 11,
+            ..settings()
+        }
+        .to_config(&DetectionConfig::default())
+        .unwrap_err();
+        assert_eq!(error.message, "The number of people must be from 1 to 10.");
+        let error = NotificationSettings {
+            remind_before_minutes: 16,
+            ..settings()
+        }
+        .to_config(&DetectionConfig::default())
+        .unwrap_err();
+        assert!(
+            error.message.contains("at most 15 minutes"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn a_hand_edited_value_the_card_did_not_change_never_blocks_a_toggle() {
+        // TUR-155: whatever the reader shows for a hand-edited value comes
+        // back unchanged with every toggle; only a changed value is checked.
+        let on_disk = DetectionConfig {
+            min_attendees: 20,
+            remind_before_minutes: 30,
+            ..DetectionConfig::default()
+        };
+        let toggled = NotificationSettings {
+            processes: false,
+            ..NotificationSettings::from(on_disk)
+        };
+        let wanted = toggled.to_config(&on_disk).unwrap();
+        assert!(!wanted.processes);
+        assert_eq!(wanted.min_attendees, 20);
     }
 
     #[test]

@@ -37,6 +37,7 @@ use jsonc_parser::cst::CstInputValue;
 
 use super::agent_section::ConfigError;
 use super::file::{read_in, with_section, write_in};
+use super::keyed::Keys;
 use super::read_section;
 
 /// One calendar source (SPEC L13, §2.7).
@@ -207,6 +208,9 @@ struct RawCalendar {
 /// `calendar` from the text of `config.jsonc`. Empty text, or no `calendar`
 /// key, is all defaults. An unknown provider name, `"eventkit"` off macOS, or
 /// a `refresh_minutes` of 0 is an error.
+// Since TUR-155 the Settings write skips bad values too; this stays for a
+// caller that wants the error itself.
+#[allow(dead_code)]
 pub fn parse_calendar(raw: &str) -> Result<CalendarConfig, ConfigError> {
     parse_calendar_on(raw, crate::platform::HAS_CALENDAR_APP)
 }
@@ -315,6 +319,7 @@ pub fn calendar() -> CalendarConfig {
 
 /// `raw` with `calendar.providers` set to `providers`, comments and every
 /// other key kept.
+#[cfg(test)]
 pub fn with_providers(raw: &str, providers: &[Provider]) -> Result<String, ConfigError> {
     let names = providers
         .iter()
@@ -333,21 +338,46 @@ pub fn with_providers(raw: &str, providers: &[Provider]) -> Result<String, Confi
 pub fn set_providers(edit: impl FnOnce(&mut Vec<Provider>)) -> Result<CalendarConfig, ConfigError> {
     let dir = super::app_dir().map_err(ConfigError::Root)?;
     write_in(&dir, |raw| edit_providers(raw, edit))?;
-    parse_calendar(&read_in(&dir)?)
+    // TUR-155: the save landed, so a bad value elsewhere in the section is
+    // skipped (logged) here rather than reported as a failed save.
+    Ok(calendar_or_defaults(&read_in(&dir)?))
 }
 
-/// `raw` with `edit` applied to its providers, without repeats. The OS
-/// check stays with [`parse_calendar`], so the result is checked on read.
+/// `raw` with `edit` applied to its providers, without repeats. Only
+/// `providers` is read (TUR-155), so a bad value in another key never stops
+/// the save, and a name the app does not know (a typo such as `"googel"`)
+/// is kept as written, after the known ones. The OS check stays with the
+/// reader. Only a file that does not parse is refused, never overwritten.
 fn edit_providers(raw: &str, edit: impl FnOnce(&mut Vec<Provider>)) -> Result<String, ConfigError> {
-    let mut providers = parse_calendar(raw)?.providers;
+    let mut keys = Keys::read(raw, "calendar");
+    let (mut providers, unknown) = match keys.get::<Vec<String>>("providers") {
+        None => (CalendarConfig::default().providers, Vec::new()),
+        Some(names) => {
+            let (mut known, mut unknown) = (Vec::new(), Vec::new());
+            for name in names {
+                match Provider::from_config(&name) {
+                    Ok(provider) => known.push(provider),
+                    Err(_) => unknown.push(name),
+                }
+            }
+            (known, unknown)
+        }
+    };
     edit(&mut providers);
-    let mut unique = Vec::with_capacity(providers.len());
+    let mut names: Vec<String> = Vec::with_capacity(providers.len() + unknown.len());
     for provider in providers {
-        if !unique.contains(&provider) {
-            unique.push(provider);
+        let name = provider.as_str().to_owned();
+        if !names.contains(&name) {
+            names.push(name);
         }
     }
-    with_providers(raw, &unique)
+    names.extend(unknown);
+    let names = names.into_iter().map(CstInputValue::String).collect();
+    with_section(
+        raw,
+        "calendar",
+        vec![("providers", CstInputValue::Array(names))],
+    )
 }
 
 #[cfg(test)]
@@ -691,7 +721,18 @@ mod tests {
             vec![Provider::Google, Provider::Microsoft]
         );
         assert!(edit_providers("{ not json", |_| {}).is_err());
-        assert!(edit_providers(r#"{ "calendar": { "providers": ["googel"] } }"#, |_| {}).is_err());
+        // TUR-155: a typo is kept as written, and a bad key beside it does
+        // not stop the save.
+        let kept = edit_providers(
+            r#"{ "calendar": { "providers": ["googel"], "refresh_minutes": "5" } }"#,
+            |list| list.push(Provider::Microsoft),
+        )
+        .unwrap();
+        assert!(
+            kept.contains(r#"["microsoft", "googel"]"#) || kept.contains(r#""microsoft","googel""#),
+            "{kept}"
+        );
+        assert!(kept.contains(r#""refresh_minutes": "5""#), "{kept}");
     }
 
     #[test]

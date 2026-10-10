@@ -23,7 +23,9 @@ use stt::registry::Preference;
 
 use super::FILE;
 use super::agent_section::parse_default_repo;
-use super::agent_section::{AgentConfig, ConfigError, TicketsConfig, parse_agent, parse_tickets};
+use super::agent_section::{
+    AgentConfig, ConfigError, Harness, TicketsConfig, parse_agent, parse_tickets,
+};
 
 /// The JSON Schema for `config.jsonc`, kept in the repo and shipped inside the
 /// binary.
@@ -47,6 +49,38 @@ pub fn tickets() -> Result<TicketsConfig, ConfigError> {
 /// default (TUR-113): only then are tickets sent to it on their own.
 pub fn tickets_chosen() -> Result<bool, ConfigError> {
     super::agent_section::parse_tickets_chosen(&read_in(&app_dir()?)?)
+}
+
+/// `tickets`, whether the user chose them, and the agent's harness.
+pub type TrackerView = (TicketsConfig, bool, Harness);
+
+/// `tickets`, whether the user chose them ([`tickets_chosen`]), and the
+/// agent's harness, all from one read of `~/Meetings/.app/config.jsonc`
+/// (TUR-155). The harness is best effort: a bad `agent` section never fails
+/// the tracker settings.
+pub fn tracker_view() -> Result<TrackerView, ConfigError> {
+    tracker_view_of(&read_in(&app_dir()?)?)
+}
+
+/// [`tracker_view`] from the text of `config.jsonc`.
+pub fn tracker_view_of(raw: &str) -> Result<TrackerView, ConfigError> {
+    Ok((
+        parse_tickets(raw)?,
+        super::agent_section::parse_tickets_chosen(raw)?,
+        super::agent_section::parse_harness_best_effort(raw),
+    ))
+}
+
+/// The agent's harness, best effort ([`tracker_view`]): the default when the
+/// file cannot be read.
+pub fn harness_best_effort() -> Harness {
+    match app_dir().and_then(|dir| read_in(&dir)) {
+        Ok(raw) => super::agent_section::parse_harness_best_effort(&raw),
+        Err(error) => {
+            tracing::warn!(%error, "config.jsonc could not be read; showing the default agent");
+            Harness::default()
+        }
+    }
 }
 
 /// `repos.default` from `~/Meetings/.app/config.jsonc`, `None` when unset.
@@ -151,12 +185,39 @@ pub(super) fn write_in<E: From<ConfigError>>(
 
 fn write_file_and_schema(dir: &Path, updated: &str) -> Result<(), ConfigError> {
     store::create_app_dir(dir)?;
-    write_atomic(&dir.join(FILE), updated)?;
+    // TUR-155: a `config.jsonc` that is a link (to a dotfiles repo, say) stays
+    // a link; the file it points at is the one replaced.
+    write_atomic(&link_target(&dir.join(FILE)), updated)?;
+    // The save above has landed, so a schema that cannot be written only
+    // costs editor autocomplete: logged, never reported as a failed save.
     let schema = dir.join(SCHEMA_FILE);
-    if std::fs::read_to_string(&schema).ok().as_deref() != Some(SCHEMA) {
-        write_atomic(&schema, SCHEMA)?;
+    if std::fs::read_to_string(&schema).ok().as_deref() != Some(SCHEMA)
+        && let Err(error) = write_atomic(&schema, SCHEMA)
+    {
+        tracing::warn!(%error, "config.schema.json could not be written; the config save itself landed");
     }
     Ok(())
+}
+
+/// The most links [`link_target`] follows, so a loop of links ends.
+const MAX_LINKS: usize = 40;
+
+/// `path` with every symlink at its end followed, relative targets taken
+/// from the link's own folder. `path` itself when it is not a link. A
+/// dangling link resolves to the missing file it names, which the write
+/// then creates.
+fn link_target(path: &Path) -> PathBuf {
+    let mut path = path.to_path_buf();
+    for _ in 0..MAX_LINKS {
+        let Ok(target) = std::fs::read_link(&path) else {
+            break;
+        };
+        path = match path.parent() {
+            Some(folder) => folder.join(target),
+            None => target,
+        };
+    }
+    path
 }
 
 /// Through `meeting_format::write_atomic`: a unique temp file, synced, then
@@ -213,6 +274,11 @@ pub(super) fn with_section(
     section: &str,
     fields: Vec<(&str, CstInputValue)>,
 ) -> Result<String, ConfigError> {
+    // Nothing changed (a setter that writes only the keys it changed,
+    // TUR-155): the file is left exactly as it is.
+    if fields.is_empty() {
+        return Ok(raw.to_owned());
+    }
     // A file that does not parse is refused, never overwritten: it is the
     // user's file, and a typo is no reason to lose the rest of it.
     let root = CstRootNode::parse(raw, &Default::default())

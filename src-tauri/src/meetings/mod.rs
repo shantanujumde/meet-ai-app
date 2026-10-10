@@ -32,6 +32,9 @@ mod view;
 pub use self::list::{Live, MeetingList, list, recover_interrupted_audio};
 pub use self::root::{change_root, root};
 pub use self::view::{MeetingDetail, detail, rename, write_notes};
+// TUR-155: the config writer's tests make a symlinked `config.jsonc`.
+#[cfg(test)]
+pub(crate) use self::platform::symlink;
 // `recording.rs`'s tests check that the list parser reads back what the
 // recorder writes.
 #[cfg(test)]

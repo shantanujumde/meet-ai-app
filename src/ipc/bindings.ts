@@ -524,6 +524,18 @@ export const commands = {
 	setShowRecordingOverlay: (on: boolean) => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("set_show_recording_overlay", { on })),
 	/**  The overlay's transcript text was clicked: bring the main window forward. */
 	overlayShowMain: () => __TAURI_INVOKE<void>("overlay_show_main"),
+	/**
+	 *  What in `section` of `config.jsonc` was not valid and is shown as its
+	 *  default, or `None` when all of it was valid.
+	 */
+	configProblem: (section: meet_ai_lib_config_problem_ConfigSection) => typedError<{
+	/**  Which error enum this came from: `stt`, `model`, or `app`. */
+	domain: string,
+	/**  The stable variant tag. Safe to `switch` on. */
+	kind: string,
+	/**  The error's own sentence. Display it; do not parse it. */
+	message: string,
+} | null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("config_problem", { section })),
 };
 
 /* Constants */
@@ -535,9 +547,13 @@ export const HEADPHONE_WARNING_EVENT = "headphones://warning" as const;
 
 export const HOOK_FAILED_EVENT = "hook://failed" as const;
 
+export const MAX_ATTENDEES = 10 as const;
+
 export const MEETINGS_CHANGED_EVENT = "meetings-changed" as const;
 
 export const MEETINGS_WATCH_PROBLEM_EVENT = "meetings-watch://problem" as const;
+
+export const MIN_ATTENDEES = 1 as const;
 
 export const MODEL_PROGRESS_EVENT = "model://progress" as const;
 
@@ -744,6 +760,15 @@ export type meet_ai_lib_brief_Commit = {
 	subject: string,
 };
 
+/**  The `config.jsonc` sections a Settings card shows. */
+export type meet_ai_lib_config_problem_ConfigSection = 
+/**  Settings, General: the Dock and menu-bar switches. */
+"app" | 
+/**  Settings, Appearance. */
+"appearance" | 
+/**  Settings, Notifications. */
+"detection";
+
 /**  Whether one choice can be picked, and the sentence to show when not. */
 export type meet_ai_lib_engine_choices_EngineAvailability = {
 	available: boolean,
@@ -776,6 +801,11 @@ export type meet_ai_lib_engine_choices_EngineChoices = {
 	 *  Hinglish, then every language whisper has a token for, by name.
 	 */
 	spokenLanguages: meet_ai_lib_engine_choices_SpokenLanguageOption[],
+	/**
+	 *  What in `transcription` was not valid and is shown as its default
+	 *  (TUR-155), such as `"engine": "whispr"`; `None` when all of it was.
+	 */
+	configProblem: string | null,
 };
 
 /**  What the filesystem says, with no subprocess involved. */
@@ -1055,7 +1085,10 @@ export type meet_ai_lib_agent_run_NotesSection = {
 export type meet_ai_lib_detection_settings_NotificationSettings = {
 	/**  "Remind me before meetings": `detection.calendar`. */
 	remind: boolean,
-	/**  The lead time: `detection.remind_before_minutes`, 0 to 15. */
+	/**
+	 *  The lead time: `detection.remind_before_minutes`, 0 to
+	 *  [`config::MAX_REMIND_BEFORE_MINUTES`].
+	 */
 	remindBeforeMinutes: number,
 	/**  "Ask when a meeting app is running": `detection.processes`. */
 	processes: boolean,
@@ -1064,7 +1097,10 @@ export type meet_ai_lib_detection_settings_NotificationSettings = {
 	 *  `detection.audio_activity`.
 	 */
 	audioActivity: boolean,
-	/**  "Only for meetings with at least N people": `detection.min_attendees`. */
+	/**
+	 *  "Only for meetings with at least N people": `detection.min_attendees`,
+	 *  [`config::MIN_ATTENDEES`] to [`config::MAX_ATTENDEES`].
+	 */
 	minAttendees: number,
 	/**  "Ask to record when a call starts": `detection.call_start` (TUR-143). */
 	callStart: boolean,

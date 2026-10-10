@@ -127,6 +127,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::overlay::show_recording_overlay,
             crate::overlay::set_show_recording_overlay,
             crate::overlay::overlay_show_main,
+            crate::config_problem::config_problem,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)
@@ -148,6 +149,9 @@ pub fn builder() -> Builder<tauri::Wry> {
             "RECORD_SHORTCUT_OTHER",
             crate::shortcut::RECORD_SHORTCUT_OTHER,
         )
+        // TUR-155: the one range `detection.min_attendees` takes.
+        .constant("MIN_ATTENDEES", crate::config::MIN_ATTENDEES)
+        .constant("MAX_ATTENDEES", crate::config::MAX_ATTENDEES)
         .typ::<crate::detection::notify::Prompt>()
         .typ::<crate::lifecycle::NavigateTo>()
         .typ::<crate::hooks::app::HookFailed>()

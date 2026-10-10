@@ -109,6 +109,9 @@ pub struct EngineChoices {
     /// What the spoken-language picker offers besides `auto`, in its order:
     /// Hinglish, then every language whisper has a token for, by name.
     pub spoken_languages: Vec<SpokenLanguageOption>,
+    /// What in `transcription` was not valid and is shown as its default
+    /// (TUR-155), such as `"engine": "whispr"`; `None` when all of it was.
+    pub config_problem: Option<String>,
 }
 
 /// One language the spoken-language picker offers.
@@ -139,9 +142,15 @@ const HINGLISH_NAME: &str = "Hinglish (Hindi and English)";
 
 /// The picker as it stands. Runs the ~160 ms probe; call it off the render path.
 pub fn choices() -> EngineChoices {
-    let transcription = config::transcription();
+    let config::Checked {
+        value: transcription,
+        problem,
+    } = config::transcription_checked();
     let environment = super::discover(super::DEFAULT_LOCALE, &transcription.model);
-    view(&transcription, registry::options(&environment))
+    EngineChoices {
+        config_problem: problem,
+        ..view(&transcription, registry::options(&environment))
+    }
 }
 
 fn view(transcription: &Transcription, options: registry::EngineOptions) -> EngineChoices {
@@ -157,6 +166,7 @@ fn view(transcription: &Transcription, options: registry::EngineOptions) -> Engi
         languages: options.installed_locales,
         spoken_language: transcription.language.clone(),
         spoken_languages: spoken_languages(),
+        config_problem: None,
     }
 }
 
