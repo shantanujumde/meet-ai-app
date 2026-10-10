@@ -293,9 +293,10 @@ pub async fn todays_meetings(app: AppHandle) -> Result<TodaysMeetings, UiError> 
 
 /// `calendar.refresh_minutes` alone: a config read, never the calendar. The
 /// Today pane asks for it when [`todays_meetings`] fails, so the re-read
-/// timer follows the config even while access is denied.
+/// timer follows the config even while access is denied. On the blocking
+/// pool: the root pointer and `config.jsonc` are disk reads (TUR-172).
 #[tauri::command]
 #[specta::specta]
-pub async fn calendar_refresh_minutes() -> u32 {
-    config::calendar().refresh_minutes
+pub async fn calendar_refresh_minutes() -> Result<u32, UiError> {
+    crate::error::on_blocking_pool(|| config::calendar().refresh_minutes).await
 }

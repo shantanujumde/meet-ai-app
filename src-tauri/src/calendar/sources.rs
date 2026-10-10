@@ -95,17 +95,16 @@ async fn edit_providers(
 }
 
 /// Which calendar sources this OS offers and which are set up. A config
-/// read only; never the network or the keystore.
+/// read only; never the network or the keystore. A read that panicked is
+/// the error kind `task-failed`, never the default sources: those would
+/// show the Calendar app on when it is off (TUR-172).
 #[tauri::command]
 #[specta::specta]
-pub async fn calendar_sources() -> CalendarSources {
-    tauri::async_runtime::spawn_blocking(current)
+pub async fn calendar_sources() -> Result<CalendarSources, UiError> {
+    crate::error::on_blocking_pool(current)
         .await
-        .unwrap_or_else(|_| {
-            CalendarSources::new(
-                &CalendarConfig::default(),
-                crate::platform::HAS_CALENDAR_APP,
-            )
+        .inspect_err(|error| {
+            tracing::warn!(message = %error.message, "could not read the calendar sources");
         })
 }
 

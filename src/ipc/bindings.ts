@@ -353,9 +353,10 @@ export const commands = {
 	/**
 	 *  `calendar.refresh_minutes` alone: a config read, never the calendar. The
 	 *  Today pane asks for it when [`todays_meetings`] fails, so the re-read
-	 *  timer follows the config even while access is denied.
+	 *  timer follows the config even while access is denied. On the blocking
+	 *  pool: the root pointer and `config.jsonc` are disk reads (TUR-172).
 	 */
-	calendarRefreshMinutes: () => __TAURI_INVOKE<number>("calendar_refresh_minutes"),
+	calendarRefreshMinutes: () => typedError<number, meet_ai_lib_error_UiError>(__TAURI_INVOKE("calendar_refresh_minutes")),
 	/**
 	 *  Both providers' sign-in state. The first call after a launch refreshes
 	 *  each stored sign-in once, to learn the account and whether it still works.
@@ -363,9 +364,11 @@ export const commands = {
 	calendarAccounts: () => typedError<meet_ai_lib_calendar_signin_CalendarAccount[], meet_ai_lib_error_UiError>(__TAURI_INVOKE("calendar_accounts")),
 	/**
 	 *  Which calendar sources this OS offers and which are set up. A config
-	 *  read only; never the network or the keystore.
+	 *  read only; never the network or the keystore. A read that panicked is
+	 *  the error kind `task-failed`, never the default sources: those would
+	 *  show the Calendar app on when it is off (TUR-172).
 	 */
-	calendarSources: () => __TAURI_INVOKE<meet_ai_lib_calendar_sources_CalendarSources>("calendar_sources"),
+	calendarSources: () => typedError<meet_ai_lib_calendar_sources_CalendarSources, meet_ai_lib_error_UiError>(__TAURI_INVOKE("calendar_sources")),
 	/**
 	 *  Turn the Calendar app on or off (macOS). On first, so its ids win when a
 	 *  meeting is also in a signed-in calendar. Off macOS, turning it on is the
@@ -397,8 +400,12 @@ export const commands = {
 	 *  `git`.
 	 */
 	meetingBrief: (title: string) => typedError<meet_ai_lib_brief_MeetingBrief, meet_ai_lib_error_UiError>(__TAURI_INVOKE("meeting_brief", { title })),
-	/**  `audio.retention_days` as the retention job reads it, for Settings. */
-	audioRetentionDays: () => __TAURI_INVOKE<meet_ai_lib_retention_AudioRetentionSetting>("audio_retention_days"),
+	/**
+	 *  `audio.retention_days` as the retention job reads it, for Settings. On
+	 *  the blocking pool: the root pointer and `config.jsonc` are disk reads
+	 *  (TUR-172).
+	 */
+	audioRetentionDays: () => typedError<meet_ai_lib_retention_AudioRetentionSetting, meet_ai_lib_error_UiError>(__TAURI_INVOKE("audio_retention_days")),
 	/**
 	 *  "Stop and quit": let the held quit through. The recording is then
 	 *  stopped the same way the Stop button does, off the main thread
@@ -451,9 +458,11 @@ export const commands = {
 	/**
 	 *  "Send a test reminder": a reminder for a fake "Test meeting" starting in
 	 *  the configured lead time, through the real prompt path. `false` when
-	 *  nothing was shown because a recording is running. Never records.
+	 *  nothing was shown because a recording is running. Never records. The
+	 *  lead time is read on the blocking pool: it may read `config.jsonc`
+	 *  (TUR-172).
 	 */
-	sendTestReminder: () => __TAURI_INVOKE<boolean>("send_test_reminder"),
+	sendTestReminder: () => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("send_test_reminder")),
 	/**
 	 *  The "Never detect" list (TUR-143): `detection.never_detect`, the apps a
 	 *  prompt's "Never for" added or the user wrote in.
