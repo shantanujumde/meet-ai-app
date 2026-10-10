@@ -35,7 +35,10 @@ export function NotesPane({
   onSaved,
 }: {
   meetingId: string;
-  /** What was on disk when the meeting was opened. Never re-applied after. */
+  /**
+   * What was on disk when the meeting was opened. Read on mount only, never
+   * re-applied: render the pane with `key={meetingId}`.
+   */
   initialNotes: string;
   onSaved?: (body: string) => void;
 }) {
@@ -48,14 +51,11 @@ export function NotesPane({
   const savedOnDisk = useRef(initialNotes);
   const timer = useRef<number | undefined>(undefined);
 
-  // Switching meetings replaces the whole pane's contents. Keyed on the id so
-  // this cannot fire while the user is typing into the same meeting.
-  useEffect(() => {
-    setText(initialNotes);
-    setState({ kind: "clean" });
-    latest.current = initialNotes;
-    savedOnDisk.current = initialNotes;
-  }, [initialNotes]);
+  // `initialNotes` is read once, above, and never again (TUR-150). The parent
+  // re-reads the meeting (when its recording stops, say) while the user may
+  // still be typing, and putting the disk's older text back would drop what
+  // they typed since. Another meeting gets a new pane: the parent keys this
+  // component on the meeting id.
 
   // `onSaved` is typically an inline arrow from the parent, so it gets a new
   // identity whenever the parent re-renders. Held in a ref so it cannot change
@@ -81,8 +81,9 @@ export function NotesPane({
     }
   }, [meetingId]);
 
-  // Flush whatever is pending when the pane goes away or the meeting changes.
-  // Navigating to another meeting with a save still debounced must not drop it.
+  // Flush whatever is pending when the pane goes away. Navigating to another
+  // meeting unmounts it (it is keyed on the id), and a save still debounced
+  // must not be dropped.
   useEffect(() => {
     return () => {
       window.clearTimeout(timer.current);
