@@ -30,9 +30,9 @@ pub(crate) const F32_GOLDEN_HASHES: bool = true;
 /// mach_timebase_info"). `AudioGetCurrentHostTime` returns exactly the value
 /// `mach_absolute_time()` would — same underlying counter — so calling it
 /// from the mic callback keeps both channels' anchors comparable without
-/// needing to reconcile two different clock epochs. `cpal`'s own per-callback
-/// `InputCallbackInfo` timestamp is not documented to share that domain, so
-/// this reads the Core Audio host clock directly instead of trusting it.
+/// needing to reconcile two different clock epochs. `cpal` does not document
+/// its per-callback `InputCallbackInfo` timestamp as sharing that domain, so
+/// [`input_callback_ns`] only takes it when it is plausible against this.
 pub(crate) fn host_now_ns() -> u64 {
     // SAFETY: both calls read current host-clock state; neither takes a
     // pointer or has a precondition beyond "the audio HAL is initialized",
@@ -42,10 +42,25 @@ pub(crate) fn host_now_ns() -> u64 {
     }
 }
 
-/// The microphone's callbacks keep stamping themselves with [`host_now_ns`],
-/// the tap's clock, rather than `cpal`'s callback time (see above).
-pub(crate) fn input_callback_ns(_info: &cpal::InputCallbackInfo) -> Option<u64> {
-    None
+/// When the microphone callback's first frame was captured, on the tap's
+/// clock (TUR-151). Before, the callback stamped itself with
+/// [`host_now_ns`] when it ran, later than the capture by at least the
+/// packet, while the tap stamps `inInputTime`, its capture time.
+///
+/// `cpal` 0.18.2's Core Audio input callback builds `callback` from the
+/// callback's `AudioTimeStamp.mHostTime` scaled by `mach_timebase_info`
+/// (`src/host/coreaudio/mod.rs` `host_time_to_stream_instant`,
+/// `macos/device.rs` input callback), the same ns domain as
+/// `AudioConvertHostTimeToNanos`. Its `capture` takes a further latency
+/// estimate off that, which the tap's time does not, so `callback` is used.
+/// That this time is the first frame's capture is to be verified on
+/// hardware (`docs/manual-checks/worktree-tur151.md`); a time that is not
+/// plausible against [`host_now_ns`] is ignored by the caller
+/// (`crate::capture_clock::first_frame_ns`), which then falls back to the
+/// callback's own time less the packet.
+pub(crate) fn input_callback_ns(info: &cpal::InputCallbackInfo) -> Option<u64> {
+    let ns = u64::try_from(info.timestamp().callback.as_nanos()).ok()?;
+    (ns != 0).then_some(ns)
 }
 
 /// The Core Audio process tap.

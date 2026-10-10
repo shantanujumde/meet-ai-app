@@ -342,3 +342,47 @@ fn the_header_is_always_exactly_44_bytes_with_no_extra_chunks() {
         "no chunk may sit between the header and the samples"
     );
 }
+
+/// TUR-151: on a reopened file the front belongs to the earlier segments, so
+/// `prepend_silence` refuses, and `pad_segment_head` pads where this
+/// writer began appending, shifting only what it appended since.
+#[test]
+fn a_reopened_writer_pads_its_segment_head_and_refuses_to_prepend() {
+    let (_dir, path) = temp_path("reopen-pad.wav");
+    let first = tone(160, 440.0);
+    let mut w = WavWriter::create(&path).unwrap();
+    w.append(&first).unwrap();
+    w.fsync_data().unwrap();
+    w.patch_header().unwrap();
+    drop(w);
+
+    let mut w = WavWriter::open_append(&path).unwrap();
+    let second = tone(40, 880.0);
+    w.append(&second).unwrap();
+    let refused = w.prepend_silence(10).unwrap_err();
+    assert_eq!(refused.kind(), io::ErrorKind::InvalidInput);
+    w.pad_segment_head(80).unwrap();
+    w.fsync_data().unwrap();
+    w.patch_header().unwrap();
+
+    let (frames, samples) = read_declared(&path).unwrap();
+    assert_eq!(frames, 160 + 80 + 40);
+    assert_eq!(samples[..160], first, "the earlier segment did not move");
+    assert!(samples[160..240].iter().all(|&s| s == 0), "the pad");
+    assert_eq!(samples[240..], second, "this segment's audio after its pad");
+}
+
+#[test]
+fn on_a_created_file_the_segment_head_is_the_file_head() {
+    let (_dir, path) = temp_path("created-pad.wav");
+    let real = tone(160, 440.0);
+    let mut w = WavWriter::create(&path).unwrap();
+    w.append(&real).unwrap();
+    w.pad_segment_head(80).unwrap();
+    w.fsync_data().unwrap();
+    w.patch_header().unwrap();
+    let (frames, samples) = read_declared(&path).unwrap();
+    assert_eq!(frames, 240);
+    assert!(samples[..80].iter().all(|&s| s == 0));
+    assert_eq!(samples[80..], real);
+}

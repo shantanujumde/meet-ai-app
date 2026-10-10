@@ -3,12 +3,12 @@
 //! `cpal` is already cross-platform (SETUP.md: pinned at 0.18.2 for exactly
 //! this reason), so unlike the process tap — macOS-only, lives in
 //! [`crate::macos`] per SPEC §4's ⛔ — this module needs no platform gate of
-//! its own. The one exception is the host-clock read each callback stamps
-//! itself with, which is OS code and comes from `crate::platform`.
+//! its own. The one exception is the capture time each callback stamps its
+//! packet with, which is OS code and comes from `crate::platform`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -16,11 +16,13 @@ use cpal::{SampleFormat, Stream, StreamConfig};
 use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
+use crate::capture_clock::{CaptureClock, Feed, first_frame_ns, time_marks};
 use crate::loopback::sound_server::{SoundServer, input_buffer_size, is_alsa_null};
 use crate::mic_choice::{self, MicChoice};
 use crate::pipeline::Pipeline;
 use crate::platform::host_now_ns;
-// TUR-37: on Windows the capture time WASAPI stamps, the loopback's clock too.
+// The OS's capture time, on the host clock: WASAPI's on Windows (TUR-37),
+// Core Audio's on macOS (TUR-151).
 use crate::platform::input_callback_ns;
 use crate::rate_meter::{CallbackMeter, FixedRates, Rates};
 use crate::tee::Tee;
@@ -78,23 +80,18 @@ impl MicSource {
 
     /// Raw device samples → [`Pipeline`], following the measured rate
     /// (TUR-87): when the callbacks deliver another rate than `cpal`
-    /// reported, the resampler is rebuilt at the measured one.
+    /// reported, the resampler is rebuilt at the measured one. Every append
+    /// carries the capture time of the frame it ends at (TUR-151).
     fn worker_loop(
         mut consumer: HeapCons<f32>,
         mut pipeline: Pipeline,
         rates: Arc<FixedRates>,
         track: TrackWriter,
-        last_cb_host_ns: Arc<AtomicU64>,
+        clock: CaptureClock,
         running: Arc<AtomicBool>,
         tee: Option<Tee>,
     ) {
-        let mut sink = |frames: &[i16]| {
-            track.append(
-                frames,
-                last_cb_host_ns.load(Ordering::Relaxed),
-                tee.as_ref(),
-            );
-        };
+        let mut feed = Feed::new(track, clock, tee);
         // Sized once; `pop_slice` only refills it.
         let mut scratch = vec![0.0f32; 4096];
         loop {
@@ -105,8 +102,7 @@ impl MicSource {
                 std::thread::sleep(IDLE_POLL);
                 continue;
             }
-            pipeline.follow(&*rates, &mut sink);
-            pipeline.push(&scratch[..popped], &mut sink);
+            feed.push(&mut pipeline, &*rates, &scratch[..popped]);
         }
     }
 }
@@ -162,23 +158,27 @@ impl MicSource {
 
         let rb = HeapRb::<f32>::new(RING_CAPACITY_SAMPLES);
         let (mut producer, consumer) = rb.split();
-        let last_cb_host_ns = Arc::new(AtomicU64::new(0));
+        // Each packet's capture time rides next to its samples (TUR-151).
+        let (mut marks, clock) = time_marks(channels);
         let running = Arc::new(AtomicBool::new(true));
 
-        let cb_host_ns_for_stream = Arc::clone(&last_cb_host_ns);
         // The delivered-rate meter (TUR-84's, TUR-87): integers and atomics.
         let mut meter = CallbackMeter::new(Arc::clone(&rates), channels);
         let err_fn = |err| tracing::warn!("cpal input stream error: {err}");
 
         // The callback itself: timestamp, then push into the lock-free ring.
         // No allocation, no lock, no I/O — SPEC §2.3's real-time constraint.
+        // The time is the packet's first frame's capture, or the callback's
+        // own less the packet when the OS gives none (`first_frame_ns`).
         let stream = match sample_format {
             SampleFormat::F32 => device.build_input_stream(
                 config,
                 move |data: &[f32], info: &cpal::InputCallbackInfo| {
-                    let now = input_callback_ns(info).unwrap_or_else(host_now_ns);
-                    cb_host_ns_for_stream.store(now, Ordering::Relaxed);
-                    let _ = producer.push_slice(data);
+                    let frames = data.len() / channels.max(1);
+                    let now =
+                        first_frame_ns(input_callback_ns(info), host_now_ns(), frames, device_rate);
+                    marks.mark(now);
+                    marks.advance(producer.push_slice(data));
                     meter.observe(now, data.len());
                 },
                 err_fn,
@@ -189,8 +189,13 @@ impl MicSource {
                 device.build_input_stream(
                     config,
                     move |data: &[i16], info: &cpal::InputCallbackInfo| {
-                        let now = input_callback_ns(info).unwrap_or_else(host_now_ns);
-                        cb_host_ns_for_stream.store(now, Ordering::Relaxed);
+                        let frames = data.len() / channels.max(1);
+                        let now = first_frame_ns(
+                            input_callback_ns(info),
+                            host_now_ns(),
+                            frames,
+                            device_rate,
+                        );
                         meter.observe(now, data.len());
                         if scratch.len() < data.len() {
                             scratch.resize(data.len(), 0.0);
@@ -198,7 +203,8 @@ impl MicSource {
                         for (dst, src) in scratch.iter_mut().zip(data.iter()) {
                             *dst = *src as f32 / i16::MAX as f32;
                         }
-                        let _ = producer.push_slice(&scratch[..data.len()]);
+                        marks.mark(now);
+                        marks.advance(producer.push_slice(&scratch[..data.len()]));
                     },
                     err_fn,
                     Some(crate::AUDIO_PERMISSION_TIMEOUT),
@@ -223,17 +229,7 @@ impl MicSource {
                 let running = Arc::clone(&running);
                 let rates = Arc::clone(&rates);
                 let pipeline = Pipeline::new("microphone", channels, device_rate);
-                move || {
-                    Self::worker_loop(
-                        consumer,
-                        pipeline,
-                        rates,
-                        track,
-                        last_cb_host_ns,
-                        running,
-                        tee,
-                    )
-                }
+                move || Self::worker_loop(consumer, pipeline, rates, track, clock, running, tee)
             })
             .expect("spawning the mic worker thread");
 

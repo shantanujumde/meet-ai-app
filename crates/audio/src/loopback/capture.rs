@@ -4,6 +4,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::capture_clock::MarkWriter;
+
 use ringbuf::HeapProd;
 use ringbuf::traits::{Observer, Producer};
 
@@ -56,8 +58,9 @@ pub struct Capture {
     timeline: Timeline,
     meter: CallbackMeter<FixedRates>,
     rates: Arc<FixedRates>,
-    /// The latest packet's capture time, for the worker's position latch.
-    last_ns: Arc<AtomicU64>,
+    /// Each timed packet's capture time, next to its samples, for the
+    /// worker's position latch (TUR-151).
+    times: MarkWriter,
     channels: usize,
     /// Interleaved samples pushed so far: where the next gap mark points.
     pushed: u64,
@@ -72,7 +75,7 @@ impl Capture {
         producer: HeapProd<f32>,
         marks: HeapProd<GapMark>,
         rates: Arc<FixedRates>,
-        last_ns: Arc<AtomicU64>,
+        times: MarkWriter,
         channels: usize,
         stats: Arc<CaptureStats>,
     ) -> Self {
@@ -83,7 +86,7 @@ impl Capture {
             timeline: Timeline::default(),
             meter: CallbackMeter::new(Arc::clone(&rates), channels),
             rates,
-            last_ns,
+            times,
             channels,
             pushed: 0,
             filled_ns: 0,
@@ -122,6 +125,11 @@ impl Capture {
         let frames = (whole / channels) as u64;
         let rate = self.rates.effective();
         let stamp = self.timeline.stamp(capture_ns, frames, rate);
+        // The time first, then any gap mark: a worker that sees the gap's
+        // mark then also sees when the samples after it were captured.
+        if let Some(stamp) = stamp {
+            self.times.mark(stamp.host_ns);
+        }
 
         if let Some(stamp) = stamp
             && stamp.gap_frames > 0
@@ -142,6 +150,7 @@ impl Capture {
         let room = self.producer.vacant_len() / channels * channels;
         let pushed = self.producer.push_slice(&samples[..whole.min(room)]);
         self.pushed += pushed as u64;
+        self.times.advance(pushed);
         let dropped = ((whole - pushed) / channels) as u64;
         if dropped > 0 {
             self.mark(dropped);
@@ -154,7 +163,6 @@ impl Capture {
             // Dropped frames were delivered on time, so the meter counts them.
             self.meter
                 .observe(stamp.host_ns.saturating_sub(self.filled_ns), whole);
-            self.last_ns.store(stamp.host_ns, Ordering::Release);
         }
     }
 
@@ -175,6 +183,7 @@ mod tests {
     use ringbuf::traits::{Consumer, Split};
 
     use super::*;
+    use crate::capture_clock::CaptureClock;
 
     const MS: u64 = 1_000_000;
 
@@ -182,20 +191,21 @@ mod tests {
         capture: Capture,
         samples: ringbuf::HeapCons<f32>,
         marks: ringbuf::HeapCons<GapMark>,
-        last_ns: Arc<AtomicU64>,
+        clock: CaptureClock,
+        rate: u32,
         stats: Arc<CaptureStats>,
     }
 
     fn rig(rate: u32, channels: usize, ring: usize, mark_ring: usize) -> Rig {
         let (producer, samples) = HeapRb::<f32>::new(ring).split();
         let (mark_tx, marks) = HeapRb::<GapMark>::new(mark_ring).split();
-        let last_ns = Arc::new(AtomicU64::new(0));
+        let (times, clock) = crate::capture_clock::time_marks(channels);
         let stats = Arc::new(CaptureStats::default());
         let capture = Capture::new(
             producer,
             mark_tx,
             FixedRates::new("test", rate),
-            Arc::clone(&last_ns),
+            times,
             channels,
             Arc::clone(&stats),
         );
@@ -203,16 +213,21 @@ mod tests {
             capture,
             samples,
             marks,
-            last_ns,
+            clock,
+            rate,
             stats,
         }
     }
 
     fn drain(rig: &mut Rig) -> (Vec<f32>, Vec<GapMark>) {
-        (
-            rig.samples.pop_iter().collect(),
-            rig.marks.pop_iter().collect(),
-        )
+        let samples: Vec<f32> = rig.samples.pop_iter().collect();
+        rig.clock.consumed(samples.len());
+        (samples, rig.marks.pop_iter().collect())
+    }
+
+    /// When the boundary after every sample drained so far was captured.
+    fn drained_until_ns(rig: &mut Rig) -> u64 {
+        rig.clock.boundary_ns(rig.rate, 0.0)
     }
 
     #[test]
@@ -230,7 +245,8 @@ mod tests {
                 frames: 500
             }]
         );
-        assert_eq!(rig.last_ns.load(Ordering::Acquire), 1_510 * MS);
+        // The second packet's 10 frames at 1 kHz end 10 ms after its time.
+        assert_eq!(drained_until_ns(&mut rig), 1_520 * MS);
         assert_eq!(rig.stats.gaps.load(Ordering::Relaxed), 1);
         assert_eq!(rig.stats.gap_frames.load(Ordering::Relaxed), 500);
     }
@@ -279,11 +295,12 @@ mod tests {
     fn packets_before_the_first_timestamp_still_go_through() {
         let mut rig = rig(48_000, 1, 100, 8);
         rig.capture.packet(&mut [0.1, 0.2], None, false);
-        assert_eq!(rig.last_ns.load(Ordering::Acquire), 0, "no position yet");
+        assert_eq!(drained_until_ns(&mut rig), 0, "no position yet");
         rig.capture.packet(&mut [0.3], Some(5 * MS), false);
         let (samples, _) = drain(&mut rig);
         assert_eq!(samples, vec![0.1, 0.2, 0.3]);
-        assert_eq!(rig.last_ns.load(Ordering::Acquire), 5 * MS);
+        // One frame at 48 kHz past the timed packet's start.
+        assert_eq!(drained_until_ns(&mut rig), 5 * MS + 20_833);
     }
 
     #[test]

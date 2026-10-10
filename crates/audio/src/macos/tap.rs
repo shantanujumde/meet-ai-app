@@ -2,7 +2,7 @@
 //! [`AudioSource`], alongside [`crate::mic::MicSource`].
 //!
 //! Ports `spikes/phase0a-tcc/src/probe/main.swift`'s `SystemTapRecorder` to
-//! Rust via `objc2-core-audio`. Same worker-thread → resampler → [`WavWriter`]
+//! Rust via `objc2-core-audio`. Same worker-thread → resampler → [`TrackWriter`]
 //! shape as [`crate::mic::MicSource`]; the genuinely new part is building the
 //! tap and its private aggregate device through Core Audio's C API instead of
 //! `cpal`, and de-interleaving the tap's `AudioBufferList` by hand.
@@ -26,8 +26,8 @@
 
 use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -50,8 +50,9 @@ use super::tap_buffers::{LayoutProbe, TapBuffers, gather_into};
 use super::tap_pipeline::TapPipeline;
 use super::tap_rate::{CallbackMeter, RateSources, RateState, RateWatch};
 use super::tap_uuid::{format_uuid_bytes, locally_unique_uuid_bytes};
+use crate::capture_clock::{CaptureClock, Feed, time_marks};
 use crate::tee::Tee;
-use crate::wav_writer::WavWriter;
+use crate::track::TrackWriter;
 use crate::{AudioSource, Channel, Error};
 
 /// Ring buffer capacity, in raw (tap-rate, interleaved) samples. Same 4 s
@@ -136,12 +137,6 @@ fn output_device_uid(device_id: AudioObjectID) -> Result<String, Error> {
     Ok(uid.to_string())
 }
 
-struct Shared {
-    writer: WavWriter,
-    frames: u64,
-    last_host_ns: u64,
-}
-
 /// The signature Core Audio's `AudioDeviceIOBlock` requires: `(inNow,
 /// inInputData, inInputTime, outOutputData, outOutputTime)`, none of them
 /// `Option` since the block form always receives live pointers.
@@ -169,7 +164,7 @@ struct Built {
     rates: Arc<RateState>,
     worker: JoinHandle<()>,
     running: Arc<AtomicBool>,
-    shared: Arc<Mutex<Shared>>,
+    track: TrackWriter,
 }
 
 // SAFETY: `RcBlock` is only non-`Send` because it wraps a raw `NonNull`
@@ -184,18 +179,18 @@ unsafe impl Send for Built {}
 
 /// The system-audio capture channel: a private Core Audio process tap riding
 /// an aggregate device built around the default output device, feeding a
-/// resampler and a [`WavWriter`] through a lock-free ring buffer — same
+/// resampler and a [`TrackWriter`] through a lock-free ring buffer — same
 /// real-time discipline as `MicSource`: the IO block only timestamps and
 /// pushes samples, never locks, allocates, or touches disk.
 pub struct SystemSource {
     built: Option<Built>,
-    /// The same `Arc` as `built.shared`, kept alive independently so
+    /// A clone of `built.track` (TUR-151: the shared [`TrackWriter`]), kept so
     /// [`AudioSource::position`] still reports the final frame count after
     /// [`AudioSource::stop`] has torn `built` down. Without this, the
     /// orchestrator's post-stop "read the exact final count" step (contract
     /// §7's "equality on graceful stop") would silently see `None` and fall
     /// back to zero, undoing everything the earlier checkpoints wrote.
-    shared: Option<Arc<Mutex<Shared>>>,
+    track: Option<TrackWriter>,
     /// The live-transcription copy, if one was asked for ([`AudioSource::tee`]).
     tee: Option<Tee>,
 }
@@ -210,41 +205,25 @@ impl SystemSource {
     pub fn new() -> Self {
         Self {
             built: None,
-            shared: None,
+            track: None,
             tee: None,
         }
     }
 
-    /// Raw IO-proc samples → [`TapPipeline`], at [`RateState::effective`].
+    /// Raw IO-proc samples → [`TapPipeline`], at [`RateState::effective`],
+    /// each append timed by the capture of the frame it ends at (TUR-151).
     #[allow(clippy::too_many_arguments)]
     fn worker_loop(
         mut consumer: HeapCons<f32>,
         mut pipeline: TapPipeline,
         rates: Arc<RateState>,
-        shared: Arc<Mutex<Shared>>,
-        last_cb_host_ns: Arc<AtomicU64>,
+        track: TrackWriter,
+        clock: CaptureClock,
         running: Arc<AtomicBool>,
         tee: Option<Tee>,
         probe: Arc<LayoutProbe>,
     ) {
-        let mut sink = |frames: &[i16]| {
-            let host_ns = last_cb_host_ns.load(Ordering::Relaxed);
-            let Ok(mut guard) = shared.lock() else {
-                tracing::warn!("system writer mutex poisoned; dropping this chunk");
-                return;
-            };
-            if guard.writer.append(frames).is_err() {
-                tracing::warn!("system wav writer append failed; dropping this chunk");
-                return;
-            }
-            guard.frames += frames.len() as u64;
-            guard.last_host_ns = host_ns;
-            // Same as the mic: the writer lock is released first.
-            drop(guard);
-            if let Some(tee) = &tee {
-                tee.offer(frames);
-            }
-        };
+        let mut feed = Feed::new(track, clock, tee);
         // Sized once; `pop_slice` only refills it.
         let mut scratch = vec![0.0f32; 4096];
         loop {
@@ -258,8 +237,7 @@ impl SystemSource {
             if let Some(report) = probe.take_report() {
                 tracing::info!("{report}");
             }
-            pipeline.follow(&*rates, &mut sink);
-            pipeline.push(&scratch[..popped], &mut sink);
+            feed.push(&mut pipeline, &*rates, &scratch[..popped]);
         }
     }
 
@@ -392,19 +370,11 @@ impl SystemSource {
         // and aggregate device from scratch against `dest`, but the archive
         // itself stays one continuous file across segments — see the
         // matching comment in `crate::mic::MicSource::build`.
-        let writer = if dest.exists() {
-            WavWriter::open_append(&dest)?
-        } else {
-            WavWriter::create(&dest)?
-        };
-        let shared = Arc::new(Mutex::new(Shared {
-            writer,
-            frames: 0,
-            last_host_ns: 0,
-        }));
+        let track = TrackWriter::open(&dest, "system audio")?;
         let rb = HeapRb::<f32>::new(RING_CAPACITY_SAMPLES);
         let (producer, consumer) = rb.split();
-        let last_cb_host_ns = Arc::new(AtomicU64::new(0));
+        // Each IO cycle's `inInputTime` rides next to its samples (TUR-151).
+        let (marks, clock) = time_marks(channels);
         let running = Arc::new(AtomicBool::new(true));
 
         // The IO block must be `Fn`, so the producer and interleave buffer sit
@@ -412,8 +382,8 @@ impl SystemSource {
         // call skips its cycle. `interleaved` is sized once (2 x 16384 frames).
         // Plus the delivered-rate meter (TUR-84): integers only, real-time safe.
         let meter = CallbackMeter::new(Arc::clone(&rates), channels);
-        let callback_state = RefCell::new((producer, Vec::<f32>::with_capacity(32_768), meter));
-        let last_cb_host_ns_for_block = Arc::clone(&last_cb_host_ns);
+        let callback_state =
+            RefCell::new((producer, Vec::<f32>::with_capacity(32_768), meter, marks));
         let io_block: RcBlock<IoBlockFn> = RcBlock::new(
             move |_now: std::ptr::NonNull<AudioTimeStamp>,
                   in_input_data: std::ptr::NonNull<AudioBufferList>,
@@ -424,7 +394,6 @@ impl SystemSource {
                 // are valid for the duration of this call.
                 let host_ns =
                     unsafe { ca::AudioConvertHostTimeToNanos(in_input_time.as_ref().mHostTime) };
-                last_cb_host_ns_for_block.store(host_ns, Ordering::Relaxed);
 
                 let abl = unsafe { in_input_data.as_ref() };
                 let n = abl.mNumberBuffers as usize;
@@ -434,7 +403,7 @@ impl SystemSource {
                 let Ok(mut state) = callback_state.try_borrow_mut() else {
                     return;
                 };
-                let (producer, interleaved, meter) = &mut *state;
+                let (producer, interleaved, meter, marks) = &mut *state;
 
                 // `mBuffers` is declared `[AudioBuffer; 1]` but is really a
                 // C flexible array member — buffer `i` lives at
@@ -464,7 +433,8 @@ impl SystemSource {
                     (unsafe { (*buffers_ptr.add(i)).mNumberChannels }, channel(i))
                 };
                 gather_into(tap, buffer, channels, interleaved);
-                let _ = producer.push_slice(interleaved);
+                marks.mark(host_ns);
+                marks.advance(producer.push_slice(interleaved));
                 meter.observe(host_ns, interleaved.len());
             },
         );
@@ -508,20 +478,11 @@ impl SystemSource {
         let worker = std::thread::Builder::new()
             .name("meet-rec-system-worker".to_string())
             .spawn({
-                let shared = Arc::clone(&shared);
+                let track = track.clone();
                 let running = Arc::clone(&running);
                 let rates = Arc::clone(&rates);
                 move || {
-                    Self::worker_loop(
-                        consumer,
-                        pipeline,
-                        rates,
-                        shared,
-                        last_cb_host_ns,
-                        running,
-                        tee,
-                        probe,
-                    )
+                    Self::worker_loop(consumer, pipeline, rates, track, clock, running, tee, probe)
                 }
             })
             .expect("spawning the system worker thread");
@@ -535,7 +496,7 @@ impl SystemSource {
             rates,
             worker,
             running,
-            shared,
+            track,
         })
     }
 }
@@ -561,7 +522,7 @@ impl AudioSource for SystemSource {
             }
         };
 
-        self.shared = Some(Arc::clone(&built.shared));
+        self.track = Some(built.track.clone());
         self.built = Some(built);
         Ok(())
     }
@@ -577,11 +538,7 @@ impl AudioSource for SystemSource {
         unsafe { AudioHardwareDestroyAggregateDevice(built.aggregate_id) };
         unsafe { AudioHardwareDestroyProcessTap(built.tap_id) };
         let _ = built.worker.join();
-        {
-            let mut guard = built.shared.lock().expect("system writer mutex poisoned");
-            guard.writer.fsync_data()?;
-            guard.writer.patch_header()?;
-        }
+        built.track.finish()?;
         Ok(())
     }
 
@@ -590,43 +547,27 @@ impl AudioSource for SystemSource {
     }
 
     fn position(&self) -> Option<(u64, u64)> {
-        let shared = self.shared.as_ref()?;
-        let guard = shared.lock().expect("system writer mutex poisoned");
-        if guard.last_host_ns == 0 {
-            None
-        } else {
-            Some((guard.last_host_ns, guard.frames))
-        }
+        self.track.as_ref()?.position()
     }
 
     fn fsync_data(&mut self) -> Result<(), Error> {
-        let Some(built) = &self.built else {
-            return Ok(());
-        };
-        let mut guard = built.shared.lock().expect("system writer mutex poisoned");
-        guard.writer.fsync_data()?;
+        if let Some(built) = &self.built {
+            built.track.fsync_data()?;
+        }
         Ok(())
     }
 
     fn patch_header(&mut self) -> Result<(), Error> {
-        let Some(built) = &self.built else {
-            return Ok(());
-        };
-        let mut guard = built.shared.lock().expect("system writer mutex poisoned");
-        guard.writer.patch_header()?;
+        if let Some(built) = &self.built {
+            built.track.patch_header()?;
+        }
         Ok(())
     }
 
+    /// The segment's own head (TUR-151), under the track's lock.
     fn pad_leading_silence(&mut self, frames: u64) -> Result<(), Error> {
-        let Some(built) = &self.built else {
-            return Ok(());
-        };
-        let mut guard = built.shared.lock().expect("system writer mutex poisoned");
-        guard.writer.prepend_silence(frames)?;
-        guard.frames += frames;
-        drop(guard);
-        if let Some(tee) = &self.tee {
-            tee.offer_silence(frames);
+        if let Some(built) = &self.built {
+            built.track.pad_leading_silence(frames, self.tee.as_ref())?;
         }
         Ok(())
     }

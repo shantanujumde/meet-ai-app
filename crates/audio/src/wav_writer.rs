@@ -78,6 +78,13 @@ pub struct WavWriter {
     /// Little-endian bytes of the chunk being appended, reused across calls so
     /// the per-chunk path allocates nothing once it has grown to chunk size.
     byte_scratch: Vec<u8>,
+    /// Frames already in the file when this writer opened it: 0 for one it
+    /// created, the earlier segments' total for one it reopened. Where
+    /// [`WavWriter::pad_segment_head`] inserts (TUR-151).
+    segment_base: u64,
+    /// Whether this writer created the file, so the front of the file is its
+    /// own ([`WavWriter::prepend_silence`]).
+    created: bool,
 }
 
 impl WavWriter {
@@ -98,6 +105,8 @@ impl WavWriter {
             synced_frames: 0,
             header_frames: 0,
             byte_scratch: Vec::new(),
+            segment_base: 0,
+            created: true,
         })
     }
 
@@ -154,22 +163,51 @@ impl WavWriter {
     /// so frame 0 of both channels lands on the recording's shared
     /// `start_host_ns`, for whichever channel's hardware came up later.
     ///
-    /// Only ever called once, at the very start of a recording, before more
-    /// than a checkpoint's worth of real audio exists — so shifting the
-    /// existing bytes by re-reading and rewriting them is cheap. The caller
+    /// Only for a file this writer created ([`WavWriter::create`]): on one
+    /// reopened with [`WavWriter::open_append`] the front of the file is an
+    /// earlier segment's audio, which a pad there would shift (TUR-151).
+    /// That is an `InvalidInput` error; a reopened segment pads its own head
+    /// with [`WavWriter::pad_segment_head`]. The caller
     /// (`AudioSource::pad_leading_silence`) is responsible for serializing
     /// this against concurrent [`WavWriter::append`] calls; nothing here
     /// does that on its own.
     pub fn prepend_silence(&mut self, frames: u64) -> io::Result<()> {
+        if !self.created {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "prepend_silence on a reopened WAV would shift the earlier segments; \
+                 pad the segment's own head instead",
+            ));
+        }
+        self.insert_silence(0, frames)
+    }
+
+    /// Contract §6's head-pad for the segment this writer is writing: insert
+    /// `frames` zero samples where this writer started appending (frame 0 of
+    /// a file it created, the end of the earlier segments of one it
+    /// reopened), ahead of the samples it has appended since (TUR-151).
+    ///
+    /// Only those samples move, never an earlier segment's, so the bytes
+    /// rewritten are this segment's first moments, not the whole file, and a
+    /// crash mid-rewrite cannot touch audio from before a device switch. Same
+    /// serialization rule as [`WavWriter::prepend_silence`].
+    pub fn pad_segment_head(&mut self, frames: u64) -> io::Result<()> {
+        self.insert_silence(self.segment_base, frames)
+    }
+
+    /// Insert `frames` zero samples at frame `at`, shifting the samples
+    /// appended after it.
+    fn insert_silence(&mut self, at: u64, frames: u64) -> io::Result<()> {
         if frames == 0 {
             return Ok(());
         }
-        self.file.seek(SeekFrom::Start(HEADER_LEN))?;
+        let offset = HEADER_LEN + at * BYTES_PER_FRAME;
+        self.file.seek(SeekFrom::Start(offset))?;
         let mut existing = Vec::new();
         self.file.read_to_end(&mut existing)?;
 
-        self.file.seek(SeekFrom::Start(HEADER_LEN))?;
-        let silence = vec![0u8; (frames * BYTES_PER_SAMPLE as u64) as usize];
+        self.file.seek(SeekFrom::Start(offset))?;
+        let silence = vec![0u8; (frames * BYTES_PER_FRAME) as usize];
         self.file.write_all(&silence)?;
         self.file.write_all(&existing)?;
 
@@ -225,6 +263,8 @@ impl WavWriter {
             synced_frames: existing_frames,
             header_frames: existing_frames,
             byte_scratch: Vec::new(),
+            segment_base: existing_frames,
+            created: false,
         })
     }
 }

@@ -4,6 +4,9 @@ use super::*;
 use crate::segments::SegmentsDrift as _;
 use crate::wav_writer::WavWriter;
 
+// TUR-151: frame-0 start alignment, and the head-pad on a reopened file.
+mod align;
+
 /// A hardware-free `AudioSource` for exercising [`align_and_pad`]'s
 /// alignment maths, which is the one piece of the device-change handling
 /// that does not itself need Core Audio or `cpal` — everything else in
@@ -210,7 +213,7 @@ impl AudioSource for StubSource {
 
     fn pad_leading_silence(&mut self, frames: u64) -> Result<(), AudioError> {
         if let Some(writer) = self.writer.as_mut() {
-            writer.prepend_silence(frames)?;
+            writer.pad_segment_head(frames)?;
             self.frames += frames;
         }
         if let Some(tee) = &self.tee {

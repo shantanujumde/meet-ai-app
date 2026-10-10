@@ -63,6 +63,19 @@ fn pad_frames_for_gap(gap_ns: u64) -> u64 {
     ((gap_ns as f64 / 1e9) * SAMPLE_RATE_HZ as f64).round() as u64
 }
 
+/// When a channel's frame 0 of this segment was captured, from its
+/// position `(host_ns, frames)`: frame `frames` was captured at `host_ns`
+/// ([`AudioSource::position`]), so frame 0 was `frames / 16 kHz` before it.
+///
+/// TUR-151: the head-pad used to compare the two `host_ns` alone. The
+/// microphone starts first and keeps writing while the tap's start blocks,
+/// so by the first poll it has written far more, and its `host_ns` said
+/// nothing about when its frame 0 was: the system pad came out short by
+/// every frame the microphone had already written.
+fn frame_zero_ns((host_ns, frames): (u64, u64)) -> u64 {
+    host_ns.saturating_sub((frames as f64 * 1e9 / SAMPLE_RATE_HZ as f64).round() as u64)
+}
+
 /// Stop a source being given up on, logging rather than returning a failure:
 /// the caller is already on its way out, and the stop is what patches the
 /// WAV header and ends the worker thread.
@@ -73,9 +86,10 @@ pub(super) fn stop_quietly(source: &mut dyn AudioSource, what: &str) {
 }
 
 /// Contract §6's head-pad: measure each channel's first resampled buffer,
-/// take the earlier one as the segment's `start_host_ns`, and pad whichever
-/// channel came up later with that much silence so frame 0 of both channels
-/// lands on the same instant.
+/// work out when each channel's frame 0 was captured ([`frame_zero_ns`]),
+/// take the earlier as the segment's `start_host_ns`, and pad whichever
+/// channel came up later with that much silence at the head of this
+/// segment, so frame 0 of both channels lands on the same instant.
 ///
 /// A system source with no first buffer within [`FIRST_BUFFER_TIMEOUT`] is
 /// stopped and set to `None`; the segment goes on microphone-only (TUR-87).
@@ -107,18 +121,20 @@ pub(super) fn align_and_pad(
         None => None,
     };
 
-    let start_host_ns = match sys_first {
-        Some((sys_ns, _)) => mic_first.0.min(sys_ns),
-        None => mic_first.0,
+    let mic_zero = frame_zero_ns(mic_first);
+    let sys_zero = sys_first.map(frame_zero_ns);
+    let start_host_ns = match sys_zero {
+        Some(sys_ns) => mic_zero.min(sys_ns),
+        None => mic_zero,
     };
 
-    if mic_first.0 > start_host_ns {
-        let pad = pad_frames_for_gap(mic_first.0 - start_host_ns);
+    if mic_zero > start_host_ns {
+        let pad = pad_frames_for_gap(mic_zero - start_host_ns);
         tracing::info!("padding microphone head with {pad} frames of silence");
         mic.pad_leading_silence(pad)
             .map_err(|e| format!("padding microphone head: {e}"))?;
     }
-    if let (Some(source), Some((sys_ns, _))) = (sys.as_deref_mut(), sys_first)
+    if let (Some(source), Some(sys_ns)) = (sys.as_deref_mut(), sys_zero)
         && sys_ns > start_host_ns
     {
         let pad = pad_frames_for_gap(sys_ns - start_host_ns);
