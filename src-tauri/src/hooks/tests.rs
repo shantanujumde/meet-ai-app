@@ -95,20 +95,161 @@ fn a_hook_that_cannot_start_is_a_failure_not_a_panic() {
 }
 
 #[test]
-fn output_is_capped() {
-    let big = vec![b'x'; OUTPUT_CAP * 2 + 5];
-    assert_eq!(capped(big.as_slice(), OUTPUT_CAP).len(), OUTPUT_CAP);
-    assert_eq!(capped(&b"short"[..], OUTPUT_CAP), "short");
-}
-
-#[test]
 fn home_is_expanded() {
     let home = Some(Path::new("/home/u"));
     assert_eq!(expand_home("~/bin/x.sh", home), "/home/u/bin/x.sh");
     assert_eq!(expand_home("$HOME/x $HOME", home), "/home/u/x /home/u");
+    assert_eq!(expand_home("\"$HOME\\x\"", home), "\"/home/u\\x\"");
     assert_eq!(expand_home("~other/x", home), "~other/x");
     assert_eq!(expand_home("echo ~/x", home), "echo ~/x");
     assert_eq!(expand_home("~/x", None), "~/x");
+}
+
+/// TUR-167: only a whole `$HOME` is the home folder.
+#[test]
+fn homebrew_prefix_is_not_home() {
+    let home = Some(Path::new("/Users/me"));
+    assert_eq!(
+        expand_home("$HOMEBREW_PREFIX/bin/x", home),
+        "$HOMEBREW_PREFIX/bin/x"
+    );
+    assert_eq!(
+        expand_home("$HOMEDIR $HOME_X $HOME", home),
+        "$HOMEDIR $HOME_X /Users/me"
+    );
+}
+
+/// TUR-167: `sh` gets the command as written, so its own expansion and
+/// quoting apply: `$HOMEBREW_PREFIX` is the variable, `'$HOME'` is literal.
+#[test]
+fn sh_expands_the_command_itself() {
+    if windows() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let report = run_hook(
+        "printf '%s|' '$HOME' \"$HOMEBREW_PREFIX_TUR167\" #",
+        dir.path(),
+        Duration::from_secs(20),
+    );
+    assert_eq!(report.outcome, Outcome::Ok, "{report:?}");
+    assert_eq!(report.stdout, "$HOME||", "{report:?}");
+}
+
+/// TUR-167: `"timeout_secs": 99999999999` (meant as "never") must not panic
+/// the hook thread; the hook runs and reports.
+#[test]
+fn a_huge_timeout_does_not_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let command = if windows() {
+        "exit /b 4 & rem"
+    } else {
+        "exit 4 #"
+    };
+    let config = HooksConfig {
+        on_meeting_end: Some(command.to_owned()),
+        timeout_secs: 99_999_999_999,
+        ..HooksConfig::default()
+    };
+    let report = run_moment(&config, Moment::MeetingEnd, dir.path());
+    assert_eq!(
+        report.map(|r| r.outcome),
+        Some(Outcome::Failed { code: Some(4) })
+    );
+    let report = run_hook(command, dir.path(), Duration::MAX);
+    assert_eq!(report.outcome, Outcome::Failed { code: Some(4) });
+}
+
+/// TUR-167: a hook that backgrounds a child holding its pipes returns soon
+/// after it exits, and the child is killed, so neither it nor the threads
+/// reading its pipes are left behind.
+#[test]
+fn a_backgrounded_grandchild_does_not_outlive_the_hook() {
+    let dir = tempfile::tempdir().unwrap();
+    let late = dir.path().join("late.txt");
+    let late_s = late.to_string_lossy();
+    let command = if windows() {
+        format!(
+            "start /b cmd /c \"%SystemRoot%\\System32\\ping.exe -n 6 127.0.0.1 >nul & echo late> {late_s}\" & echo started & rem"
+        )
+    } else {
+        format!("(sleep 4; echo late > '{late_s}') & echo started #")
+    };
+    let started = Instant::now();
+    let report = run_hook(&command, dir.path(), Duration::from_secs(60));
+    assert_eq!(report.outcome, Outcome::Ok, "{report:?}");
+    assert!(report.stdout.contains("started"), "{report:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+    std::thread::sleep(Duration::from_secs(6));
+    assert!(!late.exists(), "the hook's child outlived the hook");
+}
+
+/// TUR-167: a running hook holds the folder gate, so a folder move is
+/// refused with `folder-busy` until it ends.
+#[test]
+fn a_running_hook_holds_the_folder_gate() {
+    use crate::folder_move::FolderGate;
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("m")).unwrap();
+    let marker = root.path().join("m").join("ran");
+    let command = if windows() {
+        "%SystemRoot%\\System32\\ping.exe -n 3 127.0.0.1 >nul & echo x> ran & rem"
+    } else {
+        "sleep 1.5; echo x > ran #"
+    };
+    let config = HooksConfig {
+        on_meeting_end: Some(command.to_owned()),
+        ..HooksConfig::default()
+    };
+    let gate = FolderGate::default();
+    let root_path = root.path().to_path_buf();
+    std::thread::scope(|scope| {
+        let hook = scope.spawn(|| {
+            app::run_gated(
+                Some(&gate),
+                || Ok(root_path.clone()),
+                &config,
+                Moment::MeetingEnd,
+                "m",
+            )
+        });
+        std::thread::sleep(Duration::from_millis(500));
+        let refused = gate.begin_move().err().map(|e| e.kind);
+        assert_eq!(refused, Some("folder-busy"));
+        let ran = hook.join().unwrap();
+        assert!(matches!(ran, Ok(None)), "{ran:?}");
+    });
+    assert!(marker.exists());
+    assert!(
+        gate.begin_move().is_ok(),
+        "the gate opens once the hook ends"
+    );
+}
+
+#[test]
+fn a_hook_due_during_a_folder_move_does_not_run() {
+    use crate::folder_move::FolderGate;
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("m")).unwrap();
+    let config = HooksConfig {
+        on_meeting_end: Some("echo x > ran #".to_owned()),
+        ..HooksConfig::default()
+    };
+    let gate = FolderGate::default();
+    let _moving = gate.begin_move().unwrap();
+    let ran = app::run_gated(
+        Some(&gate),
+        || Ok(root.path().to_path_buf()),
+        &config,
+        Moment::MeetingEnd,
+        "m",
+    );
+    assert_eq!(ran.err().map(|e| e.kind), Some("folder-move-in-progress"));
+    assert!(!root.path().join("m").join("ran").exists());
 }
 
 #[test]

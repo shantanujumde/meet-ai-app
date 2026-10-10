@@ -13,6 +13,11 @@ use super::read_section;
 /// How long a hook may run before its whole process tree is killed.
 pub const DEFAULT_HOOK_TIMEOUT_SECS: u64 = 30;
 
+/// The longest a hook may run, the same ceiling `agent.timeout_sec` has
+/// (`u32::MAX` seconds, about 136 years: "never", for anyone who means it).
+/// A larger value is cut to this rather than overflowing a clock (TUR-167).
+pub const MAX_HOOK_TIMEOUT_SECS: u64 = u32::MAX as u64;
+
 /// `hooks` in `config.jsonc`. A missing or blank command is no hook.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HooksConfig {
@@ -48,7 +53,8 @@ fn command(raw: Option<String>) -> Option<String> {
 }
 
 /// `hooks` from the text of `config.jsonc`. Empty text, or no `hooks` key,
-/// is no hooks. A `timeout_secs` of 0 is the default.
+/// is no hooks. A `timeout_secs` of 0 is the default; one over
+/// [`MAX_HOOK_TIMEOUT_SECS`] is that.
 pub fn parse_hooks(raw: &str) -> Result<HooksConfig, ConfigError> {
     let hooks: RawHooks = read_section(raw, "hooks")
         .map_err(ConfigError::Invalid)?
@@ -60,7 +66,9 @@ pub fn parse_hooks(raw: &str) -> Result<HooksConfig, ConfigError> {
         timeout_secs: hooks
             .timeout_secs
             .filter(|secs| *secs > 0)
-            .unwrap_or(DEFAULT_HOOK_TIMEOUT_SECS),
+            .map_or(DEFAULT_HOOK_TIMEOUT_SECS, |secs| {
+                secs.min(MAX_HOOK_TIMEOUT_SECS)
+            }),
     })
 }
 
@@ -109,6 +117,12 @@ mod tests {
     fn a_blank_command_is_no_hook_and_zero_is_the_default_timeout() {
         let hooks = parse_hooks(r#"{ "hooks": { "on_meeting_end": "  ", "timeout_secs": 0 } }"#);
         assert_eq!(hooks.ok(), Some(HooksConfig::default()));
+    }
+
+    #[test]
+    fn a_huge_timeout_is_cut_to_the_agent_ceiling() {
+        let hooks = parse_hooks(r#"{ "hooks": { "timeout_secs": 99999999999 } }"#).ok();
+        assert_eq!(hooks.map(|h| h.timeout_secs), Some(MAX_HOOK_TIMEOUT_SECS));
     }
 
     #[test]

@@ -252,6 +252,73 @@ pub fn run_cli_exit(
     })
 }
 
+/// How a [`run_capped`] child ended, with the first `cap` bytes of each pipe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CappedRun {
+    /// The exit status. `None` when it ran past the timeout and its tree was
+    /// killed.
+    pub status: Option<ExitStatus>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Runs `command` (stdin empty) as a [`ProcessTree`] for at most `timeout`,
+/// the way [`run_cli_exit`] runs an agent CLI, but for any command: user hooks
+/// (TUR-63, TUR-167).
+///
+/// Both pipes are read at once, each keeping its first `cap` bytes. Past
+/// `timeout` the whole tree is killed. After a normal exit the tree is killed
+/// too, once the output is in (or after the same grace as an agent run), so a
+/// backgrounded grandchild neither outlives the run nor keeps a reader thread
+/// waiting forever. Any `timeout` is fine, `Duration::MAX` included: it is only
+/// ever compared with the time elapsed, never added to a clock.
+///
+/// The working folder, env and arguments are the caller's. `Err` only when the
+/// child or a reader thread could not start, or the child was lost track of.
+pub fn run_capped(mut command: Command, timeout: Duration, cap: usize) -> io::Result<CappedRun> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // `wait_for_exit` and `collect_output` read only a job's Cancel and time
+    // limit; this one is never cancelled.
+    let mut job = Job::notes(String::new(), serde_json::Value::Null);
+    job.timeout = timeout;
+    let started = Instant::now();
+    let mut child = ProcessTree::spawn(command)?;
+    let pipes =
+        read_in_background("capped-stdout", child.take_stdout(), Keep::Head(cap)).and_then(|out| {
+            let err = read_in_background("capped-stderr", child.take_stderr(), Keep::Head(cap))?;
+            Ok((out, err))
+        });
+    let (stdout, stderr) = match pipes {
+        Ok(pipes) => pipes,
+        Err(e) => {
+            child.stop();
+            return Err(e);
+        }
+    };
+    let status = match wait_for_exit(&mut child, &job, started) {
+        Ok(status) => Some(status),
+        // The tree is already killed and reaped.
+        Err(AgentError::TimedOut { .. }) => None,
+        Err(e) => return Err(io::Error::other(e.to_string())),
+    };
+    // The time limit is spent or no longer matters: the output wait is bounded
+    // by its own grace, and what came so far is kept either way.
+    job.timeout = Duration::MAX;
+    let (out, err) = collect_output(&mut child, &job, started, &stdout, &stderr)
+        .unwrap_or_else(|_| (Drained::default(), Drained::default()));
+    // Anything it left running that did not hold the pipes.
+    child.kill_tree();
+    let text = |drained: Drained| String::from_utf8_lossy(&drained.bytes).into_owned();
+    Ok(CappedRun {
+        status,
+        stdout: text(out),
+        stderr: text(err),
+    })
+}
+
 pub(crate) fn could_not_start(reason: impl Into<String>) -> AgentError {
     AgentError::CouldNotStart {
         reason: reason.into(),
@@ -849,6 +916,80 @@ mod tests {
             let job = Job::notes("", serde_json::json!({}));
             let dir = fresh_work_dir(&job).unwrap();
             assert!(dir.path().is_dir());
+        }
+
+        /// `run_capped` (TUR-167): the hooks' runner.
+        mod capped {
+            use super::*;
+
+            #[test]
+            fn output_is_capped_and_the_status_kept() {
+                let settings = [("stdout_pad", "100"), ("stderr", "oops"), ("code", "3")];
+                let run = run_capped(fake(&settings), Duration::from_secs(10), 10).unwrap();
+                assert_eq!(run.status.and_then(|s| s.code()), Some(3));
+                assert_eq!(run.stdout, "0".repeat(10));
+                assert_eq!(run.stderr, "oops");
+            }
+
+            #[test]
+            fn a_grandchild_left_behind_after_a_normal_exit_is_killed() {
+                let root = tempfile::tempdir().unwrap();
+                let pid_file = root.path().join("grandchild.pid");
+                let pid_path = pid_file.display().to_string();
+                let settings = [("grandchild_pid_file", pid_path.as_str())];
+                let run = run_capped(fake(&settings), Duration::from_secs(10), 1024).unwrap();
+                assert_eq!(run.status.and_then(|s| s.code()), Some(0));
+                let pid = test_support::wait_for_pid_file(&pid_file);
+                assert!(is_gone(pid), "grandchild {pid} is still running");
+            }
+
+            #[test]
+            fn a_grandchild_holding_the_pipes_does_not_hang_the_run() {
+                let root = tempfile::tempdir().unwrap();
+                let pid_file = root.path().join("grandchild.pid");
+                let pid_path = pid_file.display().to_string();
+                let settings = [
+                    ("stdout", "hi\n"),
+                    ("grandchild_pid_file", pid_path.as_str()),
+                    ("grandchild_keeps_stdout", "1"),
+                ];
+                let started = Instant::now();
+                let run = run_capped(fake(&settings), Duration::from_secs(20), 1024).unwrap();
+                assert_eq!(run.stdout, "hi\n");
+                assert!(
+                    started.elapsed() < OUTPUT_GRACE + AFTER_KILL_GRACE + Duration::from_secs(1),
+                    "{:?}",
+                    started.elapsed()
+                );
+                let pid = test_support::wait_for_pid_file(&pid_file);
+                assert!(is_gone(pid), "grandchild {pid} is still running");
+            }
+
+            #[test]
+            fn the_timeout_kills_the_tree() {
+                let root = tempfile::tempdir().unwrap();
+                let pid_file = root.path().join("grandchild.pid");
+                let pid_path = pid_file.display().to_string();
+                let settings = [("grandchild_pid_file", pid_path.as_str()), ("sleep", "30")];
+                let started = Instant::now();
+                let run = run_capped(fake(&settings), Duration::from_millis(500), 1024).unwrap();
+                assert_eq!(run.status, None);
+                assert!(started.elapsed() < Duration::from_secs(3));
+                let pid = test_support::wait_for_pid_file(&pid_file);
+                assert!(is_gone(pid), "grandchild {pid} is still running");
+            }
+
+            #[test]
+            fn a_huge_timeout_does_not_panic() {
+                let run = run_capped(fake(&[("stdout", "ok")]), Duration::MAX, 1024).unwrap();
+                assert_eq!(run.stdout, "ok");
+            }
+
+            #[test]
+            fn a_missing_program_is_an_error() {
+                let missing = Command::new("/no/such/program-tur167");
+                assert!(run_capped(missing, Duration::from_secs(5), 1024).is_err());
+            }
         }
     }
 

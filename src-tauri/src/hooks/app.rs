@@ -9,13 +9,16 @@
 //! recorder and the notes run need no change. Every hook runs on a thread of
 //! its own and only ever logs and emits [`crate::events::HOOK_FAILED_EVENT`].
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter as _, Listener as _};
+use tauri::{AppHandle, Emitter as _, Listener as _, Manager as _};
 
 use super::Moment;
+use crate::error::UiError;
 use crate::events::{AGENT_RUN_STATUS_EVENT, HOOK_FAILED_EVENT, RECORDING_STATE_EVENT};
+use crate::folder_move::FolderGate;
 use crate::lock::lock_or_recover;
 
 /// What [`HOOK_FAILED_EVENT`] carries.
@@ -53,6 +56,9 @@ pub fn init(app: &AppHandle) {
     });
 }
 
+/// The gate's refusal while the meetings folder moves.
+const FOLDER_MOVING: &str = "folder-move-in-progress";
+
 /// Run `moment`'s hook for `meeting_id` on a thread of its own.
 pub fn fire(app: &AppHandle, moment: Moment, meeting_id: &str) {
     let config = crate::config::hooks();
@@ -64,27 +70,54 @@ pub fn fire(app: &AppHandle, moment: Moment, meeting_id: &str) {
     let spawned = std::thread::Builder::new()
         .name("meet-ai-hook".to_owned())
         .spawn(move || {
-            let Some(dir) = crate::meetings::root()
-                .ok()
-                .and_then(|root| super::meeting_dir(&root, &meeting_id))
-            else {
-                tracing::warn!(hook = moment.name(), "no meeting folder for the hook");
-                return;
-            };
-            if let Some(report) = super::run_moment(&config, moment, &dir) {
-                let failed = HookFailed {
-                    meeting_id,
-                    hook: moment.name().to_owned(),
-                    message: report.outcome.describe(),
-                };
-                if let Err(error) = app.emit(HOOK_FAILED_EVENT, &failed) {
-                    tracing::warn!(%error, "could not tell the window a hook failed");
+            let gate = app.try_state::<FolderGate>();
+            let ran = run_gated(gate.as_deref(), crate::meetings::root, &config, moment, &meeting_id);
+            let message = match ran {
+                Ok(None) => return,
+                Ok(Some(report)) => report.outcome.describe(),
+                Err(refused) if refused.kind == FOLDER_MOVING => {
+                    tracing::warn!(hook = moment.name(), "hook not run: the folder is moving");
+                    "did not run: the meetings folder was moving".to_owned()
                 }
+                Err(error) => {
+                    tracing::warn!(hook = moment.name(), error = %error.message, "no meetings folder for the hook");
+                    return;
+                }
+            };
+            let failed = HookFailed {
+                meeting_id,
+                hook: moment.name().to_owned(),
+                message,
+            };
+            if let Err(error) = app.emit(HOOK_FAILED_EVENT, &failed) {
+                tracing::warn!(%error, "could not tell the window a hook failed");
             }
         });
     if let Err(error) = spawned {
         tracing::warn!(%error, hook = moment.name(), "could not start the hook");
     }
+}
+
+/// Run the hook holding the folder gate for its whole run (TUR-167): it works
+/// in the meeting folder, often writes there, and a folder move meanwhile
+/// would copy past it and delete what it wrote. The gate only counts writers,
+/// so holding it never blocks the window; a move started meanwhile is refused
+/// with `folder-busy`, and a hook due during a move is refused, not run.
+/// `Ok(Some)` is a hook that did not succeed.
+pub(super) fn run_gated(
+    gate: Option<&FolderGate>,
+    root: impl FnOnce() -> Result<PathBuf, UiError>,
+    config: &crate::config::HooksConfig,
+    moment: Moment,
+    meeting_id: &str,
+) -> Result<Option<super::Report>, UiError> {
+    crate::folder_move::writing_in(gate, root, |root| {
+        let Some(dir) = super::meeting_dir(root, meeting_id) else {
+            tracing::warn!(hook = moment.name(), "no meeting folder for the hook");
+            return Ok(None);
+        };
+        Ok(super::run_moment(config, moment, &dir))
+    })
 }
 
 /// `meetingId` in a recorder status payload.
