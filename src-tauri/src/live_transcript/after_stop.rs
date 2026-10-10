@@ -127,6 +127,7 @@ fn transcribe(scope: &Scope, transcript: &Path, open: OpenEngine) -> Status {
         },
         engine: engine.map(str::to_string),
         detail: outcome.as_ref().err().cloned(),
+        dropped_frames: 0,
     };
     match outcome {
         Ok(()) => scope.settle(),

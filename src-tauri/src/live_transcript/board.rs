@@ -109,7 +109,12 @@ impl Scope {
             if board.status.state == State::Failed {
                 return None;
             }
-            board.status = status;
+            // Frames already lost stay counted whatever the new status says.
+            let dropped_frames = board.status.dropped_frames;
+            board.status = Status {
+                dropped_frames,
+                ..status
+            };
             Some(board.status.clone())
         });
         if let Some(Some(status)) = changed {
@@ -122,6 +127,19 @@ impl Scope {
             state: State::Running,
             engine: Some(engine.to_string()),
             detail: None,
+            dropped_frames: 0,
+        });
+    }
+
+    /// A track's engine never got `frames` of its audio (TUR-148). Counted on
+    /// the board, which `settle` leaves alone, so the status Stop returns
+    /// says the transcript has gaps even when it ended `stopped`.
+    pub(super) fn dropped(&self, frames: u64) {
+        if frames == 0 {
+            return;
+        }
+        let _ = self.with_board(|board| {
+            board.status.dropped_frames = board.status.dropped_frames.saturating_add(frames);
         });
     }
 

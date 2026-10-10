@@ -21,9 +21,10 @@
 //! "Interrupted", `audio::wav_repair::classify_audio`), and one still marked
 //! `audio/.incomplete`: the marker is written with the meeting folder and
 //! removed here ([`transcript_finished`]) only when live transcription ended
-//! cleanly, with no failure and no timeout. And when `config.jsonc` cannot be
-//! read or parsed, or its `audio` section is not valid, no pass runs at all
-//! (logged, and Settings says "Audio cleanup paused").
+//! cleanly, with no failure, no timeout and no dropped frames (TUR-148). And
+//! when `config.jsonc` cannot be read or parsed, or its `audio` section is
+//! not valid, no pass runs at all (logged, and Settings says "Audio cleanup
+//! paused").
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -113,14 +114,24 @@ impl Drop for Transcribing {
 }
 
 /// Live transcription of the meeting in `meeting_dir` is over, with
-/// `status`. Only a clean end (`stopped`: no failure, no timeout) removes the
-/// `audio/.incomplete` marker and so lets retention delete its audio later.
+/// `status`. Only a clean end (`stopped`: no failure, no timeout, and no
+/// frames the engine fell behind on) removes the `audio/.incomplete` marker
+/// and so lets retention delete its audio later.
 pub fn transcript_finished(meeting_dir: &Path, status: &live_transcript::Status) {
     if status.state != live_transcript::State::Stopped {
         tracing::warn!(
             meeting = %meeting_dir.display(),
             state = ?status.state,
             "the transcript is not complete; keeping this meeting's audio"
+        );
+        return;
+    }
+    if status.dropped_frames > 0 {
+        // TUR-148: partial. The WAVs are the only way to fill the gaps.
+        tracing::warn!(
+            meeting = %meeting_dir.display(),
+            dropped_frames = status.dropped_frames,
+            "the speech engine fell behind, so the transcript has gaps; keeping this meeting's audio"
         );
         return;
     }
@@ -420,6 +431,7 @@ mod tests {
             state,
             engine: Some("apple-speech".to_owned()),
             detail: None,
+            dropped_frames: 0,
         }
     }
 
@@ -554,6 +566,26 @@ mod tests {
 
         let report = run_in(tmp.path(), Retention::Days(0), SystemTime::now(), &idle()).unwrap();
         assert_eq!(report.deleted.len(), 1, "{report:?}");
+    }
+
+    // --- TUR-148 ------------------------------------------------------------
+
+    #[test]
+    fn a_stopped_transcript_with_dropped_frames_keeps_the_audio() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gaps = meeting(tmp.path(), "2026-01-01-1000-gaps");
+        store::retention::mark_incomplete(&gaps).unwrap();
+        let partial = live_transcript::Status {
+            dropped_frames: 1,
+            ..status(live_transcript::State::Stopped)
+        };
+
+        transcript_finished(&gaps, &partial);
+
+        assert!(gaps.join("audio/.incomplete").exists());
+        let report = run_in(tmp.path(), Retention::Days(0), SystemTime::now(), &idle()).unwrap();
+        assert!(report.deleted.is_empty(), "{report:?}");
+        assert!(mic(&gaps).exists());
     }
 
     #[test]

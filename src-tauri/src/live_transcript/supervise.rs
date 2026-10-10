@@ -207,12 +207,15 @@ fn feed_track(
         }
     }
 
-    if feed.dropped_frames() > 0 {
+    let dropped_frames = feed.dropped_frames();
+    if dropped_frames > 0 {
         tracing::warn!(
             speaker = speaker.label(),
-            dropped_frames = feed.dropped_frames(),
+            dropped_frames,
             "the speech engine fell behind; those frames reached the WAV but not the live transcript"
         );
+        // TUR-148: a transcript with gaps is not complete for retention.
+        scope.dropped(dropped_frames);
     }
 
     if let Some(error) = failure {

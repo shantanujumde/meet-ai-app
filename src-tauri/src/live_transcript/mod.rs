@@ -24,7 +24,9 @@
 //! re-run from the WAVs. So nothing here can stop, stall, or fail a recording:
 //!
 //! * The tee never blocks capture (see `audio::tee`). If the engine falls
-//!   behind, transcription loses frames, the WAV does not.
+//!   behind, transcription loses frames, the WAV does not. The count goes
+//!   out with the final [`Status`], and retention keeps the audio of a
+//!   transcript with such gaps (TUR-148).
 //! * An engine that will not start, or fails mid-meeting, ends *transcription*
 //!   — both tracks, so the window's "transcription stopped" is simply true —
 //!   and says so on [`TRANSCRIPT_STATUS_EVENT`] in a sentence the user can read. The
@@ -107,6 +109,12 @@ pub struct Status {
     pub engine: Option<String>,
     /// A sentence for the user when `state` is `failed`.
     pub detail: Option<String>,
+    /// Frames of this meeting the live engines never got, because the tee's
+    /// queue was full (the engine fell behind). More than zero means
+    /// `transcript.md` has gaps only the WAVs can fill, so retention keeps
+    /// the audio (TUR-148). Not sent to the window.
+    #[serde(skip)]
+    pub dropped_frames: u64,
 }
 
 impl Status {
@@ -115,6 +123,7 @@ impl Status {
             state: State::Idle,
             engine: None,
             detail: None,
+            dropped_frames: 0,
         }
     }
 }
