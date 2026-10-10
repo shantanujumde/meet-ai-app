@@ -75,12 +75,16 @@ export function TrackerSettings() {
   /** The values the last test ticket that got through checked. */
   const [passed, setPassed] = useState<{ tracker: Tracker; server: string } | null>(null);
 
-  // The form shows what was read, and after a save what was saved.
-  useEffect(() => {
-    if (saved === null) return;
-    setTrackerChoice(saved.tracker);
-    setServer(saved.trackerMcp);
-  }, [saved]);
+  // The form shows what was read, and after a save what was saved. Set
+  // while rendering, so no frame shows the new settings with the old form.
+  const [shown, setShown] = useState<Settings | null>(null);
+  if (saved !== shown) {
+    setShown(saved);
+    if (saved !== null) {
+      setTrackerChoice(saved.tracker);
+      setServer(saved.trackerMcp);
+    }
+  }
 
   const name = server.trim();
   const unsaved = name.length > 0 && !isSaved(saved, tracker, name);
