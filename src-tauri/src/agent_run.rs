@@ -208,8 +208,9 @@ pub fn finish_then_run(app: &AppHandle, transcription: Transcription) {
         tracing::warn!(path = %transcript.display(), "no meeting folder around the transcript; no notes run");
         return;
     };
-    // TUR-85: only a transcript that ended cleanly (no failure, no timeout)
-    // lets retention delete this meeting's audio.
+    // TUR-85: only a transcript that ended cleanly (no failure, no timeout,
+    // no frames the engine fell behind on, TUR-148) lets retention delete
+    // this meeting's audio.
     crate::retention::transcript_finished(&stop_root.join(&meeting_id), &status);
     let app = app.clone();
     // TUR-45: busy for the retention job until the transcript is final.
