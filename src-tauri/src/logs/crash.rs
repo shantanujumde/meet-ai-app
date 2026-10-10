@@ -208,16 +208,17 @@ pub fn panic_dir<'a>(dir: &'a Path, fallback: Option<&'a Path>) -> Option<&'a Pa
     }
 }
 
-/// Write a crash file into `dir` for every panic, then run the hook that was
-/// there before (the default one prints to stderr), so nothing else changes.
-/// When `dir` is gone (the meetings folder moved), the file goes to the
-/// folder `fallback` names instead; see [`panic_dir`].
+/// Write a crash file into the folder `dir` names for every panic, then run
+/// the hook that was there before (the default one prints to stderr), so
+/// nothing else changes. `dir` is asked at each panic, so a folder move this
+/// launch is followed (TUR-149). When that folder is not there, the file goes
+/// to the folder `fallback` names instead; see [`panic_dir`].
 ///
 /// A panic that the app catches and recovers from is still written: it is a
 /// bug either way, and [`MAX_CRASH_FILES`](super::MAX_CRASH_FILES) caps how
 /// many pile up.
 pub fn install_panic_hook(
-    dir: PathBuf,
+    dir: impl Fn() -> PathBuf + Send + Sync + 'static,
     fallback: impl Fn() -> Option<PathBuf> + Send + Sync + 'static,
 ) {
     let previous = std::panic::take_hook();
@@ -233,6 +234,7 @@ pub fn install_panic_hook(
             backtrace: &backtrace,
         };
         // No tracing call here: a panic inside the logger would recurse.
+        let dir = dir();
         let fallback = fallback();
         let written = match panic_dir(&dir, fallback.as_deref()) {
             Some(dir) => write_panic_file(dir, Utc::from_unix(unix_now()), &report).map(drop),

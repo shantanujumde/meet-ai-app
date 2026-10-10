@@ -168,7 +168,8 @@ fn a_real_panic_leaves_a_crash_file() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = tempfile::tempdir().unwrap();
-    install_panic_hook(dir.path().to_path_buf(), || None);
+    let path = dir.path().to_path_buf();
+    install_panic_hook(move || path.clone(), || None);
 
     let joined = std::thread::Builder::new()
         .name("tur46-forced-panic".into())
@@ -225,7 +226,8 @@ fn a_real_panic_after_a_folder_move_lands_in_the_fallback() {
     let gone = root.path().join("old-meetings/.app/logs");
     let os_logs = tempfile::tempdir().unwrap();
     let fallback = os_logs.path().to_path_buf();
-    install_panic_hook(gone.clone(), move || Some(fallback.clone()));
+    let dead = gone.clone();
+    install_panic_hook(move || dead.clone(), move || Some(fallback.clone()));
 
     let joined = std::thread::Builder::new()
         .name("tur90-forced-panic".into())
@@ -264,7 +266,9 @@ fn installing_twice_writes_one_crash_report_per_panic() {
     let flag = OnceLock::new();
     for _ in 0..2 {
         let path = dir.path().to_path_buf();
-        install_once(&flag, move || install_panic_hook(path, || None));
+        install_once(&flag, move || {
+            install_panic_hook(move || path.clone(), || None)
+        });
     }
 
     let joined = std::thread::Builder::new()
@@ -285,4 +289,41 @@ fn installing_twice_writes_one_crash_report_per_panic() {
         })
         .sum();
     assert_eq!(reports, 1);
+}
+
+#[test]
+fn the_logs_folder_is_never_one_under_an_old_root() {
+    // TUR-149: worked out from the current root each time, not kept from
+    // startup.
+    let meetings = PathBuf::from("/New/Meetings/.app/logs");
+    let os = PathBuf::from("/Library/Logs/meet-ai");
+    assert_eq!(
+        pick_dir(true, Some(meetings.clone()), Some(os.clone())),
+        Some(meetings),
+        "the current root's folder"
+    );
+    assert_eq!(
+        pick_dir(true, None, Some(os.clone())),
+        Some(os.clone()),
+        "the root is not there: the OS folder, not a made-up one"
+    );
+    assert_eq!(
+        pick_dir(false, Some(PathBuf::from("/M/.app/logs")), Some(os.clone())),
+        Some(os),
+        "onboarded this launch: the live log is still in the OS folder"
+    );
+    assert_eq!(pick_dir(false, None, None), None);
+}
+
+#[test]
+fn crash_files_follow_a_folder_move() {
+    let installed = Path::new("/Old/Meetings/.app/logs");
+    assert_eq!(panic_dir_now(installed), installed);
+    follow_root(Path::new("/New/Meetings"));
+    assert_eq!(
+        panic_dir_now(installed),
+        meeting_format::layout::logs_dir(Path::new("/New/Meetings"))
+    );
+    // The only test that moves: put the static back for the next run.
+    *MOVED_LOGS_DIR.lock().unwrap() = None;
 }
