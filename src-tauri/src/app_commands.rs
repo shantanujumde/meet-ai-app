@@ -194,15 +194,24 @@ mod tests {
             APP_COMMANDS.len(),
             "a command is listed twice"
         );
-        let bindings = manifest_dir().join("../src/ipc/bindings.ts");
+        // A fresh export, not the committed file: CI deletes that one for
+        // `export_bindings` to write again while this test runs.
+        let scratch = tempfile::tempdir().unwrap();
+        let bindings = scratch.path().join("bindings.ts");
+        crate::bindings::builder()
+            .export(
+                specta_typescript::Typescript::default()
+                    .layout(specta_typescript::Layout::ModulePrefixedName),
+                &bindings,
+            )
+            .unwrap();
         let registered = invoked_in_bindings(&bindings);
         let unlisted: Vec<_> = registered.difference(&listed).collect();
         let unregistered: Vec<_> = listed.difference(&registered).collect();
         assert!(
             unlisted.is_empty() && unregistered.is_empty(),
             "APP_COMMANDS and bindings.rs disagree: add {unlisted:?} to APP_COMMANDS \
-             (and grant it in capabilities/), drop {unregistered:?} (run `just bindings` \
-             after changing bindings.rs)"
+             (and grant it in capabilities/), drop {unregistered:?}"
         );
     }
 
