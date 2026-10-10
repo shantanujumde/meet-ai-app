@@ -134,8 +134,17 @@ fn brief_from(
         });
     };
 
-    let folder = store::folder::load(&store::folder::meeting_dir(root, &found.id)?)?;
-    let meeting = folder.meeting.as_ref();
+    // Only `meeting.md` and `tickets/`: the transcript and notes are never
+    // shown, so they are not read (TUR-166). Listing the folder keeps the
+    // old error for a meeting that is gone; an unreadable `meeting.md`
+    // leaves the sections empty, as a full load did.
+    let dir = store::folder::meeting_dir(root, &found.id)?;
+    std::fs::read_dir(&dir).map_err(store::Error::from)?;
+    let meeting = store::meeting::Meeting::read(&dir.join(store::MEETING_FILE))
+        .ok()
+        .flatten();
+    let tickets = store::folder::tickets(&dir);
+    let meeting = meeting.as_ref();
     let section = |heading: &str| {
         meeting
             .and_then(|m| m.section(heading))
@@ -143,8 +152,7 @@ fn brief_from(
             .filter(|text| !text.is_empty())
             .map(str::to_owned)
     };
-    let open_tickets = folder
-        .tickets
+    let open_tickets = tickets
         .iter()
         .filter(|ticket| !matches!(ticket.status(), Some(Status::Done | Status::Dropped)))
         .map(|ticket| BriefTicket {
