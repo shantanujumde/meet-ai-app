@@ -179,6 +179,17 @@ impl Reminders {
         self.held.insert(event.id.clone(), event.start);
     }
 
+    /// [`Self::tick`] at `clock`'s time, the way the loop ticks: the gap to
+    /// the next tick is measured from when this one finished, not from when
+    /// it began. A slow calendar read (a Google or Microsoft sign-in can take
+    /// 20 s) is then not mistaken for a sleep, which would re-read the
+    /// calendar on every tick (TUR-172).
+    pub fn tick_on(&mut self, clock: &dyn Clock, calendar: &dyn Upcoming) -> Vec<Event> {
+        let due = self.tick(clock.now(), calendar);
+        self.last_tick = Some(clock.now());
+        due
+    }
+
     /// One tick at `now`: the events to remind about, each at most once
     /// unless the caller [`Self::hold`]s it.
     pub fn tick(&mut self, now: DateTime<Utc>, calendar: &dyn Upcoming) -> Vec<Event> {
@@ -330,7 +341,7 @@ pub fn spawn(
                 if let Some(settings) = settings() {
                     reminders.configure(settings);
                     reminders.set_recording(recording());
-                    for event in reminders.tick(clock.now(), &calendar) {
+                    for event in reminders.tick_on(&clock, &calendar) {
                         if fire(&event) == Fired::Held {
                             reminders.hold(&event);
                         }
