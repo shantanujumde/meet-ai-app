@@ -25,11 +25,11 @@ pub const RETIRED_TITLES_KEY: &str = "retired_titles";
 /// `retired_tickets` list names, tickets the user deleted or discarded
 /// included.
 ///
-/// [`super::write()`] never hands out a number its own record still names, so
-/// a deleted top ticket does not come back under its old name. A writer that
-/// numbers tickets for the whole root, such as a hand-made ticket, takes the
-/// larger of this and [`super::highest_ticket_number`], under
-/// [`super::lock_meeting_writers`], to keep the same rule.
+/// [`super::write()`] never hands out a number any meeting's record still
+/// names, so a deleted top ticket does not come back under its old name, in
+/// its own meeting or another. Every writer of a new number goes through
+/// [`super::next_ticket_number`], under [`super::lock_meeting_writers`], to
+/// keep the same rule.
 ///
 /// A `meeting.md` that cannot be read is logged and skipped, as an unlistable
 /// `tickets/` is in [`super::highest_ticket_number`].

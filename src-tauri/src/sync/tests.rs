@@ -4,8 +4,8 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use agent::fake::{FakeBehavior, FakeHarness};
@@ -199,8 +199,8 @@ fn agent_failures_in_a_sync_say_what_to_do() {
         signed_out.message
     );
     let runs = SyncRuns::default();
-    let claim = runs.claim("TICK-0001").unwrap();
-    runs.cancel("TICK-0001");
+    let claim = runs.claim("TICK-0001", Some(MEETING)).unwrap();
+    runs.cancel("TICK-0001", Some(MEETING));
     let sleepy = FakeHarness::new(FakeBehavior::Sleep(Duration::from_secs(10)));
     let stopped = run(
         root.path(),
@@ -221,8 +221,8 @@ fn agent_failures_in_a_sync_say_what_to_do() {
 fn cancel_stops_the_run() {
     let root = meetings_root();
     let runs = SyncRuns::default();
-    let claim = runs.claim("TICK-0001").unwrap();
-    runs.cancel("TICK-0001");
+    let claim = runs.claim("TICK-0001", Some(MEETING)).unwrap();
+    runs.cancel("TICK-0001", Some(MEETING));
     let sleepy = FakeHarness::new(FakeBehavior::Sleep(Duration::from_secs(10)));
     let err = run(
         root.path(),
@@ -239,13 +239,16 @@ fn cancel_stops_the_run() {
 #[test]
 fn one_run_per_ticket_at_a_time() {
     let runs = SyncRuns::default();
-    let first = runs.claim("TICK-0001").unwrap();
-    assert_eq!(runs.claim("TICK-0001").err().unwrap().kind, "sync-busy");
-    assert!(runs.claim("TICK-0002").is_ok());
+    let first = runs.claim("TICK-0001", Some(MEETING)).unwrap();
+    assert_eq!(
+        runs.claim("TICK-0001", Some(MEETING)).err().unwrap().kind,
+        "sync-busy"
+    );
+    assert!(runs.claim("TICK-0002", Some(MEETING)).is_ok());
     drop(first);
-    assert!(runs.claim("TICK-0001").is_ok());
+    assert!(runs.claim("TICK-0001", Some(MEETING)).is_ok());
     // Cancelling a ticket with no run is a no-op.
-    runs.cancel("TICK-0009");
+    runs.cancel("TICK-0009", Some(MEETING));
 }
 
 #[test]

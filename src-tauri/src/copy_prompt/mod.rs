@@ -21,7 +21,7 @@ use prompts::start_work::{StartWorkInput, render_start_work_from};
 use prompts::wrap_up::{Target, WrapUpInput, render_wrap_up_from};
 use store::folder_name::{prettify_slug, split_folder_name};
 use store::meeting::Meeting;
-use store::ticket::{self, Ticket};
+use store::ticket::Ticket;
 
 use crate::config::{self, Harness};
 use crate::error::UiError;
@@ -144,7 +144,7 @@ fn wrap_up_in(root: &Path, meeting_id: &str) -> Result<String, UiError> {
         notes: store::notes::read(&dir)?,
     };
     let target = Target::Clipboard {
-        first_ticket: next_ticket_number(root, &dir)?,
+        first_ticket: next_ticket_number(root)?,
         meeting_dir: dir,
     };
     Ok(render_wrap_up_from(root, &input, &target)?)
@@ -178,34 +178,11 @@ fn find_ticket(root: &Path, ticket_id: &str, meeting_id: Option<&str>) -> Result
         .ok_or_else(not_found)
 }
 
-/// One past the highest `TICK-NNNN` in the shared tickets folder and this
-/// meeting's, so the agent's files never take a number already in use.
-fn next_ticket_number(root: &Path, meeting_dir: &Path) -> Result<u32, UiError> {
-    let mut highest = 0;
-    for dir in [
-        root.join(store::TICKETS_DIR),
-        meeting_dir.join(store::TICKETS_DIR),
-    ] {
-        let entries = match fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.into()),
-        };
-        for entry in entries {
-            let path = entry?.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
-                continue;
-            }
-            if let Some(n) = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .and_then(ticket::parse_id)
-            {
-                highest = highest.max(n);
-            }
-        }
-    }
-    Ok(highest.saturating_add(1))
+/// The first number the pasted agent may use: the same global rule as a notes
+/// run and a hand-made ticket (TUR-154), so its files never take a number any
+/// meeting already uses or retired.
+fn next_ticket_number(root: &Path) -> Result<u32, UiError> {
+    Ok(store::agent_notes::next_ticket_number(root)?)
 }
 
 /// `meeting.md`, or `None` when the meeting has not been wrapped up yet.

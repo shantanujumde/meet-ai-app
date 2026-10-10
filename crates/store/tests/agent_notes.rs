@@ -702,6 +702,29 @@ fn a_deleted_ticket_with_the_highest_number_is_not_recreated_by_a_rerun() {
     );
 }
 
+/// TUR-154: the deleted top ticket belongs to another meeting. Meeting B's
+/// first notes run must not take the number meeting A still records.
+#[test]
+fn a_number_another_meeting_retired_is_not_handed_out_by_a_notes_run() {
+    let root = Root::new("retired-across");
+    root.meeting(STANDUP);
+    root.meeting(RETRO);
+    root.write(STANDUP, &notes("standup"), &first());
+    fs::remove_file(root.ticket_path(STANDUP, "TICK-0003")).unwrap();
+
+    let outcome = root.write(RETRO, &notes("standup"), &second());
+
+    assert!(
+        !root.ticket_path(RETRO, "TICK-0003").exists(),
+        "TICK-0003 was retired in {STANDUP} but {RETRO} took it: {outcome:?}"
+    );
+    assert_eq!(
+        outcome.written,
+        ids(&["TICK-0004", "TICK-0005", "TICK-0006"])
+    );
+    assert_eq!(agent_notes::next_ticket_number(&root.path).unwrap(), 7);
+}
+
 // ---------------------------------------------------------------------------
 // 6. Numbering across the whole root
 // ---------------------------------------------------------------------------

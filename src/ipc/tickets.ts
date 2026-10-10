@@ -123,9 +123,9 @@ export function syncTask(ticketId: string, meetingId: string | null): Promise<Ti
   return narrow(() => commands.syncTask(ticketId, meetingId));
 }
 
-/** Stop this ticket's running sync. */
-export async function cancelSync(ticketId: string): Promise<void> {
-  await call(() => commands.cancelSync(ticketId));
+/** Stop this ticket's running sync. `meetingId` as for {@link syncTask}. */
+export async function cancelSync(ticketId: string, meetingId: string | null): Promise<void> {
+  await call(() => commands.cancelSync(ticketId, meetingId));
 }
 
 /** Forget the issue a Sync created but could not attach, so the next Sync runs afresh. */

@@ -76,9 +76,11 @@ use crate::watcher::SelfWrites;
 use crate::{Error, MEETING_FILE, TICKETS_DIR};
 
 mod actions;
+mod numbering;
 mod retired;
 mod text;
 
+pub use numbering::next_ticket_number;
 pub use retired::{RETIRED_TICKETS_KEY, RETIRED_TITLES_KEY, highest_recorded_ticket_number};
 pub(crate) use retired::{retire, retire_title};
 
@@ -194,12 +196,8 @@ pub fn write(
 
     let tickets_dir = dir.join(TICKETS_DIR);
     let earlier = sort_earlier(&tickets_dir, &meeting);
-    // A number the user's deletion freed stays retired: counting the record
-    // too keeps a deleted top ticket from coming back under its old name.
-    let next = highest_ticket_number(root)?
-        .max(earlier.highest)
-        .max(highest_recorded_ticket_number(root)?)
-        .saturating_add(1);
+    // Numbered for the whole root, past every number any meeting retired.
+    let next = next_ticket_number(root)?.max(earlier.highest.saturating_add(1));
     // A task the user approved or discarded does not come back (SPEC A26).
     let settled = retired::settled_titles(root, meeting_id, &meeting);
     let tasks: Vec<Task> = notes

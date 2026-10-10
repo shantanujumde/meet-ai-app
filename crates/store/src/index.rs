@@ -27,8 +27,8 @@ pub use titled::{IndexedMeeting, same_title_key};
 
 /// Bump when the tables below change. A file with another number is dropped
 /// and rebuilt, never migrated: the markdown is the truth, so rebuilding is
-/// always safe.
-pub const SCHEMA_VERSION: i32 = 1;
+/// always safe. 2: `tickets` keyed by (meeting, ticket) (TUR-154).
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// Markers [`Hit::snippet`] puts around each matched word.
 pub const MATCH_START: char = '\u{ab}';
@@ -51,7 +51,7 @@ CREATE TABLE meetings(
     mtime INTEGER NOT NULL
 );
 CREATE TABLE tickets(
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     meeting_id TEXT NOT NULL,
     title TEXT NOT NULL,
     status TEXT,
@@ -59,7 +59,8 @@ CREATE TABLE tickets(
     estimate TEXT,
     synced_to TEXT,
     path TEXT NOT NULL,
-    mtime INTEGER NOT NULL
+    mtime INTEGER NOT NULL,
+    PRIMARY KEY (meeting_id, id)
 );
 CREATE VIRTUAL TABLE transcript_fts USING fts5(
     meeting_id UNINDEXED, ts UNINDEXED, speaker UNINDEXED, text
@@ -478,5 +479,38 @@ mod tests {
             meeting_id_of(root, Path::new("/elsewhere/x/notes.md")),
             None
         );
+    }
+
+    fn ticket_rows(index: &Index) -> Vec<(String, String)> {
+        let mut stmt = index
+            .conn
+            .prepare("SELECT meeting_id, id FROM tickets ORDER BY meeting_id, id")
+            .expect("prepare");
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows")
+    }
+
+    /// TUR-154: two meetings holding the same ticket id keep a row each, and
+    /// dropping one meeting leaves the other's row.
+    #[test]
+    fn two_meetings_with_the_same_ticket_id_keep_a_row_each() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let (a, b) = ("2026-10-01-1000-a", "2026-10-02-1000-b");
+        for id in [a, b] {
+            let tickets = root.path().join(id).join(TICKETS_DIR);
+            std::fs::create_dir_all(&tickets).expect("tickets dir");
+            crate::ticket::Ticket::new("TICK-0001", "Same number", id)
+                .write(&tickets.join("TICK-0001.md"))
+                .expect("ticket");
+        }
+        let mut index = Index::open(root.path()).expect("open");
+        let row = |m: &str| (m.to_owned(), "TICK-0001".to_owned());
+        assert_eq!(ticket_rows(&index), vec![row(a), row(b)]);
+
+        std::fs::remove_dir_all(root.path().join(a)).expect("remove a");
+        index.refresh_meeting(root.path(), a).expect("refresh");
+        assert_eq!(ticket_rows(&index), vec![row(b)]);
     }
 }
