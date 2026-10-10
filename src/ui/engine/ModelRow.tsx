@@ -8,7 +8,8 @@
  * `config.jsonc`.
  *
  * A model that is here and not picked gets a quiet Delete, confirmed inline
- * with its size before anything goes (TUR-132).
+ * with its size before anything goes (TUR-132). A download in flight gets a
+ * Cancel (TUR-159).
  */
 
 import { useCallback, useId, useRef, useState } from "react";
@@ -36,6 +37,7 @@ export function ModelRow({
   inUse,
   onPick,
   onDownload,
+  onCancel,
   onDelete,
 }: {
   /** The model radios' shared `name`. */
@@ -48,6 +50,8 @@ export function ModelRow({
   inUse: boolean;
   onPick: () => void;
   onDownload: () => void;
+  /** Stop the download in flight; its partial file is kept for a resume. */
+  onCancel: () => void;
   onDelete: () => void;
 }) {
   const { progress, error, busy } = state;
@@ -108,9 +112,21 @@ export function ModelRow({
               ) : null}
             </>
           ) : (
-            <Button size="small" disabled={downloading} onClick={onDownload}>
-              {downloading ? "Downloading…" : "Download"}
-            </Button>
+            <>
+              <Button size="small" disabled={downloading} onClick={onDownload}>
+                {downloading ? "Downloading…" : "Download"}
+              </Button>
+              {downloading ? (
+                <Button
+                  size="small"
+                  tone="quiet"
+                  aria-label={`Cancel downloading ${model.displayName}`}
+                  onClick={onCancel}
+                >
+                  Cancel
+                </Button>
+              ) : null}
+            </>
           )}
         </div>
       </div>

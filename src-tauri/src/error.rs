@@ -90,6 +90,7 @@ impl From<modelfetch::Error> for UiError {
         let kind = match error.kind() {
             modelfetch::ErrorKind::Download => "download",
             modelfetch::ErrorKind::Checksum => "checksum",
+            modelfetch::ErrorKind::Cancelled => "cancelled",
         };
         Self {
             domain: ErrorDomain::Model,

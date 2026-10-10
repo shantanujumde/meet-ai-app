@@ -60,11 +60,16 @@ fn check_not_in_use(id: &str, picked: &str, idle: bool) -> Result<(), UiError> {
     ))
 }
 
-/// Remove `installed` (if any) and `<filename>.part` in `dir`. A file that is
-/// already gone is not an error.
+/// Remove `installed` (if any) with the digest file beside it (TUR-159), and
+/// `<filename>.part` in `dir`. A file that is already gone is not an error.
 fn remove(spec: &ModelSpec, installed: Option<&Path>, dir: &Path) -> Result<(), UiError> {
     let part: PathBuf = dir.join(format!("{}.part", spec.filename));
-    for path in installed.into_iter().chain([part.as_path()]) {
+    let digest = installed.map(stt::model::digest_file);
+    for path in installed
+        .into_iter()
+        .chain(digest.as_deref())
+        .chain([part.as_path()])
+    {
         match std::fs::remove_file(path) {
             Ok(()) => tracing::info!(model = spec.id, path = %path.display(), "deleted model file"),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -88,11 +93,14 @@ mod tests {
         let part = dir.path().join(format!("{}.part", spec.filename));
         std::fs::write(&file, b"model").expect("write model");
         std::fs::write(&part, b"half").expect("write part");
+        let digest = stt::model::digest_file(&file);
+        std::fs::write(&digest, spec.sha256).expect("write digest");
 
         remove(spec, Some(&file), dir.path()).expect("deleted");
 
         assert!(!file.exists());
         assert!(!part.exists());
+        assert!(!digest.exists());
     }
 
     #[test]

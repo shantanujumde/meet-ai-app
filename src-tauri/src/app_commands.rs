@@ -30,6 +30,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "model_catalogue",
     "download_model",
     "delete_model",
+    "cancel_model_download",
     "engine_choices",
     "model_credits",
     "set_transcription",

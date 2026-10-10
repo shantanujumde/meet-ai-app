@@ -37,6 +37,7 @@
     "allow-model-catalogue",
     "allow-download-model",
     "allow-delete-model",
+    "allow-cancel-model-download",
     "allow-engine-choices",
     "allow-model-credits",
     "allow-set-transcription",

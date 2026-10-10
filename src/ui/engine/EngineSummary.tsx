@@ -78,6 +78,9 @@ export function EngineSummary() {
         onDownloadParakeet={() => {
           if (choices) void speech.download(choices.parakeetModel.id);
         }}
+        onCancelParakeet={() => {
+          if (choices) void speech.cancel(choices.parakeetModel.id);
+        }}
       />
       <SpokenLanguagePicker
         choices={choices}

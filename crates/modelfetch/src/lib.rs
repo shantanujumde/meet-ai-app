@@ -18,19 +18,29 @@
 //!   with an HTTP `Range` request instead of starting over.
 //! * **Verified.** The `.part` file is renamed to its real name *only* after
 //!   its SHA-256 matches the digest pinned in `stt::model`. A file under its
-//!   real name is therefore always a file we verified.
-//! * **Pinned.** The URL comes from the catalogue and must be HTTPS. Nothing
-//!   here takes a caller-supplied URL.
+//!   real name is therefore always a file we verified, and the digest it was
+//!   verified against is written beside it (`stt::model::digest_file`), so a
+//!   catalogue entry whose digest later changes fetches the new file.
+//! * **Pinned.** The URL comes from the catalogue, must be HTTPS, and names a
+//!   commit rather than a branch. Nothing here takes a caller-supplied URL.
+//! * **Cancellable.** The caller's flag is checked while waiting for the
+//!   server, between chunks, during backoff and while hashing. A cancelled
+//!   download keeps its `.part`, so the next one resumes.
+//! * **Quiet.** Progress is reported when the percentage changes, or every
+//!   100 ms, not per network chunk.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
-use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use stt::model::ModelSpec;
-use tokio::io::AsyncWriteExt;
 
+// One attempt, and whether its failure is worth another (TUR-159).
+mod attempt;
 mod retry;
+// Fewer progress reports (TUR-159).
+mod throttle;
 
 // A model that is a folder of files, such as Parakeet (TUR-62).
 mod folder;
@@ -44,7 +54,7 @@ use retry::RetryPolicy;
 /// not be killed for being slow — on a bad hotel connection 574 MB
 /// legitimately takes a long time. Silence is bounded separately, by
 /// [`STALL_TIMEOUT`].
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long the server may send nothing at all before the attempt fails.
 ///
@@ -81,6 +91,10 @@ pub enum Error {
         expected: &'static str,
         actual: String,
     },
+
+    /// The caller asked to stop. The `.part` file is kept for a resume.
+    #[error("the download of {0} was cancelled")]
+    Cancelled(&'static str),
 }
 
 impl Error {
@@ -93,6 +107,7 @@ impl Error {
         match self {
             Error::Download(_) => ErrorKind::Download,
             Error::Checksum { .. } => ErrorKind::Checksum,
+            Error::Cancelled(_) => ErrorKind::Cancelled,
         }
     }
 }
@@ -103,6 +118,7 @@ impl Error {
 pub enum ErrorKind {
     Download,
     Checksum,
+    Cancelled,
 }
 
 /// How far along a download is.
@@ -145,9 +161,13 @@ impl Progress {
 /// `on_progress` is called at least twice for any real download — once before
 /// the first request goes out, and once when verification starts — so a UI
 /// never has to decide whether a 0% bar means "connecting" or "frozen".
+///
+/// Setting `cancel` stops the download with [`Error::Cancelled`] within a
+/// fraction of a second.
 pub async fn ensure(
     spec: &ModelSpec,
     dir: &Path,
+    cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<PathBuf, Error> {
     if !spec.url.starts_with("https://") && !dir.join(spec.filename).is_file() {
@@ -156,7 +176,7 @@ pub async fn ensure(
             spec.id
         )));
     }
-    ensure_with(spec, dir, &RetryPolicy::default(), on_progress).await
+    ensure_with(spec, dir, &RetryPolicy::default(), cancel, on_progress).await
 }
 
 /// [`ensure`] with an injectable retry policy and no https check.
@@ -167,14 +187,45 @@ async fn ensure_with(
     spec: &ModelSpec,
     dir: &Path,
     policy: &RetryPolicy,
+    cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<PathBuf, Error> {
     let final_path = dir.join(spec.filename);
     if final_path.is_file() {
         // Present means verified: nothing reaches this name without passing
-        // the digest check below.
-        return Ok(final_path);
+        // the digest check below. Against which digest is in the file beside
+        // it.
+        match stt::model::verified_digest(&final_path) {
+            Some(digest) if digest == spec.sha256 => return Ok(final_path),
+            // Verified by a build from before the digest file, against the
+            // same catalogue: record it, once.
+            None => {
+                record_digest(spec, &final_path).await;
+                return Ok(final_path);
+            }
+            // Verified against a digest the catalogue no longer pins: the
+            // file upstream changed and so did the entry. Fetch the new one.
+            Some(digest) => {
+                tracing::warn!(
+                    model = spec.id,
+                    had = %digest,
+                    pinned = spec.sha256,
+                    "the installed model is not the pinned version; downloading it again"
+                );
+                remove_if_present(&final_path).await;
+                remove_if_present(&stt::model::digest_file(&final_path)).await;
+            }
+        }
     }
+
+    // Progress reports, throttled (TUR-159). The first one and the verifying
+    // ones always get through.
+    let mut throttle = throttle::Throttle::default();
+    let on_progress = &mut |progress: Progress| {
+        if throttle.admit(&progress, Instant::now()) {
+            on_progress(progress);
+        }
+    };
 
     tokio::fs::create_dir_all(dir)
         .await
@@ -208,7 +259,7 @@ async fn ensure_with(
     });
 
     if resumed < spec.bytes {
-        resumed = retry::download_with_retry(spec, &part_path, policy, on_progress).await?;
+        resumed = retry::download_with_retry(spec, &part_path, policy, cancel, on_progress).await?;
     }
 
     on_progress(Progress {
@@ -217,7 +268,7 @@ async fn ensure_with(
         verifying: true,
     });
 
-    let actual = sha256_file(&part_path).await?;
+    let actual = sha256_file(spec.id, &part_path, cancel).await?;
     if actual != spec.sha256 {
         // Delete the bad bytes. A checksum failure is a possible tampering
         // signal, and leaving the `.part` in place would make the UI's
@@ -231,6 +282,9 @@ async fn ensure_with(
         });
     }
 
+    // The digest first: a crash between the two leaves a digest file with no
+    // model, which reads as not installed, never a model with a wrong digest.
+    record_digest(spec, &final_path).await;
     tokio::fs::rename(&part_path, &final_path)
         .await
         .map_err(|e| Error::Download(format!("{}: {e}", final_path.display())))?;
@@ -239,117 +293,24 @@ async fn ensure_with(
     Ok(final_path)
 }
 
-/// Stream the remaining bytes into `part_path`, returning the new total.
+/// Write the digest `final_path` is verified against beside it.
 ///
-/// Fails with [`Error::Download`] — the error the retry acts on — if the
-/// server sends nothing for `stall` while we wait for headers or a chunk.
-pub(crate) async fn download(
-    spec: &ModelSpec,
-    part_path: &Path,
-    resumed: u64,
-    stall: Duration,
-    on_progress: &mut dyn FnMut(Progress),
-) -> Result<u64, Error> {
-    let stalled = || {
-        Error::Download(format!(
-            "{}: no data for {} ms; the connection stalled",
-            spec.url,
-            stall.as_millis()
-        ))
-    };
-
-    let client = reqwest::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .build()
-        .map_err(|e| Error::Download(e.to_string()))?;
-
-    let mut request = client.get(spec.url);
-    if resumed > 0 {
-        request = request.header(reqwest::header::RANGE, format!("bytes={resumed}-"));
+/// Not fatal when it fails: a model with no digest file counts as verified
+/// against the catalogue it was downloaded with, which is still true.
+async fn record_digest(spec: &ModelSpec, final_path: &Path) {
+    let path = stt::model::digest_file(final_path);
+    if let Err(error) = tokio::fs::write(&path, format!("{}\n", spec.sha256)).await {
+        tracing::warn!(path = %path.display(), %error, "could not record the model's digest");
     }
-
-    let response = tokio::time::timeout(stall, request.send())
-        .await
-        .map_err(|_| stalled())?
-        .map_err(|e| Error::Download(format!("{}: {e}", spec.url)))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        return Err(Error::Download(format!("{} returned {status}", spec.url)));
-    }
-
-    // A server that ignores `Range` answers 200 with the whole file. Appending
-    // that to what we already have would corrupt it, so start the file over.
-    let append = resumed > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
-    if resumed > 0 && !append {
-        tracing::warn!(
-            "the server ignored the resume request; downloading {} from the start",
-            spec.id
-        );
-    }
-
-    let mut written = if append { resumed } else { 0 };
-    let mut file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(append)
-        .truncate(!append)
-        .open(part_path)
-        .await
-        .map_err(|e| Error::Download(format!("{}: {e}", part_path.display())))?;
-
-    let mut stream = response.bytes_stream();
-    // The bytes written so far stay in the `.part` file when this fails or
-    // times out, so the retry resumes from them rather than starting over.
-    let streamed: Result<(), Error> = async {
-        while let Some(chunk) = tokio::time::timeout(stall, stream.next())
-            .await
-            .map_err(|_| stalled())?
-        {
-            let chunk = chunk.map_err(|e| Error::Download(format!("{}: {e}", spec.url)))?;
-            file.write_all(&chunk)
-                .await
-                .map_err(|e| Error::Download(format!("{}: {e}", part_path.display())))?;
-            written += chunk.len() as u64;
-            on_progress(Progress {
-                downloaded_bytes: written,
-                total_bytes: spec.bytes,
-                verifying: false,
-            });
-        }
-        Ok(())
-    }
-    .await;
-
-    // Flush even when the stream failed. A `tokio::fs::File` write only
-    // queues the bytes; dropping the handle without a flush lets them land
-    // *after* the retry has measured or truncated the `.part` file, which
-    // resumes from the wrong offset or corrupts it.
-    let flushed = file
-        .flush()
-        .await
-        .map_err(|e| Error::Download(format!("{}: {e}", part_path.display())));
-    streamed?;
-    flushed?;
-    // The rename below is only atomic with respect to bytes that actually
-    // reached the disk, so sync before the digest is computed and trusted.
-    file.sync_all()
-        .await
-        .map_err(|e| Error::Download(format!("{}: {e}", part_path.display())))?;
-    drop(file);
-
-    if written != spec.bytes {
-        return Err(Error::Download(format!(
-            "{} is {written} bytes, expected {}",
-            spec.id, spec.bytes
-        )));
-    }
-
-    Ok(written)
 }
 
-/// SHA-256 of a file, lowercase hex.
-async fn sha256_file(path: &Path) -> Result<String, Error> {
+/// SHA-256 of a file, lowercase hex. Stops between chunks once `cancel` is
+/// set: hashing a gigabyte takes seconds.
+async fn sha256_file(
+    model: &'static str,
+    path: &Path,
+    cancel: &AtomicBool,
+) -> Result<String, Error> {
     use tokio::io::AsyncReadExt;
 
     let mut file = tokio::fs::File::open(path)
@@ -365,6 +326,9 @@ async fn sha256_file(path: &Path) -> Result<String, Error> {
             .map_err(|e| Error::Download(format!("{}: {e}", path.display())))?;
         if read == 0 {
             break;
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Error::Cancelled(model));
         }
         hasher.update(&buffer[..read]);
     }
@@ -417,6 +381,9 @@ mod tests {
         facts: stt::model::ModelFacts::NONE,
     };
 
+    /// A cancel flag nobody sets.
+    pub(crate) static NEVER: AtomicBool = AtomicBool::new(false);
+
     #[test]
     fn hex_is_lowercase_and_zero_padded() {
         assert_eq!(hex(&[0x00, 0x0f, 0xff]), "000fff");
@@ -465,10 +432,69 @@ mod tests {
         std::fs::write(dir.join(TINY.filename), b"already verified").unwrap();
 
         let mut calls = 0;
-        let path = ensure(&TINY, &dir, &mut |_| calls += 1).await.unwrap();
+        let path = ensure(&TINY, &dir, &NEVER, &mut |_| calls += 1)
+            .await
+            .unwrap();
 
         assert_eq!(path, dir.join(TINY.filename));
         assert_eq!(calls, 0, "the installed path must not report progress");
+        // Installed before digest files: the pinned digest is recorded.
+        assert_eq!(
+            stt::model::verified_digest(&path).as_deref(),
+            Some(TINY.sha256)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_promoted_part_records_the_digest_it_was_verified_against() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        std::fs::write(dir.join(format!("{}.part", TINY.filename)), [0u8; 8]).unwrap();
+        let path = ensure(&TINY, &dir, &NEVER, &mut |_| {}).await.unwrap();
+        assert_eq!(
+            stt::model::verified_digest(&path).as_deref(),
+            Some(TINY.sha256)
+        );
+        assert!(stt::model::is_installed(&TINY, &dir));
+    }
+
+    #[tokio::test]
+    async fn a_model_verified_against_another_digest_is_fetched_again() {
+        // The catalogue entry changed since this file was verified. Nothing
+        // listens at the URL, so the re-fetch fails, but the stale file must
+        // be gone rather than returned as if it were the pinned one.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let file = dir.join(TINY.filename);
+        std::fs::write(&file, b"old weights").unwrap();
+        std::fs::write(stt::model::digest_file(&file), "0".repeat(64)).unwrap();
+        let dead = ModelSpec {
+            url: "http://127.0.0.1:1/x",
+            ..TINY
+        };
+        let once = RetryPolicy {
+            max_retries: 0,
+            base_delay: Duration::ZERO,
+            stall_timeout: STALL_TIMEOUT,
+        };
+        let result = ensure_with(&dead, &dir, &once, &NEVER, &mut |_| {}).await;
+        assert!(matches!(result, Err(Error::Download(_))), "got {result:?}");
+        assert!(!file.exists(), "the stale model was kept");
+        assert!(!stt::model::digest_file(&file).exists());
+    }
+
+    #[tokio::test]
+    async fn a_cancel_while_hashing_keeps_the_part_for_a_resume() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let part = dir.join(format!("{}.part", TINY.filename));
+        std::fs::write(&part, [0u8; 8]).unwrap();
+        let cancel = AtomicBool::new(true);
+        let error = ensure(&TINY, &dir, &cancel, &mut |_| {}).await.unwrap_err();
+        assert!(matches!(error, Error::Cancelled(_)), "got {error:?}");
+        assert_eq!(error.kind(), ErrorKind::Cancelled);
+        assert!(part.exists());
+        assert!(!dir.join(TINY.filename).exists());
     }
 
     #[tokio::test]
@@ -481,7 +507,7 @@ mod tests {
         std::fs::write(dir.join(format!("{}.part", TINY.filename)), [0u8; 8]).unwrap();
 
         let mut seen: Vec<Progress> = Vec::new();
-        let path = ensure(&TINY, &dir, &mut |progress| seen.push(progress))
+        let path = ensure(&TINY, &dir, &NEVER, &mut |progress| seen.push(progress))
             .await
             .unwrap();
 
@@ -500,7 +526,7 @@ mod tests {
         let part = dir.join(format!("{}.part", TINY.filename));
         std::fs::write(&part, b"notzeros").unwrap();
 
-        let error = ensure(&TINY, &dir, &mut |_| {}).await.unwrap_err();
+        let error = ensure(&TINY, &dir, &NEVER, &mut |_| {}).await.unwrap_err();
 
         // Must be ModelChecksum, not ModelDownload: the UI shows a
         // security-flavoured screen for one and "try again" for the other.
@@ -536,7 +562,7 @@ mod tests {
             base_delay: Duration::ZERO,
             stall_timeout: STALL_TIMEOUT,
         };
-        let _ = ensure_with(&dead, &dir, &fast, &mut |progress| {
+        let _ = ensure_with(&dead, &dir, &fast, &NEVER, &mut |progress| {
             first.get_or_insert(progress);
         })
         .await;

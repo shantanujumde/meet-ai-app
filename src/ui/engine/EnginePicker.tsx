@@ -64,6 +64,7 @@ export function EnginePicker({
   onPick,
   parakeetDownload,
   onDownloadParakeet,
+  onCancelParakeet,
 }: {
   choices: EngineChoices | null;
   checking: boolean;
@@ -71,6 +72,8 @@ export function EnginePicker({
   /** The Parakeet model's download in flight, if any (TUR-62). */
   parakeetDownload: ModelState;
   onDownloadParakeet: () => void;
+  /** Stop the Parakeet download in flight (TUR-159). */
+  onCancelParakeet: () => void;
 }) {
   const group = useId();
   const ready = choices !== null;
@@ -134,14 +137,26 @@ export function EnginePicker({
         onPick={onPick}
         status={
           parakeetMissing ? (
-            <Button
-              size="small"
-              icon={Download}
-              disabled={parakeetBusy}
-              onClick={onDownloadParakeet}
-            >
-              {parakeetBusy ? "Downloading…" : "Download"}
-            </Button>
+            <span className="flex items-center gap-2">
+              <Button
+                size="small"
+                icon={Download}
+                disabled={parakeetBusy}
+                onClick={onDownloadParakeet}
+              >
+                {parakeetBusy ? "Downloading…" : "Download"}
+              </Button>
+              {parakeetBusy ? (
+                <Button
+                  size="small"
+                  tone="quiet"
+                  aria-label="Cancel downloading Parakeet"
+                  onClick={onCancelParakeet}
+                >
+                  Cancel
+                </Button>
+              ) : null}
+            </span>
           ) : null
         }
       >
