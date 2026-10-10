@@ -32,6 +32,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::Channel;
 
+// TUR-164: the file while it is still being written, for the live transcript.
+mod live;
+pub use live::LiveSegments;
+
 /// Schema version written into every `segments.json`.
 ///
 /// Version 1 is the first shape that ever reaches disk — anchors included — so

@@ -3,6 +3,8 @@
 use std::io;
 use std::path::Path;
 
+use meeting_format::segments::LiveSegments;
+
 use super::{Anchor, SCHEMA_VERSION, Segment, Segments};
 #[allow(unused_imports)] // named by intra-doc links only
 use super::{CLOSE_ANCHOR_SLACK_MS, SegmentsDrift};
@@ -32,6 +34,9 @@ pub struct SegmentOpen {
 /// [`SegmentsDrift::check_wav_header`] for why that order is the safe direction).
 pub struct SegmentsWriter {
     segments: Vec<Segment>,
+    /// Where each version is also published in memory, for the live
+    /// transcript (TUR-164). Empty for `meet-rec`.
+    shared: Vec<LiveSegments>,
 }
 
 impl SegmentsWriter {
@@ -39,7 +44,16 @@ impl SegmentsWriter {
     pub fn new(open: SegmentOpen) -> Self {
         Self {
             segments: vec![Self::segment(0, open)],
+            shared: Vec::new(),
         }
+    }
+
+    /// Also publish every version this writer writes to `shared`, starting
+    /// now (TUR-164). The in-memory copy gets it even when the disk write
+    /// then fails: it describes what was captured, not what reached the disk.
+    pub fn share_with(&mut self, shared: LiveSegments) {
+        shared.publish(self.as_segments());
+        self.shared.push(shared);
     }
 
     fn segment(idx: u32, open: SegmentOpen) -> Segment {
@@ -145,6 +159,9 @@ impl SegmentsWriter {
     /// the old file or the new one, never a torn one — that is what makes this
     /// safe to call on a live recording `crates/stt` might be tailing.
     pub fn write_atomic(&self, path: &Path) -> io::Result<()> {
+        for shared in &self.shared {
+            shared.publish(self.as_segments());
+        }
         let json = self
             .to_json()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;

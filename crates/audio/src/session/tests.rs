@@ -10,6 +10,8 @@ mod align;
 mod crash_safety;
 // TUR-163: a stalled or lost stream gets a new segment.
 mod stall;
+// TUR-164: the tees' feeds see segments.json as it is written.
+mod timeline;
 
 /// A hardware-free `AudioSource` for exercising [`align_and_pad`]'s
 /// alignment maths, which is the one piece of the device-change handling
