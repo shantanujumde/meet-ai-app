@@ -10,6 +10,7 @@
 //! [`TrackWriter`] is those steps, once: the microphone, the loopback and
 //! (since TUR-151) the macOS process tap all write through it.
 
+use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -38,6 +39,10 @@ struct Track {
 #[derive(Clone)]
 pub(crate) struct TrackWriter {
     track: Arc<Mutex<Track>>,
+    /// The same file, synced outside the lock (TUR-163): a checkpoint's
+    /// `fsync` can take seconds on a busy disk, and the worker appending
+    /// through `track` must not wait on it while its ring fills.
+    sync: Arc<File>,
     /// What the log calls this channel.
     label: &'static str,
 }
@@ -55,12 +60,14 @@ impl TrackWriter {
         } else {
             WavWriter::create(dest)?
         };
+        let sync = Arc::new(writer.sync_handle()?);
         Ok(Self {
             track: Arc::new(Mutex::new(Track {
                 writer,
                 frames: 0,
                 last_host_ns: 0,
             })),
+            sync,
             label,
         })
     }
@@ -103,12 +110,23 @@ impl TrackWriter {
         (track.last_host_ns != 0).then_some((track.last_host_ns, track.frames))
     }
 
+    /// §7's step 1, with the sync itself outside the lock: what was
+    /// appended before it started is durable once it returns, and appends
+    /// go on meanwhile (TUR-163).
     pub(crate) fn fsync_data(&self) -> io::Result<()> {
-        self.lock().writer.fsync_data()
+        let frames = self.lock().writer.appended_frames();
+        self.sync.sync_data()?;
+        self.lock().writer.mark_synced(frames);
+        Ok(())
     }
 
+    /// §7's step 3, the same way: the size fields are written under the
+    /// lock, and synced outside it.
     pub(crate) fn patch_header(&self) -> io::Result<()> {
-        self.lock().writer.patch_header()
+        let frames = self.lock().writer.write_header_sizes()?;
+        self.sync.sync_all()?;
+        self.lock().writer.mark_header(frames);
+        Ok(())
     }
 
     /// Both, under one lock. Test shorthand only: a source's stop fsyncs,
@@ -222,6 +240,23 @@ mod tests {
         expected.push(5);
         assert_eq!(samples_on_disk(&path), expected);
         assert_eq!(second.position(), Some((3, 8)), "pad counts in the segment");
+    }
+
+    /// TUR-163: frames appended while a checkpoint syncs (the worker no
+    /// longer waits for it) are not declared until the next one.
+    #[test]
+    fn a_header_declares_only_what_was_appended_before_its_sync() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wav");
+        let track = TrackWriter::open(&path, "test").unwrap();
+        track.append(&[1; 20], 5, None);
+        track.fsync_data().unwrap();
+        track.append(&[1; 7], 6, None);
+        track.patch_header().unwrap();
+        assert_eq!(crate::wav_writer::read_header_frames(&path).unwrap(), 20);
+        track.fsync_data().unwrap();
+        track.patch_header().unwrap();
+        assert_eq!(crate::wav_writer::read_header_frames(&path).unwrap(), 27);
     }
 
     #[test]
