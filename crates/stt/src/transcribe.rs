@@ -15,8 +15,8 @@ use meeting_format::layout;
 
 use crate::placement::PlacingSink;
 use crate::segments::{Segments, SegmentsTimeline};
-use crate::sink::{CollectingSink, MarkdownSink, TranscriptSink};
-use crate::{Channel, Error, Speaker, SttEngine, Utterance};
+use crate::sink::CollectingSink;
+use crate::{Channel, Error, Speaker, SttEngine, Utterance, format_transcript_line};
 
 /// The on-disk layout of one meeting, per SPEC §3.1 — the names come from
 /// [`meeting_format::layout`], this just binds them to one meeting folder.
@@ -59,10 +59,11 @@ pub struct Outcome {
 /// Transcribe both tracks of a meeting into `transcript.md`.
 ///
 /// Both tracks go through the same engine, then merge by timestamp. They are
-/// collected before writing rather than streamed straight to the file because
-/// SPEC §3.4 makes `transcript.md` append-only: the sink cannot move a line
-/// once it is written, so the ordering has to be right the first time. (Live
-/// has no such luxury and is sorted once at stop instead, SPEC A19.) The live
+/// collected before writing rather than streamed straight to the file so the
+/// ordering is right the first time, and the file is then written whole,
+/// replacing any earlier run's: running this twice on one meeting gives one
+/// transcript, not two (TUR-175). (Live appends as lines settle and is sorted
+/// once at stop instead, SPEC A19.) The live
 /// pane (Phase 2, Nia's [`TranscriptSink`] consumer) is what shows text as it
 /// arrives; the file is what has to be correct.
 ///
@@ -112,16 +113,23 @@ pub fn transcribe_meeting(
     // consistent run to run.
     utterances.sort_by_key(|utterance| utterance.start_sec);
 
+    // The whole file is replaced, through a temp file and a rename, rather
+    // than appended to: running this again on the same meeting (or after a
+    // run that was cut off) must leave one transcript, not two (TUR-175).
+    // Empty text was already dropped by the collecting sink (SPEC §3.4).
     let transcript_path = paths.transcript_md();
-    let mut sink = MarkdownSink::create(&transcript_path)?;
-    for utterance in &utterances {
-        sink.write(utterance)?;
+    let body: String = utterances
+        .iter()
+        .map(|utterance| format_transcript_line(utterance) + "\n")
+        .collect();
+    if let Some(parent) = transcript_path.parent() {
+        std::fs::create_dir_all(parent)?;
     }
-    sink.flush()?;
+    meeting_format::write_atomic(&transcript_path, body.as_bytes())?;
 
     Ok(Outcome {
         transcript_path,
-        lines: sink.lines_written(),
+        lines: utterances.len(),
         engine: engine.name(),
     })
 }
@@ -162,6 +170,7 @@ pub fn transcribe_track(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sink::TranscriptSink;
 
     /// An engine that replays a canned script, so the merge and the file
     /// writing can be tested without any model at all.
@@ -227,6 +236,27 @@ mod tests {
              [00:00:07] You: Sessions are still in memory.\n\
              [00:00:14] Others: How long will that take?\n\
              [00:00:20] You: About two days.\n"
+        );
+    }
+
+    /// TUR-175: a second run (or one after a run that was cut off) replaces
+    /// the transcript instead of appending a second copy.
+    #[test]
+    fn running_again_replaces_the_transcript_rather_than_appending() {
+        let (_tmp, paths) = meeting_dir();
+        std::fs::write(paths.transcript_md(), "[00:00:01] Others: half a run\n").unwrap();
+        let mut engine = ScriptedEngine {
+            mic: vec![(3, "Can anyone hear me?")],
+            system: vec![(1, "Morning.")],
+        };
+
+        transcribe_meeting(&paths, &mut engine).unwrap();
+        let outcome = transcribe_meeting(&paths, &mut engine).unwrap();
+
+        assert_eq!(outcome.lines, 2);
+        assert_eq!(
+            std::fs::read_to_string(&outcome.transcript_path).unwrap(),
+            "[00:00:01] Others: Morning.\n[00:00:03] You: Can anyone hear me?\n"
         );
     }
 
