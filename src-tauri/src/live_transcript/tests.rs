@@ -502,6 +502,57 @@ fn a_microphone_only_meeting_transcribes_the_microphone() {
     );
 }
 
+/// TUR-164: a live line is placed by the `segments.json` the recorder
+/// publishes on the feed, the same way the batch path places it. Here the
+/// first second of `mic.wav` is segment 0, and segment 1 starts 10 s into
+/// the recording after a device switch, so the fake's lines at WAV seconds 1
+/// and 2 were said at 10 s and 11 s.
+#[test]
+fn a_live_line_is_placed_by_the_segments_the_recorder_publishes() {
+    use meeting_format::segments::{Segment, Segments};
+    let segment = |idx: u32, start_host_ns: u64, mic_frames: u64| Segment {
+        idx,
+        start_host_ns,
+        mic_rate: 16_000,
+        sys_rate: 0,
+        mic_frames,
+        sys_frames: 0,
+        reason: String::new(),
+        start_continuous_ns: None,
+        start_unix_ns: None,
+        mic_device_rate: None,
+        sys_device_rate: None,
+        anchors: Vec::new(),
+    };
+    let path_dir = temp_transcript("placed");
+    let path = path_dir.path.clone();
+    let live = LiveTranscript::default();
+    let notify = Arc::new(CollectingNotify::default());
+    let (mic_tee, mic_feed) = audio::tee::tee();
+    mic_tee.timeline().publish(Segments {
+        version: 1,
+        segments: vec![
+            segment(0, 5_000_000_000, 16_000),
+            segment(1, 15_000_000_000, 0),
+        ],
+    });
+
+    let transcription = live.start(
+        notify.clone(),
+        path.clone(),
+        vec![(Speaker::You, mic_feed)],
+        fake(Mode::Echo),
+    );
+    mic_tee.offer(&chunk());
+    mic_tee.offer(&chunk());
+    drop(mic_tee);
+    assert_eq!(transcription.finish(STOP_TIMEOUT).state, State::Stopped);
+    assert_eq!(
+        read(&path),
+        "[00:00:10] You: You line 1.\n[00:00:11] You: You line 2.\n"
+    );
+}
+
 #[test]
 fn stop_before_the_engine_has_loaded_still_transcribes_what_was_recorded() {
     let path_dir = temp_transcript("slow-load");

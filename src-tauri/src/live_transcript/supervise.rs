@@ -76,7 +76,9 @@ pub(super) fn supervise(
             let scope = scope.clone();
             move |update: &LiveUpdate| scope.update(update)
         };
-        let options = SessionOptions::new(speaker).with_seq(seq.clone());
+        let options = SessionOptions::new(speaker)
+            .with_seq(seq.clone())
+            .with_timeline(feed.timeline());
         let started =
             guarded(|| engine.start_session(options, Box::new(sink.clone()), Box::new(listener)));
         match started {

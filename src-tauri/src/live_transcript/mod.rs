@@ -46,10 +46,15 @@
 //!
 //! # Timestamps
 //!
-//! `start_sec` on a live line is the position in the tee, which is the position
-//! in the WAV — the tee pads its own gaps so the two never drift apart. That is
-//! the same WAV-frame timeline the batch path after Stop reads ([`after_stop`]),
-//! so a meeting transcribed either way agrees about when things were said.
+//! The engines see a line's position in the tee, which is its position in the
+//! WAV: the tee pads what it drops, so the two never drift apart. That
+//! position is then placed on the recording's clock through `segments.json`
+//! (SPEC §3.4): each feed carries the copy the recorder publishes every time
+//! it writes the file, and the session maps every line through it before the
+//! pane or `transcript.md` sees it. The batch path after Stop ([`after_stop`])
+//! maps the same positions through the finished file with the same function,
+//! so a meeting transcribed either way agrees about when things were said,
+//! across device switches, pauses and two clocks drifting apart (TUR-164).
 
 mod board;
 #[cfg(test)]
