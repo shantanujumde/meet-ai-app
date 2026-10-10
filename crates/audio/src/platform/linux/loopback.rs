@@ -200,7 +200,6 @@ fn on_stream_error(error: cpal::Error) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
