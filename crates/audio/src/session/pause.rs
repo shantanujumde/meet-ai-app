@@ -21,7 +21,6 @@
 //! device watch (the resume opens whatever the defaults are by then).
 
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Instant;
 
 use super::RecordingSession;
 use super::segment::{Paths, open_next, stop_for};
@@ -65,12 +64,14 @@ impl RecordingSession {
             return Ok(());
         }
         tracing::info!("pausing: stopping both channels");
-        let close = stop_for(&mut *self.mic, &mut self.sys, "pause")?;
-        self.writer
-            .update_frames(close.mic_frames, close.sys_frames);
-        self.writer
-            .write_atomic(&self.segments_path)
-            .map_err(|e| format!("writing segments.json at a pause: {e}"))?;
+        // Writes `segments.json` before the headers (TUR-162).
+        let close = stop_for(
+            &mut *self.mic,
+            &mut self.sys,
+            &mut self.writer,
+            &self.segments_path,
+            "pause",
+        )?;
         self.paused = Some(close);
         Ok(())
     }
@@ -83,9 +84,9 @@ impl RecordingSession {
         new_mic: impl FnOnce() -> Box<dyn AudioSource>,
         new_sys: impl FnOnce() -> Option<Box<dyn AudioSource>>,
     ) -> Result<(), String> {
-        let Some(close) = self.paused else {
+        if self.paused.is_none() {
             return Ok(());
-        };
+        }
         // A system-audio denial found while paused (TUR-136): the new segment
         // simply opens without a tap.
         if let Some(why) = self.drop_request.take() {
@@ -109,14 +110,13 @@ impl RecordingSession {
             reason::RESUMED_AFTER_PAUSE,
             &self.tees,
             self.want_system,
-            close,
             new_mic,
             new_sys,
         )?;
         self.paused = None;
         self.last_output_device = crate::platform::default_output_device().ok();
         self.last_input_device = crate::platform::default_input_device().ok();
-        self.last_checkpoint = Instant::now();
+        self.segments_written();
         Ok(())
     }
 

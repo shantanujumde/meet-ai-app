@@ -242,11 +242,13 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
     }
 
     fn stop(&mut self) -> Result<(), Error> {
+        self.stop_capture()?;
+        self.patch_header()
+    }
+
+    fn stop_capture(&mut self) -> Result<(), Error> {
         self.halt();
-        if let Some(track) = &self.track {
-            track.finish()?;
-        }
-        Ok(())
+        self.fsync_data()
     }
 
     fn channel(&self) -> Channel {

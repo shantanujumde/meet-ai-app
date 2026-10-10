@@ -28,7 +28,6 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::JoinHandle;
 use std::time::Duration;
 
 use block2::RcBlock;
@@ -36,8 +35,7 @@ use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2_core_audio::{
     self as ca, AudioDeviceIOProcID, AudioHardwareCreateAggregateDevice,
-    AudioHardwareCreateProcessTap, AudioHardwareDestroyAggregateDevice,
-    AudioHardwareDestroyProcessTap, AudioObjectID, AudioObjectPropertyAddress, CATapDescription,
+    AudioHardwareCreateProcessTap, AudioObjectID, AudioObjectPropertyAddress, CATapDescription,
     CATapMuteBehavior,
 };
 use objc2_core_audio_types::{AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp};
@@ -47,12 +45,14 @@ use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
 
 use super::tap_buffers::{LayoutProbe, TapBuffers, gather_into};
+use super::tap_guard::{AggregateDevice, IoProc, TapObject};
 use super::tap_pipeline::TapPipeline;
 use super::tap_rate::{CallbackMeter, RateSources, RateState, RateWatch};
 use super::tap_uuid::{format_uuid_bytes, locally_unique_uuid_bytes};
 use crate::capture_clock::{CaptureClock, Feed, time_marks};
 use crate::tee::Tee;
 use crate::track::TrackWriter;
+use crate::worker::Worker;
 use crate::{AudioSource, Channel, Error};
 
 /// Ring buffer capacity, in raw (tap-rate, interleaved) samples. Same 4 s
@@ -148,22 +148,24 @@ type IoBlockFn = dyn Fn(
     std::ptr::NonNull<AudioTimeStamp>,
 );
 
-/// Everything alive between a successful `build()` and `stop()`. Torn down in
-/// the mirror-image order of construction: IO proc → aggregate device → tap.
+/// Everything alive between a successful `build()` and `stop()`. The fields
+/// drop in teardown order, the mirror image of construction (TUR-162): rate
+/// listeners, IO proc, aggregate device, tap, then the worker is joined. So
+/// dropping a `Built` anywhere, a build that finished after its start timed
+/// out included, stops the capture; `tap_guard` has the guards.
 struct Built {
-    tap_id: AudioObjectID,
-    aggregate_id: AudioObjectID,
-    io_proc_id: AudioDeviceIOProcID,
+    /// Unregistered before the aggregate device is destroyed.
+    _rate_watch: RateWatch,
+    _io_proc: IoProc,
+    _aggregate: AggregateDevice,
+    _tap: TapObject,
     /// Kept alive for the tap's lifetime even though Core Audio `Block_copy`s
     /// its own reference on `AudioDeviceCreateIOProcIDWithBlock` — belt and
     /// braces against relying on an internal-only guarantee.
     _io_block: RcBlock<IoBlockFn>,
-    /// Unregistered before the aggregate device is destroyed.
-    rate_watch: RateWatch,
     /// Reported and measured rates, for [`AudioSource::rate_report`].
     rates: Arc<RateState>,
-    worker: JoinHandle<()>,
-    running: Arc<AtomicBool>,
+    _worker: Worker,
     track: TrackWriter,
 }
 
@@ -286,11 +288,11 @@ impl SystemSource {
                 "AudioHardwareCreateProcessTap returned noErr but kAudioObjectUnknown".to_string(),
             ));
         }
+        let tap = TapObject(tap_id);
 
         let format: AudioStreamBasicDescription =
             unsafe { get_property(tap_id, ca::kAudioTapPropertyFormat)? };
         if format.mChannelsPerFrame == 0 || format.mSampleRate <= 0.0 {
-            unsafe { AudioHardwareDestroyProcessTap(tap_id) };
             return Err(Error::NoDevice(format!(
                 "tap reports a degenerate format: {}Hz {}ch",
                 format.mSampleRate, format.mChannelsPerFrame
@@ -345,11 +347,11 @@ impl SystemSource {
             )
         };
         if status != 0 {
-            unsafe { AudioHardwareDestroyProcessTap(tap_id) };
             return Err(Error::NoDevice(format!(
                 "AudioHardwareCreateAggregateDevice failed: OSStatus {status}"
             )));
         }
+        let aggregate = AggregateDevice(aggregate_id);
 
         // The IO proc runs at the aggregate's rate, not the tap format's
         // (TUR-80: 16 kHz on a Bluetooth headset in a call).
@@ -375,7 +377,6 @@ impl SystemSource {
         let (producer, consumer) = rb.split();
         // Each IO cycle's `inInputTime` rides next to its samples (TUR-151).
         let (marks, clock) = time_marks(channels);
-        let running = Arc::new(AtomicBool::new(true));
 
         // The IO block must be `Fn`, so the producer and interleave buffer sit
         // in a `RefCell`: no lock on the real-time thread, and a re-entrant
@@ -449,25 +450,19 @@ impl SystemSource {
             )
         };
         if status != 0 {
-            unsafe { AudioHardwareDestroyAggregateDevice(aggregate_id) };
-            unsafe { AudioHardwareDestroyProcessTap(tap_id) };
             return Err(Error::NoDevice(format!(
                 "AudioDeviceCreateIOProcIDWithBlock failed: OSStatus {status}"
             )));
         }
-        let Some(io_proc_id_value) = io_proc_id else {
-            unsafe { AudioHardwareDestroyAggregateDevice(aggregate_id) };
-            unsafe { AudioHardwareDestroyProcessTap(tap_id) };
+        if io_proc_id.is_none() {
             return Err(Error::NoDevice(
                 "AudioDeviceCreateIOProcIDWithBlock returned noErr but no IOProcID".to_string(),
             ));
-        };
+        }
+        let mut io_proc = IoProc::new(aggregate_id, io_proc_id);
 
-        let status = unsafe { ca::AudioDeviceStart(aggregate_id, io_proc_id) };
+        let status = io_proc.start();
         if status != 0 {
-            unsafe { ca::AudioDeviceDestroyIOProcID(aggregate_id, io_proc_id) };
-            unsafe { AudioHardwareDestroyAggregateDevice(aggregate_id) };
-            unsafe { AudioHardwareDestroyProcessTap(tap_id) };
             return Err(Error::NoDevice(format!(
                 "AudioDeviceStart failed: OSStatus {status}"
             )));
@@ -475,27 +470,22 @@ impl SystemSource {
 
         let rate_watch = RateWatch::install(&rates);
         let pipeline = TapPipeline::new("system tap", channels, input_rate);
-        let worker = std::thread::Builder::new()
-            .name("meet-rec-system-worker".to_string())
-            .spawn({
-                let track = track.clone();
-                let running = Arc::clone(&running);
-                let rates = Arc::clone(&rates);
-                move || {
-                    Self::worker_loop(consumer, pipeline, rates, track, clock, running, tee, probe)
-                }
-            })
-            .expect("spawning the system worker thread");
+        let worker = Worker::spawn("meet-rec-system-worker", {
+            let track = track.clone();
+            let rates = Arc::clone(&rates);
+            move |running| {
+                Self::worker_loop(consumer, pipeline, rates, track, clock, running, tee, probe)
+            }
+        })?;
 
         Ok(Built {
-            tap_id,
-            aggregate_id,
-            io_proc_id: Some(io_proc_id_value),
+            _rate_watch: rate_watch,
+            _io_proc: io_proc,
+            _aggregate: aggregate,
+            _tap: tap,
             _io_block: io_block,
-            rate_watch,
             rates,
-            worker,
-            running,
+            _worker: worker,
             track,
         })
     }
@@ -503,24 +493,15 @@ impl SystemSource {
 
 impl AudioSource for SystemSource {
     fn start(&mut self, dest: PathBuf) -> Result<(), Error> {
-        let (tx, rx) = std::sync::mpsc::channel();
         let tee = self.tee.clone();
-        std::thread::Builder::new()
-            .name("meet-rec-system-init".to_string())
-            .spawn(move || {
-                let _ = tx.send(Self::build(dest, tee));
-            })
-            .expect("spawning the system tap init thread");
-
-        let built = match rx.recv_timeout(crate::AUDIO_PERMISSION_TIMEOUT) {
-            Ok(result) => result?,
-            Err(_) => {
-                // Same shape as `MicSource::start`: the init thread is still
-                // blocked inside Core Audio with no way to be cancelled, and
-                // is deliberately leaked rather than joined.
-                return Err(Error::PermissionDenied);
-            }
-        };
+        // Same shape as `MicSource::start`: on a timeout the init thread is
+        // leaked, and a `Built` it finishes later is dropped there, which
+        // tears the tap down (TUR-162).
+        let built = crate::init_thread::run_bounded(
+            "meet-rec-system-init",
+            crate::AUDIO_PERMISSION_TIMEOUT,
+            move || Self::build(dest, tee),
+        )?;
 
         self.track = Some(built.track.clone());
         self.built = Some(built);
@@ -528,18 +509,14 @@ impl AudioSource for SystemSource {
     }
 
     fn stop(&mut self) -> Result<(), Error> {
-        let Some(built) = self.built.take() else {
-            return Ok(());
-        };
-        built.running.store(false, Ordering::Release);
-        drop(built.rate_watch);
-        unsafe { ca::AudioDeviceStop(built.aggregate_id, built.io_proc_id) };
-        unsafe { ca::AudioDeviceDestroyIOProcID(built.aggregate_id, built.io_proc_id) };
-        unsafe { AudioHardwareDestroyAggregateDevice(built.aggregate_id) };
-        unsafe { AudioHardwareDestroyProcessTap(built.tap_id) };
-        let _ = built.worker.join();
-        built.track.finish()?;
-        Ok(())
+        self.stop_capture()?;
+        self.patch_header()
+    }
+
+    fn stop_capture(&mut self) -> Result<(), Error> {
+        // Dropping `built` tears the tap down and joins the worker.
+        self.built = None;
+        self.fsync_data()
     }
 
     fn channel(&self) -> Channel {
@@ -551,15 +528,15 @@ impl AudioSource for SystemSource {
     }
 
     fn fsync_data(&mut self) -> Result<(), Error> {
-        if let Some(built) = &self.built {
-            built.track.fsync_data()?;
+        if let Some(track) = &self.track {
+            track.fsync_data()?;
         }
         Ok(())
     }
 
     fn patch_header(&mut self) -> Result<(), Error> {
-        if let Some(built) = &self.built {
-            built.track.patch_header()?;
+        if let Some(track) = &self.track {
+            track.patch_header()?;
         }
         Ok(())
     }

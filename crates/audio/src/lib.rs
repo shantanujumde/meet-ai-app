@@ -121,6 +121,13 @@ pub(crate) mod track;
 /// carries through the ring, and the worker's feed into [`track`] (TUR-151).
 pub(crate) mod capture_clock;
 
+/// A source's worker thread, stopped and joined on drop (TUR-162).
+pub(crate) mod worker;
+
+/// The bounded wait on a build that can block on a TCC dialog, and the
+/// teardown of one that finishes late (TUR-162).
+pub(crate) mod init_thread;
+
 /// The real audio-permission measurement: runs the [`chime`] positive control
 /// against a live [`macos::tap::SystemSource`], and a start/stop probe against
 /// [`mic::MicSource`]. This is the "measurement" `src-tauri/src/permission.rs`
@@ -164,6 +171,24 @@ pub trait AudioSource: Send {
 
     /// Stop capture and flush the WAV header.
     fn stop(&mut self) -> Result<(), Error>;
+
+    /// The first half of [`AudioSource::stop`]: stop capture, wait for the
+    /// worker to write its last frame, and fsync the data, but leave the
+    /// header alone. [`AudioSource::position`] is final once it returns.
+    /// Calling it again is harmless.
+    ///
+    /// The recording session ends a segment with this, writes
+    /// `segments.json`, and only then calls [`AudioSource::patch_header`]:
+    /// §7's checkpoint order (TUR-162). A full `stop` there would patch the
+    /// header first, and a crash before `segments.json` caught up would leave
+    /// a header declaring frames no `segments.json` accounts for.
+    ///
+    /// The default is `stop`, which keeps the old order: fine for the
+    /// no-op stub and the test fixtures, wrong for anything that records.
+    /// Every real source overrides it.
+    fn stop_capture(&mut self) -> Result<(), Error> {
+        self.stop()
+    }
 
     /// Which channel this source feeds.
     fn channel(&self) -> Channel;
