@@ -10,8 +10,9 @@
  * radios go back to what is on disk and the reason is shown.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
+  cancelModelDownload,
   deleteModel,
   downloadModel,
   engineChoices,
@@ -23,7 +24,12 @@ import {
 } from "@/ipc/client";
 import type { EngineChoice, EngineChoices, EnvironmentView, ModelView, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
-import type { ModelState } from "./ModelRow";
+import {
+  downloadStates,
+  keepRunningDownloads,
+  subscribeDownloadStates,
+  updateDownloadStates,
+} from "./downloadStore";
 
 export type Speech = ReturnType<typeof useSpeech>;
 
@@ -36,7 +42,9 @@ export function useSpeech() {
   const [saveError, setSaveError] = useState<UiError | null>(null);
   const [models, setModels] = useState<ModelView[] | null>(null);
   const [listError, setListError] = useState<UiError | null>(null);
-  const [downloads, setDownloads] = useState<Record<string, ModelState>>({});
+  // In a store, not component state, so a download in flight is still shown
+  // as one after the user leaves this screen and comes back (TUR-159).
+  const downloads = useSyncExternalStore(subscribeDownloadStates, downloadStates);
 
   // The latest choices, for picks that start from them. State alone is a
   // render behind when two picks land close together (TUR-170).
@@ -99,8 +107,9 @@ export function useSpeech() {
   // out, and again with `verifying: true` before hashing. Both arrive here, so
   // a bar never sits at 0% with no explanation or at 100% looking frozen.
   useEffect(() => {
+    keepRunningDownloads();
     return onModelProgress((progress) => {
-      setDownloads((previous) => ({
+      updateDownloadStates((previous) => ({
         ...previous,
         [progress.modelId]: { ...previous[progress.modelId], progress },
       }));
@@ -183,32 +192,51 @@ export function useSpeech() {
 
   const download = useCallback(
     async (id: string) => {
-      setDownloads((previous) => ({ ...previous, [id]: { busy: true } }));
+      updateDownloadStates((previous) => ({ ...previous, [id]: { busy: true } }));
       try {
         await downloadModel(id);
-        setDownloads((previous) => ({ ...previous, [id]: {} }));
+        updateDownloadStates((previous) => ({ ...previous, [id]: {} }));
         await refreshModels();
         // A first model makes Whisper pickable.
         void check();
       } catch (thrown) {
-        setDownloads((previous) => ({
+        const error = toUiError(thrown);
+        // A cancel is what the user asked for, not a failure to explain.
+        const cancelled = error.domain === "model" && error.kind === "cancelled";
+        updateDownloadStates((previous) => ({
           ...previous,
-          [id]: { error: toUiError(thrown), busy: false },
+          [id]: cancelled ? {} : { error, busy: false },
         }));
       }
     },
     [check, refreshModels],
   );
 
+  /**
+   * Stop a download (TUR-159). The pending `download` above then settles
+   * with `cancelled` and puts the row back; the partial file is kept, so the
+   * next Download resumes it.
+   */
+  const cancel = useCallback(async (id: string) => {
+    try {
+      await cancelModelDownload(id);
+    } catch (thrown) {
+      updateDownloadStates((previous) => ({
+        ...previous,
+        [id]: { ...previous[id], error: toUiError(thrown) },
+      }));
+    }
+  }, []);
+
   /** Delete a downloaded model, then re-read the list (TUR-132). */
   const remove = useCallback(
     async (id: string) => {
-      setDownloads((previous) => ({ ...previous, [id]: { busy: true } }));
+      updateDownloadStates((previous) => ({ ...previous, [id]: { busy: true } }));
       try {
         await deleteModel(id);
-        setDownloads((previous) => ({ ...previous, [id]: {} }));
+        updateDownloadStates((previous) => ({ ...previous, [id]: {} }));
       } catch (thrown) {
-        setDownloads((previous) => ({
+        updateDownloadStates((previous) => ({
           ...previous,
           [id]: { error: toUiError(thrown), busy: false },
         }));
@@ -237,6 +265,7 @@ export function useSpeech() {
     pickModel,
     pickLanguage,
     download,
+    cancel,
     remove,
   };
 }

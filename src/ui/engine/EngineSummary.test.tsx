@@ -519,3 +519,89 @@ describe("Speech card: one probe (TUR-171)", () => {
     expect(ipc.engineSelection).not.toHaveBeenCalled();
   });
 });
+
+describe("EngineSummary: a download survives leaving the screen (TUR-159)", () => {
+  const { cancelModelDownload, downloadModel } = ipc;
+
+  /** A download that stays in flight until the test settles it. */
+  function pendingDownload() {
+    let settle: { resolve: (path: string) => void; reject: (error: unknown) => void } = {
+      resolve: () => {},
+      reject: () => {},
+    };
+    downloadModel.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          settle = { resolve, reject };
+        }),
+    );
+    return {
+      resolve: (path: string) => settle.resolve(path),
+      reject: (error: unknown) => settle.reject(error),
+    };
+  }
+
+  test("the row is still busy after a remount, with no second download", async () => {
+    const user = userEvent.setup();
+    engineChoices.mockResolvedValue(choices());
+    modelCatalogue.mockResolvedValue([small(), large()]);
+    const download = pendingDownload();
+    const first = render(<EngineSummary />);
+    await user.click(
+      await within(await findRow("Large turbo (multilingual)")).findByRole("button", {
+        name: "Download",
+      }),
+    );
+    expect(downloadModel).toHaveBeenCalledTimes(1);
+
+    // Leave Settings mid-download, and come back.
+    first.unmount();
+    await renderCard();
+
+    const row = modelRow("Large turbo (multilingual)");
+    expect(within(row).getByRole("button", { name: "Downloading…" })).toBeDisabled();
+    expect(within(row).queryByRole("button", { name: "Download" })).toBeNull();
+    expect(within(row).getByText("Starting…")).toBeInTheDocument();
+    expect(downloadModel).toHaveBeenCalledTimes(1);
+
+    // The download that kept running finishes, and the row learns it.
+    modelCatalogue.mockResolvedValue([small(), large({ installed: true })]);
+    download.resolve("/models/ggml-large-v3-turbo-q5_0.bin");
+    await waitFor(() =>
+      expect(
+        within(modelRow("Large turbo (multilingual)")).queryByRole("button", {
+          name: "Downloading…",
+        }),
+      ).toBeNull(),
+    );
+  });
+
+  test("Cancel stops it and puts the row back without an error", async () => {
+    const user = userEvent.setup();
+    engineChoices.mockResolvedValue(choices());
+    modelCatalogue.mockResolvedValue([small(), large()]);
+    const download = pendingDownload();
+    await renderCard();
+    const row = modelRow("Large turbo (multilingual)");
+    await user.click(within(row).getByRole("button", { name: "Download" }));
+
+    await user.click(
+      within(row).getByRole("button", { name: "Cancel downloading Large turbo (multilingual)" }),
+    );
+    expect(cancelModelDownload).toHaveBeenCalledWith("large-v3-turbo-q5_0");
+    download.reject({
+      domain: "model",
+      kind: "cancelled",
+      message: "the download of large-v3-turbo-q5_0 was cancelled",
+    });
+
+    expect(await within(row).findByRole("button", { name: "Download" })).toBeEnabled();
+    expect(within(row).queryByRole("alert")).toBeNull();
+  });
+});
+
+/** The row around a model, once the list has rendered it. */
+async function findRow(name: string): Promise<HTMLElement> {
+  await screen.findByText(name);
+  return modelRow(name);
+}

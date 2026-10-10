@@ -136,6 +136,12 @@ export const commands = {
 	 */
 	deleteModel: (id: string) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("delete_model", { id })),
 	/**
+	 *  Stop the download of `id` (TUR-159). The pending `download_model` call
+	 *  then fails with the `model`/`cancelled` error, and the `.part` file stays
+	 *  for the next download to resume. False when `id` was not downloading.
+	 */
+	cancelModelDownload: (id: string) => __TAURI_INVOKE<boolean>("cancel_model_download", { id }),
+	/**
 	 *  The Settings engine picker (TUR-75): the saved choice, what "Automatic"
 	 *  lands on, and which choices this Mac can run. Runs the ~160 ms probe.
 	 */

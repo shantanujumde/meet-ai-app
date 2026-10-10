@@ -32,6 +32,7 @@ function renderRow(view: ModelView, onPick = vi.fn()) {
       inUse={false}
       onPick={onPick}
       onDownload={vi.fn()}
+      onCancel={vi.fn()}
       onDelete={vi.fn()}
     />,
   );
@@ -117,6 +118,7 @@ describe("ModelRow: delete (TUR-132)", () => {
         inUse={false}
         onPick={vi.fn()}
         onDownload={vi.fn()}
+        onCancel={vi.fn()}
         onDelete={onDelete}
       />,
     );
@@ -146,5 +148,47 @@ describe("ModelRow: delete (TUR-132)", () => {
     await user.click(screen.getByRole("button", { name: "Delete" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
     expect(onDelete).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ModelRow: cancel (TUR-159)", () => {
+  test("a download in flight offers Cancel, and only then", async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    const view = model({ installed: false });
+    const { rerender } = render(
+      <ModelRow
+        group="models"
+        model={view}
+        state={{ busy: true }}
+        picked={false}
+        inUse={false}
+        onPick={vi.fn()}
+        onDownload={vi.fn()}
+        onCancel={onCancel}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Downloading…" })).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: "Cancel downloading Large (multilingual)" }),
+    );
+    expect(onCancel).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ModelRow
+        group="models"
+        model={view}
+        state={{}}
+        picked={false}
+        inUse={false}
+        onPick={vi.fn()}
+        onDownload={vi.fn()}
+        onCancel={onCancel}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^Cancel/ })).toBeNull();
   });
 });
