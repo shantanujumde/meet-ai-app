@@ -2,6 +2,7 @@
 //! Also the launch-time pass that makes interrupted recordings playable.
 
 use std::path::Path;
+use std::sync::LazyLock;
 
 use audio::Channel;
 use audio::wav_repair::{classify_audio, expose_unheadered_samples};
@@ -14,6 +15,10 @@ use crate::recording::{Phase, Status};
 
 const AUDIO: &str = meeting_format::layout::AUDIO_DIR;
 const SEGMENTS: &str = meeting_format::layout::SEGMENTS_FILE;
+
+/// Folder summaries kept between list refreshes, so a refresh reads only
+/// the folders whose files changed (TUR-166).
+static SUMMARIES: LazyLock<store::folder::SummaryCache> = LazyLock::new(Default::default);
 
 /// Which meeting, if any, the running app is recording into.
 ///
@@ -63,10 +68,11 @@ pub(super) fn list_in(root: &Path, live: Live<'_>) -> Result<MeetingList, UiErro
         });
     }
 
-    // `scan` skips `.app` and every other dot-folder, sorts newest first, and
-    // never lets one unreadable folder hide the rest.
+    // `scan_summaries` skips `.app` and every other dot-folder, sorts newest
+    // first, never lets one unreadable folder hide the rest, and reads only
+    // the `meeting.md`, `notes.md` and `transcript.md` that changed (TUR-166).
     let live_id = live_id(live);
-    let meetings = store::folder::scan(root)?
+    let meetings = store::folder::scan_summaries(root, &SUMMARIES)?
         .iter()
         .map(|folder| {
             let is_live = live_id.as_deref() == Some(folder.id.as_str());

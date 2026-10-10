@@ -63,6 +63,12 @@ pub struct Transcript {
 /// including a speaker other than `You` / `Others`. Empty text after the
 /// colon parses (a hand edit can produce one) with `text == ""`.
 pub fn parse_line(raw: &str) -> Option<(String, u64, Speaker, String)> {
+    let (time, start_sec, speaker, text) = split_line(raw)?;
+    Some((time.to_string(), start_sec, speaker, text.to_string()))
+}
+
+/// [`parse_line`] without copying: the timestamp and text borrow `raw`.
+fn split_line(raw: &str) -> Option<(&str, u64, Speaker, &str)> {
     // SPEC §3.4's regex, written out rather than compiled: the prefix is
     // fixed-width and anchored, and the regex crate is not in the workspace.
     let rest = raw.strip_prefix('[')?;
@@ -87,7 +93,7 @@ pub fn parse_line(raw: &str) -> Option<(String, u64, Speaker, String)> {
         after.strip_prefix(' ')?
     };
 
-    Some((time.to_string(), start_sec, speaker, text.to_string()))
+    Some((time, start_sec, speaker, text))
 }
 
 fn serialize_label<S: serde::Serializer>(speaker: &Speaker, out: S) -> Result<S::Ok, S::Error> {
@@ -148,6 +154,41 @@ pub fn read(path: &Path) -> Result<Option<Transcript>, Error> {
             }],
         })),
     }
+}
+
+/// What the meeting list shows of a transcript: how many lines parse and the
+/// last one's timestamp (TUR-166).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Stats {
+    /// The same count as `parse(raw).lines.len()`.
+    pub line_count: usize,
+    /// The last parsed line's `HH:MM:SS`.
+    pub last_time: Option<String>,
+}
+
+/// [`read`], reduced to its [`Stats`]: the same lines counted, but no line is
+/// copied out. `Ok(None)` if the file does not exist; a file that is not
+/// UTF-8 has no lines, as [`read`] gives it none.
+pub fn stats(path: &Path) -> Result<Option<Stats>, Error> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let Ok(raw) = std::str::from_utf8(&bytes) else {
+        return Ok(Some(Stats::default()));
+    };
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
+    let mut stats = Stats::default();
+    let mut last = None;
+    for raw_line in raw.lines() {
+        if let Some((time, ..)) = split_line(raw_line) {
+            stats.line_count += 1;
+            last = Some(time);
+        }
+    }
+    stats.last_time = last.map(str::to_owned);
+    Ok(Some(stats))
 }
 
 /// `\d{2}:\d{2}:\d{2}` and nothing longer, as seconds.
@@ -387,5 +428,26 @@ mod tests {
             t.lines.iter().map(|l| l.seq).collect::<Vec<_>>(),
             vec![0, 1, 2, 3]
         );
+    }
+
+    /// TUR-166: the list's cheap count agrees with the full parse, bad lines,
+    /// blank lines, a BOM and CRLF included.
+    #[test]
+    fn stats_count_the_same_lines_the_full_parse_keeps() {
+        let dir = scratch("stats");
+        let path = dir.path().join(crate::TRANSCRIPT_FILE);
+        assert_eq!(stats(&path).unwrap(), None, "no file is no stats");
+
+        let raw = "\u{feff}[00:00:02] You: hi\r\n\r\n[00:00:09] Priya: not the contract\n\
+                   [00:01:15] Others: bye\n   \n";
+        std::fs::write(&path, raw).unwrap();
+        let full = parse(raw);
+        let got = stats(&path).unwrap().expect("the file exists");
+        assert_eq!(got.line_count, full.lines.len());
+        assert_eq!(got.line_count, 2);
+        assert_eq!(got.last_time.as_deref(), Some("00:01:15"));
+
+        std::fs::write(&path, [0xff, 0xfe, b'\n']).unwrap();
+        assert_eq!(stats(&path).unwrap(), Some(Stats::default()));
     }
 }
