@@ -10,7 +10,9 @@
  * - calendar access denied, which is never shown as an empty day: one line
  *   on what stops working, **Open System Settings** and **Check again**, like
  *   the audio permission screen;
- * - any other read error, through the shared error screen;
+ * - any other read error, through the shared error screen; a calendar that
+ *   fails while another answers (an expired Google sign-in) is one line
+ *   above the day instead (TUR-174), never hidden;
  * - no calendar to read at all (TUR-49): Windows and Linux before a sign-in,
  *   or a Mac with the Calendar app turned off. "Sign in with Google or
  *   Microsoft" and both buttons, never an empty day.
@@ -41,6 +43,7 @@ import { osText } from "@/lib/osText";
 import { briefPath } from "@/lib/routes";
 import { EMPTY_DAY, SIGN_IN_TO_SEE_TODAY } from "./calendar/copy";
 import { SignInButtons } from "./calendar/SignInButtons";
+import { UnreadableCalendars } from "./calendar/UnreadableCalendars";
 import { openSettings } from "./PrivacyButtons";
 import { Button, ButtonRow, cardVariants, RowLabel, RowValue, rowVariants } from "./primitives";
 import { Checking, ErrorState } from "./states";
@@ -154,15 +157,20 @@ function TodayBody({ state, onRetry }: { state: State; onRetry: () => void }) {
         </div>
       );
     case "ready":
-      if (state.today.events.length === 0) {
-        return <p className="state__body">{EMPTY_DAY}</p>;
-      }
       return (
-        <ul className={cardVariants({ flush: true })} aria-label="Today's meetings">
-          {state.today.events.map((event) => (
-            <TodayRow key={event.id} event={event} minAttendees={state.today.minAttendees} />
-          ))}
-        </ul>
+        <>
+          {/* TUR-174: a calendar that failed while another answered. */}
+          <UnreadableCalendars unreadable={state.today.unreadable} />
+          {state.today.events.length === 0 ? (
+            <p className="state__body">{EMPTY_DAY}</p>
+          ) : (
+            <ul className={cardVariants({ flush: true })} aria-label="Today's meetings">
+              {state.today.events.map((event) => (
+                <TodayRow key={event.id} event={event} minAttendees={state.today.minAttendees} />
+              ))}
+            </ul>
+          )}
+        </>
       );
   }
 }

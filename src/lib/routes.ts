@@ -15,9 +15,12 @@ export const MEETINGS = "/meetings";
 export const SETTINGS = "/settings";
 
 /** A Settings section a link can scroll to: `/settings?section=<id>`. */
-export type SettingsAnchor = "tracker";
+export type SettingsAnchor = "tracker" | "calendars";
 
-/** Settings, scrolled to one section (TUR-113: "Open Tracker settings"). */
+/**
+ * Settings, scrolled to one section (TUR-113: "Open Tracker settings";
+ * TUR-174: "Open Calendar settings" from Today).
+ */
 export function settingsPath(section: SettingsAnchor): string {
   return `${SETTINGS}?${new URLSearchParams({ section }).toString()}`;
 }

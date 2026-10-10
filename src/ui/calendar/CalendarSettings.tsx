@@ -34,7 +34,7 @@ import { SettingSwitch } from "../SettingSwitch";
 import { SettingsSection } from "../settings/SettingsSection";
 import { Checking, InlineError } from "../states";
 import { notConfiguredCopy, PROVIDER_NAME, signInLabel } from "./copy";
-import { WAITING_FOR_BROWSER } from "./SignInButtons";
+import { CANCEL_SIGN_IN, WAITING_FOR_BROWSER } from "./SignInButtons";
 import { useCalendarSignIn } from "./useCalendarSignIn";
 
 export const CALENDAR_APP_LABEL = "Calendar app";
@@ -83,6 +83,7 @@ export function CalendarSettings() {
   return (
     <SettingsSection
       title="Calendars"
+      anchorId="calendars"
       description="Where meetings come from"
       after={error ? <InlineError error={error} /> : null}
     >
@@ -153,7 +154,7 @@ function SignInRow({
   onAccount: (account: CalendarAccount) => void;
   onSources: (sources: CalendarSources) => void;
 }) {
-  const { connecting, error, setError, connect } = useCalendarSignIn(onAccount);
+  const { connecting, error, setError, connect, cancel } = useCalendarSignIn(onAccount);
   const [disconnecting, setDisconnecting] = useState(false);
   const busy = connecting !== null || disconnecting;
   const name = PROVIDER_NAME[provider];
@@ -172,11 +173,23 @@ function SignInRow({
   }
 
   const state = account?.state ?? "signed-out";
-  const connectButton = (label: string, tone: "primary" | "neutral") => (
-    <Button size="small" tone={tone} disabled={busy} onClick={() => void connect(provider)}>
-      {connecting ? WAITING_FOR_BROWSER : label}
-    </Button>
-  );
+  const connectButton = (label: string, tone: "primary" | "neutral") => {
+    const button = (
+      <Button size="small" tone={tone} disabled={busy} onClick={() => void connect(provider)}>
+        {connecting ? WAITING_FOR_BROWSER : label}
+      </Button>
+    );
+    // TUR-174: a closed browser tab never comes back; Cancel stops waiting.
+    if (!connecting) return button;
+    return (
+      <ButtonRow>
+        {button}
+        <Button size="small" tone="quiet" onClick={() => void cancel()}>
+          {CANCEL_SIGN_IN}
+        </Button>
+      </ButtonRow>
+    );
+  };
   const disconnectButton = (
     <Button size="small" tone="quiet" disabled={busy} onClick={() => void disconnect()}>
       {disconnecting ? "Disconnecting…" : "Disconnect"}

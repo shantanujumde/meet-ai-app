@@ -10,10 +10,11 @@ import {
   type meet_ai_lib_calendar_sources_CalendarSources as CalendarSources,
   commands,
   type meet_ai_lib_calendar_signin_SignInProvider as SignInProvider,
+  type meet_ai_lib_calendar_read_UnreadableCalendar as UnreadableCalendar,
 } from "./bindings";
 import { call, hasBackend } from "./client";
 
-export type { CalendarAccount, CalendarSources, SignInProvider };
+export type { CalendarAccount, CalendarSources, SignInProvider, UnreadableCalendar };
 
 /** Both sign-ins, in the order the screens list them. */
 export const SIGN_IN_PROVIDERS: readonly SignInProvider[] = ["google", "microsoft"];
@@ -58,4 +59,13 @@ export function calendarConnect(provider: SignInProvider): Promise<CalendarAccou
 /** Sign out and stop reading that calendar. */
 export function calendarDisconnect(provider: SignInProvider): Promise<CalendarSources> {
   return call(() => commands.calendarDisconnect(provider));
+}
+
+/**
+ * Stop waiting for the browser (TUR-174): the pending {@link calendarConnect}
+ * rejects with kind `calendar-sign-in-cancelled`. `false` when that sign-in
+ * was no longer waiting.
+ */
+export function calendarCancelSignIn(provider: SignInProvider): Promise<boolean> {
+  return call(() => commands.calendarCancelSignIn(provider));
 }

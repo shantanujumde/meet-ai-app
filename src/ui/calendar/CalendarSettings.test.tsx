@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import type { CalendarAccount, CalendarSources } from "@/ipc/client";
 import { ipc } from "@/test/ipcMock";
 import { CALENDAR_APP_LABEL, CalendarSettings, SIGN_IN_EXPIRED } from "./CalendarSettings";
+import { CANCEL_SIGN_IN } from "./SignInButtons";
 
 vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
@@ -109,6 +110,29 @@ describe("CalendarSettings", () => {
     expect(within(row("Microsoft")).getByRole("button")).toHaveTextContent(
       "Sign in with Microsoft",
     );
+  });
+
+  test("a waiting sign-in has a Cancel on its row that ends it quietly (TUR-174)", async () => {
+    let reject: (error: unknown) => void = () => {};
+    ipc.calendarConnect.mockReturnValue(new Promise((_, no) => (reject = no)));
+    ipc.calendarCancelSignIn.mockImplementation(async () => {
+      reject({ domain: "app", kind: "calendar-sign-in-cancelled", message: "cancelled" });
+      return true;
+    });
+    await show(MAC);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Sign in with Microsoft" }));
+    });
+    const microsoft = row("Microsoft");
+    expect(within(row("Google")).queryByRole("button", { name: CANCEL_SIGN_IN })).toBeNull();
+    await act(async () => {
+      fireEvent.click(within(microsoft).getByRole("button", { name: CANCEL_SIGN_IN }));
+    });
+    expect(ipc.calendarCancelSignIn).toHaveBeenCalledWith("microsoft");
+    expect(within(row("Microsoft")).getByRole("button")).toHaveTextContent(
+      "Sign in with Microsoft",
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   test("a sign-in that fails shows why, on its own row", async () => {

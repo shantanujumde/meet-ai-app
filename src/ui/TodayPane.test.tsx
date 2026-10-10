@@ -5,6 +5,8 @@ import type { TodayEvent, TodaysMeetings } from "@/ipc/client";
 import type { UiError } from "@/ipc/types";
 import { ipc } from "@/test/ipcMock";
 import { EMPTY_DAY, SIGN_IN_TO_SEE_TODAY } from "./calendar/copy";
+import { CANCEL_SIGN_IN, WAITING_FOR_BROWSER } from "./calendar/SignInButtons";
+import { OPEN_CALENDAR_SETTINGS } from "./calendar/UnreadableCalendars";
 import { CALENDAR_DENIED_COPY, formatAttendees, formatTime, TodayPane } from "./TodayPane";
 
 vi.mock("@/ipc/client", async (importOriginal) =>
@@ -29,7 +31,7 @@ function event(over: Partial<TodayEvent> = {}): TodayEvent {
 }
 
 function day(events: TodayEvent[], over: Partial<TodaysMeetings> = {}): TodaysMeetings {
-  return { events, refreshMinutes: 15, minAttendees: 2, ...over };
+  return { events, refreshMinutes: 15, minAttendees: 2, unreadable: [], ...over };
 }
 
 const DENIED: UiError = {
@@ -51,6 +53,7 @@ function renderPane() {
       <Routes>
         <Route path="/" element={<TodayPane />} />
         <Route path="/brief" element={<Location />} />
+        <Route path="/settings" element={<Location />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -268,5 +271,85 @@ describe("TodayPane with no calendar to read", () => {
     await show();
     expect(screen.getByText(EMPTY_DAY)).toBeTruthy();
     expect(screen.queryByText(SIGN_IN_TO_SEE_TODAY)).toBeNull();
+  });
+
+  test("an expired sign-in is flagged while the other calendars still show (TUR-174)", async () => {
+    todaysMeetings.mockResolvedValue(
+      day([event()], {
+        unreadable: [
+          {
+            provider: "Google",
+            kind: "calendar-sign-in-expired",
+            message: "your Google sign-in has expired and needs renewing",
+          },
+        ],
+      }),
+    );
+    await show();
+
+    expect(screen.getByText("Standup")).toBeTruthy();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Google needs you to sign in again, so its meetings are missing here.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: OPEN_CALENDAR_SETTINGS }));
+    expect(screen.getByText("at /settings?section=calendars")).toBeTruthy();
+  });
+
+  test("an unreachable calendar on an otherwise empty day says so above it", async () => {
+    todaysMeetings.mockResolvedValue(
+      day([], {
+        unreadable: [{ provider: "Microsoft", kind: "calendar-unreachable", message: "timed out" }],
+      }),
+    );
+    await show();
+    expect(screen.getByText(EMPTY_DAY)).toBeTruthy();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Microsoft could not be read, so its meetings are missing here: timed out",
+    );
+  });
+
+  test("every calendar read shows no warning", async () => {
+    todaysMeetings.mockResolvedValue(day([event()]));
+    await show();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  test("a waiting sign-in can be cancelled, quietly (TUR-174)", async () => {
+    ipc.calendarSources.mockResolvedValue(OFF_MAC);
+    let reject: (error: UiError) => void = () => {};
+    ipc.calendarConnect.mockReturnValue(new Promise((_, no) => (reject = no)));
+    ipc.calendarCancelSignIn.mockImplementation(async () => {
+      reject({ domain: "app", kind: "calendar-sign-in-cancelled", message: "cancelled" });
+      return true;
+    });
+    await show();
+    expect(screen.queryByRole("button", { name: CANCEL_SIGN_IN })).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    });
+    expect(screen.getByRole("button", { name: WAITING_FOR_BROWSER })).toBeDisabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: CANCEL_SIGN_IN }));
+    });
+    expect(ipc.calendarCancelSignIn).toHaveBeenCalledWith("google");
+    expect(screen.getByRole("button", { name: "Sign in with Google" })).not.toBeDisabled();
+    expect(screen.queryByRole("button", { name: CANCEL_SIGN_IN })).toBeNull();
+    // The user asked for it: no error line.
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  test("a sign-in that times out on its own still says so", async () => {
+    ipc.calendarSources.mockResolvedValue(OFF_MAC);
+    ipc.calendarConnect.mockRejectedValue({
+      domain: "app",
+      kind: "calendar-sign-in-cancelled",
+      message: "the Google sign-in was cancelled",
+    });
+    await show();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("the Google sign-in was cancelled");
   });
 });
