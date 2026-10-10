@@ -7,45 +7,21 @@
 //! (`platform/windows_loopback.rs`); in the tests a fake, so the keepalive's
 //! lifecycle and the gap filling are checked on every OS.
 
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
-use ringbuf::traits::{Consumer, Split};
-use ringbuf::{HeapCons, HeapRb};
-
-use super::capture::{Capture, CaptureStats};
-use super::clock::{GapRule, frames_to_ns, ns_to_frames};
-use super::splice::{GapMark, Piece, splice};
-use crate::capture_clock::{CaptureClock, Feed, time_marks};
-use crate::pipeline::Pipeline;
+use super::capture::Capture;
+use super::clock::GapRule;
+use super::drain::ring;
 use crate::rate_meter::{FixedRates, Rates};
-use crate::segments::SAMPLE_RATE_HZ;
 use crate::tee::Tee;
-use crate::track::{IDLE_POLL, TrackWriter};
+use crate::track::TrackWriter;
 use crate::{AudioSource, Channel, Error};
 
 /// What the log calls this channel.
 const LABEL: &str = "system loopback";
-
-/// Seconds of device audio the sample ring holds for a late worker.
-const RING_SECONDS: usize = 4;
-
-/// Gap marks the callback can queue before the worker takes them.
-const MARK_CAPACITY: usize = 256;
-
-/// Samples the worker takes from the ring at a time, and the length of its
-/// buffers of zeros for gap silence.
-const WORKER_POP_SAMPLES: usize = 4096;
-
-/// The start of every gap goes through the resampler as zeros, so the
-/// audio before it (and the filter's tail) comes out first and in order;
-/// the rest is written as 16 kHz silence directly, so a gap of minutes costs
-/// no resampling. Two resampler chunks at least.
-const FLUSH_THROUGH_MS: u64 = 100;
-const FLUSH_THROUGH_MIN_FRAMES: u64 = 2048;
 
 /// A loopback device's stream format, as the [`Backend`] reads it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,12 +146,13 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
         // Same as the microphone: a reopened segment appends to the same file.
         let track = TrackWriter::open(&dest, LABEL)?;
         let rates = FixedRates::new(LABEL, format.rate);
-        let ring = RING_SECONDS * format.rate as usize * format.channels;
-        let (producer, consumer) = HeapRb::<f32>::new(ring).split();
-        let (mark_tx, marks) = HeapRb::<GapMark>::new(MARK_CAPACITY).split();
-        // Each packet's capture time rides next to its samples (TUR-151).
-        let (times, clock) = time_marks(format.channels);
-        let stats = Arc::new(CaptureStats::default());
+        let (capture, drain) = ring(
+            LABEL,
+            Arc::clone(&rates),
+            format.channels,
+            track.clone(),
+            self.tee.clone(),
+        );
 
         // Before the capture, so its first packet does not wait for a sound.
         let keepalive = match self.backend.start_keepalive() {
@@ -191,15 +168,7 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
                 None
             }
         };
-        let capture = Capture::new(
-            producer,
-            mark_tx,
-            Arc::clone(&rates),
-            times,
-            format.channels,
-            Arc::clone(&stats),
-        )
-        .with_gap_rule(self.backend.gap_rule());
+        let capture = capture.with_gap_rule(self.backend.gap_rule());
         let stream = match self.backend.start_capture(&format, capture) {
             Ok(stream) => stream,
             Err(e) => {
@@ -209,21 +178,10 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
         };
 
         let running = Arc::new(AtomicBool::new(true));
-        let worker = Worker {
-            consumer,
-            marks,
-            pipeline: Pipeline::new(LABEL, format.channels, format.rate),
-            rates: Arc::clone(&rates),
-            track: track.clone(),
-            clock,
-            running: Arc::clone(&running),
-            tee: self.tee.clone(),
-            stats,
-            channels: format.channels,
-        };
+        let flag = Arc::clone(&running);
         let spawned = std::thread::Builder::new()
             .name("meet-rec-loopback-worker".to_string())
-            .spawn(move || worker.run());
+            .spawn(move || drain.run(&flag, || {}));
         let handle = match spawned {
             Ok(handle) => handle,
             Err(e) => {
@@ -292,124 +250,10 @@ impl<B: Backend> AudioSource for LoopbackSource<B> {
     fn device_rate(&self) -> Option<u32> {
         self.rates.as_ref().map(|rates| rates.effective())
     }
-}
 
-/// The worker thread: ring to [`Pipeline`] to [`TrackWriter`], with the gap
-/// marks spliced in as silence.
-struct Worker {
-    consumer: HeapCons<f32>,
-    marks: HeapCons<GapMark>,
-    pipeline: Pipeline,
-    rates: Arc<FixedRates>,
-    track: TrackWriter,
-    clock: CaptureClock,
-    running: Arc<AtomicBool>,
-    tee: Option<Tee>,
-    stats: Arc<CaptureStats>,
-    channels: usize,
-}
-
-impl Worker {
-    fn run(self) {
-        let Worker {
-            mut consumer,
-            mut marks,
-            mut pipeline,
-            rates,
-            track,
-            clock,
-            running,
-            tee,
-            stats,
-            channels,
-        } = self;
-        // Every append timed by the capture of the frame it ends at (TUR-151).
-        let mut feed = Feed::new(track, clock, tee);
-        let mut silence = Silence::new(channels);
-        let mut pending: VecDeque<GapMark> = VecDeque::new();
-        let mut consumed: u64 = 0;
-        let mut scratch = vec![0.0f32; WORKER_POP_SAMPLES];
-        loop {
-            // Samples first, marks second: a mark is pushed before the
-            // samples after it, so every mark these samples need is here.
-            let popped = consumer.pop_slice(&mut scratch);
-            pending.extend(marks.pop_iter());
-            let rate = rates.effective();
-            if popped > 0 {
-                pipeline.follow(&*rates, &mut |f: &[i16]| feed.extend(f));
-            }
-            splice(
-                consumed,
-                &scratch[..popped],
-                &mut pending,
-                |piece| match piece {
-                    Piece::Samples(samples) => {
-                        pipeline.push(samples, &mut |f: &[i16]| feed.extend(f));
-                        feed.consumed(samples.len());
-                    }
-                    Piece::Silence(frames) => {
-                        tracing::info!(
-                            "{LABEL}: {} ms the device did not deliver, written as silence",
-                            frames_to_ns(frames, rate) / 1_000_000
-                        );
-                        let rest =
-                            silence.write(frames, rate, &mut pipeline, &mut |f: &[i16]| {
-                                feed.extend(f)
-                            });
-                        feed.silence(rest, &pipeline);
-                    }
-                },
-            );
-            feed.flush(&pipeline);
-            consumed += popped as u64;
-            if popped == 0 {
-                if !running.load(Ordering::Acquire) {
-                    break;
-                }
-                std::thread::sleep(IDLE_POLL);
-            }
-        }
-        tracing::info!("{LABEL} stopped: {}", stats.describe());
-    }
-}
-
-/// Writes gap silence: the first part through the resampler, and says how
-/// much of the rest is owed straight at 16 kHz ([`Feed::silence`] writes it,
-/// timed, TUR-151).
-struct Silence {
-    channels: usize,
-    /// Device-rate zeros, a whole number of frames long.
-    device: Vec<f32>,
-}
-
-impl Silence {
-    fn new(channels: usize) -> Self {
-        let channels = channels.max(1);
-        Self {
-            channels,
-            device: vec![0.0; (WORKER_POP_SAMPLES / channels).max(1) * channels],
-        }
-    }
-
-    /// Push the start of a `frames`-long gap through `pipeline`; returns the
-    /// 16 kHz frames of silence still owed for the rest of it.
-    fn write(
-        &mut self,
-        frames: u64,
-        rate: u32,
-        pipeline: &mut Pipeline,
-        sink: &mut impl FnMut(&[i16]),
-    ) -> u64 {
-        let flush = (u64::from(rate) * FLUSH_THROUGH_MS / 1000).max(FLUSH_THROUGH_MIN_FRAMES);
-        let through = frames.min(flush);
-        let mut samples = through as usize * self.channels;
-        while samples > 0 {
-            let n = samples.min(self.device.len());
-            pipeline.push(&self.device[..n], sink);
-            samples -= n;
-        }
-        let rest = frames - through;
-        ns_to_frames(frames_to_ns(rest, rate), SAMPLE_RATE_HZ)
+    /// With no keepalive the device sends nothing while nothing plays.
+    fn delivers_continuously(&self) -> bool {
+        self.keepalive.is_some()
     }
 }
 

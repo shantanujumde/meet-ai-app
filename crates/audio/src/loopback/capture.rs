@@ -12,7 +12,7 @@ use ringbuf::traits::{Observer, Producer};
 use super::clock::{GapRule, Timeline, frames_to_ns};
 use super::silent;
 use super::splice::GapMark;
-use crate::rate_meter::{CallbackMeter, FixedRates, Rates};
+use crate::rate_meter::{CallbackMeter, Rates};
 
 /// What the callback did that the worker should log. Atomics only, so the
 /// callback can count without a lock.
@@ -56,8 +56,10 @@ pub struct Capture {
     producer: HeapProd<f32>,
     marks: HeapProd<GapMark>,
     timeline: Timeline,
-    meter: CallbackMeter<FixedRates>,
-    rates: Arc<FixedRates>,
+    meter: CallbackMeter<dyn Rates>,
+    /// The loopback's and the microphone's `FixedRates`, or the macOS tap's
+    /// own rate state (TUR-163).
+    rates: Arc<dyn Rates>,
     /// Each timed packet's capture time, next to its samples, for the
     /// worker's position latch (TUR-151).
     times: MarkWriter,
@@ -74,7 +76,7 @@ impl Capture {
     pub(crate) fn new(
         producer: HeapProd<f32>,
         marks: HeapProd<GapMark>,
-        rates: Arc<FixedRates>,
+        rates: Arc<dyn Rates>,
         times: MarkWriter,
         channels: usize,
         stats: Arc<CaptureStats>,
@@ -184,6 +186,7 @@ mod tests {
 
     use super::*;
     use crate::capture_clock::CaptureClock;
+    use crate::rate_meter::FixedRates;
 
     const MS: u64 = 1_000_000;
 

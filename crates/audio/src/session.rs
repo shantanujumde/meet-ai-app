@@ -28,6 +28,8 @@ mod pause;
 // TUR-162: ending a segment in §7's order, and riding out a failed checkpoint.
 mod finish;
 mod retry;
+// TUR-163: a channel that stopped, or whose stream died, gets a new segment.
+mod stall;
 
 pub use self::pause::PauseSwitch;
 use self::segment::{Paths, align_and_pad, reopen_segment, segment_open};
@@ -101,13 +103,14 @@ pub fn default_mic_source() -> Box<dyn AudioSource> {
 }
 
 /// §7/§11's checkpoint order: fsync every channel's data, write
-/// `segments.json`, then patch every header. Also warns if the tracks drift apart.
+/// `segments.json`, then patch every header. Also warns if the tracks drift
+/// apart, and returns a channel whose position has stopped moving (TUR-163).
 fn checkpoint(
     mic: &mut dyn AudioSource,
     sys: &mut Option<Box<dyn AudioSource>>,
     writer: &mut SegmentsWriter,
     segments_path: &Path,
-) -> Result<(), String> {
+) -> Result<Option<stall::Stall>, String> {
     mic.fsync_data().map_err(|e| format!("mic fsync: {e}"))?;
     if let Some(sys) = sys.as_deref_mut() {
         sys.fsync_data().map_err(|e| format!("system fsync: {e}"))?;
@@ -140,7 +143,14 @@ fn checkpoint(
         sys.patch_header()
             .map_err(|e| format!("system header patch: {e}"))?;
     }
-    Ok(())
+    let judge_sys = sys
+        .as_deref()
+        .is_some_and(|sys| sys.delivers_continuously());
+    Ok(stall::find(
+        &anchor,
+        judge_sys,
+        crate::platform::host_now_ns(),
+    ))
 }
 
 fn microphone_error(e: AudioError) -> String {
@@ -345,11 +355,6 @@ impl RecordingSession {
         })
     }
 
-    /// [`reopen_segment`] onto the platform's default devices.
-    fn reopen(&mut self, reason: &str) -> Result<(), String> {
-        self.reopen_with(reason, default_mic_source, default_system_source)
-    }
-
     /// [`reopen_segment`] onto the sources `new_mic` and `new_sys` build.
     fn reopen_with(
         &mut self,
@@ -448,20 +453,33 @@ impl RecordingSession {
     /// one, run an ordinary checkpoint. The caller decides how often to call
     /// this; nothing here sleeps or blocks on a timer of its own.
     pub fn tick(&mut self) -> Result<(), String> {
+        self.tick_with(&default_mic_source, &default_system_source)
+    }
+
+    /// [`Self::tick`], with the sources a reopen builds coming from
+    /// `new_mic` and `new_sys`.
+    fn tick_with(
+        &mut self,
+        new_mic: &impl Fn() -> Box<dyn AudioSource>,
+        new_sys: &impl Fn() -> Option<Box<dyn AudioSource>>,
+    ) -> Result<(), String> {
         // TUR-146: a pause or resume the window asked for, first; while
         // paused nothing else in a tick has anything to do.
-        if self.apply_pause_request(default_mic_source, default_system_source)? {
+        if self.apply_pause_request(new_mic, new_sys)? {
             return Ok(());
         }
         // TUR-136: a drop the system-audio check asked for, first.
-        self.apply_drop_request(default_mic_source)?;
+        self.apply_drop_request(new_mic)?;
+        // TUR-163: a stream whose device went away.
+        self.restart_lost_stream(new_mic, new_sys)?;
         // The device reads fail on a platform without a device watch yet
         // (`crate::platform`), so nothing below runs there.
         {
             if let Ok(current) = crate::platform::default_output_device() {
                 if self.last_output_device.is_some_and(|prev| prev != current) {
                     tracing::info!("default output device changed — reopening segment");
-                    self.reopen(segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED)?;
+                    let reason = segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED;
+                    self.reopen_with(reason, new_mic, new_sys)?;
                     self.last_input_device = crate::platform::default_input_device().ok();
                     self.segments_written();
                 }
@@ -470,7 +488,8 @@ impl RecordingSession {
             if let Ok(current) = crate::platform::default_input_device() {
                 if self.last_input_device.is_some_and(|prev| prev != current) {
                     tracing::info!("default input device changed — reopening segment");
-                    self.reopen(segments::reason::DEFAULT_INPUT_DEVICE_CHANGED)?;
+                    let reason = segments::reason::DEFAULT_INPUT_DEVICE_CHANGED;
+                    self.reopen_with(reason, new_mic, new_sys)?;
                     self.last_output_device = crate::platform::default_output_device().ok();
                     self.segments_written();
                 }
@@ -485,13 +504,16 @@ impl RecordingSession {
                 &mut self.writer,
                 &self.segments_path,
             ) {
-                Ok(()) => {
+                Ok(stalled) => {
                     self.segments_written();
                     tracing::info!("checkpoint at {:.0}s", self.started.elapsed().as_secs_f64());
+                    if let Some(stall) = stalled {
+                        self.restart_stalled(stall, new_mic, new_sys)?;
+                    }
                 }
                 // TUR-162: the previous checkpoint is still whole on disk, so
-                // one failure is retried at the next tick; only a run of them
-                // ends the recording.
+                // a failure is retried at the next tick; only 30 s without a
+                // good one ends the recording (TUR-163).
                 Err(e) => {
                     let since_good = self.last_checkpoint.elapsed();
                     self.checkpoint_retry.failed(e, since_good)?;

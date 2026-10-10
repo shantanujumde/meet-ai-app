@@ -25,6 +25,7 @@ use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapProd, HeapRb};
 
 use crate::pipeline::Pipeline;
+#[cfg(test)]
 use crate::rate_meter::Rates;
 use crate::segments::SAMPLE_RATE_HZ;
 use crate::tee::Tee;
@@ -194,7 +195,10 @@ impl Feed {
         }
     }
 
-    /// One slice taken from the ring: follow `rates`, resample, append.
+    /// One slice taken from the ring: follow `rates`, resample, append. The
+    /// workers do this through `loopback::drain` since TUR-163, with gap
+    /// silence spliced in; the tests here drive it directly.
+    #[cfg(test)]
     pub(crate) fn push(&mut self, pipeline: &mut Pipeline, rates: &impl Rates, samples: &[f32]) {
         let out = &mut self.out;
         let mut sink = |frames: &[i16]| out.extend_from_slice(frames);

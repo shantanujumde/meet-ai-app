@@ -29,9 +29,9 @@ use std::sync::{Arc, Mutex};
 use objc2_core_audio::{self as ca, AudioObjectID, AudioObjectPropertyAddress};
 use objc2_core_audio_types::AudioStreamBasicDescription;
 
-pub(crate) use crate::rate_meter::{CallbackMeter, Measured, Rates, decide, plausible};
 #[cfg(test)]
-pub(crate) use crate::rate_meter::{RateMeter, snap};
+pub(crate) use crate::rate_meter::{CallbackMeter, RateMeter, snap};
+pub(crate) use crate::rate_meter::{Measured, Rates, decide, plausible};
 
 /// Every rate Core Audio reports for one tap.
 #[derive(Debug, Clone, Copy, PartialEq)]

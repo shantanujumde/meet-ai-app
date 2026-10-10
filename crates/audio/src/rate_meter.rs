@@ -219,14 +219,14 @@ pub(crate) trait Rates: Send + Sync {
 /// The callback's side of the measurement: a [`RateMeter`] restarted after
 /// every [`Measured::restart`], publishing into the [`Rates`]' cell. Atomics
 /// and integers only, so it is safe on a real-time thread.
-pub(crate) struct CallbackMeter<R: Rates> {
+pub(crate) struct CallbackMeter<R: Rates + ?Sized> {
     rates: Arc<R>,
     meter: RateMeter,
     epoch: u32,
     channels: usize,
 }
 
-impl<R: Rates> CallbackMeter<R> {
+impl<R: Rates + ?Sized> CallbackMeter<R> {
     pub(crate) fn new(rates: Arc<R>, channels: usize) -> Self {
         let epoch = rates.cell().epoch();
         Self {

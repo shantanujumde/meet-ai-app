@@ -132,9 +132,26 @@ impl WavWriter {
     /// concurrent worker thread) after this sync, but before the header is
     /// actually patched.
     pub fn fsync_data(&mut self) -> io::Result<()> {
+        let frames = self.appended_frames;
         self.file.sync_data()?;
-        self.synced_frames = self.appended_frames;
+        self.mark_synced(frames);
         Ok(())
+    }
+
+    /// A second handle on the same file, for a caller that syncs without
+    /// holding the lock its appends go through (TUR-163: a slow disk then
+    /// stalls the checkpoint, never the capture worker). A sync on it covers
+    /// every byte written through this writer before the sync began.
+    pub fn sync_handle(&self) -> io::Result<File> {
+        self.file.try_clone()
+    }
+
+    /// [`WavWriter::fsync_data`]'s second half, for a caller that synced
+    /// through [`WavWriter::sync_handle`]: `frames` (the
+    /// [`WavWriter::appended_frames`] read before that sync began) are
+    /// durable, and [`WavWriter::patch_header`] may declare them.
+    pub fn mark_synced(&mut self, frames: u64) {
+        self.synced_frames = self.synced_frames.max(frames.min(self.appended_frames));
     }
 
     /// Step 3 of the checkpoint order: patch the header to declare
@@ -144,6 +161,17 @@ impl WavWriter {
     /// declared length at its previous, smaller, already-fsynced value rather
     /// than a new one the bytes don't fully back yet.
     pub fn patch_header(&mut self) -> io::Result<()> {
+        let frames = self.write_header_sizes()?;
+        self.file.sync_all()?;
+        self.mark_header(frames);
+        Ok(())
+    }
+
+    /// [`WavWriter::patch_header`] without its sync: write the two size
+    /// fields for the synced frames, and return that count. The caller syncs
+    /// through [`WavWriter::sync_handle`] and then calls
+    /// [`WavWriter::mark_header`] (TUR-163).
+    pub fn write_header_sizes(&mut self) -> io::Result<u64> {
         let frames = self.synced_frames;
         let data_len = frames * BYTES_PER_SAMPLE as u64;
 
@@ -152,10 +180,13 @@ impl WavWriter {
 
         self.file.seek(SeekFrom::Start(DATA_SIZE_OFFSET))?;
         self.file.write_all(&(data_len as u32).to_le_bytes())?;
+        Ok(frames)
+    }
 
-        self.file.sync_all()?;
-        self.header_frames = frames;
-        Ok(())
+    /// The header written by [`WavWriter::write_header_sizes`], declaring
+    /// `frames`, is on disk.
+    pub fn mark_header(&mut self, frames: u64) {
+        self.header_frames = self.header_frames.max(frames);
     }
 
     /// Insert `frames` zero samples immediately after the header, ahead of

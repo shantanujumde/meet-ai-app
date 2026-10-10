@@ -20,6 +20,9 @@ mod tap_pipeline;
 /// Which of the aggregate's IO buffers are the tap's (TUR-87).
 mod tap_buffers;
 
+/// The IO proc's body: the tap's buffers into the shared capture ring (TUR-163).
+mod tap_io;
+
 /// Which rate the tap's IO proc really runs at, and watching it change.
 mod tap_rate;
 

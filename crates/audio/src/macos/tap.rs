@@ -27,8 +27,6 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use block2::RcBlock;
 use objc2::AnyThread;
@@ -41,31 +39,17 @@ use objc2_core_audio::{
 use objc2_core_audio_types::{AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp};
 use objc2_core_foundation::{CFArray, CFBoolean, CFDictionary, CFRetained, CFString, CFType};
 use objc2_foundation::{NSArray, NSNumber, NSString, NSUUID};
-use ringbuf::traits::{Consumer, Producer, Split};
-use ringbuf::{HeapCons, HeapRb};
 
-use super::tap_buffers::{LayoutProbe, TapBuffers, gather_into};
+use super::tap_buffers::{LayoutProbe, TapBuffers};
 use super::tap_guard::{AggregateDevice, IoProc, TapObject};
-use super::tap_pipeline::TapPipeline;
-use super::tap_rate::{CallbackMeter, RateSources, RateState, RateWatch};
+use super::tap_io::TapCallback;
+use super::tap_rate::{RateSources, RateState, RateWatch};
 use super::tap_uuid::{format_uuid_bytes, locally_unique_uuid_bytes};
-use crate::capture_clock::{CaptureClock, Feed, time_marks};
+use crate::loopback::{clock::GapRule, drain};
 use crate::tee::Tee;
 use crate::track::TrackWriter;
 use crate::worker::Worker;
 use crate::{AudioSource, Channel, Error};
-
-/// Ring buffer capacity, in raw (tap-rate, interleaved) samples. Same 4 s
-/// oversizing rationale as `crate::mic::RING_CAPACITY_SAMPLES`: generous
-/// against a worker thread serviced every couple of milliseconds, so a
-/// scheduling hiccup drops nothing rather than build steady-state backlog.
-const RING_CAPACITY_SAMPLES: usize = 48_000 * 2 * 4;
-
-/// How long the worker thread sleeps when the ring buffer is empty, between
-/// polls. Matches `crate::mic::IDLE_POLL` for the same reason: short enough
-/// not to become the dominant term against the 200 ms drift gate, long
-/// enough not to spin a core.
-const IDLE_POLL: Duration = Duration::from_millis(2);
 
 /// Builds a `CFDictionary<CFString, CFType>` from `&str` keys (Core Audio's
 /// aggregate-device keys are all `&'static CStr`) and already-boxed
@@ -75,7 +59,7 @@ fn cf_dict(
 ) -> CFRetained<CFDictionary<CFString, CFType>> {
     let keys: Vec<CFRetained<CFString>> = pairs
         .iter()
-        .map(|(k, _)| CFString::from_str(k.to_str().expect("aggregate device keys are ASCII")))
+        .map(|(k, _)| CFString::from_str(&k.to_string_lossy()))
         .collect();
     let key_refs: Vec<&CFString> = keys.iter().map(|k| &**k).collect();
     let val_refs: Vec<&CFType> = pairs.iter().map(|(_, v)| &**v).collect();
@@ -114,7 +98,7 @@ unsafe fn get_property<T: Copy>(object_id: AudioObjectID, selector: u32) -> Resu
             0,
             std::ptr::null(),
             std::ptr::NonNull::from(&mut size),
-            std::ptr::NonNull::new(value.as_mut_ptr().cast()).expect("stack pointer is non-null"),
+            std::ptr::NonNull::from(&mut value).cast(),
         )
     };
     if status != 0 {
@@ -212,37 +196,6 @@ impl SystemSource {
         }
     }
 
-    /// Raw IO-proc samples → [`TapPipeline`], at [`RateState::effective`],
-    /// each append timed by the capture of the frame it ends at (TUR-151).
-    #[allow(clippy::too_many_arguments)]
-    fn worker_loop(
-        mut consumer: HeapCons<f32>,
-        mut pipeline: TapPipeline,
-        rates: Arc<RateState>,
-        track: TrackWriter,
-        clock: CaptureClock,
-        running: Arc<AtomicBool>,
-        tee: Option<Tee>,
-        probe: Arc<LayoutProbe>,
-    ) {
-        let mut feed = Feed::new(track, clock, tee);
-        // Sized once; `pop_slice` only refills it.
-        let mut scratch = vec![0.0f32; 4096];
-        loop {
-            let popped = consumer.pop_slice(&mut scratch);
-            if popped == 0 && !running.load(Ordering::Acquire) {
-                break;
-            } else if popped == 0 {
-                std::thread::sleep(IDLE_POLL);
-                continue;
-            }
-            if let Some(report) = probe.take_report() {
-                tracing::info!("{report}");
-            }
-            feed.push(&mut pipeline, &*rates, &scratch[..popped]);
-        }
-    }
-
     /// Everything that can block on the system-audio-recording TCC dialog,
     /// run on its own thread exactly like `MicSource::build`, so
     /// [`AudioSource::start`] can bound the wait with
@@ -268,7 +221,7 @@ impl SystemSource {
         unsafe { desc.setName(&NSString::from_str("meet-ai system tap")) };
         let uuid_string = format_uuid_bytes(locally_unique_uuid_bytes());
         let uuid = NSUUID::from_string(&NSString::from_str(&uuid_string))
-            .expect("a freshly-formatted canonical UUID string always parses");
+            .ok_or_else(|| Error::NoDevice(format!("tap UUID {uuid_string} did not parse")))?;
         unsafe { desc.setUUID(&uuid) };
         unsafe { desc.setPrivate(true) };
         unsafe { desc.setMuteBehavior(CATapMuteBehavior::Unmuted) };
@@ -361,7 +314,9 @@ impl SystemSource {
             output_device_id: out_dev,
         };
         let rates = RateState::new(rate_sources);
-        let input_rate = rates.effective();
+        if rates.effective() == 0 {
+            return Err(Error::NoDevice("the system tap runs at 0 Hz".to_string()));
+        }
         // Only the tap's own buffers, never the output device's mic (TUR-87).
         let probe = Arc::new(LayoutProbe::new(TapBuffers::read(aggregate_id, &format)));
         let probe_for_block = Arc::clone(&probe);
@@ -373,18 +328,20 @@ impl SystemSource {
         // itself stays one continuous file across segments — see the
         // matching comment in `crate::mic::MicSource::build`.
         let track = TrackWriter::open(&dest, "system audio")?;
-        let rb = HeapRb::<f32>::new(RING_CAPACITY_SAMPLES);
-        let (producer, consumer) = rb.split();
-        // Each IO cycle's `inInputTime` rides next to its samples (TUR-151).
-        let (marks, clock) = time_marks(channels);
+        // TUR-163: the loopback's ring, sized for this tap; a full one turns
+        // what did not fit into counted silence, never half a frame.
+        let (capture, drain) = drain::ring(
+            "system tap",
+            Arc::clone(&rates),
+            channels,
+            track.clone(),
+            tee,
+        );
+        let capture = capture.with_gap_rule(GapRule::NEVER);
 
-        // The IO block must be `Fn`, so the producer and interleave buffer sit
-        // in a `RefCell`: no lock on the real-time thread, and a re-entrant
-        // call skips its cycle. `interleaved` is sized once (2 x 16384 frames).
-        // Plus the delivered-rate meter (TUR-84): integers only, real-time safe.
-        let meter = CallbackMeter::new(Arc::clone(&rates), channels);
-        let callback_state =
-            RefCell::new((producer, Vec::<f32>::with_capacity(32_768), meter, marks));
+        // The IO block must be `Fn`, so its state sits in a `RefCell`: no lock
+        // on the real-time thread, and a re-entrant call skips its cycle.
+        let callback_state = RefCell::new(TapCallback::new(capture, probe_for_block, channels));
         let io_block: RcBlock<IoBlockFn> = RcBlock::new(
             move |_now: std::ptr::NonNull<AudioTimeStamp>,
                   in_input_data: std::ptr::NonNull<AudioBufferList>,
@@ -395,48 +352,11 @@ impl SystemSource {
                 // are valid for the duration of this call.
                 let host_ns =
                     unsafe { ca::AudioConvertHostTimeToNanos(in_input_time.as_ref().mHostTime) };
-
-                let abl = unsafe { in_input_data.as_ref() };
-                let n = abl.mNumberBuffers as usize;
-                if n == 0 {
-                    return;
-                }
                 let Ok(mut state) = callback_state.try_borrow_mut() else {
                     return;
                 };
-                let (producer, interleaved, meter, marks) = &mut *state;
-
-                // `mBuffers` is declared `[AudioBuffer; 1]` but is really a
-                // C flexible array member — buffer `i` lives at
-                // `mBuffers.as_ptr().add(i)`, exactly like the Swift probe's
-                // `UnsafeMutableAudioBufferListPointer`.
-                let buffers_ptr = abl.mBuffers.as_ptr();
-                // SAFETY: `i < mNumberBuffers`, and `mData` is valid for
-                // `mDataByteSize` bytes of `f32` per Core Audio's own
-                // documented layout for this (non-interleaved) tap format;
-                // both outlive this call. A null `mData` reads as empty.
-                let channel = |i: usize| -> &[f32] {
-                    let buf = unsafe { &*buffers_ptr.add(i) };
-                    if buf.mData.is_null() {
-                        return &[];
-                    }
-                    let count = buf.mDataByteSize as usize / std::mem::size_of::<f32>();
-                    unsafe { std::slice::from_raw_parts(buf.mData.cast::<f32>(), count) }
-                };
-                probe_for_block.observe(n, |i| unsafe { (*buffers_ptr.add(i)).mNumberChannels });
-                let tap = probe_for_block.layout().range(n);
-                let any_frames = tap.clone().map(|i| channel(i).len()).max().unwrap_or(0);
-                if any_frames == 0 {
-                    return;
-                }
-                let buffer = |i: usize| {
-                    // SAFETY: as for `channel`, `i < mNumberBuffers`.
-                    (unsafe { (*buffers_ptr.add(i)).mNumberChannels }, channel(i))
-                };
-                gather_into(tap, buffer, channels, interleaved);
-                marks.mark(host_ns);
-                marks.advance(producer.push_slice(interleaved));
-                meter.observe(host_ns, interleaved.len());
+                // SAFETY: this cycle's own buffer list, valid for this call.
+                unsafe { state.cycle(in_input_data.as_ref(), host_ns) };
             },
         );
 
@@ -469,13 +389,12 @@ impl SystemSource {
         }
 
         let rate_watch = RateWatch::install(&rates);
-        let pipeline = TapPipeline::new("system tap", channels, input_rate);
-        let worker = Worker::spawn("meet-rec-system-worker", {
-            let track = track.clone();
-            let rates = Arc::clone(&rates);
-            move |running| {
-                Self::worker_loop(consumer, pipeline, rates, track, clock, running, tee, probe)
-            }
+        let worker = Worker::spawn("meet-rec-system-worker", move |running| {
+            drain.run(&running, || {
+                if let Some(report) = probe.take_report() {
+                    tracing::info!("{report}");
+                }
+            });
         })?;
 
         Ok(Built {

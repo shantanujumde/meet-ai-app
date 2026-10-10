@@ -6,14 +6,13 @@
 //! refuse one write and take the next. Now a failure is logged and the
 //! checkpoint is tried again at the next tick; only a disk that keeps failing
 //! ends the recording.
+//!
+//! "Keeps failing" is time only (TUR-163): TUR-162 also gave up after six
+//! failures in a row, but the retry runs at every tick
+//! ([`super::TICK_INTERVAL`], 200 ms), so six fast failures were about a
+//! second of a busy disk.
 
 use std::time::Duration;
-
-/// Failed checkpoints in a row that end the recording. The retry runs at
-/// every tick ([`super::TICK_INTERVAL`]), so failures that come back at once
-/// use these up in about a second, and ones that each block for seconds run
-/// into [`MAX_SINCE_GOOD`] first.
-pub(super) const MAX_CONSECUTIVE_FAILURES: u32 = 6;
 
 /// How long after the last good checkpoint a failing one ends the recording:
 /// about six checkpoint intervals of audio that no `segments.json` covers.
@@ -32,8 +31,7 @@ impl CheckpointRetry {
     }
 
     /// Count a failed checkpoint, `since_good` after the last good one.
-    /// `Err` means give up: [`MAX_CONSECUTIVE_FAILURES`] in a row, or
-    /// [`MAX_SINCE_GOOD`] reached, whichever comes first.
+    /// `Err` means give up: [`MAX_SINCE_GOOD`] reached.
     pub(super) fn failed(&mut self, error: String, since_good: Duration) -> Result<(), String> {
         self.failures += 1;
         tracing::warn!(
@@ -42,7 +40,7 @@ impl CheckpointRetry {
             "checkpoint failed ({error}); the previous one on disk still holds, \
              trying again at the next tick"
         );
-        if self.failures >= MAX_CONSECUTIVE_FAILURES || since_good >= MAX_SINCE_GOOD {
+        if since_good >= MAX_SINCE_GOOD {
             return Err(format!(
                 "{error} ({} checkpoints in a row failed; the last good one was {} s ago)",
                 self.failures,
@@ -60,31 +58,33 @@ mod tests {
     const SOON: Duration = Duration::from_secs(5);
 
     #[test]
-    fn a_few_failures_are_ridden_out_and_a_success_clears_them() {
+    fn failures_are_ridden_out_and_a_success_clears_them() {
         let mut retry = CheckpointRetry::default();
-        for _ in 1..MAX_CONSECUTIVE_FAILURES {
+        for _ in 0..20 {
             retry.failed("fsync".into(), SOON).expect("not yet");
         }
         retry.succeeded();
-        for _ in 1..MAX_CONSECUTIVE_FAILURES {
-            retry.failed("fsync".into(), SOON).expect("counted afresh");
+        assert_eq!(retry.failures, 0);
+    }
+
+    /// TUR-163: a run of fast failures (one per 200 ms tick) no longer ends
+    /// the recording after about a second; only the time does.
+    #[test]
+    fn many_failures_inside_thirty_seconds_never_give_up() {
+        let mut retry = CheckpointRetry::default();
+        for tick in 0..120u64 {
+            let since_good = SOON + Duration::from_millis(200 * tick);
+            retry
+                .failed("fsync".into(), since_good)
+                .unwrap_or_else(|e| panic!("gave up at {since_good:?}: {e}"));
         }
     }
 
     #[test]
-    fn the_sixth_failure_in_a_row_gives_up() {
+    fn thirty_seconds_without_a_good_checkpoint_gives_up() {
         let mut retry = CheckpointRetry::default();
-        for _ in 1..MAX_CONSECUTIVE_FAILURES {
-            retry.failed("fsync".into(), SOON).unwrap();
-        }
-        let error = retry.failed("fsync".into(), SOON).unwrap_err();
-        assert!(error.starts_with("fsync"), "{error}");
-        assert!(error.contains("6 checkpoints in a row"), "{error}");
-    }
-
-    #[test]
-    fn thirty_seconds_without_a_good_checkpoint_gives_up_at_once() {
-        let mut retry = CheckpointRetry::default();
-        assert!(retry.failed("rename".into(), MAX_SINCE_GOOD).is_err());
+        let error = retry.failed("rename".into(), MAX_SINCE_GOOD).unwrap_err();
+        assert!(error.starts_with("rename"), "{error}");
+        assert!(error.contains("30 s ago"), "{error}");
     }
 }

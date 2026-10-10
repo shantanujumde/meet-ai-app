@@ -12,6 +12,7 @@
 //! itself down on drop, so a late build stops capturing at once instead of
 //! running, unseen, until the app quits.
 
+use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
 use crate::Error;
@@ -20,6 +21,11 @@ use crate::Error;
 /// it. A timeout reads as [`Error::PermissionDenied`], as before: an
 /// unanswered dialog is what blocks these calls. A build that finishes after
 /// that is dropped on its own thread, which is what tears it down.
+///
+/// A thread that ends without an answer (`build` panicked: a 0 Hz device,
+/// an Objective-C failure) is a device error, not a permission one (TUR-163):
+/// it used to read as "permission denied", and the user was sent to System
+/// Settings to turn on a permission that was already on.
 pub(crate) fn run_bounded<T: Send + 'static>(
     name: &str,
     timeout: Duration,
@@ -35,7 +41,13 @@ pub(crate) fn run_bounded<T: Send + 'static>(
         })?;
     match rx.recv_timeout(timeout) {
         Ok(result) => result,
-        Err(_) => Err(Error::PermissionDenied),
+        Err(RecvTimeoutError::Timeout) => Err(Error::PermissionDenied),
+        Err(RecvTimeoutError::Disconnected) => {
+            tracing::warn!("{name} ended without an answer; its build panicked");
+            Err(Error::DeviceRead(
+                "opening the device stopped unexpectedly; the log has the details".to_string(),
+            ))
+        }
     }
 }
 
@@ -86,6 +98,15 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// TUR-163's "Done when": a build that panics is a device error.
+    #[test]
+    fn a_build_that_panics_is_a_device_error_not_a_denial() {
+        let result: Result<(), Error> = run_bounded("test-init", Duration::from_secs(5), || {
+            panic!("a 0 Hz device");
+        });
+        assert!(matches!(result, Err(Error::DeviceRead(_))), "{result:?}");
     }
 
     #[test]

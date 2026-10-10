@@ -11,29 +11,19 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{SampleFormat, Stream, StreamConfig};
-use ringbuf::traits::{Consumer, Producer, Split};
-use ringbuf::{HeapCons, HeapRb};
+use cpal::{Stream, StreamConfig};
 
-use crate::capture_clock::{CaptureClock, Feed, first_frame_ns, time_marks};
 use crate::loopback::sound_server::{SoundServer, input_buffer_size, is_alsa_null};
 use crate::mic_choice::{self, MicChoice};
-use crate::pipeline::Pipeline;
-use crate::platform::host_now_ns;
-// The OS's capture time, on the host clock: WASAPI's on Windows (TUR-37),
-// Core Audio's on macOS (TUR-151).
-use crate::platform::input_callback_ns;
-use crate::rate_meter::{CallbackMeter, FixedRates, Rates};
+use crate::rate_meter::{FixedRates, Rates};
 use crate::tee::Tee;
-use crate::track::{IDLE_POLL, TrackWriter};
+use crate::track::TrackWriter;
 use crate::worker::Worker;
 use crate::{AudioSource, Channel, Error};
 
-/// Ring buffer capacity, in raw (device-rate, interleaved) samples. 4 s at
-/// 48 kHz stereo is generously oversized for a worker thread serviced every
-/// couple of milliseconds; it exists so a scheduling hiccup drops nothing
-/// rather than to hold steady-state backlog.
-const RING_CAPACITY_SAMPLES: usize = 48_000 * 2 * 4;
+// TUR-163: the callback and the ring, shared with the loopback.
+mod callback;
+use self::callback::{MicCallback, on_stream_error, unsupported};
 
 /// Everything [`MicSource::start`] needs to hand back once the stream is
 /// actually live.
@@ -46,6 +36,7 @@ struct Built {
     rates: Arc<FixedRates>,
     worker: Worker,
     track: TrackWriter,
+    lost: Arc<AtomicBool>,
 }
 
 /// The microphone capture channel: a `cpal` input stream feeding a resampler
@@ -60,6 +51,8 @@ pub struct MicSource {
     tee: Option<Tee>,
     /// The reported and measured device rates (TUR-87), while running.
     rates: Option<Arc<FixedRates>>,
+    /// Set by the stream's error callback when the stream died (TUR-163).
+    lost: Option<Arc<AtomicBool>>,
 }
 
 impl Default for MicSource {
@@ -76,34 +69,7 @@ impl MicSource {
             track: None,
             tee: None,
             rates: None,
-        }
-    }
-
-    /// Raw device samples → [`Pipeline`], following the measured rate
-    /// (TUR-87): when the callbacks deliver another rate than `cpal`
-    /// reported, the resampler is rebuilt at the measured one. Every append
-    /// carries the capture time of the frame it ends at (TUR-151).
-    fn worker_loop(
-        mut consumer: HeapCons<f32>,
-        mut pipeline: Pipeline,
-        rates: Arc<FixedRates>,
-        track: TrackWriter,
-        clock: CaptureClock,
-        running: Arc<AtomicBool>,
-        tee: Option<Tee>,
-    ) {
-        let mut feed = Feed::new(track, clock, tee);
-        // Sized once; `pop_slice` only refills it.
-        let mut scratch = vec![0.0f32; 4096];
-        loop {
-            let popped = consumer.pop_slice(&mut scratch);
-            if popped == 0 && !running.load(Ordering::Acquire) {
-                break;
-            } else if popped == 0 {
-                std::thread::sleep(IDLE_POLL);
-                continue;
-            }
-            feed.push(&mut pipeline, &*rates, &scratch[..popped]);
+            lost: None,
         }
     }
 
@@ -165,6 +131,14 @@ impl MicSource {
             "microphone device rate {device_rate} Hz, {channels} ch, {sample_format:?} \
              (cpal default input config)"
         );
+        // TUR-163: refused here, not by a panic in the resampler (0 Hz) or
+        // the callback (a format it cannot convert).
+        if device_rate == 0 || channels == 0 {
+            return Err(Error::NoDevice(format!(
+                "the microphone reports {device_rate} Hz and {channels} channels"
+            )));
+        }
+        unsupported(sample_format)?;
         let rates = FixedRates::new("microphone", device_rate);
 
         // A segment reopen (device change) restarts capture against the same
@@ -175,76 +149,34 @@ impl MicSource {
         // segment-relative frame count (see its doc).
         let track = TrackWriter::open(&dest, "microphone")?;
 
-        let rb = HeapRb::<f32>::new(RING_CAPACITY_SAMPLES);
-        let (mut producer, consumer) = rb.split();
-        // Each packet's capture time rides next to its samples (TUR-151).
-        let (mut marks, clock) = time_marks(channels);
+        // The loopback's ring (TUR-163): whole frames only, and frames a full
+        // ring has no room for come back as counted silence. Sized for this
+        // device's rate and channels.
+        let (capture, drain) = callback::ring(Arc::clone(&rates), channels, track.clone(), tee);
+        let mut callback = MicCallback::new(capture, channels, device_rate);
+        let lost = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&lost);
 
-        // The delivered-rate meter (TUR-84's, TUR-87): integers and atomics.
-        let mut meter = CallbackMeter::new(Arc::clone(&rates), channels);
-        let err_fn = |err| tracing::warn!("cpal input stream error: {err}");
-
-        // The callback itself: timestamp, then push into the lock-free ring.
-        // No allocation, no lock, no I/O — SPEC §2.3's real-time constraint.
-        // The time is the packet's first frame's capture, or the callback's
-        // own less the packet when the OS gives none (`first_frame_ns`).
-        let stream = match sample_format {
-            SampleFormat::F32 => device.build_input_stream(
+        // The callback converts, timestamps and pushes into the lock-free
+        // ring: no allocation, no lock, no I/O (SPEC §2.3).
+        let stream = device
+            .build_input_stream_raw(
                 config,
-                move |data: &[f32], info: &cpal::InputCallbackInfo| {
-                    let frames = data.len() / channels.max(1);
-                    let now =
-                        first_frame_ns(input_callback_ns(info), host_now_ns(), frames, device_rate);
-                    marks.mark(now);
-                    marks.advance(producer.push_slice(data));
-                    meter.observe(now, data.len());
+                sample_format,
+                move |data: &cpal::Data, info: &cpal::InputCallbackInfo| {
+                    callback.on_input(data, info);
                 },
-                err_fn,
+                move |error| on_stream_error(&flag, &error),
                 Some(crate::AUDIO_PERMISSION_TIMEOUT),
-            ),
-            SampleFormat::I16 => {
-                let mut scratch = vec![0.0f32; 8192];
-                device.build_input_stream(
-                    config,
-                    move |data: &[i16], info: &cpal::InputCallbackInfo| {
-                        let frames = data.len() / channels.max(1);
-                        let now = first_frame_ns(
-                            input_callback_ns(info),
-                            host_now_ns(),
-                            frames,
-                            device_rate,
-                        );
-                        meter.observe(now, data.len());
-                        if scratch.len() < data.len() {
-                            scratch.resize(data.len(), 0.0);
-                        }
-                        for (dst, src) in scratch.iter_mut().zip(data.iter()) {
-                            *dst = *src as f32 / i16::MAX as f32;
-                        }
-                        marks.mark(now);
-                        marks.advance(producer.push_slice(&scratch[..data.len()]));
-                    },
-                    err_fn,
-                    Some(crate::AUDIO_PERMISSION_TIMEOUT),
-                )
-            }
-            other => {
-                return Err(Error::NoDevice(format!(
-                    "microphone reports an unsupported sample format: {other:?}"
-                )));
-            }
-        }
-        .map_err(|e| Error::NoDevice(format!("failed to build input stream: {e}")))?;
+            )
+            .map_err(|e| Error::NoDevice(format!("failed to build input stream: {e}")))?;
 
         stream
             .play()
             .map_err(|e| Error::NoDevice(format!("failed to start input stream: {e}")))?;
 
-        let worker = Worker::spawn("meet-rec-mic-worker", {
-            let track = track.clone();
-            let rates = Arc::clone(&rates);
-            let pipeline = Pipeline::new("microphone", channels, device_rate);
-            move |running| Self::worker_loop(consumer, pipeline, rates, track, clock, running, tee)
+        let worker = Worker::spawn("meet-rec-mic-worker", move |running| {
+            drain.run(&running, || {});
         })?;
 
         Ok(Built {
@@ -252,6 +184,7 @@ impl MicSource {
             rates,
             worker,
             track,
+            lost,
         })
     }
 }
@@ -274,6 +207,7 @@ impl AudioSource for MicSource {
         self.rates = Some(built.rates);
         self.worker = Some(built.worker);
         self.track = Some(built.track);
+        self.lost = Some(built.lost);
         Ok(())
     }
 
@@ -327,6 +261,12 @@ impl AudioSource for MicSource {
 
     fn device_rate(&self) -> Option<u32> {
         self.rates.as_ref().map(|rates| rates.effective())
+    }
+
+    fn stream_lost(&self) -> bool {
+        self.lost
+            .as_ref()
+            .is_some_and(|lost| lost.load(Ordering::Acquire))
     }
 }
 
@@ -419,25 +359,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let track = TrackWriter::open(&dir.path().join("mic.wav"), "microphone").unwrap();
         let rates = FixedRates::new("microphone", 48_000);
-        let (_producer, consumer) = HeapRb::<f32>::new(64).split();
-        let (_marks, clock) = time_marks(1);
-        let worker = Worker::spawn("test-mic-worker", {
-            let rates = Arc::clone(&rates);
-            let pipeline = Pipeline::new("microphone", 1, 48_000);
-            move |running| {
-                MicSource::worker_loop(consumer, pipeline, rates, track, clock, running, None)
-            }
-        })
-        .unwrap();
+        let (_capture, drain) = callback::ring(Arc::clone(&rates), 1, track, None);
+        let worker =
+            Worker::spawn("test-mic-worker", move |running| drain.run(&running, || {})).unwrap();
         let mut source = MicSource::new();
         source.worker = Some(worker);
-        assert_eq!(Arc::strong_count(&rates), 2, "the worker holds the rates");
+        let held = Arc::strong_count(&rates);
 
         drop(source);
         assert_eq!(
             Arc::strong_count(&rates),
-            1,
-            "the worker had returned by the time the drop did"
+            held - 1,
+            "the worker had returned, and dropped its half of the ring, by the time the drop did"
         );
     }
 }
