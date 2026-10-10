@@ -88,4 +88,20 @@ describe("loadOnboarding", () => {
 
     expect(useAppStore.getState().onboarding).toEqual({ completedAt: null });
   });
+
+  // TUR-170: the confirm dialog itself failing shows an error, and moves nothing.
+  test("a confirm dialog that fails shows the error instead of rejecting", async () => {
+    useAppStore.setState({
+      meetings: { root: "/Users/me/Meetings", rootExists: true, meetings: [] },
+    });
+    ipc.changeMeetingsFolder.mockClear();
+    confirm.mockRejectedValue(new Error("dialog plugin unavailable"));
+    const { result } = renderHook(() => useChangeFolder());
+
+    await act(() => result.current.pick());
+
+    expect(result.current.error?.message).toContain("dialog plugin unavailable");
+    expect(result.current.busy).toBe(false);
+    expect(ipc.changeMeetingsFolder).not.toHaveBeenCalled();
+  });
 });
