@@ -85,14 +85,22 @@ export function Onboarding() {
     };
   }, []);
 
+  // TUR-165: every move inside the wizard replaces the entry rather than
+  // pushing one. A finished step bounces to Meetings (`Bootstrap`), so pushed
+  // entries would leave the title bar's Back arrow enabled for ~6 presses
+  // that each do nothing visible.
+  function goTo(step: OnboardingStep) {
+    navigate(onboardingStepPath(step), { replace: true });
+  }
+
   function goNext() {
     const next = STEPS[index + 1];
-    if (next) navigate(onboardingStepPath(next));
+    if (next) goTo(next);
   }
 
   async function complete() {
     await finish();
-    navigate(MEETINGS);
+    navigate(MEETINGS, { replace: true });
   }
 
   const previous = STEPS[index - 1];
@@ -130,7 +138,7 @@ export function Onboarding() {
 
       <ButtonRow>
         {previous ? (
-          <Button tone="quiet" size="small" onClick={() => navigate(onboardingStepPath(previous))}>
+          <Button tone="quiet" size="small" onClick={() => goTo(previous)}>
             Back
           </Button>
         ) : null}
