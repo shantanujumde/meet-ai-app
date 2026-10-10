@@ -38,6 +38,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
 use std::time::{Duration, Instant};
 
+use meeting_format::segments::LiveSegments;
+
 /// How many chunks the queue holds before it starts dropping.
 ///
 /// A chunk is one resampler output — [`crate::resample`] takes 1024
@@ -86,6 +88,9 @@ pub struct Tee {
     /// A second consumer fed the same frames (TUR-136: the system-audio
     /// check). Never hushed by this tee's [`Hush`].
     also: Option<Box<Tee>>,
+    /// The recording's `segments.json` as it is written, shared with the
+    /// [`TeeFeed`] so the live transcript places lines by it (TUR-164).
+    timeline: LiveSegments,
 }
 
 /// A shared "silence this copy for a while" switch (TUR-136).
@@ -134,6 +139,7 @@ impl Hush {
 pub struct TeeFeed {
     rx: Receiver<Chunk>,
     dropped: Arc<AtomicU64>,
+    timeline: LiveSegments,
 }
 
 /// A connected [`Tee`]/[`TeeFeed`] pair with [`DEFAULT_CAPACITY_CHUNKS`].
@@ -146,6 +152,7 @@ pub fn tee() -> (Tee, TeeFeed) {
 pub fn tee_with_capacity(chunks: usize) -> (Tee, TeeFeed) {
     let (tx, rx) = mpsc::sync_channel(chunks.max(1));
     let dropped = Arc::new(AtomicU64::new(0));
+    let timeline = LiveSegments::new();
     (
         Tee {
             tx,
@@ -153,8 +160,13 @@ pub fn tee_with_capacity(chunks: usize) -> (Tee, TeeFeed) {
             dropped: Arc::clone(&dropped),
             hush: None,
             also: None,
+            timeline: timeline.clone(),
         },
-        TeeFeed { rx, dropped },
+        TeeFeed {
+            rx,
+            dropped,
+            timeline,
+        },
     )
 }
 
@@ -173,6 +185,12 @@ impl Tee {
     pub fn fan_out(mut self, second: Tee) -> Self {
         self.also = Some(Box::new(second));
         self
+    }
+
+    /// Where the recorder publishes `segments.json` for this tee's feed
+    /// (TUR-164). A fan-out's second tee has its own, which nobody publishes to.
+    pub fn timeline(&self) -> &LiveSegments {
+        &self.timeline
     }
 
     /// Hand over a copy of `frames`. Never blocks.
@@ -257,6 +275,13 @@ impl TeeFeed {
     /// Zero on any healthy run; logged when it is not.
     pub fn dropped_frames(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
+    }
+
+    /// The recording's `segments.json` as it is written, for placing live
+    /// lines on the recording's clock (SPEC §3.4, TUR-164). Empty until the
+    /// recorder publishes, and forever when nothing records into this tee.
+    pub fn timeline(&self) -> LiveSegments {
+        self.timeline.clone()
     }
 }
 

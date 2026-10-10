@@ -61,6 +61,14 @@ impl Tees {
         source
     }
 
+    /// Have `writer` publish every `segments.json` it writes to the tees'
+    /// feeds, so live lines are placed by it too (SPEC §3.4, TUR-164).
+    fn share_timelines(&self, writer: &mut SegmentsWriter) {
+        for tee in [&self.mic, &self.sys].into_iter().flatten() {
+            writer.share_with(tee.timeline().clone());
+        }
+    }
+
     /// Give `source` the system tee, if there is one. Returns it for chaining.
     fn attach_sys<'a>(&self, source: &'a mut dyn AudioSource) -> &'a mut dyn AudioSource {
         if let Some(tee) = &self.sys {
@@ -324,7 +332,8 @@ impl RecordingSession {
             sys.as_deref(),
             segments::reason::START,
         );
-        let writer = SegmentsWriter::new(open);
+        let mut writer = SegmentsWriter::new(open);
+        tees.share_timelines(&mut writer);
         // First segments.json write happens at the first checkpoint, not
         // here — nothing has been fsynced yet for it to honestly describe.
 

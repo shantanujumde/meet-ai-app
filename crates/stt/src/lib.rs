@@ -38,6 +38,8 @@ pub mod languages;
 pub mod model;
 /// `stt::parakeet`, the ONNX Runtime engine for computers with no GPU (TUR-62).
 pub mod parakeet;
+/// A line's WAV position on the recording's clock, batch and live (TUR-164).
+mod placement;
 pub mod registry;
 pub mod replay;
 pub mod segments;
@@ -89,8 +91,11 @@ pub use meeting_format::transcript::collapse_whitespace;
 pub struct Utterance {
     /// Seconds from the start of the recording to the start of this utterance.
     ///
-    /// Derived from `segments.json` (`start_host_ns + frame / rate`), never
-    /// from the wall clock at write time — that is the clock-drift mitigation.
+    /// Derived from `segments.json` (`start_host_ns + frame / rate`, with the
+    /// rate corrected through the checkpoint anchors), never from the wall
+    /// clock at write time — that is the clock-drift mitigation. Engines hand
+    /// over the WAV position ([`TranscriptSink::write_at`]); the batch path
+    /// and the live session map it the same way (`placement`, TUR-164).
     pub start_sec: u64,
     /// `You` or `Others`, per L5.
     pub speaker: Speaker,

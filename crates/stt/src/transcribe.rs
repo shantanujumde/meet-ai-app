@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use meeting_format::layout;
 
+use crate::placement::PlacingSink;
+use crate::segments::{Segments, SegmentsTimeline};
 use crate::sink::{CollectingSink, MarkdownSink, TranscriptSink};
 use crate::{Channel, Error, Speaker, SttEngine, Utterance};
 
@@ -63,11 +65,19 @@ pub struct Outcome {
 /// has no such luxury and is sorted once at stop instead, SPEC A19.) The live
 /// pane (Phase 2, Nia's [`TranscriptSink`] consumer) is what shows text as it
 /// arrives; the file is what has to be correct.
+///
+/// Every line is placed on the recording's clock through `segments.json`
+/// (SPEC §3.4, [`crate::segments`]), the same way the live session places
+/// it, so the two agree on when a line was said even after a device switch,
+/// a pause, or an hour of two clocks drifting apart. A meeting whose
+/// `segments.json` is missing or unreadable is still transcribed, at WAV
+/// positions, and the log says why.
 pub fn transcribe_meeting(
     paths: &MeetingPaths,
     engine: &mut dyn SttEngine,
 ) -> Result<Outcome, Error> {
     let mut utterances = Vec::new();
+    let segments = read_segments(&paths.segments_json());
 
     for (channel, speaker) in [
         (Channel::Mic, Speaker::You),
@@ -82,7 +92,12 @@ pub fn transcribe_meeting(
         }
 
         let mut collected = CollectingSink::new();
-        engine.transcribe(&wav, speaker, &mut collected)?;
+        let mut placing = PlacingSink {
+            inner: &mut collected,
+            segments: segments.as_ref(),
+            channel,
+        };
+        engine.transcribe(&wav, speaker, &mut placing)?;
         tracing::info!(
             engine = engine.name(),
             track = ?channel,
@@ -111,7 +126,26 @@ pub fn transcribe_meeting(
     })
 }
 
+/// `segments.json` for the batch path, or `None` (WAV positions) when there
+/// is none to read. Missing is a recording from before the file existed, or
+/// a hand-made folder; unreadable is worth a warning, but never worth losing
+/// the transcript over.
+fn read_segments(path: &Path) -> Option<Segments> {
+    if !path.is_file() {
+        tracing::info!(path = %path.display(), "no segments.json; lines stay at their WAV positions");
+        return None;
+    }
+    Segments::read(path)
+        .inspect_err(|error| {
+            tracing::warn!(%error, "segments.json unreadable; lines stay at their WAV positions");
+        })
+        .ok()
+}
+
 /// Transcribe one WAV and return its utterances, without writing anything.
+///
+/// Times are WAV positions: one track has no `segments.json` to place them
+/// by. [`transcribe_meeting`] places them.
 ///
 /// The building block the app uses when it wants the structured result rather
 /// than the file — for example to push lines at the UI over a Tauri channel.

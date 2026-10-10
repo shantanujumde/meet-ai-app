@@ -47,7 +47,7 @@ use crate::session::{
 use crate::sink::TranscriptSink;
 use crate::vad::{EarshotVad, SAMPLE_RATE, SegmentConfig, Vad, detect_speech};
 use crate::whisper::is_hallucination;
-use crate::{Error, Speaker, Utterance, collapse_whitespace};
+use crate::{Error, Speaker, collapse_whitespace};
 
 /// Tunables for the Parakeet path.
 #[derive(Debug, Clone)]
@@ -226,11 +226,7 @@ impl crate::SttEngine for ParakeetEngine {
         // Layer 1: no spans, no inference, nothing to write.
         for span in spans {
             for (start_sec, text) in decode(&self.model, span.samples(&pcm), span.start_sec())? {
-                sink.write(&Utterance {
-                    start_sec: start_sec as u64,
-                    speaker,
-                    text,
-                })?;
+                sink.write_at(start_sec, speaker, text)?;
             }
         }
         sink.flush()

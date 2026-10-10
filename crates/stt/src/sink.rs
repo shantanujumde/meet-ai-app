@@ -11,7 +11,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use crate::{Error, Utterance, format_transcript_line};
+use crate::{Error, Speaker, Utterance, format_transcript_line};
 
 /// A destination for finalized utterances.
 ///
@@ -20,6 +20,22 @@ use crate::{Error, Utterance, format_transcript_line};
 pub trait TranscriptSink {
     /// Record one finalized utterance.
     fn write(&mut self, utterance: &Utterance) -> Result<(), Error>;
+
+    /// Record one finalized utterance that starts `wav_sec` seconds into its
+    /// track's WAV (TUR-164).
+    ///
+    /// Engines call this rather than [`Self::write`]: they know where a line
+    /// is in the WAV, not when it was said. The default stores it at that
+    /// position, cut to whole seconds. The batch path's sink overrides it to
+    /// place the line through `segments.json` first (SPEC §3.4,
+    /// [`crate::segments`]).
+    fn write_at(&mut self, wav_sec: f64, speaker: Speaker, text: String) -> Result<(), Error> {
+        self.write(&Utterance {
+            start_sec: wav_sec.max(0.0) as u64,
+            speaker,
+            text,
+        })
+    }
 
     /// Flush anything buffered. Called at least at end of transcription.
     fn flush(&mut self) -> Result<(), Error> {
@@ -131,7 +147,6 @@ impl TranscriptSink for CollectingSink {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Speaker;
 
     fn utterance(start_sec: u64, text: &str) -> Utterance {
         Utterance {
