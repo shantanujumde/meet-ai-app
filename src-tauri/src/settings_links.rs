@@ -135,8 +135,10 @@ mod tests {
     }
 
     #[test]
-    fn every_url_scheme_is_in_the_opener_scope() {
-        // `capabilities/default.json` allows these schemes for the opener.
+    fn no_url_scheme_is_in_the_webviews_opener_scope() {
+        // `open_privacy_settings` opens these from Rust, where the opener's
+        // capability scope does not apply, so the webview is not granted
+        // them (TUR-158): a script in it could open any settings page.
         let capability = include_str!("../capabilities/default.json");
         for os in ["macos", "windows"] {
             for pane in [Pane::Microphone, Pane::AudioCapture, Pane::Calendars] {
@@ -144,8 +146,8 @@ mod tests {
                     if let Target::Url(url) = target {
                         let (scheme, _) = url.split_once(':').unwrap_or((url, ""));
                         assert!(
-                            capability.contains(&format!("\"{scheme}:*\"")),
-                            "{scheme}: is missing from the opener scope"
+                            !capability.contains(&format!("\"{scheme}:")),
+                            "{scheme}: is in the webview's opener scope"
                         );
                     }
                 }

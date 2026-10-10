@@ -6,6 +6,9 @@
 
 mod agent_run;
 mod agent_setup;
+// TUR-158: the app command list `build.rs` declares; here for its tests.
+#[cfg(test)]
+mod app_commands;
 // TUR-102: Light / Dark / System and the glass switch.
 mod appearance;
 // TUR-58: "Start at login".
@@ -92,7 +95,6 @@ pub fn run() {
         // Two recorders would fight over the system audio tap, so a second
         // launch must focus the existing window rather than start a new app.
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            use tauri::Manager as _;
             // TUR-58: `meet-ai --toggle-recording` (Wayland's stand-in for
             // the shortcut) toggles in this, the running app, and shows no
             // window, the same as pressing the shortcut.
@@ -101,10 +103,10 @@ pub fn run() {
                 return;
             }
             // TUR-76: the window may be hidden, with no Dock icon.
+            // `show_main_window` focuses the main window by its label; the
+            // first window in the map can be the prompt card or the hidden
+            // overlay instead (TUR-158).
             lifecycle::show_main_window(app);
-            if let Some(window) = app.webview_windows().values().next() {
-                let _ = window.set_focus();
-            }
         }));
         builder = builder.plugin(global_shortcut_plugin());
         // TUR-58: "Start at login", off until the Settings switch says so.
@@ -118,7 +120,6 @@ pub fn run() {
         .manage(logs::LogsDir(logs_dir))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())

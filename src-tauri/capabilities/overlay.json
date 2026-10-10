@@ -1,11 +1,18 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "overlay",
-  "description": "The small always-on-top recording window (TUR-146): it hears the recording state and the live transcript, and is dragged by its card.",
+  "description": "The small always-on-top recording window (TUR-146): it hears the recording state and the live transcript, pauses, resumes or stops the recording, brings the main window forward, and is dragged by its card. Nothing else (TUR-158).",
   "windows": ["overlay"],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "allow-recording-status",
+    "allow-pause-recording",
+    "allow-resume-recording",
+    "allow-stop-recording",
+    "allow-live-transcript",
+    "allow-overlay-show-main",
+    "allow-appearance-settings"
   ]
 }
