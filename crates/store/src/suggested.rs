@@ -12,7 +12,8 @@
 //!   line leaves the meeting's Action Items.
 //!
 //! Every change holds [`lock_meeting_writers`], so it never lands in the
-//! middle of a notes run numbering or rewriting the same tickets. A notes run
+//! middle of a notes run numbering or rewriting the same tickets; a discard,
+//! which also writes `meeting.md`, holds [`lock_meeting_md`] too. A notes run
 //! does not bring an approved or discarded task back: to it, the file is gone
 //! from the meeting's folder, as one the user deleted is.
 //!
@@ -22,7 +23,9 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::agent_notes::{default_title, lock_meeting_writers, retire, retire_title};
+use crate::agent_notes::{
+    default_title, lock_meeting_md, lock_meeting_writers, retire, retire_title,
+};
 use crate::folder::{self, meeting_dir};
 use crate::meeting::Meeting;
 use crate::ticket::{self, Status, Ticket};
@@ -129,6 +132,7 @@ pub fn discard(
     self_writes: &SelfWrites,
 ) -> Result<(), Error> {
     let _writers = lock_meeting_writers();
+    let _meeting_md = lock_meeting_md();
     let path = suggestion_path(root, meeting_id, ticket_id)?;
     if !path.is_file() {
         return Err(not_a_suggestion(meeting_id, ticket_id));

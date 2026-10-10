@@ -38,7 +38,7 @@ use std::path::Path;
 use meeting_format::meeting_md::{TITLE, TITLE_HASH, TITLE_SOURCE};
 use sha2::{Digest, Sha256};
 
-use crate::agent_notes::{default_title, lock_meeting_writers};
+use crate::agent_notes::{default_title, lock_meeting_md};
 use crate::folder::meeting_dir;
 use crate::meeting::Meeting;
 use crate::{Error, MEETING_FILE};
@@ -159,7 +159,7 @@ pub(crate) fn suggest(meeting: &mut Meeting, suggested: &str, default: &str) -> 
 /// Returns the title as written ([`clean`]ed).
 ///
 /// Creates `meeting.md` (id from the folder name, the four sections empty)
-/// when the meeting has none yet. Holds [`lock_meeting_writers`] for the whole
+/// when the meeting has none yet. Holds [`lock_meeting_md`] for the whole
 /// read and write, like every other writer of `meeting.md`, so it cannot land
 /// in the middle of a notes run.
 ///
@@ -183,7 +183,7 @@ pub fn set_by_user(root: &Path, meeting_id: &str, title: &str) -> Result<String,
             "a meeting's name cannot be blank",
         )));
     };
-    let _writers = lock_meeting_writers();
+    let _meeting_md = lock_meeting_md();
 
     let dir = meeting_dir(root, meeting_id)?;
     if !dir.is_dir() {

@@ -38,28 +38,33 @@ pub const RETIRED_TITLES_KEY: &str = "retired_titles";
 ///
 /// [`Error::Io`] when `root` itself cannot be listed.
 pub fn highest_recorded_ticket_number(root: &Path) -> Result<u32, Error> {
-    let mut highest = 0;
-    for dir in folder::meeting_dirs(root)? {
-        let path = dir.join(MEETING_FILE);
-        let meeting = match Meeting::read(&path) {
-            Ok(Some(meeting)) => meeting,
-            Ok(None) => continue,
-            Err(error) => {
-                tracing::warn!(path = %path.display(), %error, "skipping a meeting.md that could not be read");
-                continue;
-            }
-        };
-        highest = highest.max(highest_retired(&meeting));
-        let Some(Yaml::Hash(record)) = meeting.frontmatter.get(AGENT_TICKETS_KEY) else {
-            continue;
-        };
+    Ok(folder::meeting_dirs(root)?
+        .iter()
+        .map(|dir| highest_recorded_in(&dir.join(MEETING_FILE)))
+        .max()
+        .unwrap_or(0))
+}
+
+/// [`highest_recorded_ticket_number`] for the one `meeting.md` at `path`; 0
+/// when it is missing or cannot be read.
+pub(super) fn highest_recorded_in(path: &Path) -> u32 {
+    let meeting = match Meeting::read(path) {
+        Ok(Some(meeting)) => meeting,
+        Ok(None) => return 0,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "skipping a meeting.md that could not be read");
+            return 0;
+        }
+    };
+    let mut highest = highest_retired(&meeting);
+    if let Some(Yaml::Hash(record)) = meeting.frontmatter.get(AGENT_TICKETS_KEY) {
         for id in record.keys().filter_map(Yaml::as_str) {
             if let Some(n) = ticket::parse_id(id) {
                 highest = highest.max(n);
             }
         }
     }
-    Ok(highest)
+    highest
 }
 
 /// The highest number in `meeting`'s `retired_tickets` list; 0 for none.
