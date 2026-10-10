@@ -1,6 +1,7 @@
 //! The board: the pane's model kept in Rust, and the scope an engine thread
 //! writes it through.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -84,6 +85,10 @@ pub(super) struct Scope {
     pub(super) board: Arc<Mutex<Board>>,
     pub(super) generation: u64,
     pub(super) notify: Arc<dyn Notify>,
+    /// Set once the recording has fully stopped (Stop's `stopping`). A
+    /// failure before that happens while the user is still in the meeting,
+    /// so it also posts a desktop notification (TUR-161).
+    pub(super) stopping: Arc<AtomicBool>,
 }
 
 impl Scope {
@@ -145,7 +150,9 @@ impl Scope {
 
     /// Stop with a reason. Logged here, so every failure path is logged once.
     /// Only the first failure is reported: the second is almost always the
-    /// first one's consequence.
+    /// first one's consequence. A first failure while the meeting still
+    /// records is also posted as one desktop notification (TUR-161): with a
+    /// ⌘⇧R recording the window is usually hidden.
     pub(super) fn fail(&self, detail: String) {
         let changed = self.with_board(|board| {
             if board.status.state == State::Failed {
@@ -161,6 +168,10 @@ impl Scope {
                 "live transcription stopped"
             );
             self.notify.status(&status);
+            if !self.stopping.load(Ordering::Acquire) {
+                self.notify
+                    .failed(status.detail.as_deref().unwrap_or_default());
+            }
         }
     }
 

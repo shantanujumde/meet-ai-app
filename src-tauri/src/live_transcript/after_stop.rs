@@ -29,8 +29,9 @@ use super::{OpenEngine, State, Status, TranscriptFinal};
 use crate::lock::lock_or_recover;
 
 /// Appended to every failure sentence here: the recording is over, and safe.
-const AUDIO_SAVED: &str = "The recording itself is complete, and the meeting can be transcribed \
-                           from its saved audio.";
+/// No promise of a transcription later (TUR-161): no command does that yet.
+const AUDIO_SAVED: &str =
+    "The recording itself is complete, and its audio is kept in the meeting folder.";
 
 /// Transcribe the meeting whose `transcript.md` is `transcript`, waiting up
 /// to `timeout` for it. See [`super::Transcription::finish_final`].
