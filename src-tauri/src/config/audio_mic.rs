@@ -7,9 +7,8 @@
 
 use serde::Deserialize;
 
-use super::agent_section::ConfigError;
-use super::file::{read_in, with_section, write_in};
-use super::read_section;
+use super::error::ConfigError;
+use super::section::Flag;
 
 /// The key in the `audio` section.
 const KEY: &str = "use_builtin_mic_with_bluetooth";
@@ -24,42 +23,41 @@ struct RawAudioMic {
     use_builtin_mic_with_bluetooth: Option<bool>,
 }
 
-/// The setting from the text of `config.jsonc`.
-pub fn parse(raw: &str) -> Result<bool, ConfigError> {
-    let section: RawAudioMic = read_section(raw, "audio")
-        .map_err(ConfigError::Invalid)?
-        .unwrap_or_default();
-    Ok(section.use_builtin_mic_with_bluetooth.unwrap_or(DEFAULT))
-}
-
-fn or_default(raw: &str) -> bool {
-    parse(raw).unwrap_or_else(|error| {
-        tracing::warn!(%error, "config.jsonc's audio section is not valid; using the Mac's own mic with Bluetooth (the default)");
-        DEFAULT
-    })
-}
+/// `audio.use_builtin_mic_with_bluetooth`, read strictly (TUR-176: `section::Flag`).
+const FLAG: Flag<RawAudioMic> = Flag {
+    section: "audio",
+    key: KEY,
+    default: DEFAULT,
+    pick: |section| section.use_builtin_mic_with_bluetooth,
+    when_invalid: "audio section is not valid; using the Mac's own mic with Bluetooth (the default)",
+};
 
 /// The setting from `~/Meetings/.app/config.jsonc`, or the default.
 pub fn use_builtin_mic_with_bluetooth() -> bool {
-    or_default(&super::raw_or_empty())
-}
-
-/// `raw` with the setting written, comments and other keys kept.
-pub fn with_setting(raw: &str, on: bool) -> Result<String, ConfigError> {
-    with_section(raw, "audio", vec![(KEY, on.into())])
+    FLAG.get()
 }
 
 /// Save the setting and return it as read back from disk.
 pub fn set_use_builtin_mic_with_bluetooth(on: bool) -> Result<bool, ConfigError> {
-    let dir = super::app_dir().map_err(ConfigError::Root)?;
-    write_in(&dir, |raw| with_setting(raw, on))?;
-    parse(&read_in(&dir)?)
+    FLAG.set(on)
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::file::SCHEMA;
     use super::*;
+
+    // The names these tests were written against (TUR-176 moved the code
+    // into `section::Flag`).
+    fn parse(raw: &str) -> Result<bool, ConfigError> {
+        FLAG.parse(raw)
+    }
+    fn or_default(raw: &str) -> bool {
+        FLAG.or_default(raw)
+    }
+    fn with_setting(raw: &str, on: bool) -> Result<String, ConfigError> {
+        FLAG.with(raw, on)
+    }
 
     #[test]
     fn missing_is_on() {

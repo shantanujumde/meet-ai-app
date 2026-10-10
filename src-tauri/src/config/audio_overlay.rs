@@ -7,9 +7,8 @@
 
 use serde::Deserialize;
 
-use super::agent_section::ConfigError;
-use super::file::{read_in, with_section, write_in};
-use super::read_section;
+use super::error::ConfigError;
+use super::section::Flag;
 
 /// The key in the `audio` section.
 const KEY: &str = "show_recording_overlay";
@@ -23,42 +22,41 @@ struct RawAudioOverlay {
     show_recording_overlay: Option<bool>,
 }
 
-/// The setting from the text of `config.jsonc`.
-pub fn parse(raw: &str) -> Result<bool, ConfigError> {
-    let section: RawAudioOverlay = read_section(raw, "audio")
-        .map_err(ConfigError::Invalid)?
-        .unwrap_or_default();
-    Ok(section.show_recording_overlay.unwrap_or(DEFAULT))
-}
-
-fn or_default(raw: &str) -> bool {
-    parse(raw).unwrap_or_else(|error| {
-        tracing::warn!(%error, "config.jsonc's audio section is not valid; showing the recording overlay (the default)");
-        DEFAULT
-    })
-}
+/// `audio.show_recording_overlay`, read strictly (TUR-176: `section::Flag`).
+const FLAG: Flag<RawAudioOverlay> = Flag {
+    section: "audio",
+    key: KEY,
+    default: DEFAULT,
+    pick: |section| section.show_recording_overlay,
+    when_invalid: "audio section is not valid; showing the recording overlay (the default)",
+};
 
 /// The setting from `~/Meetings/.app/config.jsonc`, or the default.
 pub fn show_recording_overlay() -> bool {
-    or_default(&super::raw_or_empty())
-}
-
-/// `raw` with the setting written, comments and other keys kept.
-pub fn with_setting(raw: &str, on: bool) -> Result<String, ConfigError> {
-    with_section(raw, "audio", vec![(KEY, on.into())])
+    FLAG.get()
 }
 
 /// Save the setting and return it as read back from disk.
 pub fn set_show_recording_overlay(on: bool) -> Result<bool, ConfigError> {
-    let dir = super::app_dir().map_err(ConfigError::Root)?;
-    write_in(&dir, |raw| with_setting(raw, on))?;
-    parse(&read_in(&dir)?)
+    FLAG.set(on)
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::file::SCHEMA;
     use super::*;
+
+    // The names these tests were written against (TUR-176 moved the code
+    // into `section::Flag`).
+    fn parse(raw: &str) -> Result<bool, ConfigError> {
+        FLAG.parse(raw)
+    }
+    fn or_default(raw: &str) -> bool {
+        FLAG.or_default(raw)
+    }
+    fn with_setting(raw: &str, on: bool) -> Result<String, ConfigError> {
+        FLAG.with(raw, on)
+    }
 
     #[test]
     fn missing_is_on() {

@@ -13,9 +13,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::agent_section::ConfigError;
-use super::file::{read_in, with_section, write_in};
+use super::error::ConfigError;
 use super::keyed::{Checked, Keys};
+use super::section::{Fields, Section};
 
 /// The section's name in `config.jsonc`.
 const SECTION: &str = "appearance";
@@ -60,81 +60,70 @@ impl Default for AppearanceConfig {
     }
 }
 
-/// `appearance` from the text of `config.jsonc`, key by key, with what was
-/// not valid. Empty text, or no `appearance` key, is all defaults.
-pub fn read_appearance(raw: &str) -> Checked<AppearanceConfig> {
-    let mut keys = Keys::read(raw, SECTION);
-    let defaults = AppearanceConfig::default();
-    let appearance = AppearanceConfig {
-        theme: keys.get("theme").unwrap_or(defaults.theme),
-        glass: keys.get("glass").unwrap_or(defaults.glass),
-    };
-    keys.checked(appearance)
-}
+impl Section for AppearanceConfig {
+    const NAME: &'static str = SECTION;
 
-/// `appearance` from the text of `config.jsonc`, each bad key logged and
-/// read as its default.
-pub fn parse_appearance(raw: &str) -> AppearanceConfig {
-    read_appearance(raw).value
+    fn from_keys(keys: &mut Keys) -> Self {
+        let defaults = Self::default();
+        Self {
+            theme: keys.get("theme").unwrap_or(defaults.theme),
+            glass: keys.get("glass").unwrap_or(defaults.glass),
+        }
+    }
+
+    fn fields(&self, before: Option<&Self>) -> Fields {
+        let mut fields = Vec::new();
+        if before.is_none_or(|old| old.theme != self.theme) {
+            fields.push(("theme", self.theme.as_str().into()));
+        }
+        if before.is_none_or(|old| old.glass != self.glass) {
+            fields.push(("glass", self.glass.into()));
+        }
+        fields
+    }
 }
 
 /// `appearance` from `~/Meetings/.app/config.jsonc`, each bad key read as
 /// its default (logged).
 pub fn appearance() -> AppearanceConfig {
-    parse_appearance(&super::raw_or_empty())
+    AppearanceConfig::current()
 }
 
 /// [`appearance`], with what was not valid, for the Settings screen.
 pub fn appearance_checked() -> Checked<AppearanceConfig> {
-    read_appearance(&super::raw_or_empty())
-}
-
-/// `raw` with its `appearance` section set, comments and other keys kept.
-#[cfg(test)]
-pub fn with_appearance(raw: &str, appearance: &AppearanceConfig) -> Result<String, ConfigError> {
-    with_section(raw, SECTION, fields(appearance, None))
-}
-
-/// The keys of `appearance` to write: all of them, or only those that differ
-/// from `before`.
-fn fields(
-    appearance: &AppearanceConfig,
-    before: Option<&AppearanceConfig>,
-) -> Vec<(&'static str, jsonc_parser::cst::CstInputValue)> {
-    let mut fields = Vec::new();
-    if before.is_none_or(|old| old.theme != appearance.theme) {
-        fields.push(("theme", appearance.theme.as_str().into()));
-    }
-    if before.is_none_or(|old| old.glass != appearance.glass) {
-        fields.push(("glass", appearance.glass.into()));
-    }
-    fields
+    AppearanceConfig::current_checked()
 }
 
 /// Save `appearance` to `~/Meetings/.app/config.jsonc` and return it as read
-/// back from disk.
+/// back from disk. Only the keys that differ from the file, read under the
+/// write lock, are written.
 pub fn set_appearance(appearance: AppearanceConfig) -> Result<AppearanceConfig, ConfigError> {
-    let dir = super::app_dir().map_err(ConfigError::Root)?;
-    set_appearance_in(&dir, appearance)
-}
-
-/// [`set_appearance`] for the config folder `dir`: only the keys that differ
-/// from the file, read under the write lock, are written.
-fn set_appearance_in(
-    dir: &std::path::Path,
-    appearance: AppearanceConfig,
-) -> Result<AppearanceConfig, ConfigError> {
-    write_in(dir, |raw| {
-        let before = parse_appearance(raw);
-        with_section(raw, SECTION, fields(&appearance, Some(&before)))
-    })?;
-    Ok(parse_appearance(&read_in(dir)?))
+    AppearanceConfig::update(|_| Ok::<_, ConfigError>(appearance))
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::file::SCHEMA;
+    use super::super::file::read_in;
     use super::*;
+
+    // The names these tests were written against (TUR-176 moved the code
+    // into `Section`).
+    fn read_appearance(raw: &str) -> Checked<AppearanceConfig> {
+        AppearanceConfig::read(raw)
+    }
+    fn parse_appearance(raw: &str) -> AppearanceConfig {
+        AppearanceConfig::parse(raw)
+    }
+    fn with_appearance(raw: &str, appearance: &AppearanceConfig) -> Result<String, ConfigError> {
+        AppearanceConfig::with(raw, appearance)
+    }
+    fn set_appearance_in(
+        dir: &std::path::Path,
+        appearance: AppearanceConfig,
+    ) -> Result<AppearanceConfig, ConfigError> {
+        AppearanceConfig::update_in(dir, |_| Ok::<_, ConfigError>(appearance))
+    }
 
     #[test]
     fn no_section_is_the_system_theme_with_glass_on() {

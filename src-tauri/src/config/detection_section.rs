@@ -21,11 +21,9 @@
 //! "Never detect" list `never_detect` (its own reader, `detection_never.rs`,
 //! so this section stays `Copy`).
 
-use jsonc_parser::cst::CstInputValue;
-
-use super::agent_section::ConfigError;
-use super::file::{read_in, with_section, write_in};
+use super::error::ConfigError;
 use super::keyed::{Checked, Keys};
+use super::section::{Fields, Section};
 
 /// `detection.remind_before_minutes` when it is missing or not valid: the
 /// reminder fires a minute before the start (TUR-30's behaviour).
@@ -80,32 +78,46 @@ impl Default for DetectionConfig {
     }
 }
 
-/// `detection` from the text of `config.jsonc`, key by key, with what was
-/// not valid. Empty text, or no `detection` key, is all defaults.
-pub fn read_detection(raw: &str) -> Checked<DetectionConfig> {
-    let mut keys = Keys::read(raw, "detection");
-    let defaults = DetectionConfig::default();
-    let detection = DetectionConfig {
-        calendar: keys.get("calendar").unwrap_or(defaults.calendar),
-        processes: keys.get("processes").unwrap_or(defaults.processes),
-        audio_activity: keys
-            .get("audio_activity")
-            .unwrap_or(defaults.audio_activity),
-        min_attendees: min_attendees(&mut keys),
-        remind_before_minutes: remind_before_minutes(&mut keys),
-        call_start: keys.get("call_start").unwrap_or(defaults.call_start),
-        call_end: keys.get("call_end").unwrap_or(defaults.call_end),
-        stop_after_silence: keys
-            .get("stop_after_silence")
-            .unwrap_or(defaults.stop_after_silence),
-    };
-    keys.checked(detection)
-}
+impl Section for DetectionConfig {
+    const NAME: &'static str = "detection";
 
-/// `detection` from the text of `config.jsonc`, each bad key logged and read
-/// as its default.
-pub fn parse_detection(raw: &str) -> DetectionConfig {
-    read_detection(raw).value
+    fn from_keys(keys: &mut Keys) -> Self {
+        let defaults = Self::default();
+        Self {
+            calendar: keys.get("calendar").unwrap_or(defaults.calendar),
+            processes: keys.get("processes").unwrap_or(defaults.processes),
+            audio_activity: keys
+                .get("audio_activity")
+                .unwrap_or(defaults.audio_activity),
+            min_attendees: min_attendees(keys),
+            remind_before_minutes: remind_before_minutes(keys),
+            call_start: keys.get("call_start").unwrap_or(defaults.call_start),
+            call_end: keys.get("call_end").unwrap_or(defaults.call_end),
+            stop_after_silence: keys
+                .get("stop_after_silence")
+                .unwrap_or(defaults.stop_after_silence),
+        }
+    }
+
+    fn fields(&self, before: Option<&Self>) -> Fields {
+        let mut fields = Vec::new();
+        macro_rules! key {
+            ($field:ident) => {
+                if before.is_none_or(|old| old.$field != self.$field) {
+                    fields.push((stringify!($field), self.$field.into()));
+                }
+            };
+        }
+        key!(calendar);
+        key!(processes);
+        key!(audio_activity);
+        key!(min_attendees);
+        key!(remind_before_minutes);
+        key!(call_start);
+        key!(call_end);
+        key!(stop_after_silence);
+        fields
+    }
 }
 
 /// `min_attendees` as written: a whole number, clamped to [`MIN_ATTENDEES`]
@@ -170,44 +182,12 @@ fn remind_before_minutes(keys: &mut Keys) -> u32 {
 /// `detection` from `~/Meetings/.app/config.jsonc`, each bad key read as its
 /// SPEC §3.5 default (logged).
 pub fn detection() -> DetectionConfig {
-    parse_detection(&super::raw_or_empty())
+    DetectionConfig::current()
 }
 
 /// [`detection`], with what was not valid, for the Notifications card.
 pub fn detection_checked() -> Checked<DetectionConfig> {
-    read_detection(&super::raw_or_empty())
-}
-
-/// `raw` with its `detection` section set to `detection`, comments and other
-/// keys kept.
-#[cfg(test)]
-pub fn with_detection(raw: &str, detection: &DetectionConfig) -> Result<String, ConfigError> {
-    with_section(raw, "detection", fields(detection, None))
-}
-
-/// The keys of `detection` to write: all of them, or only those that differ
-/// from `before`.
-fn fields(
-    detection: &DetectionConfig,
-    before: Option<&DetectionConfig>,
-) -> Vec<(&'static str, CstInputValue)> {
-    let mut fields = Vec::new();
-    macro_rules! key {
-        ($field:ident) => {
-            if before.is_none_or(|old| old.$field != detection.$field) {
-                fields.push((stringify!($field), detection.$field.into()));
-            }
-        };
-    }
-    key!(calendar);
-    key!(processes);
-    key!(audio_activity);
-    key!(min_attendees);
-    key!(remind_before_minutes);
-    key!(call_start);
-    key!(call_end);
-    key!(stop_after_silence);
-    fields
+    DetectionConfig::current_checked()
 }
 
 /// Save the `detection` section `merge` makes from the one on disk (each bad
@@ -217,30 +197,31 @@ fn fields(
 pub fn update_detection<E: From<ConfigError>>(
     merge: impl FnOnce(&DetectionConfig) -> Result<DetectionConfig, E>,
 ) -> Result<DetectionConfig, E> {
-    let dir = super::app_dir().map_err(ConfigError::Root)?;
-    update_detection_in(&dir, merge)
-}
-
-/// [`update_detection`] for the config folder `dir`.
-fn update_detection_in<E: From<ConfigError>>(
-    dir: &std::path::Path,
-    merge: impl FnOnce(&DetectionConfig) -> Result<DetectionConfig, E>,
-) -> Result<DetectionConfig, E> {
-    write_in(dir, |raw| -> Result<String, E> {
-        let before = parse_detection(raw);
-        let wanted = merge(&before)?;
-        Ok(with_section(
-            raw,
-            "detection",
-            fields(&wanted, Some(&before)),
-        )?)
-    })?;
-    Ok(parse_detection(&read_in(dir).map_err(E::from)?))
+    DetectionConfig::update(merge)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::file::{read_in, write_in};
     use super::*;
+
+    // The names these tests were written against (TUR-176 moved the code
+    // into `Section`).
+    fn read_detection(raw: &str) -> Checked<DetectionConfig> {
+        DetectionConfig::read(raw)
+    }
+    fn parse_detection(raw: &str) -> DetectionConfig {
+        DetectionConfig::parse(raw)
+    }
+    fn with_detection(raw: &str, detection: &DetectionConfig) -> Result<String, ConfigError> {
+        DetectionConfig::with(raw, detection)
+    }
+    fn update_detection_in<E: From<ConfigError>>(
+        dir: &std::path::Path,
+        merge: impl FnOnce(&DetectionConfig) -> Result<DetectionConfig, E>,
+    ) -> Result<DetectionConfig, E> {
+        DetectionConfig::update_in(dir, merge)
+    }
 
     #[test]
     fn no_section_is_the_spec_3_5_defaults() {

@@ -14,9 +14,9 @@ use std::path::Path;
 use jsonc_parser::cst::CstInputValue;
 use serde::Deserialize;
 
-use super::agent_section::ConfigError;
+use super::error::ConfigError;
 use super::file::{read_in, with_section, write_in};
-use super::read_section;
+use super::section::{or_default as logged_or, strict};
 
 /// The key in the `detection` section.
 const KEY: &str = "never_detect";
@@ -42,17 +42,16 @@ pub fn tidy(apps: impl IntoIterator<Item = String>) -> Vec<String> {
 
 /// The list from the text of `config.jsonc`.
 pub fn parse(raw: &str) -> Result<Vec<String>, ConfigError> {
-    let section: RawNever = read_section(raw, "detection")
-        .map_err(ConfigError::Invalid)?
-        .unwrap_or_default();
+    let section: RawNever = strict(raw, "detection")?;
     Ok(tidy(section.never_detect.unwrap_or_default()))
 }
 
 fn or_default(raw: &str) -> Vec<String> {
-    parse(raw).unwrap_or_else(|error| {
-        tracing::warn!(%error, "config.jsonc's detection.never_detect is not valid; asking about every app");
-        Vec::new()
-    })
+    logged_or(
+        parse(raw),
+        "detection.never_detect is not valid; asking about every app",
+        Vec::new,
+    )
 }
 
 /// The list from `~/Meetings/.app/config.jsonc`, or none.
@@ -136,9 +135,12 @@ mod tests {
         let written = with_never_detect(raw, &apps).unwrap();
         assert!(written.contains("// mine"), "{written}");
         assert_eq!(parse(&written).unwrap(), apps);
-        assert!(!super::super::detection_section::parse_detection(&written).processes);
+        assert!(
+            !<super::super::DetectionConfig as super::super::section::Section>::parse(&written)
+                .processes
+        );
         // And the switches' writer keeps the list.
-        let switches = super::super::detection_section::with_detection(
+        let switches = <super::super::DetectionConfig as super::super::section::Section>::with(
             &written,
             &super::super::DetectionConfig::default(),
         )

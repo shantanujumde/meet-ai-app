@@ -3,9 +3,8 @@
 use std::path::PathBuf;
 
 use super::FILE;
-use super::agent_section::{
-    AgentConfig, ConfigError, Harness, TicketsConfig, parse_agent, parse_tickets,
-};
+use super::agent_section::{AgentConfig, Harness, TicketsConfig, parse_agent, parse_tickets};
+use super::error::ConfigError;
 use super::file::{SCHEMA, SCHEMA_FILE, with_agent, with_tickets};
 
 fn every_field_set() -> AgentConfig {

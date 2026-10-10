@@ -7,8 +7,8 @@
 
 use serde::Deserialize;
 
-use super::agent_section::ConfigError;
-use super::read_section;
+use super::error::ConfigError;
+use super::section::{or_default, strict};
 
 /// How long a hook may run before its whole process tree is killed.
 pub const DEFAULT_HOOK_TIMEOUT_SECS: u64 = 30;
@@ -56,9 +56,7 @@ fn command(raw: Option<String>) -> Option<String> {
 /// is no hooks. A `timeout_secs` of 0 is the default; one over
 /// [`MAX_HOOK_TIMEOUT_SECS`] is that.
 pub fn parse_hooks(raw: &str) -> Result<HooksConfig, ConfigError> {
-    let hooks: RawHooks = read_section(raw, "hooks")
-        .map_err(ConfigError::Invalid)?
-        .unwrap_or_default();
+    let hooks: RawHooks = strict(raw, "hooks")?;
     Ok(HooksConfig {
         on_transcript_ready: command(hooks.on_transcript_ready),
         on_analysis_complete: command(hooks.on_analysis_complete),
@@ -76,10 +74,11 @@ pub fn parse_hooks(raw: &str) -> Result<HooksConfig, ConfigError> {
 /// section is missing or not valid (logged). Read each time a hook is due, so
 /// an edit needs no restart.
 pub fn hooks() -> HooksConfig {
-    parse_hooks(&super::raw_or_empty()).unwrap_or_else(|error| {
-        tracing::warn!(%error, "config.jsonc's hooks section is not valid; running no hooks");
-        HooksConfig::default()
-    })
+    or_default(
+        parse_hooks(&super::raw_or_empty()),
+        "hooks section is not valid; running no hooks",
+        HooksConfig::default,
+    )
 }
 
 #[cfg(test)]

@@ -23,9 +23,8 @@ use stt::registry::Preference;
 
 use super::FILE;
 use super::agent_section::parse_default_repo;
-use super::agent_section::{
-    AgentConfig, ConfigError, Harness, TicketsConfig, parse_agent, parse_tickets,
-};
+use super::agent_section::{AgentConfig, Harness, TicketsConfig, parse_agent, parse_tickets};
+use super::error::ConfigError;
 
 /// The JSON Schema for `config.jsonc`, kept in the repo and shipped inside the
 /// binary.
@@ -34,13 +33,11 @@ pub(super) const SCHEMA_FILE: &str = "config.schema.json";
 
 /// `agent` from `~/Meetings/.app/config.jsonc`. A missing file or section is
 /// the SPEC §3.5 defaults; an unknown `harness` is an error.
-#[allow(dead_code)] // TUR-9 (Setup screens) adds the IPC command that calls this.
 pub fn agent() -> Result<AgentConfig, ConfigError> {
     parse_agent(&read_in(&app_dir()?)?)
 }
 
 /// `tickets` from `~/Meetings/.app/config.jsonc`, defaults when missing.
-#[allow(dead_code)] // TUR-9 (Setup screens) adds the IPC command that calls this.
 pub fn tickets() -> Result<TicketsConfig, ConfigError> {
     parse_tickets(&read_in(&app_dir()?)?)
 }
@@ -88,12 +85,6 @@ pub fn default_repo() -> Result<Option<String>, ConfigError> {
     parse_default_repo(&read_in(&app_dir()?)?)
 }
 
-/// Save `agent` into `~/Meetings/.app/config.jsonc`, keeping everything else.
-#[allow(dead_code)] // TUR-9 (Setup screens) adds the IPC command that calls this.
-pub fn set_agent(agent: &AgentConfig) -> Result<(), ConfigError> {
-    write_in(&app_dir()?, |raw| with_agent(raw, agent))
-}
-
 /// Save the `agent` section `merge` makes from the one on disk (or the error
 /// reading it), keeping everything else. `merge` runs under the write lock,
 /// so the keys it keeps are the ones on disk at that moment.
@@ -107,7 +98,6 @@ pub fn update_agent<E: From<ConfigError>>(
 }
 
 /// Save `tickets` into `~/Meetings/.app/config.jsonc`, keeping everything else.
-#[allow(dead_code)] // TUR-9 (Setup screens) adds the IPC command that calls this.
 pub fn set_tickets(tickets: &TicketsConfig) -> Result<(), ConfigError> {
     write_in(&app_dir()?, |raw| with_tickets(raw, tickets))
 }

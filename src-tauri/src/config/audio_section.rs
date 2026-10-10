@@ -12,7 +12,7 @@
 use serde::Deserialize;
 use store::retention::Retention;
 
-use super::agent_section::ConfigError;
+use super::error::ConfigError;
 use super::read_section;
 
 /// `audio` as written. A missing (or `null`) key is the default; a value
