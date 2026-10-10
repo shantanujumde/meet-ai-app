@@ -2,11 +2,13 @@
 //! every `cpal`-fed [`crate::AudioSource`]: the microphone ([`crate::mic`]) and
 //! the output-device loopback ([`crate::loopback`], TUR-37).
 //!
-//! Both sources run the same worker-side steps: open the file (or append to
+//! Every source runs the same worker-side steps: open the file (or append to
 //! it after a segment reopen), append each resampled chunk while latching the
-//! host time of the callback that produced it, hand the chunk to the tee, and
-//! answer `position`, `fsync_data`, `patch_header` and `pad_leading_silence`
-//! from under the same lock. [`TrackWriter`] is those steps, once.
+//! capture time of the frame boundary it ends at ([`crate::capture_clock`],
+//! TUR-151), hand the chunk to the tee, and answer `position`, `fsync_data`,
+//! `patch_header` and `pad_leading_silence` from under the same lock.
+//! [`TrackWriter`] is those steps, once: the microphone, the loopback and
+//! (since TUR-151) the macOS process tap all write through it.
 
 use std::io;
 use std::path::Path;
@@ -26,6 +28,7 @@ struct Track {
     /// Frames written this segment: what [`TrackWriter::position`] reports,
     /// latched together with `last_host_ns` by the same append.
     frames: u64,
+    /// When frame `frames` (the next one) was captured; 0 before any time.
     last_host_ns: u64,
 }
 
@@ -68,10 +71,11 @@ impl TrackWriter {
         self.track.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The worker's sink: append `frames`, latch `host_ns` with the new frame
-    /// count, then (with the lock released) offer the chunk to `tee`. A failed
-    /// append is logged and the chunk dropped, so the latch never claims
-    /// frames the file does not have.
+    /// The worker's sink: append `frames`, latch `host_ns` (the capture time
+    /// of the boundary right after them, from [`crate::capture_clock::Feed`])
+    /// with the new frame count, then (with the lock released) offer the
+    /// chunk to `tee`. A failed append is logged and the chunk dropped, so
+    /// the latch never claims frames the file does not have.
     pub(crate) fn append(&self, frames: &[i16], host_ns: u64, tee: Option<&Tee>) {
         let mut track = self.lock();
         if track.writer.append(frames).is_err() {
@@ -91,8 +95,9 @@ impl TrackWriter {
         }
     }
 
-    /// The latest `(host_ns, frames)` pair, or `None` before the first chunk
-    /// with a host time was written.
+    /// The latest `(host_ns, frames)` pair: frame `frames` of this segment
+    /// starts at `host_ns`, so frame 0 started `frames / 16 kHz` before it.
+    /// `None` before the first chunk with a host time was written.
     pub(crate) fn position(&self) -> Option<(u64, u64)> {
         let track = self.lock();
         (track.last_host_ns != 0).then_some((track.last_host_ns, track.frames))
@@ -114,12 +119,15 @@ impl TrackWriter {
         track.writer.patch_header()
     }
 
-    /// Contract §6's head-pad. Holding the lock keeps the worker's appends
-    /// out of the splice; the tee gets the same pad so both timelines stay
-    /// the same length.
+    /// Contract §6's head-pad, at the head of this segment: the start of a
+    /// file this track created, or where a reopened one began appending, so
+    /// an earlier segment never moves (TUR-151,
+    /// [`WavWriter::pad_segment_head`]). Holding the lock keeps the worker's
+    /// appends out of the splice; the tee gets the same pad so both
+    /// timelines stay the same length.
     pub(crate) fn pad_leading_silence(&self, frames: u64, tee: Option<&Tee>) -> io::Result<()> {
         let mut track = self.lock();
-        track.writer.prepend_silence(frames)?;
+        track.writer.pad_segment_head(frames)?;
         track.frames += frames;
         drop(track);
         if let Some(tee) = tee {
@@ -179,6 +187,40 @@ mod tests {
         second.finish().unwrap();
         assert_eq!(second.position(), Some((2, 3)), "segment-relative");
         assert_eq!(frames_on_disk(&path), 11, "one continuous file");
+    }
+
+    fn samples_on_disk(path: &Path) -> Vec<i16> {
+        hound::WavReader::open(path)
+            .unwrap()
+            .samples::<i16>()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    /// TUR-151: a reopened segment's head-pad goes at that segment's start,
+    /// not the file's, so the earlier segment stays where it was.
+    #[test]
+    fn a_reopened_segment_pads_its_own_head_and_never_the_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wav");
+        let first = TrackWriter::open(&path, "test").unwrap();
+        first.append(&[7; 8], 1, None);
+        first.pad_leading_silence(2, None).unwrap();
+        first.finish().unwrap();
+
+        let second = TrackWriter::open(&path, "test").unwrap();
+        second.append(&[9; 3], 2, None);
+        second.pad_leading_silence(4, None).unwrap();
+        second.append(&[5; 1], 3, None);
+        second.finish().unwrap();
+
+        let mut expected = vec![0; 2];
+        expected.extend([7; 8]);
+        expected.extend([0; 4]);
+        expected.extend([9; 3]);
+        expected.push(5);
+        assert_eq!(samples_on_disk(&path), expected);
+        assert_eq!(second.position(), Some((3, 8)), "pad counts in the segment");
     }
 
     #[test]

@@ -200,9 +200,10 @@ impl Tee {
     /// gets is on the tee's timeline too.
     ///
     /// The pad lands *after* whatever the source already offered, where the
-    /// WAV puts it at the very front. That misplaces at most the first
-    /// resampler chunk (~21 ms) by the pad length; every frame after it is at
-    /// the same index in both, which is what timestamps depend on.
+    /// WAV puts it at the head of the segment (TUR-151: of this segment, no
+    /// longer the whole file). That misplaces the segment's first frames
+    /// (those written before alignment) by the pad length; every frame after
+    /// them is at the same index in both, which is what timestamps depend on.
     pub fn offer_silence(&self, frames: u64) {
         if frames == 0 {
             return;
