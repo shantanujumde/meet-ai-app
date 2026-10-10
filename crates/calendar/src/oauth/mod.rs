@@ -25,15 +25,11 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use oauth2::basic::{
-    BasicErrorResponse, BasicErrorResponseType, BasicRevocationErrorResponse,
-    BasicTokenIntrospectionResponse, BasicTokenType,
-};
+use oauth2::basic::{BasicErrorResponseType, BasicTokenType};
 use oauth2::{
-    AuthType, AuthUrl, AuthorizationCode, Client, ClientId, ClientSecret, CsrfToken,
-    EndpointNotSet, EndpointSet, ExtraTokenFields, HttpRequest, HttpResponse, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, RefreshToken, RequestTokenError, Scope, StandardRevocableToken,
-    StandardTokenResponse, TokenResponse as _, TokenUrl,
+    AuthorizationCode, CsrfToken, ExtraTokenFields, HttpRequest, HttpResponse, PkceCodeChallenge,
+    PkceCodeVerifier, RefreshToken, RequestTokenError, Scope, StandardTokenResponse,
+    TokenResponse as _,
 };
 
 use crate::Error;
@@ -41,15 +37,14 @@ use crate::Error;
 mod callback;
 mod providers;
 mod token_store;
+mod wire;
 
 pub use callback::{account_label, carries_state, check_callback};
 pub use providers::{Endpoints, ProviderId};
 #[cfg(any(test, feature = "fake"))]
 pub use token_store::MemoryStore;
 pub use token_store::{KEYRING_SERVICE, KeyringStore, StoreError, TokenStore, keyring_user};
-
-#[cfg(test)]
-mod tests;
+use wire::{access_of, build_client, exchange_error, request_error_detail};
 
 /// How long a sign-in waits for the browser before giving up.
 pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -64,10 +59,6 @@ const STATE_BYTES: u32 = 32;
 /// just before expiry does not fail halfway.
 const EXPIRY_MARGIN: Duration = Duration::from_secs(60);
 
-/// Assumed lifetime when the provider does not say (both do today: ~1 hour).
-const DEFAULT_LIFETIME: Duration = Duration::from_secs(60 * 60);
-
-/// The redirect URI for a loopback listener on `port`.
 pub fn redirect_uri(port: u16) -> String {
     format!("http://127.0.0.1:{port}{CALLBACK_PATH}")
 }
@@ -192,19 +183,6 @@ pub struct IdTokenFields {
 impl ExtraTokenFields for IdTokenFields {}
 
 type TokenResponse = StandardTokenResponse<IdTokenFields, BasicTokenType>;
-
-type OAuth2Client = Client<
-    BasicErrorResponse,
-    TokenResponse,
-    BasicTokenIntrospectionResponse,
-    StandardRevocableToken,
-    BasicRevocationErrorResponse,
-    EndpointSet,
-    EndpointNotSet,
-    EndpointNotSet,
-    EndpointNotSet,
-    EndpointSet,
->;
 
 /// Where the OAuth clients come from. The app reads `config.jsonc` on each
 /// call, so pasting a client id needs no restart.
@@ -567,75 +545,5 @@ impl CalendarAuth {
     }
 }
 
-/// The access token and when it runs out.
-fn access_of(response: &TokenResponse) -> (String, Instant) {
-    let lifetime = response.expires_in().unwrap_or(DEFAULT_LIFETIME);
-    (
-        response.access_token().secret().clone(),
-        Instant::now() + lifetime,
-    )
-}
-
-fn build_client(
-    provider: ProviderId,
-    client: &OAuthClient,
-    redirect_uri: Option<&str>,
-) -> Result<OAuth2Client, SignInError> {
-    let failed = |detail: String| SignInError::Failed { provider, detail };
-    let endpoints = provider.endpoints();
-    let auth_url =
-        AuthUrl::new(endpoints.auth_url.to_owned()).map_err(|error| failed(error.to_string()))?;
-    let token_url =
-        TokenUrl::new(endpoints.token_url.to_owned()).map_err(|error| failed(error.to_string()))?;
-    let mut oauth: OAuth2Client = Client::new(ClientId::new(client.client_id.trim().to_owned()))
-        .set_auth_uri(auth_url)
-        .set_token_uri(token_url)
-        // Google documents the client id and secret in the body for
-        // installed apps; with no secret (Microsoft) it is the same anyway.
-        .set_auth_type(AuthType::RequestBody);
-    if let Some(secret) = client
-        .client_secret
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        oauth = oauth.set_client_secret(ClientSecret::new(secret.to_owned()));
-    }
-    if let Some(redirect_uri) = redirect_uri {
-        let redirect =
-            RedirectUrl::new(redirect_uri.to_owned()).map_err(|error| failed(error.to_string()))?;
-        oauth = oauth.set_redirect_uri(redirect);
-    }
-    Ok(oauth)
-}
-
-/// A failed code exchange, as a [`SignInError`].
-fn exchange_error(
-    provider: ProviderId,
-    error: RequestTokenError<HttpError, BasicErrorResponse>,
-) -> SignInError {
-    match error {
-        RequestTokenError::Request(error) => SignInError::Unreachable {
-            provider,
-            detail: error.to_string(),
-        },
-        error => SignInError::Failed {
-            provider,
-            detail: request_error_detail(&error),
-        },
-    }
-}
-
-/// A token request error in one line, without the response body (it can
-/// echo tokens back).
-fn request_error_detail(error: &RequestTokenError<HttpError, BasicErrorResponse>) -> String {
-    match error {
-        RequestTokenError::ServerResponse(response) => match response.error_description() {
-            Some(description) => format!("{}: {description}", response.error()),
-            None => response.error().to_string(),
-        },
-        RequestTokenError::Request(error) => error.to_string(),
-        RequestTokenError::Parse(error, _) => format!("unreadable reply: {error}"),
-        RequestTokenError::Other(detail) => detail.clone(),
-    }
-}
+#[cfg(test)]
+mod tests;
