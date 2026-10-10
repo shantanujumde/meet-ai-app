@@ -17,8 +17,8 @@ use store::watcher::SelfWrites;
 use super::notes::{self, Agent, SaveWrite};
 use super::runs::{AgentRuns, Sink, Work};
 use super::{
-    Failure, FailureKind, State, Status, after_stop, failure, meeting_of, read_meeting_notes,
-    switch_notes,
+    Failure, FailureKind, State, Status, TRANSCRIPT_NOT_FINAL, after_stop, failure, meeting_of,
+    read_meeting_notes, refuse_while_transcribing, switch_notes,
 };
 
 const STANDUP: &str = "2026-09-01-1430-standup";
@@ -115,14 +115,13 @@ fn snapshot(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     files
 }
 
-/// The fake CLI doing `behavior`, found through `detect` as the real one is.
+/// The fake CLI doing `behavior`. A missing or signed-out fake says so when
+/// it runs, as the real CLIs found by `agent_setup::harness` do.
 fn fake(behavior: FakeBehavior, timeout: Duration) -> impl FnOnce() -> Result<Agent, Failure> {
     move || {
-        let harness = notes::detected(FakeHarness::new(behavior.clone()), |_| {
-            FakeHarness::new(behavior)
-        })?;
         Ok(Agent {
-            harness: Box::new(harness),
+            harness: Box::new(FakeHarness::new(behavior)),
+            sign_in: Some("claude auth login".into()),
             model: Some("fake-small".into()),
             timeout,
             work_root: std::env::temp_dir(),
@@ -284,13 +283,13 @@ fn each_agent_failure_writes_nothing_and_says_why() {
         (
             FakeBehavior::Stdout("Sure! Here are your notes.".into()),
             LONG,
-            FailureKind::BadReply,
-            "did not match the notes format",
+            FailureKind::InvalidJson,
+            "was not JSON",
         ),
         (
             FakeBehavior::Reply(serde_json::json!({ "summary": "only this" })),
             LONG,
-            FailureKind::BadReply,
+            FailureKind::SchemaMismatch,
             "nothing was written",
         ),
         (
@@ -323,24 +322,75 @@ fn not_signed_in_gives_the_command_to_sign_in() {
     let root = Root::new();
     root.standup();
     let failure = run(&root, FakeBehavior::NotSignedIn, LONG).unwrap_err();
-    assert_eq!(failure.command.as_deref(), Some("claude"));
-    assert!(failure.message.contains("/login"), "{}", failure.message);
+    assert_eq!(failure.command.as_deref(), Some("claude auth login"));
+    assert!(
+        failure.message.contains("run claude auth login"),
+        "{}",
+        failure.message
+    );
 
     let claude = failure::from_agent(
         &AgentError::NotSignedIn {
             harness: "Claude Code".into(),
         },
         agent::claude::ID,
+        None,
     );
     assert!(claude.message.starts_with("Claude Code is not signed in"));
+    // The same command Setup shows (TUR-168), not "type /login".
+    assert_eq!(claude.command.as_deref(), Some("claude auth login"));
     let codex = failure::from_agent(
         &AgentError::NotSignedIn {
             harness: "Codex".into(),
         },
         "codex",
+        None,
     );
     assert_eq!(codex.command.as_deref(), Some("codex login"));
     assert!(codex.message.contains("codex login"), "{}", codex.message);
+
+    // Codex inside ChatGPT.app: the full path Setup shows, which a terminal
+    // can run, rather than a bare `codex login` that is not on its PATH.
+    let bundled = "/Applications/ChatGPT.app/Contents/Resources/codex login";
+    let codex = failure::from_agent(
+        &AgentError::NotSignedIn {
+            harness: "Codex".into(),
+        },
+        "codex",
+        Some(bundled),
+    );
+    assert_eq!(codex.command.as_deref(), Some(bundled));
+    assert!(codex.message.contains(bundled), "{}", codex.message);
+}
+
+/// TUR-168: the notes run, Sync (and its tracker check) and Setup's Test
+/// give every agent error the same kind.
+#[test]
+fn each_agent_error_kind_is_the_same_in_every_runner() {
+    use crate::agent_setup::harness::{self, ErrorKind};
+
+    let mut notes_kinds = Vec::new();
+    for (error, again) in harness::tests::one_of_each()
+        .into_iter()
+        .zip(harness::tests::one_of_each())
+    {
+        let kind = ErrorKind::of(&error);
+        let notes = failure::from_agent(&error, agent::claude::ID, None).kind;
+        assert_eq!(notes, FailureKind::from(kind), "{error:?}");
+        notes_kinds.push(notes);
+        let label = format!("{error:?}");
+        let sync = crate::sync::send_error(error, None).kind;
+        let test = harness::agent_error(again, None).kind;
+        assert_eq!(sync, kind.key(), "Sync: {label}");
+        assert_eq!(test, kind.key(), "Test: {label}");
+    }
+    // No two kinds fold into one in the meeting view either.
+    for (at, kind) in notes_kinds.iter().enumerate() {
+        assert!(!notes_kinds[at + 1..].contains(kind), "{kind:?} twice");
+    }
+    // The notes run's own "not the notes format" check is a schema mismatch
+    // too.
+    assert_eq!(failure::bad_reply().kind, FailureKind::SchemaMismatch);
 }
 
 #[test]
@@ -350,11 +400,12 @@ fn the_remaining_agent_errors_map_to_plain_words() {
             after: Duration::from_secs(300),
         },
         "claude-code",
+        None,
     );
     assert!(timed_out.message.contains("300 seconds"));
     assert!(timed_out.message.contains("agent.timeout_sec"));
 
-    let cancelled = failure::from_agent(&AgentError::Cancelled, "claude-code");
+    let cancelled = failure::from_agent(&AgentError::Cancelled, "claude-code", None);
     assert_eq!(cancelled.kind, FailureKind::Cancelled);
 
     let silent = failure::from_agent(
@@ -363,6 +414,7 @@ fn the_remaining_agent_errors_map_to_plain_words() {
             stderr: " \n".into(),
         },
         "claude-code",
+        None,
     );
     assert!(silent.message.contains("exit code 1"), "{}", silent.message);
 
@@ -372,6 +424,7 @@ fn the_remaining_agent_errors_map_to_plain_words() {
             stderr: format!("{}the real error", "x".repeat(2000)),
         },
         "claude-code",
+        None,
     );
     assert!(long.message.ends_with("the real error"));
     assert!(long.message.chars().count() < 500, "{}", long.message);
@@ -381,14 +434,16 @@ fn the_remaining_agent_errors_map_to_plain_words() {
             errors: vec!["/tasks: missing".into()],
         },
         "claude-code",
+        None,
     );
-    assert_eq!(schema.kind, FailureKind::BadReply);
+    assert_eq!(schema.kind, FailureKind::SchemaMismatch);
 
     let start = failure::from_agent(
         &AgentError::CouldNotStart {
             reason: "no temp folder".into(),
         },
         "claude-code",
+        None,
     );
     assert_eq!(start.kind, FailureKind::CouldNotStart);
     assert!(start.message.contains("no temp folder"));
@@ -800,6 +855,7 @@ fn a_slow_transcript_save_makes_the_run_wait_for_the_last_line() {
     let started_with = Mutex::new(None);
     after_stop(
         &runs,
+        None,
         &root.path,
         STANDUP,
         &auto_run_on(),
@@ -854,6 +910,7 @@ fn a_transcript_that_never_becomes_final_starts_no_run_and_offers_retry() {
 
     after_stop(
         &runs,
+        None,
         &root.path,
         STANDUP,
         &auto_run_on(),
@@ -904,10 +961,12 @@ fn notes_off_at_stop_creates_no_run_at_all() {
 
     after_stop(
         &runs,
+        None,
         &root.path,
         STANDUP,
         &auto_run_on(),
-        |_| panic!("nothing waits for a meeting whose notes are off"),
+        // Waited for only so "Make notes now" is refused meanwhile.
+        already_final,
         sink.as_ref(),
         || started.store(true, Ordering::SeqCst),
     );
@@ -928,6 +987,7 @@ fn notes_switched_off_while_the_transcript_saves_creates_no_run() {
 
     after_stop(
         &runs,
+        None,
         &root.path,
         STANDUP,
         &auto_run_on(),
@@ -971,6 +1031,7 @@ fn auto_run_off_or_no_agent_starts_nothing_and_on_writes_the_notes() {
     ] {
         after_stop(
             &runs,
+            None,
             &root.path,
             STANDUP,
             &Ok(off.clone()),
@@ -988,6 +1049,7 @@ fn auto_run_off_or_no_agent_starts_nothing_and_on_writes_the_notes() {
 
     after_stop(
         &runs,
+        None,
         &root.path,
         STANDUP,
         &auto_run_on(),
@@ -1154,4 +1216,73 @@ fn no_agent_set_up_is_said_before_anything_is_sent() {
         failure.message
     );
     assert_eq!(snapshot(&dir), before);
+}
+
+/// TUR-168: "Make notes now" (auto-run off) right after Stop is refused,
+/// with a clear error, until the transcript is final; it never sends one
+/// missing its last lines.
+#[test]
+fn make_notes_now_is_refused_until_the_transcript_is_final() {
+    let root = Root::new();
+    root.standup();
+    let runs = AgentRuns::default();
+    let sink = Arc::new(Recorded::default());
+    let manual = Ok(settings(false, crate::config::Harness::ClaudeCode));
+
+    let pending = runs.transcript_pending(STANDUP);
+    after_stop(
+        &runs,
+        Some(pending),
+        &root.path,
+        STANDUP,
+        &manual,
+        |wait| {
+            assert_eq!(wait, super::FINAL_WAIT);
+            // The engine is still saving: a press now is refused.
+            let refused = refuse_while_transcribing(&runs, STANDUP).unwrap_err();
+            assert_eq!(
+                (refused.domain, refused.kind),
+                ("app", TRANSCRIPT_NOT_FINAL)
+            );
+            assert_eq!(
+                refused.message,
+                "The transcript is still being finished; try again in a moment."
+            );
+            // Another meeting is not held up.
+            assert!(refuse_while_transcribing(&runs, "2026-09-02-0900-other").is_ok());
+            true
+        },
+        sink.as_ref(),
+        || panic!("auto-run is off: nothing starts at Stop"),
+    );
+
+    assert!(sink.states().is_empty(), "no status with auto-run off");
+    assert!(!runs.is_transcript_pending(STANDUP));
+    assert!(refuse_while_transcribing(&runs, STANDUP).is_ok());
+}
+
+/// A transcript that never becomes final does not refuse Retry forever.
+#[test]
+fn a_transcript_that_never_becomes_final_lets_retry_through() {
+    let root = Root::new();
+    root.standup();
+    let runs = AgentRuns::default();
+    let sink = Arc::new(Recorded::default());
+
+    let pending = runs.transcript_pending(STANDUP);
+    after_stop(
+        &runs,
+        Some(pending),
+        &root.path,
+        STANDUP,
+        &auto_run_on(),
+        |_| false,
+        sink.as_ref(),
+        || panic!("no run on half a transcript"),
+    );
+
+    assert!(failed(FailureKind::CouldNotStart)(
+        &runs.status(STANDUP).state
+    ));
+    assert!(refuse_while_transcribing(&runs, STANDUP).is_ok());
 }

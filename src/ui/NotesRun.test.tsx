@@ -418,6 +418,26 @@ describe("notes only when I click (TUR-101)", () => {
     expect(await screen.findByText("Writing notes…")).toBeTruthy();
   });
 
+  // TUR-168: pressed right after Stop, while the last lines are still saved.
+  test("Make notes now on a transcript still being finished says so and can be pressed again", async () => {
+    ipc.notesAutoRun.mockResolvedValue(false);
+    given({ state: "idle" });
+    startNotesRun.mockRejectedValueOnce({
+      domain: "app",
+      kind: "transcript-not-final",
+      message: "The transcript is still being finished; try again in a moment.",
+    });
+    renderRun({ withSwitch: true });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Make notes now" }));
+    expect(await screen.findByText("The transcript is still being finished")).toBeTruthy();
+    expect(screen.queryByText("Writing notes…")).toBeNull();
+    const again = screen.getByRole("button", { name: "Make notes now" });
+    expect(again).not.toBeDisabled();
+    fireEvent.click(again);
+    expect(await screen.findByText("Writing notes…")).toBeTruthy();
+  });
+
   test("the per-meeting switch still hides and brings back the button", async () => {
     ipc.notesAutoRun.mockResolvedValue(false);
     given({ state: "idle" });
