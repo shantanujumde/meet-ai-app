@@ -23,13 +23,18 @@ use chrono::{DateTime, Duration, Local, NaiveDate, Offset as _, TimeZone, Utc};
 use serde::Serialize;
 use tauri::{AppHandle, Manager as _};
 
+use self::read::{Read, UnreadableCalendar};
 use self::readable::Prompt;
 use crate::config::{self, Provider};
 use crate::error::UiError;
 
 // TUR-88: the sign-in's own loopback listener.
 mod loopback;
+// TUR-174: every provider at once, each failure kept.
+pub mod read;
 pub mod readable;
+// TUR-174: the sign-in's Cancel.
+pub mod cancel;
 pub mod signin;
 // TUR-49: the Settings card's sources.
 pub mod sources;
@@ -81,16 +86,24 @@ impl CalendarState {
 
     /// Events overlapping `[from, to)` from every provider, sorted by start.
     ///
-    /// Blocking (see the module comment). `Ok(vec![])` means the calendars
-    /// were read and hold nothing then. A provider that fails is logged and
-    /// skipped while another one answers; when none answers, the first
-    /// error is returned, so a denied calendar is never an empty day.
+    /// Blocking (see the module comment); the providers are read in parallel
+    /// ([`read`]). `Ok(vec![])` means the calendars were read and hold
+    /// nothing then. A provider that fails is logged and skipped while
+    /// another one answers ([`Self::read_between`] keeps it); when none
+    /// answers, the first error is returned, so a denied calendar is never an
+    /// empty day.
     pub fn events_between(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
     ) -> Result<Vec<Event>, Error> {
         merge(&self.providers(Prompt::Allowed), from, to)
+    }
+
+    /// [`Self::events_between`], plus the providers that failed while
+    /// another answered (TUR-174), so the Today pane can flag them.
+    pub fn read_between(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Read, Error> {
+        read::read_all(&self.providers(Prompt::Allowed), from, to)
     }
 
     /// [`Self::events_between`] for a reader in the background (the menu
@@ -136,33 +149,14 @@ fn provider_for(provider: Provider) -> Option<SharedProvider> {
     }
 }
 
-/// Every provider's events in one sorted list; see
+/// Every provider's events in one sorted list, read in parallel; see
 /// [`CalendarState::events_between`] for what an error does.
 fn merge(
     providers: &[SharedProvider],
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> Result<Vec<Event>, Error> {
-    let mut sources = Vec::new();
-    let mut answered = providers.is_empty();
-    let mut first_error = None;
-    for provider in providers {
-        match provider.list_events(from, to) {
-            Ok(found) => {
-                answered = true;
-                sources.push(found);
-            }
-            Err(error) => {
-                tracing::warn!(provider = provider.name(), %error, "could not read a calendar");
-                first_error.get_or_insert(error);
-            }
-        }
-    }
-    if let (false, Some(error)) = (answered, first_error) {
-        return Err(error);
-    }
-    // TUR-49: one sorted list, a meeting in two calendars shown once.
-    Ok(::calendar::merge::merge_events(sources))
+    read::read_all(providers, from, to).map(|read| read.events)
 }
 
 /// Local midnight today and local midnight tomorrow, as UTC instants.
@@ -218,6 +212,10 @@ pub struct TodaysMeetings {
     pub refresh_minutes: u32,
     /// `detection.min_attendees`: below it an event is `solo`.
     pub min_attendees: u32,
+    /// The calendars that failed while another answered (TUR-174): an
+    /// expired Google sign-in next to Calendar.app's events. Empty when
+    /// every calendar was read.
+    pub unreadable: Vec<UnreadableCalendar>,
 }
 
 impl TodaysMeetings {
@@ -240,6 +238,15 @@ impl TodaysMeetings {
             events,
             refresh_minutes,
             min_attendees,
+            unreadable: Vec::new(),
+        }
+    }
+
+    /// The same, flagging the calendars in `read.failed`.
+    pub fn from_read(read: Read, refresh_minutes: u32, min_attendees: u32) -> Self {
+        Self {
+            unreadable: read.failed.into_iter().map(Into::into).collect(),
+            ..Self::new(read.events, refresh_minutes, min_attendees)
         }
     }
 }
@@ -259,7 +266,8 @@ impl From<Error> for UiError {
 
 /// Today's events from every configured calendar, local midnight to
 /// midnight. Denied access is the error kind `calendar-denied`, never an
-/// empty list.
+/// empty list. A calendar that fails while another answers is listed in
+/// `unreadable` (TUR-174).
 ///
 /// On the blocking pool: EventKit can wait minutes for the permission answer.
 #[tauri::command]
@@ -269,12 +277,16 @@ pub async fn todays_meetings(app: AppHandle) -> Result<TodaysMeetings, UiError> 
         let refresh_minutes = config::calendar().refresh_minutes;
         let min_attendees = config::detection().min_attendees;
         let (from, to) = today_bounds(&Local::now());
-        let events = app.state::<CalendarState>().events_between(from, to)?;
+        let read = app.state::<CalendarState>().read_between(from, to)?;
         // TUR-77: the menu bar's Today follows a fresh read (a grant, an edit),
         // and shows this one rather than reading again (TUR-90).
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        crate::tray::reread_soon(&app, &events);
-        Ok(TodaysMeetings::new(events, refresh_minutes, min_attendees))
+        crate::tray::reread_soon(&app, &read.events);
+        Ok(TodaysMeetings::from_read(
+            read,
+            refresh_minutes,
+            min_attendees,
+        ))
     })
     .await?
 }

@@ -191,3 +191,111 @@ fn a_meeting_in_two_calendars_is_read_once_with_the_first_providers_id() {
     assert_eq!(events[0].attendees, 3);
     assert_eq!(events[0].ical_uid.as_deref(), Some("uid-1"));
 }
+
+/// A sign-in the provider rejected (TUR-174).
+struct Expired;
+
+impl CalendarProvider for Expired {
+    fn name(&self) -> &'static str {
+        "Google"
+    }
+    fn list_events(&self, _: DateTime<Utc>, _: DateTime<Utc>) -> Result<Vec<Event>, Error> {
+        Err(Error::SignInExpired { provider: "Google" })
+    }
+}
+
+/// Answers only once every provider sharing `barrier` is being read: a
+/// sequential read would wait on it forever.
+struct WaitsForTheOthers {
+    barrier: Arc<std::sync::Barrier>,
+    events: FakeProvider,
+}
+
+impl CalendarProvider for WaitsForTheOthers {
+    fn name(&self) -> &'static str {
+        "Waits"
+    }
+    fn list_events(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Event>, Error> {
+        self.barrier.wait();
+        self.events.list_events(from, to)
+    }
+}
+
+#[test]
+fn an_expired_sign_in_is_flagged_while_the_other_calendars_still_show() {
+    let state = CalendarState::with_providers(vec![
+        shared(FakeProvider::with_events([raw(
+            "ek-1",
+            "2026-10-03T09:00:00Z",
+            "2026-10-03T10:00:00Z",
+            2,
+        )])),
+        Arc::new(Expired),
+    ]);
+    let read = state
+        .read_between(at(DAY_FROM), at(DAY_TO))
+        .expect("one answered");
+    let today = TodaysMeetings::from_read(read, 15, 2);
+    let ids: Vec<&str> = today.events.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids, ["ek-1"]);
+    assert_eq!(
+        today.unreadable,
+        [UnreadableCalendar {
+            provider: "Google".into(),
+            kind: "calendar-sign-in-expired".into(),
+            message: "your Google sign-in has expired and needs renewing".into(),
+        }]
+    );
+    let json = serde_json::to_value(&today).expect("serializes");
+    assert_eq!(json["unreadable"][0]["kind"], "calendar-sign-in-expired");
+
+    // The plain read, for reminders and auto-titles, still skips it.
+    let events = state
+        .events_between(at(DAY_FROM), at(DAY_TO))
+        .expect("one answered");
+    assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn every_calendar_read_is_an_unflagged_day() {
+    let read = CalendarState::with_providers(vec![shared(FakeProvider::with_events([]))])
+        .read_between(at(DAY_FROM), at(DAY_TO))
+        .expect("readable");
+    assert!(TodaysMeetings::from_read(read, 15, 2).unreadable.is_empty());
+}
+
+#[test]
+fn only_failures_are_the_first_error_not_a_flagged_empty_day() {
+    let error =
+        CalendarState::with_providers(vec![Arc::new(Expired), shared(FakeProvider::denied())])
+            .read_between(at(DAY_FROM), at(DAY_TO))
+            .expect_err("none answered");
+    assert!(matches!(error, Error::SignInExpired { .. }), "{error:?}");
+}
+
+#[test]
+fn providers_are_read_in_parallel_and_keep_their_order() {
+    let barrier = Arc::new(std::sync::Barrier::new(3));
+    let waiting = |id: &str, start: &str, end: &str| -> SharedProvider {
+        Arc::new(WaitsForTheOthers {
+            barrier: Arc::clone(&barrier),
+            events: FakeProvider::with_events([raw(id, start, end, 2)]),
+        })
+    };
+    // The same meeting in the first and third: the first's id is kept.
+    let mut repeat = raw("g-1", "2026-10-03T09:00:00Z", "2026-10-03T10:00:00Z", 2);
+    repeat.title = "Event ek-1".into();
+    let state = CalendarState::with_providers(vec![
+        waiting("ek-1", "2026-10-03T09:00:00Z", "2026-10-03T10:00:00Z"),
+        waiting("ms-1", "2026-10-03T11:00:00Z", "2026-10-03T12:00:00Z"),
+        Arc::new(WaitsForTheOthers {
+            barrier: Arc::clone(&barrier),
+            events: FakeProvider::with_events([repeat]),
+        }),
+    ]);
+    let events = state
+        .events_between(at(DAY_FROM), at(DAY_TO))
+        .expect("readable");
+    let ids: Vec<&str> = events.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids, ["ek-1", "ms-1"]);
+}
