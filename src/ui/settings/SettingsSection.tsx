@@ -58,6 +58,10 @@ export function SettingsSection({
   );
 }
 
+/** A full-width text field or `<select>` in a settings form (Tracker, a new ticket). */
+export const SETTINGS_FIELD =
+  "w-full rounded-control border-[0.5px] border-separator bg-glass-sunken px-4 py-3 text-body text-fg-primary";
+
 /** A `<select>` in a settings row's control slot. */
 export const SETTINGS_SELECT =
   "rounded-control border-[0.5px] border-separator bg-glass-sunken px-3 py-2 text-footnote text-fg-primary disabled:cursor-not-allowed disabled:opacity-40";
@@ -69,6 +73,7 @@ export function SettingsRow({
   control,
   children,
   mono = false,
+  bare,
   className,
 }: {
   icon?: LucideIcon;
@@ -81,6 +86,8 @@ export function SettingsRow({
   children?: ReactNode;
   /** The grey line in monospace, for a path. */
   mono?: boolean;
+  /** Inside a padded card, whose own padding already frames the row. */
+  bare?: boolean;
   className?: string;
 }) {
   const line = (
@@ -91,9 +98,14 @@ export function SettingsRow({
       ) : null}
     </>
   );
-  if (children === undefined) return <Row className={className}>{line}</Row>;
+  if (children === undefined)
+    return (
+      <Row bare={bare} className={className}>
+        {line}
+      </Row>
+    );
   return (
-    <Row stacked className={cn("gap-5", className)}>
+    <Row stacked bare={bare} className={cn("gap-5", className)}>
       <span className="flex items-center justify-between gap-6">{line}</span>
       {children}
     </Row>

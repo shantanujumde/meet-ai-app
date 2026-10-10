@@ -15,6 +15,7 @@
 import { Plus, Settings as SettingsIcon, Ticket as TicketIcon } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
+import { useTicketSyncStates } from "@/hooks/useTicketSync";
 import { createTicket, listTickets, onMeetingsChanged, startWorkPrompt } from "@/ipc/client";
 import type { TicketStatus, TicketSummary, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
@@ -24,9 +25,9 @@ import { CopyPromptButton } from "@/ui/CopyPromptButton";
 import { IconSquare } from "@/ui/icons";
 import { Button, ButtonRow, cardVariants, Pill } from "@/ui/primitives";
 import { SendError, SendStatus, trackerName } from "@/ui/SyncButton";
+import { SETTINGS_FIELD as FIELD } from "@/ui/settings/SettingsSection";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 import { TicketDetails } from "@/ui/TicketDetails";
-import { useTicketSyncStates } from "@/ui/useTicketSync";
 
 const STATUS_LABEL: Record<TicketStatus, string> = {
   open: "Open",
@@ -41,9 +42,6 @@ const STATUS_TONE: Record<TicketStatus, "neutral" | "ok" | "warn" | "danger"> = 
   done: "ok",
   dropped: "danger",
 };
-
-const FIELD =
-  "w-full rounded-control border-[0.5px] border-separator bg-glass-sunken px-4 py-3 text-body text-fg-primary";
 
 const HINT_START = "Tickets you approved from meetings, and ones you added.";
 

@@ -18,6 +18,7 @@
 
 import { ListTodo, RefreshCw, Send } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useIpcValue } from "@/hooks/useIpcValue";
 import { type SettingsSnapshot, sendTestTicket, setTracker, trackerSettings } from "@/ipc/client";
 import type {
   Harness,
@@ -32,7 +33,7 @@ import { type SavedAgent, useSavedAgent } from "@/state/savedAgent";
 import { sessionTrackerServers } from "@/state/session";
 import { Icon } from "./icons";
 import { Button, ButtonRow, Prose } from "./primitives";
-import { SettingsSection } from "./settings/SettingsSection";
+import { SETTINGS_FIELD as FIELD, SettingsSection } from "./settings/SettingsSection";
 import { readOrThrow, useSnapshotLoad } from "./settings/snapshot";
 import { Checking, InlineError } from "./states";
 
@@ -59,16 +60,13 @@ const HARNESS_NAME: Record<Harness, string> = {
   none: "None",
 };
 
-const FIELD =
-  "w-full rounded-control border-[0.5px] border-separator bg-glass-sunken px-4 py-3 text-body text-fg-primary";
-
 const LABEL = "flex flex-col gap-2 text-callout text-fg-secondary";
 
 const pick = (snapshot: SettingsSnapshot) => readOrThrow(snapshot.tracker, snapshot.trackerError);
 
 export function TrackerSettings() {
-  const [saved, setSaved] = useState<Settings | null>(null);
-  const [loadError, setLoadError] = useState<UiError | null>(null);
+  const load = useSnapshotLoad(pick, trackerSettings);
+  const { value: saved, setValue: setSaved, error: loadError } = useIpcValue(load);
   const [tracker, setTrackerChoice] = useState<Tracker>("linear");
   const [server, setServer] = useState("");
   const [saving, setSaving] = useState(false);
@@ -77,25 +75,12 @@ export function TrackerSettings() {
   /** The values the last test ticket that got through checked. */
   const [passed, setPassed] = useState<{ tracker: Tracker; server: string } | null>(null);
 
-  const load = useSnapshotLoad(pick, trackerSettings);
-
+  // The form shows what was read, and after a save what was saved.
   useEffect(() => {
-    let current = true;
-    load().then(
-      (settings) => {
-        if (!current) return;
-        setSaved(settings);
-        setTrackerChoice(settings.tracker);
-        setServer(settings.trackerMcp);
-      },
-      (caught) => {
-        if (current) setLoadError(toUiError(caught));
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [load]);
+    if (saved === null) return;
+    setTrackerChoice(saved.tracker);
+    setServer(saved.trackerMcp);
+  }, [saved]);
 
   const name = server.trim();
   const unsaved = name.length > 0 && !isSaved(saved, tracker, name);
@@ -109,10 +94,7 @@ export function TrackerSettings() {
     setSaveError(null);
     setJustSaved(false);
     try {
-      const settings = await setTracker(tracker, name);
-      setSaved(settings);
-      setTrackerChoice(settings.tracker);
-      setServer(settings.trackerMcp);
+      setSaved(await setTracker(tracker, name));
       setJustSaved(true);
     } catch (caught) {
       setSaveError(toUiError(caught));

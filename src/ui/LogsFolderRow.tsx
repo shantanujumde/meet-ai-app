@@ -9,7 +9,8 @@ import { useState } from "react";
 import { openLogsFolder } from "@/ipc/client";
 import type { UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
-import { Button, Row, RowLabel } from "@/ui/primitives";
+import { Button } from "@/ui/primitives";
+import { SettingsRow } from "@/ui/settings/SettingsSection";
 import { ErrorState } from "@/ui/states";
 
 export function LogsFolderRow() {
@@ -27,19 +28,17 @@ export function LogsFolderRow() {
   };
 
   return (
-    <Row stacked>
-      <div className="flex items-center justify-between gap-6">
-        <RowLabel
-          icon={ScrollText}
-          name="Logs"
-          detail="The app's log and crash files, to attach to a bug report"
-          mono={false}
-        />
+    <SettingsRow
+      icon={ScrollText}
+      name="Logs"
+      detail="The app's log and crash files, to attach to a bug report"
+      control={
         <Button size="small" icon={FolderOpen} onClick={() => void open()}>
           Open logs folder
         </Button>
-      </div>
-      {error ? <ErrorState error={error} /> : null}
-    </Row>
+      }
+    >
+      {error ? <ErrorState error={error} /> : undefined}
+    </SettingsRow>
   );
 }
