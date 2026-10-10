@@ -18,7 +18,7 @@
 
 import { ListTodo, RefreshCw, Send } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { sendTestTicket, setTracker, trackerServers, trackerSettings } from "@/ipc/client";
+import { type SettingsSnapshot, sendTestTicket, setTracker, trackerSettings } from "@/ipc/client";
 import type {
   Harness,
   McpStatus,
@@ -29,9 +29,11 @@ import type {
 } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { type SavedAgent, useSavedAgent } from "@/state/savedAgent";
+import { sessionTrackerServers } from "@/state/session";
 import { Icon } from "./icons";
 import { Button, ButtonRow, Prose } from "./primitives";
 import { SettingsSection } from "./settings/SettingsSection";
+import { readOrThrow, useSnapshotLoad } from "./settings/snapshot";
 import { Checking, InlineError } from "./states";
 
 const TRACKERS: { value: Tracker; label: string }[] = [
@@ -62,6 +64,8 @@ const FIELD =
 
 const LABEL = "flex flex-col gap-2 text-callout text-fg-secondary";
 
+const pick = (snapshot: SettingsSnapshot) => readOrThrow(snapshot.tracker, snapshot.trackerError);
+
 export function TrackerSettings() {
   const [saved, setSaved] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState<UiError | null>(null);
@@ -73,9 +77,11 @@ export function TrackerSettings() {
   /** The values the last test ticket that got through checked. */
   const [passed, setPassed] = useState<{ tracker: Tracker; server: string } | null>(null);
 
+  const load = useSnapshotLoad(pick, trackerSettings);
+
   useEffect(() => {
     let current = true;
-    trackerSettings().then(
+    load().then(
       (settings) => {
         if (!current) return;
         setSaved(settings);
@@ -89,7 +95,7 @@ export function TrackerSettings() {
     return () => {
       current = false;
     };
-  }, []);
+  }, [load]);
 
   const name = server.trim();
   const unsaved = name.length > 0 && !isSaved(saved, tracker, name);
@@ -317,11 +323,13 @@ function ServerPicker({
   const [error, setError] = useState<UiError | null>(null);
   const [checking, setChecking] = useState(true);
 
-  const check = useCallback(async () => {
+  // `claude mcp list` can take a minute, so its answer is kept for the
+  // session (TUR-171); "Check again" asks anew.
+  const check = useCallback(async (fresh = false) => {
     setChecking(true);
     setError(null);
     try {
-      setServers(await trackerServers());
+      setServers(await sessionTrackerServers(fresh));
     } catch (caught) {
       setError(toUiError(caught));
     } finally {
@@ -375,7 +383,7 @@ function ServerPicker({
             Your agent has no servers added yet.
           </span>
         ) : null}
-        <Button size="small" icon={RefreshCw} disabled={checking} onClick={() => void check()}>
+        <Button size="small" icon={RefreshCw} disabled={checking} onClick={() => void check(true)}>
           Check again
         </Button>
       </ButtonRow>

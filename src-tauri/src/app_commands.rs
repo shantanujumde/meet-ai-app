@@ -112,6 +112,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "set_show_recording_overlay",
     "overlay_show_main",
     "config_problem",
+    "settings_snapshot",
 ];
 
 #[cfg(test)]

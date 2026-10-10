@@ -28,7 +28,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelNotesRun,
   meetingNotes,
-  notesAutoRun,
   notesRunStatus,
   onNotesRunStatus,
   setMeetingNotes,
@@ -36,6 +35,7 @@ import {
 } from "@/ipc/client";
 import type { MeetingNotes, NotesRunState, NotesRunStatus, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
+import { sessionNotesAutoRun } from "@/state/session";
 
 /** What a meeting shows when its notes could not be read: nothing written yet. */
 const NO_NOTES: MeetingNotes = { notesOff: false, analyzedBy: null, sections: [] };
@@ -152,11 +152,11 @@ export function useNotesRun(meetingId: string, onChanged?: () => void): NotesRun
     };
   }, [meetingId, apply, refreshNotes]);
 
-  // Read once per view: Settings is another screen, so it cannot change
-  // while this one is open.
+  // Read once per session (TUR-171): only Settings changes it, and its save
+  // and its snapshot update the kept answer.
   useEffect(() => {
     let live = true;
-    notesAutoRun().then(
+    sessionNotesAutoRun().then(
       (auto) => {
         if (live) setManual(!auto);
       },

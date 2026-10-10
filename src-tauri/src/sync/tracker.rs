@@ -137,7 +137,7 @@ pub async fn tracker_servers() -> Result<Vec<TrackerServer>, UiError> {
 
 /// One read of `config.jsonc`; a bad `agent` section shows the default
 /// agent rather than failing (TUR-155).
-fn current() -> Result<TrackerSettings, UiError> {
+pub(crate) fn current() -> Result<TrackerSettings, UiError> {
     let (tickets, chosen, harness) = config::tracker_view()?;
     Ok(settings_from(tickets, chosen, harness))
 }

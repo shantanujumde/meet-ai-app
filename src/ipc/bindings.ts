@@ -546,6 +546,11 @@ export const commands = {
 	/**  The error's own sentence. Display it; do not parse it. */
 	message: string,
 } | null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("config_problem", { section })),
+	/**
+	 *  Every saved setting the Settings screen shows, from one read of the
+	 *  meetings root and `config.jsonc`. Disk, so the blocking pool.
+	 */
+	settingsSnapshot: () => typedError<meet_ai_lib_settings_snapshot_SettingsSnapshot, meet_ai_lib_error_UiError>(__TAURI_INVOKE("settings_snapshot")),
 };
 
 /* Constants */
@@ -823,6 +828,12 @@ export type meet_ai_lib_engine_choices_EngineChoices = {
 	 */
 	honoursLanguage: boolean,
 	languageIgnoredReason: string | null,
+	/**
+	 *  Why the saved engine cannot run here, from the same probe as the rest
+	 *  (TUR-171); `None` when it can. Settings used to ask `engine_selection`
+	 *  for this, which ran the probe a second time.
+	 */
+	selectionError: meet_ai_lib_error_UiError | null,
 };
 
 /**  What the filesystem says, with no subprocess involved. */
@@ -1376,6 +1387,37 @@ export type meet_ai_lib_engine_SelectionView = {
  *  reports it as set up.
  */
 export type meet_ai_lib_sync_tracker_ServerStatus = "connected" | "needs_auth" | "failed" | "pending" | "disabled" | "configured" | "unknown";
+
+/**  The saved settings, as each Settings card's own read would answer. */
+export type meet_ai_lib_settings_snapshot_SettingsSnapshot = {
+	/**  `app.show_in_dock_when_closed` (TUR-76). */
+	showInDockWhenClosed: boolean,
+	/**  `app.menu_bar_countdown` (TUR-77). */
+	menuBarCountdown: boolean,
+	/**  What in `appearance` was not valid (TUR-155), as `config_problem` says. */
+	appearanceProblem: string | null,
+	/**  What in `detection` was not valid. */
+	detectionProblem: string | null,
+	/**  `audio.retention_days`, as the retention job reads it. */
+	audioRetention: meet_ai_lib_retention_AudioRetentionSetting,
+	/**  `audio.use_builtin_mic_with_bluetooth` (TUR-91). */
+	builtinMicWithBluetooth: boolean,
+	/**  `audio.show_recording_overlay` (TUR-146). */
+	showRecordingOverlay: boolean,
+	/**  The agent pick; `None` when `agent` could not be read (`agent_error`). */
+	agentChoice: meet_ai_lib_agent_setup_AgentChoice | null,
+	/**  `agent.auto_run` (TUR-101); `None` with `agent_error`. */
+	notesAutoRun: boolean | null,
+	/**  Why `agent` could not be read, such as an unknown `agent.harness`. */
+	agentError: meet_ai_lib_error_UiError | null,
+	/**  The Notifications card (TUR-78). */
+	notifications: meet_ai_lib_detection_settings_NotificationSettings,
+	/**  The Calendars card's sources (TUR-49); the accounts are read apart. */
+	calendarSources: meet_ai_lib_calendar_sources_CalendarSources,
+	/**  The Tracker card (TUR-113); `None` with `tracker_error`. */
+	tracker: meet_ai_lib_sync_tracker_TrackerSettings | null,
+	trackerError: meet_ai_lib_error_UiError | null,
+};
 
 /**  A cloud calendar that needs a sign-in, as the webview names it. */
 export type meet_ai_lib_calendar_signin_SignInProvider = "google" | "microsoft";

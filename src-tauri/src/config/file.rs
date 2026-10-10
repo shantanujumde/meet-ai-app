@@ -157,8 +157,18 @@ fn app_dir() -> Result<PathBuf, ConfigError> {
 }
 
 /// The text of `config.jsonc` in `dir`, or `""` if there is none yet.
+/// Inside [`super::read_once`], its one read of the file.
 pub(super) fn read_in(dir: &Path) -> Result<String, ConfigError> {
-    match std::fs::read_to_string(dir.join(FILE)) {
+    text_or_empty(super::once::read(&dir.join(FILE)))
+}
+
+/// [`read_in`] from the disk now, never a held copy: what a save starts from.
+fn read_fresh(dir: &Path) -> Result<String, ConfigError> {
+    text_or_empty(std::fs::read_to_string(dir.join(FILE)))
+}
+
+fn text_or_empty(read: std::io::Result<String>) -> Result<String, ConfigError> {
+    match read {
         Ok(raw) => Ok(raw),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(String::new()),
         Err(error) => Err(error.into()),
@@ -179,7 +189,7 @@ pub(super) fn write_in<E: From<ConfigError>>(
     // A panic in another save leaves nothing half-done here: the file is
     // only ever replaced by a rename.
     let _write = CONFIG_WRITE.lock().unwrap_or_else(PoisonError::into_inner);
-    let updated = edit(&read_in(dir)?)?;
+    let updated = edit(&read_fresh(dir)?)?;
     Ok(write_file_and_schema(dir, &updated)?)
 }
 

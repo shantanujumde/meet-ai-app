@@ -258,7 +258,7 @@ impl From<AgentHarness> for Harness {
 
 impl AgentChoice {
     /// The part of `agent` the screen shows.
-    fn from_config(agent: &AgentConfig) -> Self {
+    pub(crate) fn from_config(agent: &AgentConfig) -> Self {
         Self {
             harness: agent.harness.into(),
             model: agent.model.clone().unwrap_or_default(),

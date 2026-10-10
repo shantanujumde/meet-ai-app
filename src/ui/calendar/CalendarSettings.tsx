@@ -24,6 +24,7 @@ import {
   calendarAccounts,
   calendarDisconnect,
   calendarSources,
+  type SettingsSnapshot,
   SIGN_IN_PROVIDERS,
   type SignInProvider,
   setCalendarApp,
@@ -32,6 +33,7 @@ import { toUiError, type UiError } from "@/ipc/types";
 import { Button, ButtonRow, Row, RowLabel } from "../primitives";
 import { SettingSwitch } from "../SettingSwitch";
 import { SettingsSection } from "../settings/SettingsSection";
+import { useSnapshotLoad } from "../settings/snapshot";
 import { Checking, InlineError } from "../states";
 import { notConfiguredCopy, PROVIDER_NAME, signInLabel } from "./copy";
 import { CANCEL_SIGN_IN, WAITING_FOR_BROWSER } from "./SignInButtons";
@@ -42,14 +44,17 @@ export const SIGN_IN_EXPIRED = "Sign-in expired";
 export const NOT_REMEMBERED =
   "Signed in until meet-ai quits: this system has no keystore to remember it";
 
+const pickSources = (snapshot: SettingsSnapshot) => snapshot.calendarSources;
+
 export function CalendarSettings() {
   const [sources, setSources] = useState<CalendarSources | null>(null);
   const [accounts, setAccounts] = useState<CalendarAccount[] | null>(null);
   const [error, setError] = useState<UiError | null>(null);
+  const loadSources = useSnapshotLoad(pickSources, calendarSources);
 
   const load = useCallback(() => {
     let live = true;
-    calendarSources().then(
+    loadSources().then(
       (answer) => {
         if (live) setSources(answer);
       },
@@ -70,7 +75,7 @@ export function CalendarSettings() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [loadSources]);
 
   useEffect(() => load(), [load]);
 
@@ -95,7 +100,9 @@ export function CalendarSettings() {
         )
       ) : (
         <>
-          {sources.calendarAppAvailable ? <CalendarAppRow onSaved={setSources} /> : null}
+          {sources.calendarAppAvailable ? (
+            <CalendarAppRow on={sources.calendarApp} onSaved={setSources} />
+          ) : null}
           {SIGN_IN_PROVIDERS.map((provider) => (
             <SignInRow
               key={provider}
@@ -118,18 +125,25 @@ export function CalendarSettings() {
   );
 }
 
-/** Whether `"eventkit"` is in `calendar.providers`. Module-level, so
- * {@link SettingSwitch} reads it once. */
-const loadCalendarApp = () => calendarSources().then((sources) => sources.calendarApp);
-
-/** The Calendar app (macOS): a switch, like the Dock setting. */
-function CalendarAppRow({ onSaved }: { onSaved: (sources: CalendarSources) => void }) {
+/**
+ * The Calendar app (macOS): a switch, like the Dock setting. `on` is whether
+ * `"eventkit"` is in `calendar.providers`, from the sources the card already
+ * read (TUR-171), not a read of its own.
+ */
+function CalendarAppRow({
+  on,
+  onSaved,
+}: {
+  on: boolean;
+  onSaved: (sources: CalendarSources) => void;
+}) {
+  const load = useCallback(async () => on, [on]);
   return (
     <SettingSwitch
       icon={Calendar}
       label={CALENDAR_APP_LABEL}
       detail="Every account already in Calendar.app on this Mac. No sign-in needed."
-      load={loadCalendarApp}
+      load={load}
       save={async (on) => {
         const saved = await setCalendarApp(on);
         onSaved(saved);

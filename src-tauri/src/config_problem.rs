@@ -27,7 +27,7 @@ pub enum ConfigSection {
 pub const INVALID_CONFIG: &str = "invalid-config";
 
 /// What was not valid in `section`, as the card shows it, or `None`.
-fn problem(section: ConfigSection) -> Option<String> {
+pub(crate) fn problem(section: ConfigSection) -> Option<String> {
     match section {
         ConfigSection::App => config::app_checked().problem,
         ConfigSection::Appearance => config::appearance_checked().problem,

@@ -9,13 +9,15 @@
  */
 
 import { Dock } from "lucide-react";
-import { appSettings, setShowInDockWhenClosed } from "@/ipc/client";
+import { appSettings, type SettingsSnapshot, setShowInDockWhenClosed } from "@/ipc/client";
 import { SettingSwitch } from "./SettingSwitch";
 import { appSettingSaved } from "./settings/AppConfigProblem";
+import { useSnapshotLoad } from "./settings/snapshot";
 
 export const DOCK_SETTING_LABEL = "Show in Dock when the window is closed";
 
 const load = async () => (await appSettings()).showInDockWhenClosed;
+const pick = (snapshot: SettingsSnapshot) => snapshot.showInDockWhenClosed;
 const save = async (on: boolean) => {
   const saved = (await setShowInDockWhenClosed(on)).showInDockWhenClosed;
   appSettingSaved();
@@ -23,12 +25,13 @@ const save = async (on: boolean) => {
 };
 
 export function DockSetting() {
+  const read = useSnapshotLoad(pick, load);
   return (
     <SettingSwitch
       icon={Dock}
       label={DOCK_SETTING_LABEL}
       detail="Closing the window keeps meet-ai running in the menu bar. Quit from the menu bar icon or with ⌘Q."
-      load={load}
+      load={read}
       save={save}
     />
   );

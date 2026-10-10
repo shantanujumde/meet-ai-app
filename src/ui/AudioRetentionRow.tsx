@@ -9,8 +9,11 @@
 
 import { AudioLines } from "lucide-react";
 import { useEffect, useState } from "react";
-import { type AudioRetention, audioRetentionDays } from "@/ipc/client";
+import { type AudioRetention, audioRetentionDays, type SettingsSnapshot } from "@/ipc/client";
 import { Row, RowLabel } from "./primitives";
+import { useSnapshotLoad } from "./settings/snapshot";
+
+const pick = (snapshot: SettingsSnapshot) => snapshot.audioRetention;
 
 /** The line while the retention job is paused (TUR-85). */
 export const RETENTION_PAUSED =
@@ -33,10 +36,11 @@ export function retentionDetail(retention: AudioRetention): string {
 
 export function AudioRetentionRow() {
   const [retention, setRetention] = useState<AudioRetention | null>(null);
+  const load = useSnapshotLoad(pick, audioRetentionDays);
 
   useEffect(() => {
     let live = true;
-    audioRetentionDays()
+    load()
       .then((value) => {
         if (live) setRetention(value);
       })
@@ -45,7 +49,7 @@ export function AudioRetentionRow() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [load]);
 
   if (retention === null) return null;
   return (

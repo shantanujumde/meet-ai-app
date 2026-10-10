@@ -131,6 +131,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::overlay::set_show_recording_overlay,
             crate::overlay::overlay_show_main,
             crate::config_problem::config_problem,
+            crate::settings_snapshot::settings_snapshot,
         ])
         .constant("RECORDING_STATE_EVENT", RECORDING_STATE_EVENT)
         .constant("MODEL_PROGRESS_EVENT", MODEL_PROGRESS_EVENT)
