@@ -13,9 +13,10 @@
 //! Collapsing the two into one command would force the slower behaviour on the
 //! whole screen, which is the mistake this split exists to prevent.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, Once};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, Once};
 
 use serde::Serialize;
 use stt::model::ModelSpec;
@@ -134,9 +135,11 @@ pub struct ProgressEvent {
 /// Two `ensure` calls for the same model would resume the same `.part` file
 /// from two directions and race each other to the atomic rename. One in-flight
 /// download per model, enforced here rather than hoped for in the UI.
+///
+/// Each one carries the flag [`Downloads::cancel`] sets (TUR-159).
 #[derive(Default)]
 pub struct Downloads {
-    in_flight: Mutex<HashSet<String>>,
+    in_flight: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl Downloads {
@@ -154,17 +157,36 @@ impl Downloads {
     /// dropped, a claim it held would be released while the thread kept
     /// writing, and a retry would start a second writer on the same file.
     pub fn claim(&self, id: &str) -> Option<Claim<'_>> {
-        self.lock().insert(id.to_string()).then(|| Claim {
+        let mut in_flight = self.lock();
+        if in_flight.contains_key(id) {
+            return None;
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        in_flight.insert(id.to_string(), Arc::clone(&cancel));
+        Some(Claim {
             downloads: self,
             id: id.to_string(),
+            cancel,
         })
+    }
+
+    /// Ask the download of `id` to stop. False when nothing holds it.
+    ///
+    /// The download notices within a fraction of a second, returns
+    /// `modelfetch::Error::Cancelled`, and its thread drops the claim and the
+    /// folder guard as it ends, so the meetings folder can move again.
+    pub fn cancel(&self, id: &str) -> bool {
+        self.lock()
+            .get(id)
+            .inspect(|flag| flag.store(true, Ordering::Relaxed))
+            .is_some()
     }
 
     fn release(&self, id: &str) {
         self.lock().remove(id);
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<AtomicBool>>> {
         crate::lock::lock_or_recover(&self.in_flight)
     }
 }
@@ -178,6 +200,14 @@ impl Downloads {
 pub struct Claim<'a> {
     downloads: &'a Downloads,
     id: String,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Claim<'_> {
+    /// The flag [`Downloads::cancel`] sets for this model.
+    pub fn cancel_flag(&self) -> &AtomicBool {
+        &self.cancel
+    }
 }
 
 impl Drop for Claim<'_> {
@@ -391,12 +421,13 @@ pub async fn download(app: AppHandle, model_id: String) -> Result<String, UiErro
         let gate = app.state::<FolderGate>();
         let _writing = gate.begin_write()?;
         let downloads = app.state::<Downloads>();
-        let Some(_claim) = downloads.claim(&model_id) else {
+        let Some(claim) = downloads.claim(&model_id) else {
             return Err(UiError::app(
                 "download-already-running",
                 "That model is already downloading.",
             ));
         };
+        let cancel = claim.cancel_flag();
 
         let dir = models_dir()?;
         let dirs = ModelDirs::around(Some(dir.clone()));
@@ -426,10 +457,13 @@ pub async fn download(app: AppHandle, model_id: String) -> Result<String, UiErro
             };
 
             let fetched = match target {
-                Download::Whisper(spec) => modelfetch::ensure(spec, &dir, &mut on_progress).await,
+                Download::Whisper(spec) => {
+                    modelfetch::ensure(spec, &dir, cancel, &mut on_progress).await
+                }
                 // A folder of files, one bar for all of them (TUR-62).
                 Download::Parakeet(model) => {
-                    modelfetch::ensure_folder(model.files, &model.dir(&dir), &mut on_progress).await
+                    let folder = model.dir(&dir);
+                    modelfetch::ensure_folder(model.files, &folder, cancel, &mut on_progress).await
                 }
             };
             fetched
@@ -461,6 +495,24 @@ mod tests {
     }
 
     #[test]
+    fn cancel_flags_the_running_download_of_that_model_only() {
+        let downloads = Downloads::default();
+        assert!(!downloads.cancel("small.en-q5_1"), "nothing to cancel");
+        let small = downloads.claim("small.en-q5_1").expect("free to claim");
+        let turbo = downloads
+            .claim("large-v3-turbo-q5_0")
+            .expect("free to claim");
+        assert!(downloads.cancel("small.en-q5_1"));
+        assert!(small.cancel_flag().load(Ordering::Relaxed));
+        assert!(!turbo.cancel_flag().load(Ordering::Relaxed));
+
+        // The next download of the same model starts with a fresh flag.
+        drop(small);
+        let again = downloads.claim("small.en-q5_1").expect("free again");
+        assert!(!again.cancel_flag().load(Ordering::Relaxed));
+    }
+
+    #[test]
     fn only_one_download_per_model_can_be_in_flight() {
         let downloads = Downloads::default();
         let small = downloads.claim("small.en-q5_1");
@@ -474,9 +526,9 @@ mod tests {
         assert!(turbo.is_some());
 
         drop(small);
-        assert!(!downloads.lock().contains("small.en-q5_1"));
+        assert!(!downloads.lock().contains_key("small.en-q5_1"));
         assert!(
-            downloads.lock().contains("large-v3-turbo-q5_0"),
+            downloads.lock().contains_key("large-v3-turbo-q5_0"),
             "releasing one model must not release the other"
         );
         drop(turbo);

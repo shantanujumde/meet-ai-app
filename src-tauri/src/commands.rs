@@ -308,6 +308,15 @@ pub async fn download_model(app: AppHandle, id: String) -> Result<String, UiErro
     engine::download(app, id).await
 }
 
+/// Stop the download of `id` (TUR-159). The pending `download_model` call
+/// then fails with the `model`/`cancelled` error, and the `.part` file stays
+/// for the next download to resume. False when `id` was not downloading.
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_model_download(downloads: State<'_, engine::Downloads>, id: String) -> bool {
+    downloads.cancel(&id)
+}
+
 /// Delete a downloaded whisper model that is not picked and not in use
 /// (TUR-132). Refuses with `model-in-use` otherwise.
 #[tauri::command]
