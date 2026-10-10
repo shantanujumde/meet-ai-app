@@ -13,17 +13,20 @@
 //! is read until its blank line, however many reads that takes, up to
 //! [`MAX_HEAD`] and [`IO_TIMEOUT`]. Each connection is served on its own
 //! thread, so a browser's idle pre-opened connection cannot hold up the real
-//! one. Anything that is not a `GET` of [`oauth::CALLBACK_PATH`] (a favicon,
+//! one, and at most [`MAX_IN_FLIGHT`] are served at once (TUR-174): a
+//! connection over the cap is closed unread, so a local process opening
+//! thousands cannot start a thread for each. Anything that is not a `GET` of [`oauth::CALLBACK_PATH`] (a favicon,
 //! a stray client) gets a 404, and a callback without this sign-in's `state`
 //! ([`Loopback::expect_state`], compared in constant time by
 //! [`oauth::carries_state`] before anything else in the URL is read) gets a
 //! 400. Neither ends the listener: a stray tab or another local process
 //! cannot end the sign-in. The first callback with the right `state` ends it,
-//! and so do the timeout and dropping the [`Loopback`].
+//! and so do the timeout, a [`Canceller`] (the user's Cancel, TUR-174) and
+//! dropping the [`Loopback`].
 
 use std::io::{self, Write as _};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -38,6 +41,28 @@ pub const MAX_HEAD: usize = 16 * 1024;
 /// How long one connection may take to send its head, or to take the reply.
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The most connections served at once. A browser opens a handful to one
+/// host (the callback, a favicon, a spare it may never use), so this leaves
+/// room for it and bounds what any other local process can tie up.
+pub const MAX_IN_FLIGHT: usize = 16;
+
+/// What wakes the sign-in waiting in [`Loopback::next_callback`].
+enum Wake {
+    /// The callback URL with the expected `state`.
+    Callback(String),
+    /// [`Canceller::cancel`].
+    Cancelled,
+}
+
+/// Why [`Loopback::next_callback`] has no callback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ended {
+    /// No callback in time (or the listener stopped without one).
+    TimedOut,
+    /// [`Canceller::cancel`] was called.
+    Cancelled,
+}
+
 /// A listener on a random 127.0.0.1 port. Dropping it stops it.
 pub struct Loopback {
     /// Always 127.0.0.1, on a port the OS picked.
@@ -46,8 +71,48 @@ pub struct Loopback {
     /// The `state` a callback must carry. Unset, no callback is ours.
     expected_state: Arc<OnceLock<String>>,
     /// The callback URL, `http://127.0.0.1:<port>/callback?…`, once: the
-    /// first callback that carries the expected `state`.
-    callbacks: mpsc::Receiver<String>,
+    /// first callback that carries the expected `state`. Or a cancel.
+    callbacks: mpsc::Receiver<Wake>,
+    /// For [`Self::canceller`].
+    sender: mpsc::Sender<Wake>,
+}
+
+/// Ends a [`Loopback`]'s wait from another thread: the sign-in's Cancel.
+#[derive(Clone)]
+pub struct Canceller {
+    port: u16,
+    stop: Arc<AtomicBool>,
+    sender: mpsc::Sender<Wake>,
+}
+
+impl Canceller {
+    /// Wake [`Loopback::next_callback`] with [`Ended::Cancelled`] and stop
+    /// listening. Nothing happens if the sign-in has already ended.
+    pub fn cancel(&self) {
+        // Gone only when the sign-in stopped waiting.
+        let _ = self.sender.send(Wake::Cancelled);
+        end(&self.stop, self.port);
+    }
+}
+
+/// One of the [`MAX_IN_FLIGHT`] places; given back when dropped.
+struct Slot(Arc<AtomicUsize>);
+
+impl Slot {
+    fn take(in_flight: &Arc<AtomicUsize>) -> Option<Self> {
+        in_flight
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |now| {
+                (now < MAX_IN_FLIGHT).then_some(now + 1)
+            })
+            .ok()
+            .map(|_| Self(Arc::clone(in_flight)))
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// Listen on a random loopback port, answering the callback with `page`.
@@ -60,6 +125,8 @@ pub fn listen(page: &'static str) -> io::Result<Loopback> {
     let (sender, callbacks) = mpsc::channel();
     let stopped = Arc::clone(&stop);
     let expected = Arc::clone(&expected_state);
+    let to_waiter = sender.clone();
+    let in_flight = Arc::new(AtomicUsize::new(0));
     std::thread::Builder::new()
         .name("meet-ai-sign-in-listener".to_string())
         .spawn(move || {
@@ -70,16 +137,24 @@ pub fn listen(page: &'static str) -> io::Result<Loopback> {
                 let Ok(connection) = connection else {
                     continue;
                 };
+                // Over the cap: closed unread, with no thread for it.
+                let Some(slot) = Slot::take(&in_flight) else {
+                    tracing::debug!("too many sign-in connections at once; closed one");
+                    continue;
+                };
                 let listening = Listening {
                     port,
                     page,
                     expected_state: Arc::clone(&expected),
-                    callbacks: sender.clone(),
+                    callbacks: to_waiter.clone(),
                     stop: Arc::clone(&stopped),
                 };
                 if let Err(error) = std::thread::Builder::new()
                     .name("meet-ai-sign-in-request".to_string())
-                    .spawn(move || listening.serve(connection))
+                    .spawn(move || {
+                        listening.serve(connection);
+                        drop(slot);
+                    })
                 {
                     tracing::warn!(%error, "could not answer a sign-in request");
                 }
@@ -90,6 +165,7 @@ pub fn listen(page: &'static str) -> io::Result<Loopback> {
         stop,
         expected_state,
         callbacks,
+        sender,
     })
 }
 
@@ -105,9 +181,25 @@ impl Loopback {
         let _ = self.expected_state.set(state.to_owned());
     }
 
-    /// The first callback with the expected `state`, within `timeout`.
-    pub fn next_callback(&self, timeout: Duration) -> Result<String, mpsc::RecvTimeoutError> {
-        self.callbacks.recv_timeout(timeout)
+    /// The first callback with the expected `state`, within `timeout`, or
+    /// [`Ended::Cancelled`] once a [`Canceller`] says so.
+    pub fn next_callback(&self, timeout: Duration) -> Result<String, Ended> {
+        match self.callbacks.recv_timeout(timeout) {
+            Ok(Wake::Callback(url)) => Ok(url),
+            Ok(Wake::Cancelled) => Err(Ended::Cancelled),
+            Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
+                Err(Ended::TimedOut)
+            }
+        }
+    }
+
+    /// A handle that ends this wait from another thread.
+    pub fn canceller(&self) -> Canceller {
+        Canceller {
+            port: self.addr.port(),
+            stop: Arc::clone(&self.stop),
+            sender: self.sender.clone(),
+        }
     }
 }
 
@@ -147,7 +239,7 @@ struct Listening {
     port: u16,
     page: &'static str,
     expected_state: Arc<OnceLock<String>>,
-    callbacks: mpsc::Sender<String>,
+    callbacks: mpsc::Sender<Wake>,
     stop: Arc<AtomicBool>,
 }
 
@@ -193,7 +285,7 @@ impl Listening {
         match url {
             Ok(url) => {
                 // The receiver is gone only when the sign-in stopped waiting.
-                let _ = self.callbacks.send(url);
+                let _ = self.callbacks.send(Wake::Callback(url));
             }
             Err(refused) => {
                 tracing::debug!(?refused, "ignored a request to the sign-in listener");

@@ -97,6 +97,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             crate::calendar::sources::set_calendar_app,
             crate::calendar::sources::calendar_connect,
             crate::calendar::sources::calendar_disconnect,
+            crate::calendar::cancel::calendar_cancel_sign_in,
             brief::meeting_brief,
             crate::retention::audio_retention_days,
             crate::lifecycle::confirm_quit,

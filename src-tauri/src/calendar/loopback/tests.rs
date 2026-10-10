@@ -293,3 +293,66 @@ fn a_dropped_listener_closes_its_port() {
     drop(listener);
     assert_closes(port);
 }
+
+#[test]
+fn connections_over_the_cap_are_closed_and_a_freed_place_serves_the_browser() {
+    let listener = listen_for_state();
+    let port = listener.port();
+    // A local process holding every place with connections that never send.
+    let mut idle: Vec<TcpStream> = (0..MAX_IN_FLIGHT)
+        .map(|_| TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap())
+        .collect();
+    std::thread::sleep(Duration::from_millis(100));
+
+    // One more is closed at once, unread: no thread waits IO_TIMEOUT on it.
+    let started = Instant::now();
+    let mut over = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+    over.set_read_timeout(Some(WAIT)).unwrap();
+    let mut byte = [0u8; 1];
+    assert!(matches!(over.read(&mut byte), Ok(0) | Err(_)));
+    assert!(started.elapsed() < IO_TIMEOUT, "{:?}", started.elapsed());
+
+    // One of them closes; its place serves the real callback.
+    idle.pop();
+    let request = format!("GET /callback?state={STATE}&code=c HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    let deadline = Instant::now() + WAIT;
+    let reply = loop {
+        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        stream.set_read_timeout(Some(WAIT)).unwrap();
+        let _ = stream.write_all(request.as_bytes());
+        let mut reply = String::new();
+        let _ = stream.read_to_string(&mut reply);
+        if !reply.is_empty() || Instant::now() > deadline {
+            break reply;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(reply.starts_with("HTTP/1.1 200 OK"), "{reply}");
+    assert!(listener.next_callback(WAIT).is_ok());
+}
+
+#[test]
+fn a_cancel_ends_the_wait_and_closes_the_port() {
+    let listener = listen_for_state();
+    let port = listener.port();
+    let canceller = listener.canceller();
+    let started = Instant::now();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        canceller.cancel();
+    });
+    assert_eq!(listener.next_callback(WAIT), Err(Ended::Cancelled));
+    assert!(started.elapsed() < WAIT, "{:?}", started.elapsed());
+    assert_closes(port);
+    // A cancel after the end does nothing.
+    listener.canceller().cancel();
+}
+
+#[test]
+fn no_callback_in_time_is_timed_out() {
+    let listener = listen_for_state();
+    assert_eq!(
+        listener.next_callback(Duration::from_millis(50)),
+        Err(Ended::TimedOut)
+    );
+}

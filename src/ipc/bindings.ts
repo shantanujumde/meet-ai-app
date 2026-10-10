@@ -336,7 +336,8 @@ export const commands = {
 	/**
 	 *  Today's events from every configured calendar, local midnight to
 	 *  midnight. Denied access is the error kind `calendar-denied`, never an
-	 *  empty list.
+	 *  empty list. A calendar that fails while another answers is listed in
+	 *  `unreadable` (TUR-174).
 	 * 
 	 *  On the blocking pool: EventKit can wait minutes for the permission answer.
 	 */
@@ -375,6 +376,12 @@ export const commands = {
 	 *  first, so a config that cannot be written never leaves a token behind.
 	 */
 	calendarDisconnect: (provider: meet_ai_lib_calendar_signin_SignInProvider) => typedError<meet_ai_lib_calendar_sources_CalendarSources, meet_ai_lib_error_UiError>(__TAURI_INVOKE("calendar_disconnect", { provider })),
+	/**
+	 *  Stop waiting for the browser: the sign-in for `provider` ends as
+	 *  `calendar-sign-in-cancelled`, and nothing is stored. `false` when no
+	 *  sign-in for it was waiting (it had already finished, say).
+	 */
+	calendarCancelSignIn: (provider: meet_ai_lib_calendar_signin_SignInProvider) => __TAURI_INVOKE<boolean>("calendar_cancel_sign_in", { provider }),
 	/**
 	 *  The brief for the meeting called `title`.
 	 * 
@@ -1663,6 +1670,12 @@ export type meet_ai_lib_calendar_TodaysMeetings = {
 	refreshMinutes: number,
 	/**  `detection.min_attendees`: below it an event is `solo`. */
 	minAttendees: number,
+	/**
+	 *  The calendars that failed while another answered (TUR-174): an
+	 *  expired Google sign-in next to Calendar.app's events. Empty when
+	 *  every calendar was read.
+	 */
+	unreadable: meet_ai_lib_calendar_read_UnreadableCalendar[],
 };
 
 /**  What the check found, in plain words. */
@@ -1714,6 +1727,19 @@ export type meet_ai_lib_error_UiError = {
 	/**  Which error enum this came from: `stt`, `model`, or `app`. */
 	domain: string,
 	/**  The stable variant tag. Safe to `switch` on. */
+	kind: string,
+	/**  The error's own sentence. Display it; do not parse it. */
+	message: string,
+};
+
+/**  A calendar the Today pane could not read, while others answered. */
+export type meet_ai_lib_calendar_read_UnreadableCalendar = {
+	/**  The provider's display name, like "Google". */
+	provider: string,
+	/**
+	 *  The error kind, as in [`UiError::kind`]: `calendar-sign-in-expired`,
+	 *  `calendar-denied` or `calendar-unreachable`.
+	 */
 	kind: string,
 	/**  The error's own sentence. Display it; do not parse it. */
 	message: string,
