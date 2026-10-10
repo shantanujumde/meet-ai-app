@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { agentChoice, detectAgents, saveAgentChoice } from "@/ipc/client";
 import type { AgentChoice, AgentCli, AgentHarness, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
+import { useSavedAgent } from "@/state/savedAgent";
 import { detectKey } from "./agents";
 
 /** What detection is asked when config.jsonc could not be read: no path for either agent. */
@@ -90,6 +91,8 @@ export function useAgentSetup() {
         // A newer save started meanwhile: its answer is the one to show.
         if (run !== saveRun.current) return;
         apply(saved);
+        // TUR-170: Tracker, on the same page, follows the saved agent.
+        useSavedAgent.getState().publish(saved);
         setLoadError(null);
         if (detectKey(saved) !== detectKey(previous)) void detect(saved);
       } catch (thrown) {

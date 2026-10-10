@@ -2,6 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import type { AgentCli, AgentTestResult } from "@/ipc/types";
+import { useSavedAgent } from "@/state/savedAgent";
 import { CLAUDE_MODELS, ipc } from "@/test/ipcMock";
 import { AgentSetup } from "./AgentSetup";
 
@@ -126,6 +127,20 @@ describe("AgentSetup", () => {
     expect(screen.queryByText(/sends the transcript/)).toBeNull();
     expect(screen.getByText(/Nothing is sent anywhere/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Test" })).toBeDisabled();
+  });
+
+  // TUR-170: Tracker, on the same page, hears the saved agent; the first read is not a save.
+  test("a saved agent is published for the rest of Settings, the first read is not", async () => {
+    useSavedAgent.setState({ saved: null });
+    await renderSetup();
+    expect(useSavedAgent.getState().saved).toBeNull();
+
+    fireEvent.click(screen.getByRole("radio", { name: /None, I'll copy the prompt/ }));
+
+    await waitFor(() =>
+      expect(useSavedAgent.getState().saved).toEqual({ harness: "none", binaryPath: null }),
+    );
+    useSavedAgent.setState({ saved: null });
   });
 
   test("the privacy sentence names the provider and the user's own account", async () => {

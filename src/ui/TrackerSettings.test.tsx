@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { TrackerSettings as Settings, TrackerServer } from "@/ipc/types";
+import { useSavedAgent } from "@/state/savedAgent";
 import { ipc } from "@/test/ipcMock";
 import { TrackerSettings } from "./TrackerSettings";
 
@@ -342,5 +343,36 @@ describe("TrackerSettings, saving what the user picked", () => {
 
     expect(screen.queryByRole("option", { name: /not in your agent's list/ })).toBeNull();
     expect(serverList().value).toBe("");
+  });
+
+  // TUR-170: an agent picked above Tracker, on the same page, reaches it.
+  describe("when another agent is saved on the same page", () => {
+    afterEach(() => useSavedAgent.setState({ saved: null }));
+
+    test("the agent line, the tip and the server list follow it", async () => {
+      useSavedAgent.setState({ saved: null });
+      trackerSettings.mockResolvedValue({ ...NOTHING_SAVED, chosen: true });
+      trackerServers.mockResolvedValue(SERVERS);
+      render(<TrackerSettings />);
+      expect(await screen.findByText("Claude Code")).toBeTruthy();
+      await waitFor(() => expect(trackerServers).toHaveBeenCalled());
+      const asked = trackerServers.mock.calls.length;
+
+      act(() => useSavedAgent.getState().publish({ harness: "none", model: "", binaryPath: null }));
+      expect(await screen.findByText(/No agent is set up/)).toBeTruthy();
+
+      act(() =>
+        useSavedAgent.getState().publish({ harness: "codex", model: "", binaryPath: null }),
+      );
+      expect(await screen.findByText("Codex")).toBeTruthy();
+      expect(screen.getByText(/codex mcp add/)).toBeTruthy();
+      await waitFor(() => expect(trackerServers).toHaveBeenCalledTimes(asked + 2));
+
+      // A model-only save does not ask for the list again.
+      act(() =>
+        useSavedAgent.getState().publish({ harness: "codex", model: "o3", binaryPath: null }),
+      );
+      expect(trackerServers).toHaveBeenCalledTimes(asked + 2);
+    });
   });
 });

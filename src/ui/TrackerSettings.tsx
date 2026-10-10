@@ -28,6 +28,7 @@ import type {
   UiError,
 } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
+import { type SavedAgent, useSavedAgent } from "@/state/savedAgent";
 import { Icon } from "./icons";
 import { Button, ButtonRow, Prose } from "./primitives";
 import { SettingsSection } from "./settings/SettingsSection";
@@ -114,7 +115,10 @@ export function TrackerSettings() {
     }
   }
 
-  const harness = saved?.harness ?? null;
+  // TUR-170: an agent saved since this section read its settings (above it,
+  // on the same page) wins, so the line, the tip and the servers follow it.
+  const agent = useSavedAgent((state) => state.saved);
+  const harness = agent?.harness ?? saved?.harness ?? null;
 
   return (
     <SettingsSection title="Tracker" anchorId="tracker">
@@ -142,6 +146,7 @@ export function TrackerSettings() {
         </label>
 
         <ServerPicker
+          agent={agent}
           value={server}
           saved={saved?.chosen ? saved.trackerMcp : null}
           onChange={(value) => {
@@ -296,10 +301,13 @@ function tipFor(harness: Harness | null): string {
  * other name. Both edit the same value.
  */
 function ServerPicker({
+  agent,
   value,
   saved,
   onChange,
 }: {
+  /** The agent saved in this window, if any: a new one is asked again. */
+  agent: SavedAgent | null;
   value: string;
   /** The saved server name, or null when nothing is saved. */
   saved: string | null;
@@ -321,9 +329,12 @@ function ServerPicker({
     }
   }, []);
 
+  // Asked on open, and again when another agent is saved (TUR-170): the list
+  // is that agent's (`claude mcp list` or `codex mcp list`).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `agent` is the trigger, not a value read here.
   useEffect(() => {
     void check();
-  }, [check]);
+  }, [check, agent]);
 
   const name = value.trim();
   const listed = servers?.some((each) => each.name === name) ?? false;
