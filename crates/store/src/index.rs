@@ -21,6 +21,7 @@ use crate::folder::{self, MeetingFolder};
 use crate::{Error, TICKETS_DIR, is_plain_name};
 use meeting_format::layout::{MEETING_FILE, NOTES_FILE, TRANSCRIPT_FILE, app_dir};
 
+mod catch_up;
 mod titled;
 pub use titled::{IndexedMeeting, same_title_key};
 
@@ -92,7 +93,8 @@ pub fn index_path(root: &Path) -> PathBuf {
 
 impl Index {
     /// Open the index for `root`, building it from the markdown first when the
-    /// file is missing, damaged or from another schema version.
+    /// file is missing, damaged or from another schema version. A file that is
+    /// kept is not compared with the folder; [`Index::catch_up`] does that.
     pub fn open(root: &Path) -> Result<Self, Error> {
         let path = index_path(root);
         if let Some(index) = Self::try_open(&path) {
@@ -156,10 +158,24 @@ impl Index {
     /// Bring the index up to date for the files in `paths` (what the watcher
     /// reports). Only meetings whose files changed since they were indexed are
     /// read again. Returns how many meetings were re-indexed or removed.
+    ///
+    /// `paths` may be under `root` as given or under its canonical form: the
+    /// watcher reports real paths, so a symlinked root (an iCloud or Dropbox
+    /// `~/Meetings`) or macOS's `/var` (really `/private/var`) still matches
+    /// (TUR-152).
     pub fn update(&mut self, root: &Path, paths: &[PathBuf]) -> Result<usize, Error> {
+        // dunce: std's Windows canonical form `\\?\C:\…` never prefixes the
+        // `C:\…` paths notify reports (as in `watcher.rs`).
+        let canonical = dunce::canonicalize(root).ok();
         let ids: BTreeSet<String> = paths
             .iter()
-            .filter_map(|path| meeting_id_of(root, path))
+            .filter_map(|path| {
+                meeting_id_of(root, path).or_else(|| {
+                    canonical
+                        .as_deref()
+                        .and_then(|real| meeting_id_of(real, path))
+                })
+            })
             .collect();
         let tx = self.conn.transaction().map_err(index_error)?;
         let mut changed = 0;
@@ -291,13 +307,14 @@ fn reindex(
             return Ok(false);
         }
     }
-    delete_meeting(tx, id)?;
+    let removed = delete_meeting(tx, id)?;
     // A folder that cannot be read right now (deleted mid-batch) is treated
     // like a deleted one; the next event brings it back.
     if let Ok(folder) = folder::load(&dir) {
         insert_folder(tx, &folder, mtime)?;
+        return Ok(true);
     }
-    Ok(true)
+    Ok(removed)
 }
 
 /// Delete every row of one meeting. `true` if it had any.
@@ -391,13 +408,15 @@ fn insert_folder(
 }
 
 /// The newest change among the files the index reads from one meeting folder.
-/// The `tickets/` folder counts too, so deleting a ticket moves it.
+/// The `tickets/` folder counts too, so deleting a ticket moves it, and so
+/// does the meeting folder itself, so deleting `notes.md` (or any file that
+/// was not the newest) moves it as well (TUR-152).
 fn folder_mtime(dir: &Path) -> i64 {
     let tickets = dir.join(TICKETS_DIR);
     let mut newest = [MEETING_FILE, TRANSCRIPT_FILE, NOTES_FILE]
         .iter()
         .map(|name| modified_ms(&dir.join(name)))
-        .chain(std::iter::once(modified_ms(&tickets)))
+        .chain([modified_ms(&tickets), modified_ms(dir)])
         .max()
         .unwrap_or(0);
     if let Ok(entries) = std::fs::read_dir(&tickets) {
