@@ -17,7 +17,7 @@
  */
 
 import { ListTodo, RefreshCw, Send } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { type SettingsSnapshot, sendTestTicket, setTracker, trackerSettings } from "@/ipc/client";
 import type {
   Harness,
@@ -338,10 +338,13 @@ function ServerPicker({
   }, []);
 
   // Asked on open, and again when another agent is saved (TUR-170): the list
-  // is that agent's (`claude mcp list` or `codex mcp list`).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `agent` is the trigger, not a value read here.
+  // is that agent's (`claude mcp list` or `codex mcp list`). On open the
+  // session's answer will do (TUR-171); a new agent always asks.
+  const askedFor = useRef(agent);
   useEffect(() => {
-    void check();
+    const changed = askedFor.current !== agent;
+    askedFor.current = agent;
+    void check(changed);
   }, [check, agent]);
 
   const name = value.trim();

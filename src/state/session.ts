@@ -107,8 +107,7 @@ export function sessionDetectAgents(choice: AgentChoice, fresh = false): Promise
  * change `useSavedAgent` tells Tracker about).
  */
 export function rememberAgentChoice(saved: AgentChoice, previous: AgentChoice | null): void {
-  const sameCli =
-    previous?.harness === saved.harness && previous.binaryPath === saved.binaryPath;
+  const sameCli = previous?.harness === saved.harness && previous.binaryPath === saved.binaryPath;
   useSessionStore.setState({
     agentChoice: Promise.resolve(saved),
     copyPromptFallback: Promise.resolve(saved.harness === "none"),

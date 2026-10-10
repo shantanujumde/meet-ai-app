@@ -44,8 +44,10 @@ export function useConfigProblem(section: ConfigSection, reload?: unknown): UiEr
     }
     const ask =
       snapshot !== null && shown.current.count <= 1
-        ? fromSnapshot(snapshot, (answer) => problemIn(answer, section), () =>
-            configProblem(section),
+        ? fromSnapshot(
+            snapshot,
+            (answer) => problemIn(answer, section),
+            () => configProblem(section),
           )
         : configProblem(section);
     ask

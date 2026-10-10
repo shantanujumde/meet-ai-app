@@ -1394,7 +1394,9 @@ export type meet_ai_lib_settings_snapshot_SettingsSnapshot = {
 	showInDockWhenClosed: boolean,
 	/**  `app.menu_bar_countdown` (TUR-77). */
 	menuBarCountdown: boolean,
-	/**  What in `appearance` was not valid (TUR-155), as `config_problem` says. */
+	/**  What in `app` was not valid (TUR-155), as `config_problem` says. */
+	appProblem: string | null,
+	/**  What in `appearance` was not valid. */
 	appearanceProblem: string | null,
 	/**  What in `detection` was not valid. */
 	detectionProblem: string | null,
