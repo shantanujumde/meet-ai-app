@@ -100,7 +100,7 @@ pub struct Report {
 /// ([`run_hook`]). A whole `$HOME` is one followed by the end, a slash, a
 /// quote or a space, so `$HOMEBREW_PREFIX` stays. Unchanged when there is no
 /// home.
-pub fn expand_home(command: &str, home: Option<&Path>) -> String {
+pub fn expand_home_in_command(command: &str, home: Option<&Path>) -> String {
     let Some(home) = home.and_then(Path::to_str) else {
         return command.to_owned();
     };
@@ -134,7 +134,7 @@ fn replace_home_tokens(command: &str, home: &str) -> String {
 pub fn run_hook(command: &str, meeting_dir: &Path, timeout: Duration) -> Report {
     let windows = platform::is_windows();
     let command = if windows {
-        expand_home(command, dirs::home_dir().as_deref())
+        expand_home_in_command(command, dirs::home_dir().as_deref())
     } else {
         command.to_owned()
     };

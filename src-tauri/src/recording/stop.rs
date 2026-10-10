@@ -13,7 +13,7 @@
 
 use tauri::AppHandle;
 
-use super::{Phase, Recorder, RecordingSession, Status, Ticker, emit_state, interrupted, ticker};
+use super::{Phase, Recorder, RecordingSession, Status, Ticker, emit_state, interrupted};
 use crate::error::UiError;
 use crate::live_transcript::{self, Transcription};
 
@@ -105,7 +105,7 @@ pub(super) fn close<C: Close, R>(
         .unwrap_or_else(|payload| {
             Err(format!(
                 "stopping panicked: {}",
-                ticker::panic_message(&*payload)
+                crate::worker::panic_message(&*payload)
             ))
         })
     });

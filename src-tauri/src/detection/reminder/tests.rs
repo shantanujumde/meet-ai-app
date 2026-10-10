@@ -3,7 +3,7 @@
 //! whose clock is still fake).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use ::calendar::CalendarProvider as _;
 use ::calendar::fake::FakeProvider;

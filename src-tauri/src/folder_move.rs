@@ -188,9 +188,7 @@ impl FolderGate {
     /// fields that every holder leaves consistent, so a panic elsewhere under
     /// the lock is no reason to refuse every later write.
     fn lock(&self) -> MutexGuard<'_, GateState> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::lock::lock_or_recover(&self.state)
     }
 }
 

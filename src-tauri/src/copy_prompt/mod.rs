@@ -19,7 +19,6 @@ use std::path::{Path, PathBuf};
 
 use prompts::start_work::{StartWorkInput, render_start_work_from};
 use prompts::wrap_up::{Target, WrapUpInput, render_wrap_up_from};
-use store::folder_name::{prettify_slug, split_folder_name};
 use store::meeting::Meeting;
 use store::ticket::Ticket;
 
@@ -82,13 +81,9 @@ fn start_work_in(
     let mut excerpt = String::new();
     if let Some(id) = &meeting_id {
         let dir = store::folder::meeting_dir(root, id)?;
-        if let Some(meeting) = read_meeting(&dir)? {
-            meeting_title = meeting.title();
-            repo = meeting.frontmatter.get_str("repo");
-        }
-        if meeting_title.is_none() {
-            meeting_title = Some(fallback_title(id));
-        }
+        let meeting = read_meeting(&dir)?;
+        meeting_title = Some(store::meeting::display_title(meeting.as_ref(), id));
+        repo = meeting.and_then(|meeting| meeting.frontmatter.get_str("repo"));
         if let Some(at) = found.transcript_ref() {
             let transcript = read_optional(&dir.join(store::TRANSCRIPT_FILE))?;
             excerpt = prompts::transcript_excerpt(&transcript, &at).unwrap_or_default();
@@ -127,19 +122,9 @@ fn wrap_up_in(root: &Path, meeting_id: &str) -> Result<String, UiError> {
         ));
     }
     let meeting = read_meeting(&dir)?;
-    let (day, time, _) = split_folder_name(meeting_id);
     let input = WrapUpInput {
-        title: meeting
-            .as_ref()
-            .and_then(Meeting::title)
-            .unwrap_or_else(|| fallback_title(meeting_id)),
-        date: meeting
-            .as_ref()
-            .and_then(Meeting::date)
-            .or_else(|| day.map(|day| format!("{day} {}", time.unwrap_or_default())))
-            .unwrap_or_default()
-            .trim()
-            .to_owned(),
+        title: store::meeting::display_title(meeting.as_ref(), meeting_id),
+        date: store::meeting::display_date(meeting.as_ref(), meeting_id).unwrap_or_default(),
         transcript,
         notes: store::notes::read(&dir)?,
     };
@@ -150,32 +135,16 @@ fn wrap_up_in(root: &Path, meeting_id: &str) -> Result<String, UiError> {
     Ok(render_wrap_up_from(root, &input, &target)?)
 }
 
-/// The ticket's file: in its meeting's `tickets/` folder first, then in the
-/// shared one at the root, where the Tickets screen keeps hand-made tickets.
+/// The ticket's file ([`crate::tickets::find`]). Any plain file name may be
+/// asked for; one that is not there, or not a plain name, is
+/// `ticket-not-found`.
 fn find_ticket(root: &Path, ticket_id: &str, meeting_id: Option<&str>) -> Result<PathBuf, UiError> {
-    let not_found = || {
+    crate::tickets::find(root, ticket_id, meeting_id)?.ok_or_else(|| {
         UiError::app(
             "ticket-not-found",
             format!("Could not find the file for ticket {ticket_id}."),
         )
-    };
-    // A file name, never a path: the id comes from the window.
-    let plain =
-        !ticket_id.is_empty() && !ticket_id.starts_with('.') && !ticket_id.contains(['/', '\\']);
-    if !plain {
-        return Err(not_found());
-    }
-    let file = format!("{ticket_id}.md");
-    let mut candidates = Vec::new();
-    if let Some(id) = meeting_id.filter(|id| !id.is_empty()) {
-        candidates.push(store::folder::meeting_dir(root, id)?.join(store::TICKETS_DIR));
-    }
-    candidates.push(root.join(store::TICKETS_DIR));
-    candidates
-        .into_iter()
-        .map(|dir| dir.join(&file))
-        .find(|path| path.is_file())
-        .ok_or_else(not_found)
+    })
 }
 
 /// The first number the pasted agent may use: the same global rule as a notes
@@ -197,13 +166,6 @@ fn read_optional(path: &Path) -> Result<String, UiError> {
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(String::new()),
         Err(error) => Err(error.into()),
     }
-}
-
-/// The title the meeting list shows when `meeting.md` has none.
-fn fallback_title(meeting_id: &str) -> String {
-    let (_, _, slug) = split_folder_name(meeting_id);
-    slug.map(prettify_slug)
-        .unwrap_or_else(|| meeting_id.to_owned())
 }
 
 #[cfg(test)]

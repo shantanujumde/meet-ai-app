@@ -6,8 +6,7 @@
 
 use serde::Deserialize;
 
-use super::agent_section::ConfigError;
-use super::read_section;
+use super::section::Flag;
 
 /// The default when the key is missing or not valid.
 pub const DEFAULT: bool = true;
@@ -18,30 +17,34 @@ struct RawAudioHeadphones {
     warn_no_headphones: Option<bool>,
 }
 
-/// The setting from the text of `config.jsonc`.
-pub fn parse(raw: &str) -> Result<bool, ConfigError> {
-    let section: RawAudioHeadphones = read_section(raw, "audio")
-        .map_err(ConfigError::Invalid)?
-        .unwrap_or_default();
-    Ok(section.warn_no_headphones.unwrap_or(DEFAULT))
-}
-
-fn or_default(raw: &str) -> bool {
-    parse(raw).unwrap_or_else(|error| {
-        tracing::warn!(%error, "config.jsonc's audio section is not valid; warning without headphones (the default)");
-        DEFAULT
-    })
-}
+/// `audio.warn_no_headphones`, read strictly (TUR-176: `section::Flag`).
+const FLAG: Flag<RawAudioHeadphones> = Flag {
+    section: "audio",
+    key: "warn_no_headphones",
+    default: DEFAULT,
+    pick: |section| section.warn_no_headphones,
+    when_invalid: "audio section is not valid; warning without headphones (the default)",
+};
 
 /// The setting from `~/Meetings/.app/config.jsonc`, or the default.
 pub fn warn_no_headphones() -> bool {
-    or_default(&super::raw_or_empty())
+    FLAG.get()
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::error::ConfigError;
     use super::super::file::SCHEMA;
     use super::*;
+
+    // The names these tests were written against (TUR-176 moved the code
+    // into `section::Flag`).
+    fn parse(raw: &str) -> Result<bool, ConfigError> {
+        FLAG.parse(raw)
+    }
+    fn or_default(raw: &str) -> bool {
+        FLAG.or_default(raw)
+    }
 
     #[test]
     fn missing_is_on() {

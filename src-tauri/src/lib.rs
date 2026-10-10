@@ -60,6 +60,8 @@ mod shortcut;
 mod sync;
 mod tickets;
 mod watch;
+// TUR-176: the one stoppable worker thread and panic_message.
+mod worker;
 // The menu bar is a desktop surface; the mobile targets have nothing to put an
 // item in.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

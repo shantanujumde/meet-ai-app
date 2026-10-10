@@ -12,9 +12,9 @@
 //! [`set_app`] writes only the keys its edit changed, through the
 //! comment-keeping writer in `file.rs`.
 
-use super::agent_section::ConfigError;
-use super::file::{read_in, with_section, write_in};
+use super::error::ConfigError;
 use super::keyed::{Checked, Keys};
+use super::section::{Fields, Section};
 
 /// `app` in `config.jsonc`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -27,93 +27,89 @@ pub struct AppConfig {
     pub menu_bar_countdown: bool,
 }
 
-/// `app` from the text of `config.jsonc`, key by key, with what was not
-/// valid. Empty text, or no `app` key, is all defaults.
-pub fn read_app(raw: &str) -> Checked<AppConfig> {
-    let mut keys = Keys::read(raw, "app");
-    let defaults = AppConfig::default();
-    let app = AppConfig {
-        show_in_dock_when_closed: keys
-            .get("show_in_dock_when_closed")
-            .unwrap_or(defaults.show_in_dock_when_closed),
-        menu_bar_countdown: keys
-            .get("menu_bar_countdown")
-            .unwrap_or(defaults.menu_bar_countdown),
-    };
-    keys.checked(app)
-}
+impl Section for AppConfig {
+    const NAME: &'static str = "app";
 
-/// `app` from the text of `config.jsonc`, each bad key logged and read as
-/// its default.
-pub fn parse_app(raw: &str) -> AppConfig {
-    read_app(raw).value
+    fn from_keys(keys: &mut Keys) -> Self {
+        let defaults = Self::default();
+        Self {
+            show_in_dock_when_closed: keys
+                .get("show_in_dock_when_closed")
+                .unwrap_or(defaults.show_in_dock_when_closed),
+            menu_bar_countdown: keys
+                .get("menu_bar_countdown")
+                .unwrap_or(defaults.menu_bar_countdown),
+        }
+    }
+
+    fn fields(&self, before: Option<&Self>) -> Fields {
+        let mut fields = Vec::new();
+        let changed = |pick: fn(&Self) -> bool| before.is_none_or(|old| pick(old) != pick(self));
+        if changed(|app| app.show_in_dock_when_closed) {
+            fields.push((
+                "show_in_dock_when_closed",
+                self.show_in_dock_when_closed.into(),
+            ));
+        }
+        if changed(|app| app.menu_bar_countdown) {
+            fields.push(("menu_bar_countdown", self.menu_bar_countdown.into()));
+        }
+        fields
+    }
 }
 
 /// `app` from `~/Meetings/.app/config.jsonc`, each bad key read as its
 /// default (logged). Read on every window close, so an edit by hand needs no
 /// restart.
 pub fn app() -> AppConfig {
-    parse_app(&super::raw_or_empty())
+    AppConfig::current()
 }
 
 /// [`app`], with what was not valid, for the Settings screen.
 pub fn app_checked() -> Checked<AppConfig> {
-    read_app(&super::raw_or_empty())
-}
-
-/// `raw` with its `app` section set to `app`, comments and other keys kept.
-#[cfg(test)]
-pub fn with_app(raw: &str, app: &AppConfig) -> Result<String, ConfigError> {
-    with_section(raw, "app", fields(app, None))
-}
-
-/// The keys of `app` to write: all of them, or only those that differ from
-/// `before`.
-fn fields(
-    app: &AppConfig,
-    before: Option<&AppConfig>,
-) -> Vec<(&'static str, jsonc_parser::cst::CstInputValue)> {
-    let mut fields = Vec::new();
-    let changed = |pick: fn(&AppConfig) -> bool| before.is_none_or(|old| pick(old) != pick(app));
-    if changed(|app| app.show_in_dock_when_closed) {
-        fields.push((
-            "show_in_dock_when_closed",
-            app.show_in_dock_when_closed.into(),
-        ));
-    }
-    if changed(|app| app.menu_bar_countdown) {
-        fields.push(("menu_bar_countdown", app.menu_bar_countdown.into()));
-    }
-    fields
+    AppConfig::current_checked()
 }
 
 /// Change the `app` section of `~/Meetings/.app/config.jsonc` with `edit`,
-/// keeping everything else, and return it as read back from disk.
+/// keeping everything else, and return it as read back from disk. The
+/// section `edit` starts from is read from the file under the write lock,
+/// and only the keys `edit` changed are written: a bad key it left alone
+/// stays as the user wrote it.
 pub fn set_app(edit: impl FnOnce(&mut AppConfig)) -> Result<AppConfig, ConfigError> {
-    let dir = super::app_dir().map_err(ConfigError::Root)?;
-    set_app_in(&dir, edit)
-}
-
-/// [`set_app`] for the config folder `dir`. The section `edit` starts from is
-/// read from the file under the write lock, and only the keys `edit` changed
-/// are written: a bad key it left alone stays as the user wrote it.
-fn set_app_in(
-    dir: &std::path::Path,
-    edit: impl FnOnce(&mut AppConfig),
-) -> Result<AppConfig, ConfigError> {
-    write_in(dir, |raw| {
-        let before = parse_app(raw);
-        let mut app = before;
+    AppConfig::update(|before| {
+        let mut app = *before;
         edit(&mut app);
-        with_section(raw, "app", fields(&app, Some(&before)))
-    })?;
-    Ok(parse_app(&read_in(dir)?))
+        Ok::<_, ConfigError>(app)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::file::SCHEMA;
+    use super::super::file::{read_in, write_in};
     use super::*;
+
+    // The names these tests were written against (TUR-176 moved the code
+    // into `Section`).
+    fn read_app(raw: &str) -> Checked<AppConfig> {
+        AppConfig::read(raw)
+    }
+    fn parse_app(raw: &str) -> AppConfig {
+        AppConfig::parse(raw)
+    }
+    fn with_app(raw: &str, app: &AppConfig) -> Result<String, ConfigError> {
+        AppConfig::with(raw, app)
+    }
+    fn set_app_in(
+        dir: &std::path::Path,
+        edit: impl FnOnce(&mut AppConfig),
+    ) -> Result<AppConfig, ConfigError> {
+        AppConfig::update_in(dir, |before| {
+            let mut app = *before;
+            edit(&mut app);
+            Ok::<_, ConfigError>(app)
+        })
+    }
 
     #[test]
     fn no_section_is_the_dock_icon_going_with_the_window() {

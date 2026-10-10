@@ -441,7 +441,7 @@ fn tick_session(session: &mut RecordingSession) -> Result<(), String> {
         |payload| {
             Err(format!(
                 "the recorder's checkpoint panicked: {}",
-                ticker::panic_message(&*payload)
+                crate::worker::panic_message(&*payload)
             ))
         },
     )

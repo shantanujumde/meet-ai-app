@@ -35,10 +35,9 @@ use serde::Deserialize;
 
 use jsonc_parser::cst::CstInputValue;
 
-use super::agent_section::ConfigError;
+use super::error::ConfigError;
 use super::file::{read_in, with_section, write_in};
 use super::keyed::Keys;
-use super::read_section;
 
 /// One calendar source (SPEC L13, §2.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -248,9 +247,7 @@ fn read_calendar(
     calendar_app: bool,
     on_bad: OnBadValue,
 ) -> Result<CalendarConfig, ConfigError> {
-    let calendar: RawCalendar = read_section(raw, "calendar")
-        .map_err(ConfigError::Invalid)?
-        .unwrap_or_default();
+    let calendar: RawCalendar = super::section::strict(raw, "calendar")?;
     let defaults = CalendarConfig::defaults_for(calendar_app);
     let mut providers = match calendar.providers {
         None => defaults.providers,

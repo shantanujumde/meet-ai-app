@@ -74,6 +74,9 @@ mod file;
 mod file_tests;
 // TUR-155: decoding a section key by key.
 mod keyed;
+// TUR-176: the one ConfigError, and the reader/writer every section shares.
+mod error;
+mod section;
 // TUR-171: one read of config.jsonc for a batch of readers (Settings).
 mod once;
 pub use once::read_once;
@@ -88,7 +91,6 @@ mod appearance_section;
 #[cfg(test)]
 mod transcription_tests;
 
-pub use agent_section::ConfigError;
 pub use app_section::app_checked;
 pub use app_section::{AppConfig, app, set_app};
 pub use appearance_section::appearance_checked;
@@ -104,6 +106,7 @@ pub(crate) use audio_section::policy_at as retention_policy_at;
 pub use detection_section::{
     MAX_ATTENDEES, MAX_REMIND_BEFORE_MINUTES, MIN_ATTENDEES, detection_checked, update_detection,
 };
+pub use error::ConfigError;
 pub use keyed::Checked;
 // TUR-28 (calendar refresh loop) uses these.
 #[allow(unused_imports)]
@@ -115,15 +118,12 @@ pub use calendar_section::set_providers as set_calendar_providers;
 // TUR-78: Settings → Notifications writes the section; the reminder reads the lead time.
 pub use detection_section::{DEFAULT_REMIND_BEFORE_MINUTES, DetectionConfig};
 // TUR-143: the "Never detect" list, from a prompt and from Settings → Notifications.
-pub use detection_never::{add_never_detect, never_detect, set_never_detect};
-// TUR-9 (Setup screens) adds the IPC commands that use these.
-#[allow(unused_imports)]
 pub use agent_section::{AgentConfig, Harness, TicketsConfig};
+pub use detection_never::{add_never_detect, never_detect, set_never_detect};
 pub use file::default_repo;
 // TUR-113: tickets are sent on their own only to a tracker the user saved.
 pub use file::tickets_chosen;
-#[allow(unused_imports)] // TUR-9, same
-pub use file::{agent, set_agent, set_tickets, tickets};
+pub use file::{agent, set_tickets, tickets};
 pub use file::{set_transcription, set_transcription_language};
 // TUR-90: the Setup screen's save merges under the config write lock.
 pub use file::update_agent;
@@ -235,13 +235,7 @@ fn read_section<T: DeserializeOwned>(raw: &str, name: &str) -> Result<Option<T>,
 /// reports that, and it reaches the UI through the existing `UiError`
 /// conversion (see `error.rs`), not through this function.
 pub fn transcription() -> Transcription {
-    let Some(path) = path() else {
-        return Transcription::default();
-    };
-    let Ok(raw) = once::read(&path) else {
-        return Transcription::default();
-    };
-    parse(&raw)
+    parse(&raw_or_empty())
 }
 
 /// [`transcription`], with what was not valid, for the engine picker.

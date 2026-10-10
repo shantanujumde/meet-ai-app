@@ -4,8 +4,13 @@
 use std::fs;
 
 use super::FILE;
-use super::app_section::parse_app;
+use super::app_section::AppConfig;
 use super::file::{SCHEMA, SCHEMA_FILE, read_in, with_section, write_in};
+use super::section::Section as _;
+
+fn parse_app(raw: &str) -> AppConfig {
+    AppConfig::parse(raw)
+}
 
 fn save_dock_on(dir: &std::path::Path) -> Result<(), super::ConfigError> {
     write_in(dir, |raw| {

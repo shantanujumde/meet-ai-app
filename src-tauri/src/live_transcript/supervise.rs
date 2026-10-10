@@ -170,11 +170,7 @@ struct Track<'a> {
 /// meeting is on — not discovered when Stop joins a dead thread.
 pub(super) fn guarded<T>(work: impl FnOnce() -> Result<T, stt::Error>) -> Result<T, stt::Error> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|payload| {
-        let what = payload
-            .downcast_ref::<&str>()
-            .map(|s| (*s).to_string())
-            .or_else(|| payload.downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "unknown error".to_string());
+        let what = crate::worker::panic_message(&*payload);
         Err(stt::Error::Engine(format!(
             "the speech engine crashed ({what})"
         )))

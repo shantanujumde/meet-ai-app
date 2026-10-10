@@ -38,8 +38,6 @@
 //! `calendar::fake::FakeProvider`.
 
 use std::collections::HashMap;
-use std::sync::mpsc;
-use std::thread::JoinHandle;
 
 use ::calendar::{Error, Event};
 use chrono::{DateTime, Duration, Utc};
@@ -280,8 +278,7 @@ pub fn due_window(start: DateTime<Utc>, lead: Duration) -> (DateTime<Utc>, DateT
 
 /// A running reminder loop. Dropping it stops the loop and waits for it.
 pub struct ReminderLoop {
-    stop: Option<mpsc::Sender<()>>,
-    thread: Option<JoinHandle<()>>,
+    worker: Option<crate::worker::Worker<()>>,
 }
 
 impl ReminderLoop {
@@ -293,9 +290,8 @@ impl ReminderLoop {
     }
 
     fn shutdown(&mut self) {
-        drop(self.stop.take());
-        if let Some(thread) = self.thread.take()
-            && thread.join().is_err()
+        if let Some(worker) = self.worker.take()
+            && worker.stop().is_err()
         {
             tracing::error!("the meeting reminder thread panicked");
         }
@@ -333,32 +329,25 @@ pub fn spawn(
     recording: impl Fn() -> bool + Send + 'static,
     mut fire: impl FnMut(&Event) -> Fired + Send + 'static,
 ) -> std::io::Result<ReminderLoop> {
-    let (stop, stopped) = mpsc::channel::<()>();
-    let thread = std::thread::Builder::new()
-        .name("meet-ai-reminders".to_string())
-        .spawn(move || {
-            loop {
-                if let Some(settings) = settings() {
-                    reminders.configure(settings);
-                    reminders.set_recording(recording());
-                    for event in reminders.tick_on(&clock, &calendar) {
-                        if fire(&event) == Fired::Held {
-                            reminders.hold(&event);
-                        }
+    let worker = crate::worker::spawn("meet-ai-reminders", move |stop| {
+        loop {
+            if let Some(settings) = settings() {
+                reminders.configure(settings);
+                reminders.set_recording(recording());
+                for event in reminders.tick_on(&clock, &calendar) {
+                    if fire(&event) == Fired::Held {
+                        reminders.hold(&event);
                     }
                 }
-                // Only a timeout keeps going: a stop, or the handle dropped.
-                if !matches!(
-                    stopped.recv_timeout(interval),
-                    Err(mpsc::RecvTimeoutError::Timeout)
-                ) {
-                    break;
-                }
             }
-        })?;
+            // Only a timeout keeps going: a stop, or the handle dropped.
+            if !stop.wait(interval) {
+                break;
+            }
+        }
+    })?;
     Ok(ReminderLoop {
-        stop: Some(stop),
-        thread: Some(thread),
+        worker: Some(worker),
     })
 }
 

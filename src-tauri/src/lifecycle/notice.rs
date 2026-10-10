@@ -59,8 +59,6 @@ pub fn write_in(dir: &Path, state: &AppState) -> Result<(), UiError> {
 /// The flag is set before the notification, so a failing notification is
 /// never retried on every close.
 pub fn show_once(app: &tauri::AppHandle) {
-    use tauri_plugin_notification::NotificationExt as _;
-
     let dir = match path() {
         Ok(path) => path.parent().map(Path::to_path_buf).unwrap_or_default(),
         Err(error) => {
@@ -80,15 +78,7 @@ pub fn show_once(app: &tauri::AppHandle) {
         tracing::warn!(message = %error.message, "could not save the still-running flag; not showing the notice");
         return;
     }
-    if let Err(error) = app
-        .notification()
-        .builder()
-        .title("meet-ai")
-        .body(crate::platform::still_running_notice())
-        .show()
-    {
-        tracing::warn!(%error, "could not show the still-running notice");
-    }
+    crate::notify::post(app, "meet-ai", crate::platform::still_running_notice());
 }
 
 #[cfg(test)]

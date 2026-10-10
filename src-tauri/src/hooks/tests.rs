@@ -97,12 +97,21 @@ fn a_hook_that_cannot_start_is_a_failure_not_a_panic() {
 #[test]
 fn home_is_expanded() {
     let home = Some(Path::new("/home/u"));
-    assert_eq!(expand_home("~/bin/x.sh", home), "/home/u/bin/x.sh");
-    assert_eq!(expand_home("$HOME/x $HOME", home), "/home/u/x /home/u");
-    assert_eq!(expand_home("\"$HOME\\x\"", home), "\"/home/u\\x\"");
-    assert_eq!(expand_home("~other/x", home), "~other/x");
-    assert_eq!(expand_home("echo ~/x", home), "echo ~/x");
-    assert_eq!(expand_home("~/x", None), "~/x");
+    assert_eq!(
+        expand_home_in_command("~/bin/x.sh", home),
+        "/home/u/bin/x.sh"
+    );
+    assert_eq!(
+        expand_home_in_command("$HOME/x $HOME", home),
+        "/home/u/x /home/u"
+    );
+    assert_eq!(
+        expand_home_in_command("\"$HOME\\x\"", home),
+        "\"/home/u\\x\""
+    );
+    assert_eq!(expand_home_in_command("~other/x", home), "~other/x");
+    assert_eq!(expand_home_in_command("echo ~/x", home), "echo ~/x");
+    assert_eq!(expand_home_in_command("~/x", None), "~/x");
 }
 
 /// TUR-167: only a whole `$HOME` is the home folder.
@@ -110,11 +119,11 @@ fn home_is_expanded() {
 fn homebrew_prefix_is_not_home() {
     let home = Some(Path::new("/Users/me"));
     assert_eq!(
-        expand_home("$HOMEBREW_PREFIX/bin/x", home),
+        expand_home_in_command("$HOMEBREW_PREFIX/bin/x", home),
         "$HOMEBREW_PREFIX/bin/x"
     );
     assert_eq!(
-        expand_home("$HOMEDIR $HOME_X $HOME", home),
+        expand_home_in_command("$HOMEDIR $HOME_X $HOME", home),
         "$HOMEDIR $HOME_X /Users/me"
     );
 }
