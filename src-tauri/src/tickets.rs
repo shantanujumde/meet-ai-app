@@ -407,9 +407,7 @@ fn create_in(root: &Path, title: &str, body: &str) -> Result<TicketSummary, UiEr
     fs::create_dir_all(&dir)?;
 
     // Across every meeting, and past any number a notes run keeps retired.
-    let mut next = agent_notes::highest_ticket_number(root)?
-        .max(agent_notes::highest_recorded_ticket_number(root)?)
-        .saturating_add(1);
+    let mut next = agent_notes::next_ticket_number(root)?;
 
     for _ in 0..CREATE_ATTEMPTS {
         let id = ticket::format_id(next);

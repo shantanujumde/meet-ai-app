@@ -129,6 +129,28 @@ fn wrap_up_is_the_clipboard_prompt_with_the_next_free_ticket_number() {
     assert!(out.contains("check index size"), "{out}");
     assert!(out.contains("Unrelated chat much later"), "{out}");
 }
+#[test]
+fn wrap_up_numbers_past_every_meeting_and_every_retired_number() {
+    let root_dir = temp_root("wrap-global");
+    let root = root_dir.path();
+    meeting(root, None);
+    // Another meeting holds TICK-0004 and still records a deleted TICK-0011.
+    let other = root.join("2026-09-02-0900-planning");
+    ticket(
+        &other.join(store::TICKETS_DIR),
+        "TICK-0004",
+        Some("2026-09-02-0900-planning"),
+    );
+    fs::write(
+        other.join(store::MEETING_FILE),
+        "---\nid: 2026-09-02-0900-planning\ntitle: Planning\nagent_tickets:\n  TICK-0011: abc\n---\n",
+    )
+    .expect("meeting.md");
+
+    let out = wrap_up_in(root, MEETING).expect("render");
+    assert!(out.contains("TICK-0012.md"), "{out}");
+    assert!(!out.contains("TICK-0001.md"), "{out}");
+}
 
 #[test]
 fn wrap_up_without_meeting_md_dates_from_the_folder_name() {
