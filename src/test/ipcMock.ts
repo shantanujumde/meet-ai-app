@@ -92,6 +92,7 @@ const APPLE_READY: EngineChoices = {
     { code: "hi", name: "Hindi" },
     { code: "mr", name: "Marathi" },
   ],
+  configProblem: null,
 };
 
 const CANCELLED: NotesRunFailure = {
@@ -338,6 +339,8 @@ export const ipc = {
     glass: true,
   })),
   setAppearance: vi.fn<typeof Client.setAppearance>(async (appearance) => appearance),
+  // TUR-155: every config.jsonc section valid.
+  configProblem: vi.fn<typeof Client.configProblem>(async () => null),
   // TUR-58: meet-ai does not start at login until the user says so.
   startAtLogin: vi.fn<typeof Client.startAtLogin>(async () => false),
   setStartAtLogin: vi.fn<typeof Client.setStartAtLogin>(async (enabled) => enabled),

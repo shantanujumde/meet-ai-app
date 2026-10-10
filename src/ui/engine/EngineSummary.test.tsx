@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, test, vi } from "vitest";
 import type { EngineChoices, ModelView } from "@/ipc/types";
 import { ipc } from "@/test/ipcMock";
+import { CONFIG_PROBLEM_LEAD } from "../settings/useConfigProblem";
 import { EngineSummary, NEXT_RECORDING_NOTE } from "./EngineSummary";
 import { WHISPER_ONLY_NOTE } from "./ModelList";
 
@@ -44,6 +45,7 @@ function choices(overrides: Partial<EngineChoices> = {}): EngineChoices {
       { code: "hi", name: "Hindi" },
       { code: "mr", name: "Marathi" },
     ],
+    configProblem: null,
     ...overrides,
   };
 }
@@ -169,6 +171,20 @@ describe("EngineSummary: the engine picker", () => {
     expect(engine(/Apple \(built in\)/)).toBeDisabled();
     expect(engine(/Whisper/)).toBeDisabled();
     expect(screen.getByText("Checking…")).toBeInTheDocument();
+  });
+
+  // TUR-155: `"engine": "whispr"` reads as auto and says why, rather than
+  // the picker snapping to Automatic with only a log line.
+  test("a transcription value config.jsonc got wrong is named under the heading", async () => {
+    engineChoices.mockResolvedValue(
+      choices({ configProblem: 'transcription.engine "whispr" is not valid' }),
+    );
+    await renderCard();
+
+    expect(engine(/Automatic/)).toBeChecked();
+    expect(screen.getByRole("alert").textContent).toBe(
+      `${CONFIG_PROBLEM_LEAD} transcription.engine "whispr" is not valid`,
+    );
   });
 
   test("shows the saved choice and what Automatic does on this Mac", async () => {

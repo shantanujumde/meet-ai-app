@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import { ipc } from "@/test/ipcMock";
 import {
+  ATTENDEE_COUNTS,
   ATTENDEES_LABEL,
   AUDIO_LABEL,
   CALL_END_LABEL,
@@ -13,6 +14,7 @@ import {
   REMIND_LABEL,
   SILENCE_LABEL,
 } from "./NotificationSettings";
+import { CONFIG_PROBLEM_LEAD } from "./settings/useConfigProblem";
 
 vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
@@ -165,5 +167,40 @@ describe("NotificationSettings", () => {
       fireEvent.click(screen.getByRole("button", { name: "Send a test reminder" }));
     });
     expect(screen.getByText("Not while recording.")).toBeTruthy();
+  });
+
+  // TUR-155: a hand-edited min_attendees no longer blocks the card.
+  test("the people choices are Rust's range, plus a saved value outside it", async () => {
+    expect(ATTENDEE_COUNTS).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    ipc.notificationSettings.mockResolvedValueOnce({ ...DEFAULTS, minAttendees: 12 });
+    await show();
+    expect(select(ATTENDEES_LABEL).value).toBe("12");
+    const options = [...select(ATTENDEES_LABEL).options];
+    expect(options.at(-1)?.textContent).toBe("12 people");
+    expect(options.map((option) => option.value)).toContain("1");
+  });
+
+  test("a toggle beside a hand-edited value sends that value back unchanged", async () => {
+    ipc.notificationSettings.mockResolvedValueOnce({ ...DEFAULTS, minAttendees: 10 });
+    await show();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("switch", { name: PROCESSES_LABEL }));
+    });
+    expect(ipc.setNotificationSettings).toHaveBeenLastCalledWith({
+      ...DEFAULTS,
+      minAttendees: 10,
+      processes: false,
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  test("a value config.jsonc got wrong is named under the card", async () => {
+    ipc.configProblem.mockResolvedValue("detection.min_attendees 20 is outside 1 to 10; using 10");
+    await show();
+    expect(ipc.configProblem).toHaveBeenCalledWith("detection");
+    expect(screen.getByRole("alert").textContent).toBe(
+      `${CONFIG_PROBLEM_LEAD} detection.min_attendees 20 is outside 1 to 10; using 10`,
+    );
+    ipc.configProblem.mockResolvedValue(null);
   });
 });

@@ -10,7 +10,9 @@
  * * "Ask when a meeting app is running" is `detection.processes`.
  * * "Ask when my mic and speakers are both in use" is
  *   `detection.audio_activity`.
- * * "Only for meetings with at least N people" is `detection.min_attendees`.
+ * * "Only for meetings with at least N people" is `detection.min_attendees`,
+ *   from Rust's `MIN_ATTENDEES` to `MAX_ATTENDEES` (a value set by hand
+ *   outside them is read as the nearest end, and shown as it is).
  * * "Ask to record when a call starts" is `detection.call_start` (TUR-143):
  *   a call app or a browser using the mic for 15 seconds, named in the
  *   prompt. The "Never detect" list under it is `detection.never_detect`
@@ -23,7 +25,9 @@
  * A change saves the whole section through Rust's comment-keeping writer and
  * shows what was saved; the reminder and detection loops pick it up on their
  * next tick, with no restart. A failed save keeps the old values and says
- * why. When the OS is blocking meet-ai's notifications, a line says so and
+ * why. A value in config.jsonc Rust could not use is named under the card
+ * (TUR-155); the card still saves, since only the changed key is written.
+ * When the OS is blocking meet-ai's notifications, a line says so and
  * opens the OS page that allows them. "Send a test reminder" shows the
  * reminder for a fake meeting, which never records.
  */
@@ -41,6 +45,7 @@ import {
   Users,
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
+import { MAX_ATTENDEES, MIN_ATTENDEES } from "@/ipc/bindings";
 import {
   notificationSettings,
   openNotificationSettings,
@@ -56,6 +61,7 @@ import { NeverDetectList } from "./NeverDetectList";
 import { Button } from "./primitives";
 import { Switch } from "./SettingSwitch";
 import { SETTINGS_SELECT, SettingsRow, SettingsSection } from "./settings/SettingsSection";
+import { ConfigProblemNote, useConfigProblem } from "./settings/useConfigProblem";
 import { ErrorState } from "./states";
 
 export const REMIND_LABEL = "Remind me before meetings";
@@ -70,8 +76,21 @@ export const SILENCE_LABEL = "Stop after 10 min of silence";
 /** The lead times the card offers, in minutes. */
 export const LEAD_MINUTES = [1, 2, 5, 10];
 
-/** "Only for meetings with at least N people": 1 to 10. */
-export const ATTENDEE_COUNTS = Array.from({ length: 10 }, (_, i) => i + 1);
+/** "Only for meetings with at least N people": Rust's one range, 1 to 10. */
+export const ATTENDEE_COUNTS = Array.from(
+  { length: MAX_ATTENDEES - MIN_ATTENDEES + 1 },
+  (_, i) => i + MIN_ATTENDEES,
+);
+
+export function attendeesLabel(count: number): string {
+  return `${count} ${count === 1 ? "person" : "people"}`;
+}
+
+/** `choices`, plus `saved` in order when it is not one of them. */
+export function withSaved(choices: number[], saved: number | undefined): number[] {
+  if (saved === undefined || choices.includes(saved)) return choices;
+  return [...choices, saved].sort((a, b) => a - b);
+}
 
 export function leadLabel(minutes: number): string {
   if (minutes === 0) return "At the start";
@@ -84,6 +103,7 @@ export function NotificationSettings() {
   const [error, setError] = useState<UiError | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [testNote, setTestNote] = useState<string | null>(null);
+  const problem = useConfigProblem("detection", settings);
 
   useEffect(() => {
     let live = true;
@@ -129,13 +149,14 @@ export function NotificationSettings() {
   };
 
   const disabled = busy || settings === null;
-  const leadChoices =
-    settings && !LEAD_MINUTES.includes(settings.remindBeforeMinutes)
-      ? [...LEAD_MINUTES, settings.remindBeforeMinutes].sort((a, b) => a - b)
-      : LEAD_MINUTES;
+  const leadChoices = withSaved(LEAD_MINUTES, settings?.remindBeforeMinutes);
+  const attendeeChoices = withSaved(ATTENDEE_COUNTS, settings?.minAttendees);
 
   return (
-    <SettingsSection title="Notifications" after={error ? <ErrorState error={error} /> : null}>
+    <SettingsSection
+      title="Notifications"
+      after={error ? <ErrorState error={error} /> : <ConfigProblemNote problem={problem} />}
+    >
       <SwitchRow
         icon={Bell}
         label={REMIND_LABEL}
@@ -191,10 +212,7 @@ export function NotificationSettings() {
         detail="Calendar events with fewer people invited never remind."
         value={settings?.minAttendees ?? 2}
         disabled={disabled}
-        options={ATTENDEE_COUNTS.map((count) => ({
-          value: count,
-          label: `${count} ${count === 1 ? "person" : "people"}`,
-        }))}
+        options={attendeeChoices.map((count) => ({ value: count, label: attendeesLabel(count) }))}
         onChange={(minAttendees) => void save({ minAttendees })}
       />
       <SwitchRow

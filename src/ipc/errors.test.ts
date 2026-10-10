@@ -51,6 +51,15 @@ describe("the agreed error copy mapping", () => {
   });
 });
 
+describe("a bad value in config.jsonc (TUR-155)", () => {
+  test("has its own copy, not the generic fallback", () => {
+    const copy = copyFor(error("app", "invalid-config"));
+    expect(copy.headline).toBe("A setting in config.jsonc is not valid");
+    expect(copy.remedy).toEqual({ action: "copy-details" });
+    expect(copyFor(error("app", "invalid-setting")).headline).toBe("That value can't be saved");
+  });
+});
+
 describe("how the mapping discriminates", () => {
   test("the two enums do not collide on a shared variant name", () => {
     // Both enums could plausibly grow a variant called `download` or `engine`.

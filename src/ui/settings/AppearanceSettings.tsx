@@ -2,7 +2,8 @@
  * Settings → Appearance (TUR-102): Light / Dark / System as picture tiles,
  * and the switch for the see-through glass look. Both are saved in
  * `config.jsonc` (`appearance.theme`, `appearance.glass`) and change the
- * window at once, through the appearance store.
+ * window at once, through the appearance store. A value in config.jsonc
+ * Rust could not use is named under the card (TUR-155).
  */
 
 import { Sparkles, SunMoon } from "lucide-react";
@@ -15,6 +16,7 @@ import { Switch } from "../SettingSwitch";
 import { InlineError } from "../states";
 import { AppearanceTiles } from "./AppearanceTiles";
 import { SettingsSection } from "./SettingsSection";
+import { ConfigProblemNote, useConfigProblem } from "./useConfigProblem";
 
 export const GLASS_SETTING_LABEL = "See-through glass";
 
@@ -27,9 +29,13 @@ export function AppearanceSettings() {
   const themeLabel = useId();
   const glassId = useId();
   const busy = !loaded || saving;
+  const problem = useConfigProblem("appearance", appearance);
 
   return (
-    <SettingsSection title="Appearance" after={error ? <InlineError error={error} /> : null}>
+    <SettingsSection
+      title="Appearance"
+      after={error ? <InlineError error={error} /> : <ConfigProblemNote problem={problem} />}
+    >
       <Row stacked className="gap-5">
         <span className="flex min-w-0 items-center gap-5">
           <IconSquare icon={SunMoon} />

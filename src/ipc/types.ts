@@ -195,6 +195,8 @@ export type EngineChoices = {
   spokenLanguage: string;
   /** What the spoken-language picker offers besides "auto", in order: Hinglish, then by name. */
   spokenLanguages: SpokenLanguageOption[];
+  /** What in `transcription` was not valid and is shown as its default (TUR-155). */
+  configProblem: string | null;
 };
 
 /** One language whisper can be told the audio is in. */
