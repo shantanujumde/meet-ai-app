@@ -154,7 +154,11 @@ pub fn choices() -> EngineChoices {
     let environment = super::discover(super::DEFAULT_LOCALE, &transcription.model);
     EngineChoices {
         config_problem: problem,
-        ..view(&transcription, registry::options(&environment), &environment)
+        ..view(
+            &transcription,
+            registry::options(&environment),
+            &environment,
+        )
     }
 }
 
