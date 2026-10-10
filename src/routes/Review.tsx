@@ -23,6 +23,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useCliFound } from "@/hooks/useCliFound";
+import { useIpcValue } from "@/hooks/useIpcValue";
 import { useNotesRun } from "@/hooks/useNotesRun";
 import { readMeeting, renameMeeting, revealMeeting, wrapUpPrompt } from "@/ipc/client";
 import type { MeetingDetail, MeetingList, TranscriptLine, UiError } from "@/ipc/types";
@@ -86,21 +87,8 @@ function MeetingReview({ id }: { id: string }) {
   // is an extra and the meeting reads fine without it.
   // Null until asked, so the notes' start button does not flash up before
   // the answer says Copy prompt stands in for it.
-  const [harnessIsNone, setHarnessIsNone] = useState<boolean | null>(null);
-  useEffect(() => {
-    let current = true;
-    sessionCopyPromptFallback().then(
-      (answer) => {
-        if (current) setHarnessIsNone(answer);
-      },
-      () => {
-        if (current) setHarnessIsNone(false);
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, []);
+  const fallback = useIpcValue(sessionCopyPromptFallback);
+  const harnessIsNone = fallback.error ? false : fallback.value;
   // With an agent set up, Copy prompt also stands in when its CLI is missing.
   const cliFound = useCliFound(harnessIsNone === false);
   const copyPrompt = showsCopyPrompt({ harnessIsNone: harnessIsNone === true, cliFound });

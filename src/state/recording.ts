@@ -17,9 +17,11 @@
 import { create } from "zustand";
 import {
   isPaused,
+  joinRemindedMeeting,
   onRecordingState,
   pauseRecording,
   recordingStatus,
+  recordRemindedMeeting,
   resumeRecording,
   stopRecording,
   toggleRecording,
@@ -50,6 +52,14 @@ type RecordingStore = {
   togglePause: () => Promise<void>;
   /** Stop a live or paused recording: the overlay's Stop (TUR-146). */
   stop: () => Promise<void>;
+  /**
+   * Record from a reminder: named after the event `eventId` (joining it
+   * first when `join`), or a plain start without one. Only ever starts: with
+   * a recording running it does nothing, where `toggle` would stop it.
+   */
+  recordReminded: (eventId: string | null, join: boolean) => Promise<void>;
+  /** Open a reminded meeting's link; a refusal shows where the record button's would. */
+  joinReminded: (eventId: string) => Promise<void>;
   clearError: () => void;
   /** Apply a state pushed from Rust. Not for components to call. */
   applyFromBackend: (status: RecordingStatus) => void;
@@ -98,6 +108,24 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
     return request(stopRecording);
   },
 
+  recordReminded(eventId, join) {
+    if (get().status.phase !== "idle") return Promise.resolve();
+    if (eventId === null) return request(toggleRecording);
+    // Answers with nothing to apply: the state events bring the recording.
+    return request(async () => {
+      await recordRemindedMeeting(eventId, join);
+      return null;
+    });
+  },
+
+  async joinReminded(eventId) {
+    try {
+      await joinRemindedMeeting(eventId);
+    } catch (thrown) {
+      set({ error: toUiError(thrown) });
+    }
+  },
+
   clearError() {
     const { error } = get();
     if (error) rememberDismissed(error);
@@ -114,13 +142,14 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
  * One recorder command from this window: never two at once (the buttons
  * disable while `busy`), and its answer or its refusal shown the same way.
  */
-async function request(command: () => Promise<RecordingStatus>): Promise<void> {
+async function request(command: () => Promise<RecordingStatus | null>): Promise<void> {
   const { busy } = useRecordingStore.getState();
   if (busy) return;
   useRecordingStore.setState({ busy: true, error: null });
   const asked = heard;
   try {
-    useRecordingStore.setState(answer(await command(), asked));
+    const status = await command();
+    if (status) useRecordingStore.setState(answer(status, asked));
   } catch (thrown) {
     useRecordingStore.setState({ error: toUiError(thrown) });
   } finally {

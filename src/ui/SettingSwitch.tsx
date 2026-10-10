@@ -12,8 +12,8 @@
  * switches; off is the plain grey control fill.
  */
 
-import { type ReactNode, useEffect, useId, useState } from "react";
-import { toUiError, type UiError } from "@/ipc/types";
+import { type ReactNode, useId } from "react";
+import { useSavedSetting } from "@/hooks/useIpcValue";
 import { cn } from "@/lib/cn";
 import type { LucideIcon } from "./icons";
 import { Row, RowLabel } from "./primitives";
@@ -83,36 +83,8 @@ export function SettingSwitch({
   load: () => Promise<boolean>;
   save: (on: boolean) => Promise<boolean>;
 }) {
-  const [on, setOn] = useState<boolean | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<UiError | null>(null);
+  const { value: on, busy, error, change } = useSavedSetting(load, save);
   const id = useId();
-
-  useEffect(() => {
-    let live = true;
-    load()
-      .then((saved) => {
-        if (live) setOn(saved);
-      })
-      .catch((thrown: unknown) => {
-        if (live) setError(toUiError(thrown));
-      });
-    return () => {
-      live = false;
-    };
-  }, [load]);
-
-  const change = async (next: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      setOn(await save(next));
-    } catch (thrown) {
-      setError(toUiError(thrown));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <>

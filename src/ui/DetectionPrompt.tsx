@@ -31,13 +31,7 @@
 import { Circle, Video, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import {
-  joinRemindedMeeting,
-  onDetectionPrompt,
-  type DetectionPrompt as Prompt,
-  recordRemindedMeeting,
-} from "@/ipc/client";
-import { toUiError } from "@/ipc/types";
+import { onDetectionPrompt, type DetectionPrompt as Prompt } from "@/ipc/client";
 import { briefPath, isOnboardingPath } from "@/lib/routes";
 import { useRecordingStore } from "@/state/recording";
 import { IconSquare } from "./icons";
@@ -47,6 +41,8 @@ export function DetectionPrompt() {
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const phase = useRecordingStore((state) => state.status.phase);
   const busy = useRecordingStore((state) => state.busy);
+  const recordReminded = useRecordingStore((state) => state.recordReminded);
+  const joinReminded = useRecordingStore((state) => state.joinReminded);
   const navigate = useNavigate();
   // Onboarding owns the whole window, the same as the shell's record control.
   const onboarding = isOnboardingPath(useLocation().pathname);
@@ -71,21 +67,12 @@ export function DetectionPrompt() {
   const record = () => {
     setPrompt(null);
     if (test) return;
-    // Re-read at the click, not the render: `toggle` stops a running
-    // recording, and Record must only ever start one.
-    const recorder = useRecordingStore.getState();
-    if (recorder.status.phase !== "idle") return;
-    if (eventId === null) {
-      void recorder.toggle();
-      return;
-    }
     void recordReminded(eventId, false);
   };
 
   const joinAndRecord = () => {
     setPrompt(null);
     if (test || eventId === null) return;
-    if (useRecordingStore.getState().status.phase !== "idle") return;
     void recordReminded(eventId, true);
   };
 
@@ -95,9 +82,7 @@ export function DetectionPrompt() {
       return;
     }
     // Joining is not an answer to "record?": the banner stays.
-    joinRemindedMeeting(eventId).catch((thrown: unknown) =>
-      useRecordingStore.setState({ error: toUiError(thrown) }),
-    );
+    void joinReminded(eventId);
   };
 
   const openBrief = (title: string) => {
@@ -160,22 +145,4 @@ export function DetectionPrompt() {
       </ButtonRow>
     </section>
   );
-}
-
-/**
- * Start a recording named after the reminded meeting, joining it first when
- * `join`. Busy while it runs, like the record button; a refusal shows where
- * the record button's would.
- */
-async function recordReminded(eventId: string, join: boolean) {
-  const store = useRecordingStore;
-  if (store.getState().busy) return;
-  store.setState({ busy: true, error: null });
-  try {
-    await recordRemindedMeeting(eventId, join);
-  } catch (thrown) {
-    store.setState({ error: toUiError(thrown) });
-  } finally {
-    store.setState({ busy: false });
-  }
 }

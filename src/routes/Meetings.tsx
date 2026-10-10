@@ -10,6 +10,7 @@
 import { AudioLines, FileText } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import { useRecordShortcut } from "@/hooks/useRecordShortcut";
 import type { MeetingSummary } from "@/ipc/types";
 import { cn } from "@/lib/cn";
 import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
@@ -38,7 +39,6 @@ import { SearchBox } from "@/ui/SearchBox";
 import { SearchResults } from "@/ui/SearchResults";
 import { Checking, EmptyState, ErrorState } from "@/ui/states";
 import { TodayPane } from "@/ui/TodayPane";
-import { useRecordShortcut } from "@/ui/useRecordShortcut";
 import { WatchProblemNote } from "@/ui/WatchProblemNote";
 
 export function Meetings() {

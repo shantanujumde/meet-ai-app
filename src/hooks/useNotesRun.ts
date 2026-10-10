@@ -36,6 +36,7 @@ import {
 import type { MeetingNotes, NotesRunState, NotesRunStatus, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { sessionNotesAutoRun } from "@/state/session";
+import { useIpcValue } from "./useIpcValue";
 
 /** What a meeting shows when its notes could not be read: nothing written yet. */
 const NO_NOTES: MeetingNotes = { notesOff: false, analyzedBy: null, sections: [] };
@@ -86,7 +87,9 @@ export function useNotesRun(meetingId: string, onChanged?: () => void): NotesRun
   const [switchingFor, setSwitchingFor] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<ForMeeting<UiError> | null>(null);
   const [switchedOnFor, setSwitchedOnFor] = useState<string | null>(null);
-  const [manual, setManual] = useState(false);
+  // Read once per session (TUR-171): only Settings changes it, and its save
+  // and its snapshot update the kept answer. Unknown counts as automatic.
+  const manual = useIpcValue(sessionNotesAutoRun).value === false;
 
   // The meeting on screen, or null once unmounted: every async answer checks
   // it before it is allowed to change anything.
@@ -151,21 +154,6 @@ export function useNotesRun(meetingId: string, onChanged?: () => void): NotesRun
       stop();
     };
   }, [meetingId, apply, refreshNotes]);
-
-  // Read once per session (TUR-171): only Settings changes it, and its save
-  // and its snapshot update the kept answer.
-  useEffect(() => {
-    let live = true;
-    sessionNotesAutoRun().then(
-      (auto) => {
-        if (live) setManual(!auto);
-      },
-      () => {},
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
 
   const request = useCallback(
     async (run: (id: string) => Promise<NotesRunStatus>) => {

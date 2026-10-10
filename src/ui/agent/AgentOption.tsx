@@ -8,10 +8,9 @@
  */
 
 import { Copy } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import type { ReactNode } from "react";
+import { useCopied } from "@/hooks/useCopied";
 import type { AgentCli } from "@/ipc/types";
-import { copyText } from "@/lib/clipboard";
-import { COPIED_RESET_MS } from "@/lib/constants";
 import { osText } from "@/lib/osText";
 import { Button, Pill, Row, RowValue, rowDetailVariants } from "@/ui/primitives";
 import { Radio } from "@/ui/Radio";
@@ -73,19 +72,9 @@ export function agentDetail(cli: AgentCli | undefined, detecting: boolean): stri
 
 /** The sign-in command, selectable and with a Copy button, and what to do with it. */
 export function SignInCommand({ command }: { command: string }) {
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    try {
-      await copyText(command);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), COPIED_RESET_MS);
-    } catch {
-      // The command is on screen and selectable, so a refused clipboard
-      // costs one manual copy and is not worth an error.
-      setCopied(false);
-    }
-  }
+  // The command is on screen and selectable, so a refused clipboard costs
+  // one manual copy and is not worth an error.
+  const { copied, copy } = useCopied();
 
   return (
     <div className="flex flex-col gap-2 pl-8">
@@ -96,7 +85,7 @@ export function SignInCommand({ command }: { command: string }) {
         <code className="min-w-0 flex-1 select-all wrap-anywhere rounded-control border-[0.5px] border-separator bg-glass-sunken px-4 py-2 font-mono text-caption1 text-fg-primary">
           {command}
         </code>
-        <Button size="small" icon={Copy} onClick={() => void copy()}>
+        <Button size="small" icon={Copy} onClick={() => void copy(command)}>
           {copied ? "Copied" : "Copy"}
         </Button>
       </div>

@@ -21,11 +21,11 @@
  */
 
 import { Calendar, Check, Clock, Copy, FolderOpen, Timer, Users } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useState } from "react";
+import { useCopied } from "@/hooks/useCopied";
+import { useElapsed } from "@/hooks/useElapsed";
 import type { MeetingSummary, RecordingStatus, UiError } from "@/ipc/types";
-import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
-import { COPIED_RESET_MS } from "@/lib/constants";
 import {
   backupStopLabel,
   describeInterruption,
@@ -38,7 +38,6 @@ import { osText } from "@/lib/osText";
 import { Icon, type LucideIcon } from "./icons";
 import { MeetingTitle } from "./MeetingTitle";
 import { IconButton, rowDetailVariants } from "./primitives";
-import { useElapsed } from "./RecordControl";
 import { ErrorState } from "./states";
 
 export const SHOW_IN_FILE_MANAGER_LABEL = `Show in ${osText("fileManager")}`;
@@ -197,22 +196,10 @@ function CopyPathButton({
   path: string;
   onRefused: (refused: boolean) => void;
 }) {
-  const [copied, setCopied] = useState(false);
-  const resetTimer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
+  const { copied, copy: copyPath } = useCopied();
 
   async function copy() {
-    window.clearTimeout(resetTimer.current);
-    setCopied(false);
-    try {
-      await copyText(path);
-    } catch {
-      onRefused(true);
-      return;
-    }
-    onRefused(false);
-    setCopied(true);
-    resetTimer.current = window.setTimeout(() => setCopied(false), COPIED_RESET_MS);
+    onRefused(!(await copyPath(path)));
   }
 
   return (

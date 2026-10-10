@@ -15,19 +15,17 @@
  */
 
 import { Check, Copy } from "lucide-react";
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { useCopied } from "@/hooks/useCopied";
 import type { UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
-import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/cn";
-import { COPIED_RESET_MS } from "@/lib/constants";
 import { Button, ButtonRow, rowDetailVariants } from "./primitives";
 import { ErrorState } from "./states";
 
 type Outcome =
   | { kind: "idle" }
   | { kind: "busy" }
-  | { kind: "copied" }
   | { kind: "render-failed"; error: UiError }
   | { kind: "refused"; prompt: string };
 
@@ -53,12 +51,10 @@ export function CopyPromptButton({
   className?: string;
 }) {
   const [outcome, setOutcome] = useState<Outcome>({ kind: "idle" });
-  const resetTimer = useRef<number | undefined>(undefined);
-
-  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
+  const { copied, copy, reset } = useCopied();
 
   async function handleClick() {
-    window.clearTimeout(resetTimer.current);
+    reset();
     setOutcome({ kind: "busy" });
 
     let prompt: string;
@@ -69,18 +65,8 @@ export function CopyPromptButton({
       return;
     }
 
-    try {
-      await copyText(prompt);
-    } catch {
-      setOutcome({ kind: "refused", prompt });
-      return;
-    }
-
-    setOutcome({ kind: "copied" });
-    resetTimer.current = window.setTimeout(() => setOutcome({ kind: "idle" }), COPIED_RESET_MS);
+    setOutcome((await copy(prompt)) ? { kind: "idle" } : { kind: "refused", prompt });
   }
-
-  const copied = outcome.kind === "copied";
 
   return (
     <div className={cn("flex flex-col gap-4", className)}>

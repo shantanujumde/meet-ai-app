@@ -12,9 +12,7 @@ import {
   type meet_ai_lib_detection_popup_PopupPrompt,
   PROMPT_POPUP_EVENT,
 } from "./bindings";
-import { hasBackend, subscribe } from "./client";
-import { NO_BACKEND } from "./errors";
-import { toUiError } from "./types";
+import { call, hasBackend, subscribe } from "./client";
 
 /** What the popup shows: its card, the id an answer names, and when it closes. */
 export type PopupPrompt = meet_ai_lib_detection_popup_PopupPrompt;
@@ -25,19 +23,12 @@ export type PopupAnswer = meet_ai_lib_detection_popup_PopupAnswer;
 /** The prompt on screen, for a popup that just loaded. */
 export async function promptPopupCurrent(): Promise<PopupPrompt | null> {
   if (!hasBackend()) return null;
-  return commands.promptPopupCurrent();
+  return call(() => commands.promptPopupCurrent());
 }
 
 /** A popup button was pressed. Rust closes the popup and does what it says. */
 export async function answerPromptPopup(id: number, answer: PopupAnswer): Promise<void> {
-  if (!hasBackend()) throw NO_BACKEND;
-  let result: Awaited<ReturnType<typeof commands.answerPromptPopup>>;
-  try {
-    result = await commands.answerPromptPopup(id, answer);
-  } catch (thrown) {
-    throw toUiError(thrown);
-  }
-  if (result.status === "error") throw toUiError(result.error);
+  await call(() => commands.answerPromptPopup(id, answer));
 }
 
 /** A new prompt for the popup; returns the unsubscribe. */

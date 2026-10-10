@@ -22,8 +22,9 @@
  * step's copy lives in `onboarding/*Step.tsx`.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useNavigate, useParams } from "react-router";
+import { useIpcValue } from "@/hooks/useIpcValue";
 import { calendarSources } from "@/ipc/client";
 import { currentOs } from "@/lib/osText";
 import { permissionStepShown } from "@/lib/recordingPermission";
@@ -48,7 +49,8 @@ export function Onboarding() {
   const navigate = useNavigate();
   const current: OnboardingStep = isOnboardingStep(step) ? step : "welcome";
   // TUR-49: off macOS there is a calendar step. A Mac's list until Rust says.
-  const [calendarApp, setCalendarApp] = useState(true);
+  // A failed read keeps the Mac's list: the calendar step is optional anyway.
+  const calendarApp = useIpcValue(calendarSources).value?.calendarAppAvailable ?? true;
   const permission = useAppStore((state) => state.permission);
   // TUR-51: macOS always asks for its two grants; Windows only when the
   // microphone is blocked; Linux has nothing to grant. Opened directly (the
@@ -70,20 +72,6 @@ export function Onboarding() {
   useEffect(() => {
     void loadPermission();
   }, [loadPermission]);
-
-  useEffect(() => {
-    let live = true;
-    calendarSources().then(
-      (sources) => {
-        if (live) setCalendarApp(sources.calendarAppAvailable);
-      },
-      // Keep the Mac's list: the calendar step is optional anyway.
-      () => {},
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
 
   // TUR-165: every move inside the wizard replaces the entry rather than
   // pushing one. A finished step bounces to Meetings (`Bootstrap`), so pushed

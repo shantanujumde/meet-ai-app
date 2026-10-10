@@ -8,7 +8,7 @@
  */
 
 import { AudioLines } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useIpcValue } from "@/hooks/useIpcValue";
 import { type AudioRetention, audioRetentionDays, type SettingsSnapshot } from "@/ipc/client";
 import { Row, RowLabel } from "./primitives";
 import { useSnapshotLoad } from "./settings/snapshot";
@@ -35,21 +35,9 @@ export function retentionDetail(retention: AudioRetention): string {
 }
 
 export function AudioRetentionRow() {
-  const [retention, setRetention] = useState<AudioRetention | null>(null);
   const load = useSnapshotLoad(pick, audioRetentionDays);
-
-  useEffect(() => {
-    let live = true;
-    load()
-      .then((value) => {
-        if (live) setRetention(value);
-      })
-      // A read that failed says nothing rather than something untrue.
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [load]);
+  // A read that failed says nothing rather than something untrue.
+  const retention = useIpcValue(load).value;
 
   if (retention === null) return null;
   return (

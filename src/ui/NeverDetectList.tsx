@@ -11,6 +11,7 @@
 
 import { BellOff } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useIpcValue } from "@/hooks/useIpcValue";
 import { neverDetectApps, setNeverDetectApps } from "@/ipc/client";
 import { toUiError, type UiError } from "@/ipc/types";
 import { Button } from "./primitives";
@@ -19,22 +20,13 @@ import { SettingsRow } from "./settings/SettingsSection";
 export const NEVER_DETECT_LABEL = "Never detect";
 
 export function NeverDetectList({ onError }: { onError: (error: UiError | null) => void }) {
-  const [apps, setApps] = useState<string[] | null>(null);
+  const { value: apps, setValue: setApps, error: loadError } = useIpcValue(neverDetectApps);
   const [busy, setBusy] = useState(false);
 
+  // A failed read shows where the card's own errors do.
   useEffect(() => {
-    let live = true;
-    neverDetectApps()
-      .then((saved) => {
-        if (live) setApps(saved);
-      })
-      .catch((thrown: unknown) => {
-        if (live) onError(toUiError(thrown));
-      });
-    return () => {
-      live = false;
-    };
-  }, [onError]);
+    if (loadError) onError(loadError);
+  }, [loadError, onError]);
 
   const remove = async (app: string) => {
     if (apps === null) return;

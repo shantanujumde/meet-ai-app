@@ -17,7 +17,8 @@
  */
 
 import { Calendar } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
+import { useIpcValue } from "@/hooks/useIpcValue";
 import {
   type CalendarAccount,
   type CalendarSources,
@@ -29,7 +30,7 @@ import {
   type SignInProvider,
   setCalendarApp,
 } from "@/ipc/client";
-import { toUiError, type UiError } from "@/ipc/types";
+import { toUiError } from "@/ipc/types";
 import { Button, ButtonRow, Row, RowLabel } from "../primitives";
 import { SettingSwitch } from "../SettingSwitch";
 import { SettingsSection } from "../settings/SettingsSection";
@@ -47,37 +48,17 @@ export const NOT_REMEMBERED =
 const pickSources = (snapshot: SettingsSnapshot) => snapshot.calendarSources;
 
 export function CalendarSettings() {
-  const [sources, setSources] = useState<CalendarSources | null>(null);
-  const [accounts, setAccounts] = useState<CalendarAccount[] | null>(null);
-  const [error, setError] = useState<UiError | null>(null);
   const loadSources = useSnapshotLoad(pickSources, calendarSources);
-
-  const load = useCallback(() => {
-    let live = true;
-    loadSources().then(
-      (answer) => {
-        if (live) setSources(answer);
-      },
-      (thrown: unknown) => {
-        if (live) setError(toUiError(thrown));
-      },
-    );
-    calendarAccounts().then(
-      (answer) => {
-        if (live) setAccounts(answer);
-      },
-      (thrown: unknown) => {
-        if (!live) return;
-        setAccounts([]);
-        setError(toUiError(thrown));
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [loadSources]);
-
-  useEffect(() => load(), [load]);
+  const {
+    value: sources,
+    setValue: setSources,
+    error: sourcesError,
+  } = useIpcValue<CalendarSources>(loadSources);
+  const read = useIpcValue<CalendarAccount[]>(calendarAccounts);
+  const setAccounts = read.setValue;
+  // Accounts that could not be read: every row offers a sign-in.
+  const accounts = read.value ?? (read.error ? [] : null);
+  const error = sourcesError ?? read.error;
 
   const replaceAccount = (account: CalendarAccount) =>
     setAccounts((current) => [

@@ -5,27 +5,15 @@
  * unavailable instead of advertising it.
  */
 
-import { useEffect, useState } from "react";
 import { recordShortcutAvailable } from "@/ipc/shortcut";
 import { shortcutLabel } from "@/lib/osText";
+import { useIpcValue } from "./useIpcValue";
 
 export type RecordShortcut = { label: string; available: boolean };
 
 export function useRecordShortcut(): RecordShortcut {
-  const [available, setAvailable] = useState(true);
-  useEffect(() => {
-    let live = true;
-    recordShortcutAvailable()
-      .then((now) => {
-        if (live) setAvailable(now);
-      })
-      .catch(() => {
-        // Keep advertising it; `recordShortcutAvailable` does not reject.
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
+  // Advertised until Rust says otherwise; `recordShortcutAvailable` does not reject.
+  const available = useIpcValue(recordShortcutAvailable).value ?? true;
   return { label: shortcutLabel(), available };
 }
 

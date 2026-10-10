@@ -14,7 +14,8 @@ import type { ReactNode } from "react";
 import { useChangeFolder } from "@/hooks/useChangeFolder";
 import { DEFAULT_ROOT_LABEL } from "@/lib/constants";
 import { useAppStore } from "@/state/app";
-import { Button, Row, RowLabel, RowValue } from "@/ui/primitives";
+import { Button, RowValue } from "@/ui/primitives";
+import { SettingsRow } from "@/ui/settings/SettingsSection";
 import { ErrorState } from "@/ui/states";
 
 export function FolderRow({
@@ -33,17 +34,22 @@ export function FolderRow({
   const { busy, error, pick } = useChangeFolder();
 
   return (
-    <Row stacked bare={bare}>
-      <div className="flex items-center justify-between gap-6">
-        <RowLabel icon={Folder} name="Meetings folder" detail={root} />
+    <SettingsRow
+      icon={Folder}
+      name="Meetings folder"
+      detail={root}
+      mono
+      bare={bare}
+      control={
         <RowValue className="flex items-center gap-4">
           {status}
           <Button size="small" icon={FolderOpen} disabled={busy} onClick={() => void pick()}>
             {busy ? "Moving…" : "Change…"}
           </Button>
         </RowValue>
-      </div>
-      {error ? <ErrorState error={error} busy={busy} /> : null}
-    </Row>
+      }
+    >
+      {error ? <ErrorState error={error} busy={busy} /> : undefined}
+    </SettingsRow>
   );
 }

@@ -22,6 +22,8 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRef } from "react";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
+import { useHistoryArrows } from "@/hooks/useHistoryArrows";
+import { useResetScrollOnRouteChange } from "@/hooks/useResetScrollOnRouteChange";
 import type { PrivacyPane } from "@/ipc/types";
 import { osText } from "@/lib/osText";
 import { openPermissionScreen } from "@/lib/permissionRoute";
@@ -34,8 +36,6 @@ import { HeadphoneBanner } from "./HeadphoneBanner";
 import { Button, IconButton } from "./primitives";
 import { RecordControl } from "./RecordControl";
 import { Sidebar } from "./Sidebar";
-import { useHistoryArrows } from "./useHistoryArrows";
-import { useResetScrollOnRouteChange } from "./useResetScrollOnRouteChange";
 
 export function Shell() {
   const location = useLocation();
