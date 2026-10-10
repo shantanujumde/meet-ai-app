@@ -60,15 +60,17 @@ impl Resampler {
         let params = SincInterpolationParameters::default();
         let inner = Async::<f32>::new_sinc(
             ratio,
-            // The ratio never changes mid-recording — a device-rate change
-            // tears down and reopens the segment (SPEC §3.4/A5) rather than
-            // retuning this resampler — so no adjustment headroom is needed.
+            // The ratio is fixed for this resampler's life: a device-rate
+            // change makes the pipeline build a new one at the new rate
+            // (`pipeline.rs`, `switch`) rather than retune this one, so no
+            // adjustment headroom is needed.
             1.0,
             &params,
             CHUNK_FRAMES,
             1,
             FixedAsync::Input,
         )
+        // quality: allow-unwrap device_rate > 0 is asserted above, so the ratio is finite and positive
         .expect("SAMPLE_RATE_HZ / device_rate is always a finite, positive ratio");
         let delay_remaining = inner.output_delay();
         let out_buf = vec![0.0; inner.output_frames_max()];
@@ -119,13 +121,16 @@ impl Resampler {
         );
         out.clear();
         let in_adapter = InterleavedSlice::new(input, 1, input.len())
+            // quality: allow-unwrap one channel of input.len() frames always fits a slice of input.len()
             .expect("mono slice matches its own length");
         let out_len = self.out_buf.len();
         let mut out_adapter = InterleavedSlice::new_mut(&mut self.out_buf, 1, out_len)
+            // quality: allow-unwrap out_buf was sized for one channel at construction
             .expect("out_buf was sized from output_frames_max at construction");
         let (_read, written) = self
             .inner
             .process_into_buffer(&in_adapter, &mut out_adapter, None)
+            // quality: allow-unwrap the input length is asserted above to be the chunk the resampler asks for
             .expect("fixed input size always satisfies what the resampler asks for");
 
         let produced = &self.out_buf[..written];

@@ -195,3 +195,32 @@ fn the_schema_says_live_is_read() {
     assert!(!text.contains("Not read by the app"), "{text}");
     assert!(!text.contains("no effect"), "{text}");
 }
+
+#[test]
+fn the_schema_default_matches_the_code_default() {
+    let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+    let keys = &schema["properties"]["transcription"]["properties"];
+    let code = Transcription::default();
+    assert_eq!(
+        serde_json::from_value::<Preference>(keys["engine"]["default"].clone()).unwrap(),
+        code.engine
+    );
+    // The code picks the model by hardware tier (TUR-61), so the schema
+    // names the fixed fallback and its text says the pick is automatic.
+    assert_eq!(keys["model"]["default"], stt::model::LARGE_MODEL);
+    assert!(
+        keys["model"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("hardware")
+    );
+    assert_eq!(keys["language"]["default"], code.language);
+    assert_eq!(keys["language"]["default"], "auto");
+    assert_eq!(keys["live"]["default"], code.live);
+    assert!(
+        !keys["language"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("Not read")
+    );
+}

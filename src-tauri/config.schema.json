@@ -52,7 +52,7 @@
         },
         "model": {
           "type": "string",
-          "description": "Whisper model name, used when the whisper engine runs.",
+          "description": "Whisper model name, used when the whisper engine runs. When unset, meet-ai picks by this Mac's hardware tier (or a model already downloaded); the default shown is the largest, used when nothing else fits.",
           "default": "large-v3-turbo-q5_0",
           "examples": ["large-v3-turbo-q5_0", "small.en-q5_1"]
         },

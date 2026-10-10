@@ -9,8 +9,9 @@
 //! resampler ([`resample`]).
 //!
 //! [`AudioSource`] is one trait implemented per platform (SPEC §4) so the
-//! Windows port (SPEC §8.2) is additive rather than a rewrite — today only the
-//! macOS side exists.
+//! Windows port (SPEC §8.2) is additive rather than a rewrite. macOS, Windows
+//! and Linux each have a side under `platform/`; the macOS tap is the only one
+//! that needs a signed build and the OS audio permission to run for real.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 

@@ -5,10 +5,10 @@
 //! platform-agnostic so the Windows port (SPEC §8.2) is additive rather than a
 //! rewrite.
 //!
-//! The implementation lands in Phase 0. Below the link-time proof tests
-//! (which assert the Core Audio entry points FINDINGS §9 committed the
-//! project to are reachable from Rust at the versions the workspace pins),
-//! [`tap`] is the real, if hardware-unverified, tap implementation.
+//! Below the link-time proof tests (which assert the Core Audio entry points
+//! FINDINGS §9 committed the project to are reachable from Rust at the
+//! versions the workspace pins), [`tap`] is the real Core Audio tap
+//! implementation. Its hardware behaviour is checked by hand, not in CI.
 
 /// The system-audio [`crate::AudioSource`] — see [`tap::SystemSource`] and its
 /// module docs for the honest state of hardware verification.
@@ -50,7 +50,7 @@ mod input_devices;
 /// The functions [`crate::platform`] routes to on macOS.
 pub(crate) mod platform;
 
-/// The real tap/IOProc creation call site (once written) uses
+/// The tap/IOProc creation call site in [`tap`] uses
 /// [`crate::AUDIO_PERMISSION_TIMEOUT`] — moved there because [`crate::mic`]
 /// needs the identical bound on `cpal`'s stream creation, and both are the
 /// same failure mode: a Core Audio call that can block on a TCC dialog no one
