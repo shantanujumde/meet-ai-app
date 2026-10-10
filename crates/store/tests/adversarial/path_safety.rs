@@ -27,6 +27,14 @@ fn an_id_that_is_not_a_plain_folder_name_is_refused() {
         ".hidden",
         "..hidden",
         ".🎉",
+        // TUR-158: Windows devices and names Windows trims.
+        "a..",
+        "a.",
+        "a ",
+        "NUL",
+        "con",
+        "Com1.md",
+        "lpt9",
     ] {
         assert!(
             matches!(folder::meeting_dir(root, hostile), Err(Error::BadId(id)) if id == hostile),
@@ -50,7 +58,6 @@ fn a_plain_id_resolves_to_a_folder_directly_under_the_root() {
         "x..y",
         "~",
         "-",
-        "a..",
     ] {
         assert_eq!(
             folder::meeting_dir(root, id).unwrap(),

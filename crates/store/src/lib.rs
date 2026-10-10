@@ -203,13 +203,36 @@ pub fn write_atomic(path: &Path, contents: &str) -> Result<(), Error> {
 /// `C:` is a drive prefix (so `root.join("C:")` leaves the root) and `a:b`
 /// names an alternate data stream; NUL is never valid in a path. No meeting
 /// folder name (`YYYY-MM-DD-HHMM-slug`) or ticket id contains either.
+///
+/// Windows device names (`CON`, `NUL`, `COM1`, also `nul.txt`) and names
+/// ending in `.` or a space are refused on every OS too (TUR-158): on Windows
+/// `root.join("NUL")` is the null device, not a folder, and a trailing dot or
+/// space is silently dropped, so `a.` would name the folder `a`.
 pub(crate) fn is_plain_name(id: &str) -> bool {
     let mut components = Path::new(id).components();
     !id.is_empty()
         && !id.starts_with('.')
+        && !id.ends_with(['.', ' '])
         && !id.contains(['/', '\\', ':', '\0'])
+        && !is_windows_device(id)
         && matches!(components.next(), Some(std::path::Component::Normal(_)))
         && components.next().is_none()
+}
+
+/// Is `name` one of Windows' reserved device names, in any case, with or
+/// without an extension? Windows reads only the part before the first dot,
+/// with trailing spaces dropped, so `Con .md` is the console too.
+fn is_windows_device(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
+    let upper = stem.to_ascii_uppercase();
+    match upper.as_str() {
+        "CON" | "PRN" | "AUX" | "NUL" => true,
+        _ => ["COM", "LPT"].iter().any(|prefix| {
+            upper.strip_prefix(prefix).is_some_and(|digit| {
+                matches!(digit, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+            })
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -242,6 +265,48 @@ mod tests {
         }
         assert!(is_plain_name("2026-09-01-1430-standup"));
         assert!(is_plain_name("TICK-0001"));
+    }
+
+    #[test]
+    fn windows_device_names_are_refused_on_every_os() {
+        for device in [
+            "CON",
+            "con",
+            "Prn",
+            "AUX",
+            "nul",
+            "NUL.txt",
+            "nul.tar.gz",
+            "Con .md",
+            "COM1",
+            "com9",
+            "LPT1",
+            "lpt9.log",
+        ] {
+            assert!(!is_plain_name(device), "{device:?} must be refused");
+        }
+        // Only the whole stem is a device name.
+        for fine in [
+            "CONSOLE",
+            "2026-09-01-1430-con",
+            "nul-call",
+            "COM10",
+            "COM0",
+            "LPT",
+            "comx",
+            "a.con",
+        ] {
+            assert!(is_plain_name(fine), "{fine:?} must be accepted");
+        }
+    }
+
+    #[test]
+    fn a_trailing_dot_or_space_is_refused() {
+        for hostile in ["standup.", "standup ", "standup. ", "a..", "TICK-0001 "] {
+            assert!(!is_plain_name(hostile), "{hostile:?} must be refused");
+        }
+        assert!(is_plain_name("v1.2"));
+        assert!(is_plain_name("a b"));
     }
 
     #[test]
