@@ -38,8 +38,13 @@ pub struct HookFailed {
 pub fn init(app: &AppHandle) {
     let recording = Arc::new(Mutex::new(None::<String>));
     let handle = app.clone();
-    app.listen_any(RECORDING_STATE_EVENT, move |event| {
-        let now = meeting_id_of(event.payload());
+    app.listen_any(RECORDING_STATE_EVENT, move |_event| {
+        // The recorder's own status, not the event's JSON: a renamed field is
+        // a compile error, not a hook that never runs (TUR-173).
+        let Some(recorder) = handle.try_state::<crate::recording::Recorder>() else {
+            return;
+        };
+        let now = recorder.status().meeting_id;
         let ended = {
             let mut last = lock_or_recover(&recording);
             meeting_ended(&mut last, now)
@@ -120,12 +125,6 @@ pub(super) fn run_gated(
     })
 }
 
-/// `meetingId` in a recorder status payload.
-fn meeting_id_of(payload: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(payload).ok()?;
-    value.get("meetingId")?.as_str().map(str::to_owned)
-}
-
 /// The meeting that just ended, if the recorder went from one to none.
 pub(super) fn meeting_ended(last: &mut Option<String>, now: Option<String>) -> Option<String> {
     match now {
@@ -138,10 +137,10 @@ pub(super) fn meeting_ended(last: &mut Option<String>, now: Option<String>) -> O
 }
 
 /// The meeting whose notes run just wrote its notes, from its status payload.
+/// Read back into [`crate::agent_run::Status`], the type that wrote it, so a
+/// renamed field cannot quietly stop the hook (TUR-173).
 pub(super) fn notes_done(payload: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(payload).ok()?;
-    let state = value.get("state")?.get("state")?.as_str()?;
-    (state == "done")
-        .then(|| value.get("meetingId")?.as_str().map(str::to_owned))
-        .flatten()
+    let status: crate::agent_run::Status = serde_json::from_str(payload).ok()?;
+    let done = matches!(status.state, crate::agent_run::State::Done { .. });
+    done.then_some(status.meeting_id)
 }

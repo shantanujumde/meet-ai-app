@@ -80,23 +80,12 @@ fn an_old_watch_stops_when_a_new_recording_starts() {
 
 #[test]
 fn only_the_recording_phase_counts() {
-    let status = |phase: &str, id: Option<&str>| {
-        serde_json::json!({ "phase": phase, "meetingId": id, "startedAtMs": null, "error": null })
-            .to_string()
-    };
-    assert_eq!(
-        recording_meeting(&status("recording", Some("m1"))),
-        Some("m1".into())
-    );
-    for phase in ["idle", "starting", "stopping"] {
-        assert_eq!(
-            recording_meeting(&status(phase, Some("m1"))),
-            None,
-            "{phase}"
-        );
+    let id = || Some("m1".to_owned());
+    assert_eq!(recording_meeting(Phase::Recording, id()), id());
+    for phase in [Phase::Idle, Phase::Starting, Phase::Stopping] {
+        assert_eq!(recording_meeting(phase, id()), None, "{phase:?}");
     }
-    assert_eq!(recording_meeting(&status("recording", None)), None);
-    assert_eq!(recording_meeting("not json"), None);
+    assert_eq!(recording_meeting(Phase::Recording, None), None);
 }
 
 #[test]

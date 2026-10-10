@@ -42,7 +42,7 @@ const FINAL_WAIT: Duration = Duration::from_secs(120);
 pub(crate) const TRANSCRIPT_NOT_FINAL: &str = "transcript-not-final";
 
 /// Where one meeting's notes run stands, as the meeting view shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     /// The meeting folder name.
@@ -52,7 +52,7 @@ pub struct Status {
 
 /// The run's state. `idle` means no run for this meeting since launch: the
 /// view then goes by what is on disk (notes there or not).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize, specta::Type)]
 #[serde(tag = "state", rename_all = "kebab-case")]
 pub enum State {
     Idle,
@@ -73,7 +73,7 @@ pub enum State {
 }
 
 /// Why a run wrote no notes, in plain words.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Failure {
     pub kind: FailureKind,
@@ -86,7 +86,7 @@ pub struct Failure {
 
 /// Every way a run can end without notes. One per thing the user can do
 /// about it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum FailureKind {
     /// No agent is set up (`agent.harness` is `none`); Copy prompt instead.
