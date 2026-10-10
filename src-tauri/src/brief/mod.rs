@@ -181,7 +181,7 @@ fn brief_from(
         .filter(|repo| !repo.trim().is_empty());
     let commits = match (repo, since) {
         (Some(repo), Some(since)) => {
-            git::recent_commits(&expand_home(&repo), &since, BRIEF_MAX_COMMITS).map(|commits| {
+            git::recent_commits(&repo_dir(&repo), &since, BRIEF_MAX_COMMITS).map(|commits| {
                 RepoCommits {
                     repo,
                     since,
@@ -213,18 +213,12 @@ fn day_of(meeting: &IndexedMeeting) -> Option<NaiveDate> {
         .or_else(|| leading_day(&meeting.id))
 }
 
-/// `~` or `~/…` under the home folder; anything else as written.
-fn expand_home(repo: &str) -> PathBuf {
-    let repo = repo.trim();
-    let rest = match repo.strip_prefix('~') {
-        Some("") => Some(""),
-        Some(rest) => rest.strip_prefix('/'),
-        None => None,
-    };
-    match (rest, dirs::home_dir()) {
-        (Some(rest), Some(home)) => home.join(rest),
-        _ => PathBuf::from(repo),
-    }
+/// The meeting's `repo` as a folder: `~` or `~/…` under the home folder
+/// ([`agent::detect::expand_home`]); anything else as written.
+fn repo_dir(repo: &str) -> PathBuf {
+    let repo = Path::new(repo.trim());
+    agent::detect::expand_home(repo, dirs::home_dir().as_deref())
+        .unwrap_or_else(|| repo.to_path_buf())
 }
 
 #[cfg(test)]

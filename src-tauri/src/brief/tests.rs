@@ -352,8 +352,8 @@ fn the_day_falls_back_to_the_folder_name() {
 #[test]
 fn home_is_expanded_only_for_a_leading_tilde() {
     let home = dirs::home_dir().expect("home");
-    assert_eq!(expand_home("~/apps/api"), home.join("apps/api"));
-    assert_eq!(expand_home("~"), home);
-    assert_eq!(expand_home("/srv/api"), PathBuf::from("/srv/api"));
-    assert_eq!(expand_home("~other/api"), PathBuf::from("~other/api"));
+    assert_eq!(repo_dir("~/apps/api"), home.join("apps/api"));
+    assert_eq!(repo_dir("~"), home);
+    assert_eq!(repo_dir("/srv/api"), PathBuf::from("/srv/api"));
+    assert_eq!(repo_dir("~other/api"), PathBuf::from("~other/api"));
 }

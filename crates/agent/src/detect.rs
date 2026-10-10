@@ -203,7 +203,9 @@ pub fn find(cli: &Cli, lookup: &Lookup) -> Option<PathBuf> {
     if let Some(configured) = &lookup.binary_path {
         // On Windows a configured `...\claude` may mean `claude.cmd`; only
         // endings of that one path are tried, never another folder.
+        // Anything still relative is refused.
         let found = expand_home(configured, lookup.home.as_deref())
+            .filter(|path| path.is_absolute())
             .and_then(|path| with_suffixes(path, lookup.exe_suffixes).find(|p| is_executable(p)));
         if found.is_some() {
             return found;
@@ -418,13 +420,15 @@ fn probe(lookup: &Lookup, display_name: &str, command: Command) -> Result<CliOut
     process::run_probe(display_name, command, lookup.quick_limit, &lookup.work_root)
 }
 
-/// `~/x` as `<home>/x`. Anything still relative is refused.
-fn expand_home(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
-    let path = match path.strip_prefix("~") {
-        Ok(rest) => home?.join(rest),
-        Err(_) => path.to_path_buf(),
-    };
-    path.is_absolute().then_some(path)
+/// `~` or `~/x` as the home folder or `<home>/x`; any other path as
+/// written (`~other/x` included). `None` for a `~` path when there is no
+/// home. The one home expansion for a path the user wrote in config
+/// (TUR-176): `agent.binary_path` here, a meeting's `repo` in the brief.
+pub fn expand_home(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    match path.strip_prefix("~") {
+        Ok(rest) => home.map(|home| home.join(rest)),
+        Err(_) => Some(path.to_path_buf()),
+    }
 }
 
 /// The search order on every OS, on a fake folder layout. Nothing is run:
