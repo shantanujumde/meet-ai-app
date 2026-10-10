@@ -41,11 +41,31 @@ use crate::recording::{Phase, Recorder, Status};
 /// way the window hears about a recorder refusal.
 pub fn toggle_recording(app: &AppHandle) -> Result<Status, UiError> {
     let recorder = app.state::<Recorder>();
-    gated_toggle(
+    gated_start(
+        recorder.status().phase,
         &app.state::<FolderGate>(),
+        || recorder.stop(app),
         || recorder.toggle(app),
         |refused| recorder.refuse_start(app, refused),
     )
+}
+
+/// A toggle takes the gate only when it will start (TUR-170). A recorder
+/// that is not idle is stopped (a no-op mid-transition), ungated like the
+/// Stop command: a move only runs while idle, so a stop has nothing to race,
+/// and gating it refused ⌘⇧R's Stop while a move was only being checked.
+/// `stop` never starts, so a recording that ended meanwhile stays ended.
+fn gated_start<T>(
+    phase: Phase,
+    gate: &FolderGate,
+    stop: impl FnOnce() -> Result<T, UiError>,
+    toggle: impl FnOnce() -> Result<T, UiError>,
+    refused: impl FnOnce(&UiError),
+) -> Result<T, UiError> {
+    if phase != Phase::Idle {
+        return stop();
+    }
+    gated_toggle(gate, toggle, refused)
 }
 
 /// `Recorder::start`, through the gate: a **Record** for one meeting (the
@@ -318,6 +338,41 @@ mod tests {
         let mut reported = false;
         assert!(gated_toggle(&gate, || Ok(()), |_| reported = true).is_ok());
         assert!(!reported, "nothing to report once the move is over");
+    }
+
+    /// TUR-170: a move holding the gate (even only while it checks the phase)
+    /// must not turn ⌘⇧R's Stop away; only a start waits for the move.
+    #[test]
+    fn a_toggle_stop_is_never_gated_but_a_toggle_start_is() {
+        let gate = FolderGate::default();
+        let _moving = gate.begin_move().unwrap();
+
+        for phase in [Phase::Starting, Phase::Recording, Phase::Stopping] {
+            let mut reported = false;
+            let stopped = gated_start(
+                phase,
+                &gate,
+                || Ok("stopped"),
+                || unreachable!("a non-idle toggle only stops"),
+                |_| reported = true,
+            );
+            assert_eq!(stopped.expect("not refused"), "stopped", "{phase:?}");
+            assert!(!reported, "{phase:?}: nothing refused");
+        }
+
+        let mut reported = None;
+        let refused = gated_start(
+            Phase::Idle,
+            &gate,
+            || unreachable!("an idle toggle starts"),
+            || Ok("started"),
+            |error| reported = Some(error.kind),
+        );
+        assert_eq!(
+            refused.expect_err("refused").kind,
+            "folder-move-in-progress"
+        );
+        assert_eq!(reported, Some("folder-move-in-progress"));
     }
 
     #[test]
