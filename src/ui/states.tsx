@@ -9,11 +9,9 @@
 
 import { Inbox, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useCopied } from "@/hooks/useCopied";
 import { copyFor, detailsFor } from "@/ipc/errors";
 import type { UiError } from "@/ipc/types";
-import { copyText } from "@/lib/clipboard";
-import { COPIED_RESET_MS } from "@/lib/constants";
 import { IconSquare } from "./icons";
 import { Button, ButtonRow } from "./primitives";
 
@@ -92,21 +90,9 @@ export function ErrorState({
   busy?: boolean;
 }) {
   const copy = copyFor(error);
-  const [copied, setCopied] = useState(false);
-
-  async function handleCopy() {
-    const details = detailsFor(error);
-    try {
-      await copyText(details);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), COPIED_RESET_MS);
-    } catch {
-      // Clipboard access can be refused. The message is on screen and
-      // selectable either way, so this is not worth a second error on top of
-      // the first one.
-      setCopied(false);
-    }
-  }
+  // Clipboard access can be refused. The message is on screen and selectable
+  // either way, so a refusal is not worth a second error on top of the first.
+  const { copied, copy: copyDetails } = useCopied();
 
   const isCopy = copy.remedy.action === "copy-details";
   const showButton = copy.actionLabel !== null && (isCopy || onRemedy !== undefined);
@@ -123,7 +109,7 @@ export function ErrorState({
         <ButtonRow>
           <Button
             disabled={busy}
-            onClick={() => (isCopy ? void handleCopy() : onRemedy?.(copy.remedy))}
+            onClick={() => (isCopy ? void copyDetails(detailsFor(error)) : onRemedy?.(copy.remedy))}
           >
             {isCopy && copied ? "Copied" : copy.actionLabel}
           </Button>
