@@ -47,7 +47,8 @@ export function useCalendarSignIn(onConnected: (account: CalendarAccount) => voi
     if (connecting === null) return;
     cancelled.current = true;
     try {
-      await calendarCancelSignIn(connecting);
+      // `false`: nothing was waiting yet (or any more); the sign-in goes on.
+      if (!(await calendarCancelSignIn(connecting))) cancelled.current = false;
     } catch (thrown) {
       cancelled.current = false;
       setError(toUiError(thrown));
