@@ -4,13 +4,13 @@
  */
 
 import { ArrowRight, FolderOpen } from "lucide-react";
+import { useRecordShortcut } from "@/hooks/useRecordShortcut";
 import { revealMeeting } from "@/ipc/client";
 import { osText } from "@/lib/osText";
 import { useAppStore } from "@/state/app";
 import { FolderRow } from "@/ui/FolderRow";
 import { IconSquare } from "@/ui/icons";
 import { Button, ButtonRow, Card, Pill, Prose } from "@/ui/primitives";
-import { useRecordShortcut } from "@/ui/useRecordShortcut";
 
 export function FolderStep({ onNext }: { onNext: () => void }) {
   const rootExists = useAppStore((state) => state.meetings?.rootExists ?? false);

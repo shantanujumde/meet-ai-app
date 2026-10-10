@@ -18,6 +18,7 @@
 
 import { Pause, Play, Square } from "lucide-react";
 import { useEffect } from "react";
+import { useRecordedMs } from "@/hooks/useRecordedMs";
 import { isPaused, overlayShowMain } from "@/ipc/client";
 import type { LiveLine } from "@/ipc/types";
 import { cn } from "@/lib/cn";
@@ -25,7 +26,6 @@ import { formatTimer } from "@/lib/elapsed";
 import { useRecordingStore, watchRecordingState } from "@/state/recording";
 import { type LiveTranscript, useTranscriptStore, watchLiveTranscript } from "@/state/transcript";
 import { IconButton } from "./primitives";
-import { useRecordedMs } from "./useRecordedMs";
 
 /** How many of the latest lines the card shows. */
 export const OVERLAY_LINES = 2;

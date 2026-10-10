@@ -18,7 +18,8 @@
  */
 
 import { Mic, Pause, Play, Square } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useRecordedMs } from "@/hooks/useRecordedMs";
+import { unavailableText, useRecordShortcut } from "@/hooks/useRecordShortcut";
 import { isPaused } from "@/ipc/client";
 import type { PermissionStatus, RecordingStatus } from "@/ipc/types";
 import { formatElapsed } from "@/lib/format";
@@ -26,8 +27,6 @@ import { osText } from "@/lib/osText";
 import { recordDisabled, recordingBlocked } from "@/lib/recordingPermission";
 import { Icon } from "./icons";
 import { IconButton } from "./primitives";
-import { useRecordedMs } from "./useRecordedMs";
-import { unavailableText, useRecordShortcut } from "./useRecordShortcut";
 
 /** Human wording for each phase. `Starting`/`Stopping` get their own. */
 function labelFor(phase: RecordingStatus["phase"]): string {
@@ -41,25 +40,6 @@ function labelFor(phase: RecordingStatus["phase"]): string {
     case "stopping":
       return "Stopping…";
   }
-}
-
-/**
- * A timer that ticks in the window rather than over IPC.
- *
- * Rust sends the start instant once; sending a tick per second would be an IPC
- * message per second for the entire length of a meeting, to render something
- * the webview can work out itself.
- */
-export function useElapsed(startedAtMs: number | null): number {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (startedAtMs === null) return;
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [startedAtMs]);
-
-  return startedAtMs === null ? 0 : Math.max(0, now - startedAtMs);
 }
 
 export function RecordControl({

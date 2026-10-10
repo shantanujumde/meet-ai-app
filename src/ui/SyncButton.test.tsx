@@ -1,10 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, test, vi } from "vitest";
+import type { SendState } from "@/hooks/useTicketSync";
 import { ticketSummary } from "@/test/fixtures";
 import { ipc } from "@/test/ipcMock";
 import { SendError, SendStatus, sendLabel, trackerName } from "./SyncButton";
-import type { SendState } from "./useTicketSync";
 
 vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),

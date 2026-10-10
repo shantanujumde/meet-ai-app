@@ -18,6 +18,7 @@
 import { ExternalLink, RotateCcw, Settings as SettingsIcon, X } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
+import { isKeptIssue, type SendState } from "@/hooks/useTicketSync";
 import { dismissUnsavedSync, openSyncedIssue } from "@/ipc/client";
 import { copyFor } from "@/ipc/errors";
 import type { TicketSummary, UiError } from "@/ipc/types";
@@ -26,7 +27,6 @@ import { cn } from "@/lib/cn";
 import { settingsPath } from "@/lib/routes";
 import { Button, ButtonRow, Pill } from "./primitives";
 import { InlineError } from "./states";
-import { isKeptIssue, type SendState } from "./useTicketSync";
 
 const TRACKER_NAME: Record<string, string> = {
   linear: "Linear",
