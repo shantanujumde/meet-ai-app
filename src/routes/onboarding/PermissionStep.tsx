@@ -15,6 +15,7 @@ import { ArrowRight, Mic, RefreshCw, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { PermissionStatus } from "@/ipc/types";
 import { currentOs, type Os } from "@/lib/osText";
+import { recordingBlocked } from "@/lib/recordingPermission";
 import { IconSquare } from "@/ui/icons";
 import { PrivacyButtons } from "@/ui/PrivacyButtons";
 import { Button, ButtonRow, Card, Pill, Prose, Row, RowLabel } from "@/ui/primitives";
@@ -53,7 +54,12 @@ export function PermissionStep({
       </Card>
 
       {os === "macos" ? (
-        <MacNext state={state} onRecheck={onRecheck} onNext={onNext} />
+        <MacNext
+          state={state}
+          blocked={recordingBlocked(status)}
+          onRecheck={onRecheck}
+          onNext={onNext}
+        />
       ) : (
         <OtherNext os={os} state={state} onRecheck={onRecheck} onNext={onNext} />
       )}
@@ -87,10 +93,24 @@ type NextProps = {
   onNext: () => void;
 };
 
-function MacNext({ state, onRecheck, onNext }: NextProps) {
+/**
+ * `blocked` is a denial that includes the microphone (TUR-87). With only
+ * System Audio Recording off meet-ai still records the microphone, so the
+ * denied guidance gets a Continue too (TUR-165): otherwise "Skip setup" is
+ * the only way on, and it skips the rest of setup.
+ */
+function MacNext({ state, blocked, onRecheck, onNext }: NextProps & { blocked: boolean }) {
   return (
     <>
-      {state === "denied" ? <DeniedPath onRecheck={onRecheck} /> : null}
+      {state === "denied" ? <DeniedPath blocked={blocked} onRecheck={onRecheck} /> : null}
+
+      {state === "denied" && !blocked ? (
+        <ButtonRow>
+          <Button tone="primary" icon={ArrowRight} onClick={onNext}>
+            Continue
+          </Button>
+        </ButtonRow>
+      ) : null}
 
       {state !== "denied" ? (
         <>
@@ -187,14 +207,26 @@ function OtherNext({ os, state, onRecheck, onNext }: NextProps & { os: Exclude<O
  * two dozen entries and the audio-capture one is not called what the prompt
  * called it.
  */
-function DeniedPath({ onRecheck }: { onRecheck: () => void }) {
+function DeniedPath({ blocked, onRecheck }: { blocked: boolean; onRecheck: () => void }) {
   return (
     <div className="state state--error" role="alert">
-      <h2 className="state__title">meet-ai is not allowed to record audio</h2>
-      <p className="state__body">
-        Recording is off until this is fixed, because meet-ai will not start a recording it knows
-        would be silent. Nothing you have already recorded is affected.
-      </p>
+      {blocked ? (
+        <>
+          <h2 className="state__title">meet-ai is not allowed to record audio</h2>
+          <p className="state__body">
+            Recording is off until this is fixed, because meet-ai will not start a recording it
+            knows would be silent. Nothing you have already recorded is affected.
+          </p>
+        </>
+      ) : (
+        <>
+          <h2 className="state__title">meet-ai is not allowed to record system audio</h2>
+          <p className="state__body">
+            Recordings capture only your microphone until this is fixed, so the other people in your
+            call are missing. You can continue setup now and fix it later.
+          </p>
+        </>
+      )}
 
       <ol className="flex flex-col gap-5 [counter-reset:step]">
         <Instruction>

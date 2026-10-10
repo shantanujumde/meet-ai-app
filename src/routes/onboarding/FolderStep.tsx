@@ -13,6 +13,9 @@ import { Button, ButtonRow, Card, Pill, Prose } from "@/ui/primitives";
 
 export function FolderStep({ onNext }: { onNext: () => void }) {
   const rootExists = useAppStore((state) => state.meetings?.rootExists ?? false);
+  // TUR-165: the button opens the newest meeting's folder, so with no meeting
+  // yet it would do nothing. The path is printed in the row either way.
+  const hasMeeting = useAppStore((state) => (state.meetings?.meetings.length ?? 0) > 0);
 
   return (
     <>
@@ -31,13 +34,13 @@ export function FolderStep({ onNext }: { onNext: () => void }) {
         <FolderRow
           bare
           status={
-            rootExists ? (
+            !rootExists ? (
+              <Pill>Created on first recording</Pill>
+            ) : hasMeeting ? (
               <Button size="small" icon={FolderOpen} onClick={() => void revealFirstMeeting()}>
                 Show in {osText("fileManager")}
               </Button>
-            ) : (
-              <Pill>Created on first recording</Pill>
-            )
+            ) : null
           }
         />
       </Card>
