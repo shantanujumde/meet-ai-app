@@ -63,6 +63,10 @@ export function Sidebar({
   const shown = needle
     ? meetings.filter((meeting) => meeting.title.toLowerCase().includes(needle))
     : meetings;
+  // TUR-166: only the first load shows the spinner. A reload with a list
+  // already on screen keeps it there, so a notes autosave or a rename never
+  // makes the list vanish and lose its scroll position.
+  const waiting = loading && list === null;
 
   return (
     <nav
@@ -85,10 +89,10 @@ export function Sidebar({
 
       <SidebarGroup
         title="Recent meetings"
-        count={!loading && meetings.length > 0 ? shown.length : undefined}
+        count={!waiting && meetings.length > 0 ? shown.length : undefined}
         grow
       >
-        {loading ? (
+        {waiting ? (
           <li className="px-4 py-3">
             <Checking label="Reading your meetings folder…" />
           </li>
