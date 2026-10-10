@@ -54,7 +54,7 @@ use crate::sink::TranscriptSink;
 use crate::spoken_language::SpokenLanguage;
 use crate::vad::{EarshotVad, SAMPLE_RATE, SegmentConfig, Vad, detect_speech};
 use crate::whisper_text::{prompt_tokens, whisper_line};
-use crate::{Error, Speaker, Utterance};
+use crate::{Error, Speaker};
 
 /// Layer 3 lives with whisper's other text repairs; it stays public here.
 pub use crate::whisper_text::is_hallucination;
@@ -360,11 +360,7 @@ impl crate::SttEngine for WhisperEngine {
                 span.start_sec(),
                 self.gpu.as_deref(),
             )? {
-                sink.write(&Utterance {
-                    start_sec: start_sec as u64,
-                    speaker,
-                    text,
-                })?;
+                sink.write_at(start_sec, speaker, text)?;
             }
         }
 

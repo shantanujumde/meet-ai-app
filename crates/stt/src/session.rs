@@ -67,12 +67,17 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use meeting_format::segments::LiveSegments;
+
+use crate::placement::place_live;
 use crate::sink::TranscriptSink;
 pub use crate::span_assembler::{ReadySpan, SpanAssembler};
 use crate::{Error, Speaker, Utterance, collapse_whitespace};
 
 mod seq_counter;
 pub use seq_counter::SeqCounter;
+mod shared_collector;
+pub use shared_collector::SharedCollector;
 
 /// One line on its way to the live pane.
 ///
@@ -257,51 +262,6 @@ impl TranscriptSink for SharedSink {
     }
 }
 
-/// A [`crate::CollectingSink`] that can be read while a session still holds it.
-///
-/// The live tests need to see what has been finalized *so far*, which a
-/// `Box<dyn TranscriptSink>` handed to a session does not allow.
-#[derive(Debug, Clone, Default)]
-pub struct SharedCollector(Arc<std::sync::Mutex<Vec<Utterance>>>);
-
-impl SharedCollector {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn utterances(&self) -> Vec<Utterance> {
-        self.0.lock().expect("collector mutex").clone()
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.lock().expect("collector mutex").len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn lines(&self) -> Vec<String> {
-        self.utterances()
-            .iter()
-            .map(crate::format_transcript_line)
-            .collect()
-    }
-}
-
-impl TranscriptSink for SharedCollector {
-    fn write(&mut self, utterance: &Utterance) -> Result<(), Error> {
-        if utterance.text.trim().is_empty() {
-            return Ok(());
-        }
-        self.0
-            .lock()
-            .expect("collector mutex")
-            .push(utterance.clone());
-        Ok(())
-    }
-}
-
 /// How a live session behaves. Everything here is engine-independent.
 #[derive(Debug, Clone)]
 pub struct SessionOptions {
@@ -315,6 +275,9 @@ pub struct SessionOptions {
     /// coalesced — the newest hypothesis is kept and the ones it superseded are
     /// dropped, so the tail is never stale, only less twitchy.
     pub volatile_per_sec: f64,
+    /// The recording's `segments.json` as it is written, to place each line
+    /// by ([`Self::with_timeline`], TUR-164). `None`: the WAV position.
+    pub timeline: Option<LiveSegments>,
 }
 
 impl SessionOptions {
@@ -325,6 +288,7 @@ impl SessionOptions {
             speaker,
             seq: SeqCounter::new(),
             volatile_per_sec: 5.0,
+            timeline: None,
         }
     }
 
@@ -333,14 +297,12 @@ impl SessionOptions {
         let seq = SeqCounter::new();
         (
             Self {
-                speaker: Speaker::You,
                 seq: seq.clone(),
-                volatile_per_sec: 5.0,
+                ..Self::new(Speaker::You)
             },
             Self {
-                speaker: Speaker::Others,
                 seq,
-                volatile_per_sec: 5.0,
+                ..Self::new(Speaker::Others)
             },
         )
     }
@@ -431,6 +393,8 @@ pub struct LiveEmitter {
     showing: Option<String>,
     last_sent_at: Option<Instant>,
     finalized: usize,
+    /// Places each line on the recording's clock (TUR-164).
+    timeline: Option<LiveSegments>,
 }
 
 impl LiveEmitter {
@@ -445,6 +409,7 @@ impl LiveEmitter {
             showing: None,
             last_sent_at: None,
             finalized: 0,
+            timeline: options.timeline.clone(),
         }
     }
 
@@ -494,6 +459,7 @@ impl LiveEmitter {
             self.pending = None;
             return;
         }
+        let start_sec = place_live(self.timeline.as_ref(), self.speaker, start_sec);
         self.pending = Some((start_sec, text));
         self.poll();
     }
@@ -548,7 +514,7 @@ impl LiveEmitter {
         let line = LiveLine {
             seq: self.seq.next(),
             speaker: self.speaker,
-            start_sec: start_sec.max(0.0),
+            start_sec: place_live(self.timeline.as_ref(), self.speaker, start_sec),
             text,
         };
         sink.write(&line.to_utterance())?;

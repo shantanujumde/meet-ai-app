@@ -22,7 +22,7 @@ use std::process::{Command, Stdio};
 use crate::session::{LiveListener, SessionOptions, SttSession};
 use crate::sink::TranscriptSink;
 use crate::vad::SpeechTimeline;
-use crate::{Error, Speaker, Utterance, collapse_whitespace};
+use crate::{Error, Speaker, collapse_whitespace};
 
 use live::AppleSession;
 pub use protocol::Probe;
@@ -143,14 +143,9 @@ fn write_batch_finals(
                 if !over_heard_speech(heard_speech, start_sec, end_sec, &text) {
                     continue;
                 }
-                sink.write(&Utterance {
-                    // Truncating to whole seconds matches the [HH:MM:SS]
-                    // line format; rounding would put an utterance a
-                    // fraction before its own audio.
-                    start_sec: start_sec.max(0.0) as u64,
-                    speaker,
-                    text,
-                })?;
+                // A WAV position: the sink places it on the recording's
+                // clock (SPEC §3.4) and cuts it to whole seconds.
+                sink.write_at(start_sec, speaker, text)?;
             }
             Ok(Line::Error { code, message }) => {
                 failure = Some(Error::Sidecar(format!("{code}: {message}")));

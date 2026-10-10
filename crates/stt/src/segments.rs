@@ -14,7 +14,18 @@
 //! Timestamps derive from `segment.start_host_ns + frame_index / rate`, never
 //! from the wall clock at write time. That is the mitigation for the 🔴
 //! clock-drift risk in SPEC §7, and it is why transcript timestamps have to go
-//! through here instead of being read off the WAV.
+//! through here instead of being read off the WAV. Both paths do (TUR-164):
+//! the batch path ([`crate::transcribe_meeting`]) with the file, the live one
+//! ([`crate::SessionOptions::with_timeline`]) with the copy the recorder
+//! publishes as it writes it, through the same [`place`].
+//!
+//! `frame_index / rate` is the nominal rate. Each channel runs on its own
+//! device clock, and the mic's crystal and the output device's drift apart
+//! (100 ppm is ~270 ms over 45 minutes, past the 200 ms gate). So within a
+//! segment the frame is placed through its checkpoint anchors (SPEC A5),
+//! which pair a frame with the host time it was captured at: on the straight
+//! line between the two anchors around it, and at the nominal rate past the
+//! last one (SPEC A37).
 //!
 //! Points confirmed with Rune (the `meet-rec` author) on TUR-4, against
 //! **revision 2** of the on-disk contract, which this module now encodes rather
@@ -30,7 +41,9 @@
 //!   device change loses a few hundred ms of wall clock and `meet-rec` does not
 //!   fill it with silence. The loss shows up only as a jump in the next
 //!   segment's `start_host_ns`, which is exactly why `frame_to_sec` adds each
-//!   segment's own clock offset instead of accumulating frame time.
+//!   segment's own clock offset instead of accumulating frame time. The live
+//!   tee pads only what *it* drops, so it stays frame-for-frame with the WAV
+//!   and goes through this same mapping.
 //! - **Within a segment, frame 0 of both channels is `start_host_ns`** —
 //!   `meet-rec` head-pads whichever stream came up later. So a mic frame and a
 //!   system frame at the same index inside one segment are the same instant,
@@ -51,8 +64,9 @@
 //!
 //! Unknown fields are ignored on purpose: `meet-rec` owns this file and may add
 //! to it, and a strict parser would turn an additive change into a crash. The
-//! per-checkpoint `anchors` array Tess asked for on TUR-4 lands that way — it is
-//! for `drift-check`, not for us, and must not break transcription if it ships.
+//! per-checkpoint `anchors` array Tess asked for on TUR-4 landed that way, for
+//! `drift-check`; since TUR-164 it also corrects the timestamps, and a file
+//! without anchors still places every line at the nominal rate.
 //! `version` is read only to warn when the file is newer than what this parser
 //! was written against; a future writer that only *adds* fields must not be
 //! turned into a hard failure here.
@@ -97,9 +111,11 @@ pub trait SegmentsTimeline: Sized {
     ///
     /// The WAV is the concatenation of every segment's frames for that
     /// channel, so this walks the segments accumulating frames until it finds
-    /// the one containing `frame`, then adds that segment's own clock offset.
-    /// Without this, the unpadded gap at an AirPods swap would silently pull
-    /// every timestamp after it earlier than it really happened.
+    /// the one containing `frame`, then adds that segment's own clock offset
+    /// and places the frame inside it through its anchors. Without this, the
+    /// unpadded gap at an AirPods swap would silently pull every timestamp
+    /// after it earlier than it really happened, and two clocks drifting apart
+    /// would pull the two speakers' lines apart over a long meeting.
     ///
     /// Returns `None` only when this channel has no audio at all — no segments,
     /// or a `*_rate` of 0 in every segment because the tap never started.
@@ -111,6 +127,12 @@ pub trait SegmentsTimeline: Sized {
     /// there to keep a transcript line rather than drop it, not to make the bug
     /// invisible.
     fn frame_to_sec(&self, channel: Channel, frame: u64) -> Option<f64>;
+
+    /// [`Self::frame_to_sec`] for a position given in seconds into the WAV
+    /// (`frame / 16000`), which is how the engines report where a line
+    /// starts. Fractional, so a line is placed before it is cut to whole
+    /// seconds, never after.
+    fn wav_sec_to_sec(&self, channel: Channel, wav_sec: f64) -> Option<f64>;
 }
 
 impl SegmentsTimeline for Segments {
@@ -133,72 +155,154 @@ impl SegmentsTimeline for Segments {
     }
 
     fn frame_to_sec(&self, channel: Channel, frame: u64) -> Option<f64> {
-        let origin_ns = self.start_host_ns()?;
+        placed(self, channel, frame as f64)
+    }
 
-        let mut consumed = 0u64;
-        // Last segment that carried audio for this channel, and the frame count
-        // that preceded it — the fallback for a frame past the declared total.
-        let mut tail: Option<(&Segment, u32, u64)> = None;
+    fn wav_sec_to_sec(&self, channel: Channel, wav_sec: f64) -> Option<f64> {
+        placed(
+            self,
+            channel,
+            wav_sec.max(0.0) * f64::from(meeting_format::SAMPLE_RATE),
+        )
+    }
+}
 
-        for (i, segment) in self.segments.iter().enumerate() {
-            let rate = segment.rate(channel);
-            if rate == 0 {
-                continue; // this channel was never captured
-            }
-            let frames = segment.frames(channel);
+/// Where a position in one channel's WAV lands on the recording's clock.
+///
+/// What [`SegmentsTimeline::frame_to_sec`] answers, without its warning:
+/// `past_end` says the frame is beyond the frames the segments declare. Live
+/// that is routine (the open segment's count is only brought up to date at
+/// each checkpoint), so the live path reads this directly; after the
+/// recording it means contract §7 broke, which the trait methods log.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Placed {
+    pub sec: f64,
+    pub past_end: bool,
+}
 
-            // The final segment's frame count may be unknown if the process was
-            // killed before it could be updated; treat it as open-ended rather
-            // than refusing to place the timestamp.
-            let is_last = i + 1 == self.segments.len();
-            let within = frame.saturating_sub(consumed);
-            if within < frames || (is_last && frames == 0) {
-                return Some(sec_at(segment, origin_ns, rate, within));
-            }
-            tail = Some((segment, rate, consumed));
-            consumed += frames;
+/// [`Placed`] for `frame`, a (possibly fractional) frame index into the
+/// channel's WAV. `None` when the channel has no audio at all.
+///
+/// The WAV is the concatenation of every segment's frames for that channel,
+/// so this walks the segments accumulating frames until it finds the one
+/// holding `frame`, then places it inside that segment by its own clock
+/// ([`host_offset_ns`]). A segment's own `start_host_ns` is used rather than
+/// the frame time of everything before it, so the unpadded gap at a device
+/// switch or a pause stays accounted for.
+pub(crate) fn place(segments: &Segments, channel: Channel, frame: f64) -> Option<Placed> {
+    let origin_ns = segments.start_host_ns()?;
+    let mut consumed = 0u64;
+    // Last segment that carried audio for this channel, and the frame count
+    // that preceded it: the fallback for a frame past the declared total.
+    let mut tail: Option<(&Segment, u32, u64)> = None;
+
+    for (i, segment) in segments.segments.iter().enumerate() {
+        let rate = segment.rate(channel);
+        if rate == 0 {
+            continue; // this channel was never captured
         }
+        let frames = segment.frames(channel);
+        // The final segment's frame count may be unknown if the process was
+        // killed before it could be updated; treat it as open-ended rather
+        // than refusing to place the timestamp.
+        let is_last = i + 1 == segments.segments.len();
+        let within = (frame - consumed as f64).max(0.0);
+        if within < frames as f64 || (is_last && frames == 0) {
+            let sec = sec_at(segment, channel, origin_ns, rate, within);
+            return Some(Placed {
+                sec,
+                past_end: false,
+            });
+        }
+        tail = Some((segment, rate, consumed));
+        consumed += frames;
+    }
 
-        // Past the last declared frame. Contract §7 makes this impossible in a
-        // well-behaved recording: `segments.json` is renamed into place *before*
-        // the WAV headers are patched and the header lengths only grow, so the
-        // segments always cover at least as many frames as the file declares —
-        // in every crash ordering, not just a graceful stop. Reaching here means
-        // that invariant broke, so say so. Extrapolating from the final segment
-        // still beats returning `None` and dropping the line's timestamp, but it
-        // is a fallback for a bug, not a supported state.
-        let (segment, rate, before) = tail?;
-        let declared = self
-            .segments
-            .iter()
-            .map(|segment| segment.frames(channel))
-            .sum::<u64>();
+    // Past the last declared frame: extrapolate from the final segment.
+    let (segment, rate, before) = tail?;
+    let within = (frame - before as f64).max(0.0);
+    Some(Placed {
+        sec: sec_at(segment, channel, origin_ns, rate, within),
+        past_end: true,
+    })
+}
+
+/// [`place`], logging a frame past the declared total.
+///
+/// Contract §7 makes that impossible once the recording is over:
+/// `segments.json` is renamed into place *before* the WAV headers are patched
+/// and the header lengths only grow, so the segments always cover at least as
+/// many frames as the file declares, in every crash ordering. Reaching it
+/// means that invariant broke, so say so. Extrapolating still beats returning
+/// `None` and dropping the line's timestamp, but it is a fallback for a bug,
+/// not a supported state.
+fn placed(segments: &Segments, channel: Channel, frame: f64) -> Option<f64> {
+    let placed = place(segments, channel, frame)?;
+    if placed.past_end {
         tracing::warn!(
             ?channel,
             frame,
-            declared,
+            declared = segments.total_frames(channel),
             "frame past the last frame segments.json accounts for — the meet-rec \
              frame-count invariant (contract §7) broke; extrapolating the timestamp \
              from the final segment"
         );
-        Some(sec_at(
-            segment,
-            origin_ns,
-            rate,
-            frame.saturating_sub(before),
-        ))
     }
+    Some(placed.sec)
 }
 
 /// Seconds since `origin_ns` for a frame `within` frames into `segment`.
-///
-/// The segment's own clock offset is added rather than the frame time of
-/// everything before it, so an unpadded device-switch gap stays accounted for
-/// instead of silently pulling every later timestamp earlier.
-fn sec_at(segment: &Segment, origin_ns: u64, rate: u32, within: u64) -> f64 {
-    let segment_offset_sec = segment.start_host_ns.saturating_sub(origin_ns) as f64 / 1e9;
-    segment_offset_sec + within as f64 / rate as f64
+fn sec_at(segment: &Segment, channel: Channel, origin_ns: u64, rate: u32, within: f64) -> f64 {
+    let segment_offset_ns = segment.start_host_ns.saturating_sub(origin_ns) as f64;
+    (segment_offset_ns + host_offset_ns(segment, channel, rate, within)) / 1e9
 }
+
+/// How far a slope between two anchors may sit from the nominal rate and
+/// still be believed: a factor of two either way. Real clock error is parts
+/// per million; an interval outside this is a broken latch, not a clock.
+const BELIEVABLE_SLOPE: std::ops::RangeInclusive<f64> = 0.5..=2.0;
+
+/// Nanoseconds from `segment`'s start to the frame `within` frames into it,
+/// on the host clock (SPEC §3.4, TUR-164).
+///
+/// Nominally `within / rate`. But each channel runs on its own device clock,
+/// and two crystals 100 ppm apart slide ~270 ms apart over 45 minutes. The
+/// segment's checkpoint anchors record what the host clock said at known
+/// frames, so between two anchors the frame is placed on the straight line
+/// joining them, and past the last one at the nominal rate from it. The
+/// segment's start (frame 0 at `start_host_ns`) is the first point.
+///
+/// Anchors that do not move both forward, or whose slope is not believable,
+/// are skipped rather than trusted: a stalled channel repeats its frames, and
+/// an absent one carries `0` host times.
+fn host_offset_ns(segment: &Segment, channel: Channel, rate: u32, within: f64) -> f64 {
+    let ns_per_frame = 1e9 / f64::from(rate);
+    let (mut at_frame, mut at_ns) = (0.0, 0.0);
+    for anchor in &segment.anchors {
+        let host_ns = anchor.host_ns(channel);
+        if host_ns < segment.start_host_ns {
+            continue;
+        }
+        let frame = anchor.frames(channel) as f64;
+        let ns = (host_ns - segment.start_host_ns) as f64;
+        if frame <= at_frame || ns <= at_ns {
+            continue;
+        }
+        let slope = (ns - at_ns) / (frame - at_frame);
+        if !BELIEVABLE_SLOPE.contains(&(slope / ns_per_frame)) {
+            continue;
+        }
+        if within <= frame {
+            return at_ns + (within - at_frame) * slope;
+        }
+        (at_frame, at_ns) = (frame, ns);
+    }
+    at_ns + (within - at_frame) * ns_per_frame
+}
+
+// TUR-164: two clocks drifting apart over a long meeting, placed by anchors.
+#[cfg(test)]
+mod drift_tests;
 
 #[cfg(test)]
 mod tests {
@@ -362,8 +466,10 @@ mod tests {
         // and per-checkpoint anchors carrying a *separate* host timestamp per
         // channel (`mic_host_ns`/`sys_host_ns` — not the single shared
         // `host_ns` of the earlier proposal, because no one instant is reported
-        // by both IO callbacks). None of it is ours to interpret. All of it must
-        // parse, and transcription timing must be unchanged by its presence.
+        // by both IO callbacks). All of it must parse. Since TUR-164 the
+        // anchors also place the frames: these say the mic took 5 s of host
+        // time for 79999 frames, one short of nominal, so its frame 16000 is
+        // a hair after 1 s, and well inside a millisecond of it.
         let body = r#"{"version":1,"segments":[
             {"idx":0,"start_host_ns":1000000000,"mic_rate":16000,"sys_rate":16000,
              "mic_device_rate":48000,"sys_device_rate":48000,
@@ -376,8 +482,11 @@ mod tests {
         let segments: Segments = serde_json::from_str(body).unwrap();
         assert_eq!(segments.version, 1);
         assert_eq!(segments.segments[0].mic_device_rate, Some(48_000));
-        assert_eq!(segments.frame_to_sec(Channel::Mic, 16_000), Some(1.0));
-        assert_eq!(segments.frame_to_sec(Channel::System, 16_000), Some(1.0));
+        let mic = segments.frame_to_sec(Channel::Mic, 16_000).unwrap();
+        let sys = segments.frame_to_sec(Channel::System, 16_000).unwrap();
+        assert!((mic - 16_000.0 * 5.0 / 79_999.0).abs() < 1e-9, "mic {mic}");
+        assert!(mic > 1.0 && (mic - 1.0).abs() < 1e-3, "mic {mic}");
+        assert!((sys - 1.0).abs() < 1e-3, "sys {sys}");
     }
 
     #[test]
@@ -394,7 +503,8 @@ mod tests {
              ]}]}"#;
 
         let segments: Segments = serde_json::from_str(body).unwrap();
-        assert_eq!(segments.frame_to_sec(Channel::Mic, 16_000), Some(1.0));
+        let mic = segments.frame_to_sec(Channel::Mic, 16_000).unwrap();
+        assert!((mic - 1.0).abs() < 1e-3, "mic {mic}");
         assert_eq!(segments.frame_to_sec(Channel::System, 0), None);
     }
 
