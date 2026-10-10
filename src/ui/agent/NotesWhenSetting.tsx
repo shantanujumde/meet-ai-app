@@ -6,9 +6,9 @@
  */
 
 import { Clock } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useId } from "react";
+import { useSavedSetting } from "@/hooks/useIpcValue";
 import { notesAutoRun, type SettingsSnapshot, saveNotesAutoRun } from "@/ipc/client";
-import { toUiError, type UiError } from "@/ipc/types";
 import { rememberNotesAutoRun } from "@/state/session";
 import { IconSquare } from "@/ui/icons";
 import { Row, rowDetailVariants } from "@/ui/primitives";
@@ -38,40 +38,17 @@ const CHOICES = [
 const pick = (snapshot: SettingsSnapshot) =>
   readOrThrow(snapshot.notesAutoRun, snapshot.agentError);
 
+/** Saves, and keeps the session's answer in step (TUR-171). */
+async function save(on: boolean): Promise<boolean> {
+  const saved = await saveNotesAutoRun(on);
+  rememberNotesAutoRun(saved);
+  return saved;
+}
+
 export function NotesWhenSetting() {
   const group = useId();
-  const [on, setOn] = useState<boolean | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<UiError | null>(null);
   const load = useSnapshotLoad(pick, notesAutoRun);
-
-  useEffect(() => {
-    let live = true;
-    load()
-      .then((saved) => {
-        if (live) setOn(saved);
-      })
-      .catch((thrown: unknown) => {
-        if (live) setError(toUiError(thrown));
-      });
-    return () => {
-      live = false;
-    };
-  }, [load]);
-
-  const change = async (next: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const saved = await saveNotesAutoRun(next);
-      setOn(saved);
-      rememberNotesAutoRun(saved);
-    } catch (thrown) {
-      setError(toUiError(thrown));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const { value: on, busy, error, change } = useSavedSetting(load, save);
 
   return (
     <SettingsSection title="When notes run" after={error ? <ErrorState error={error} /> : null}>

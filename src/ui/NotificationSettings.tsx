@@ -44,7 +44,8 @@ import {
   Timer,
   Users,
 } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
+import { useIpcValue, useSavedSetting } from "@/hooks/useIpcValue";
 import { MAX_ATTENDEES, MIN_ATTENDEES } from "@/ipc/bindings";
 import {
   notificationSettings,
@@ -55,7 +56,7 @@ import {
   sendTestReminder,
   setNotificationSettings,
 } from "@/ipc/client";
-import { toUiError, type UiError } from "@/ipc/types";
+import { toUiError } from "@/ipc/types";
 import { osText } from "@/lib/osText";
 import type { LucideIcon } from "./icons";
 import { NeverDetectList } from "./NeverDetectList";
@@ -102,45 +103,22 @@ export function leadLabel(minutes: number): string {
 const pick = (snapshot: SettingsSnapshot) => snapshot.notifications;
 
 export function NotificationSettings() {
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<UiError | null>(null);
-  const [blocked, setBlocked] = useState(false);
+  const load = useSnapshotLoad(pick, notificationSettings);
+  const {
+    value: settings,
+    busy,
+    error,
+    setError,
+    change: saveAll,
+  } = useSavedSetting(load, setNotificationSettings);
+  // Not knowing is not the same as blocked: a failed read says nothing.
+  const blocked = useIpcValue(osNotificationsBlocked).value ?? false;
   const [testNote, setTestNote] = useState<string | null>(null);
   const problem = useConfigProblem("detection", settings);
-  const load = useSnapshotLoad(pick, notificationSettings);
-
-  useEffect(() => {
-    let live = true;
-    load()
-      .then((saved) => {
-        if (live) setSettings(saved);
-      })
-      .catch((thrown: unknown) => {
-        if (live) setError(toUiError(thrown));
-      });
-    osNotificationsBlocked()
-      .then((answer) => {
-        if (live) setBlocked(answer);
-      })
-      // Not knowing is not the same as blocked: say nothing.
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [load]);
 
   const save = async (change: Partial<Settings>) => {
     if (settings === null) return;
-    setBusy(true);
-    setError(null);
-    try {
-      setSettings(await setNotificationSettings({ ...settings, ...change }));
-    } catch (thrown) {
-      setError(toUiError(thrown));
-    } finally {
-      setBusy(false);
-    }
+    await saveAll({ ...settings, ...change });
   };
 
   const test = async () => {
