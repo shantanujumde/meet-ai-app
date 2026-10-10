@@ -20,7 +20,9 @@
 //! 3. **A phrase blocklist.** The handful of strings whisper reaches for when
 //!    it has nothing — mostly YouTube subtitle boilerplate baked into its
 //!    training data. Only applied to segments that are *entirely* one of these
-//!    phrases, so a real "Thank you." inside a sentence survives.
+//!    phrases, so a real "Thank you." inside a sentence survives. Checked
+//!    after a loop is cut to one copy, so "Thank you. Thank you. Thank you."
+//!    is caught too.
 //!
 //! Layer 3 is deliberately last and deliberately narrow. A blocklist that ate
 //! real speech would be a worse bug than the one it fixes.
@@ -51,8 +53,8 @@ use crate::session::{
 use crate::sink::TranscriptSink;
 use crate::spoken_language::SpokenLanguage;
 use crate::vad::{EarshotVad, SAMPLE_RATE, SegmentConfig, Vad, detect_speech};
-use crate::whisper_text::{collapse_repeats, echoes_prompt, prompt_tokens};
-use crate::{Error, Speaker, Utterance, collapse_whitespace};
+use crate::whisper_text::{prompt_tokens, whisper_line};
+use crate::{Error, Speaker, Utterance};
 
 /// Layer 3 lives with whisper's other text repairs; it stays public here.
 pub use crate::whisper_text::is_hallucination;
@@ -296,23 +298,10 @@ fn decode(
             continue;
         }
 
-        // Layer 3.
-        if is_hallucination(&raw) {
-            tracing::debug!(text = %raw, "dropped: known hallucination phrase");
-            continue;
-        }
-
-        let Some(text) = collapse_whitespace(&collapse_repeats(&raw)) else {
+        // Layer 3, after loops are cut to one copy (`whisper_line`).
+        let Some(text) = whisper_line(&raw, config.prompt.as_deref()) else {
             continue;
         };
-        if config
-            .prompt
-            .as_deref()
-            .is_some_and(|prompt| echoes_prompt(&text, prompt))
-        {
-            tracing::debug!(text = %text, "dropped: the prompt written back");
-            continue;
-        }
 
         let within_span = segment.start_timestamp() as f64 / 100.0;
         lines.push(((span_start_sec + within_span).max(0.0), text));
