@@ -34,6 +34,7 @@ mod folder_move;
 mod headphone_warning;
 // TUR-63: the user's own commands at three moments of a meeting.
 mod hooks;
+mod ipc_defaults;
 // TUR-76: closing the window hides it; quitting asks first while recording.
 mod lifecycle;
 mod live_transcript;

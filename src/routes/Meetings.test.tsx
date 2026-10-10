@@ -71,7 +71,13 @@ describe("Meetings list", () => {
   // TUR-170: a click while a ⌘⇧R start is under way must not stop it.
   test("Start recording waits while Rust is starting or stopping", async () => {
     shortcut.available = true;
-    const idle = { phase: "idle", meetingId: null, startedAtMs: null, error: null } as const;
+    const idle = {
+      phase: "idle",
+      meetingId: null,
+      startedAtMs: null,
+      pause: { pausedAtMs: null, pausedTotalMs: 0 },
+      error: null,
+    } as const;
     useRecordingStore.setState({ status: { ...idle, phase: "starting" }, busy: false });
     await renderEmpty();
     const button = await screen.findByRole("button", { name: "Start recording" });

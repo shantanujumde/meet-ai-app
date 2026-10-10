@@ -93,8 +93,8 @@ impl TicketSyncStatus {
 pub struct TicketSyncOverview {
     /// A tracker is chosen in Settings, Tracker and an agent is chosen.
     pub tracker_set_up: bool,
-    /// `linear`, `jira` or `github`, the default when none is set up.
-    pub tracker: String,
+    /// The default when none is set up.
+    pub tracker: super::tracker::Tracker,
     pub tickets: Vec<TicketSyncStatus>,
 }
 
@@ -364,7 +364,7 @@ impl AutoSync {
 pub(crate) fn unsent(rows: &[TicketSummary]) -> Vec<&str> {
     rows.iter()
         .filter(|row| !row.suggested && row.synced_to.is_none() && row.external_url.is_none())
-        .filter(|row| row.status.as_deref() != Some(ticket::Status::Dropped.as_str()))
+        .filter(|row| row.status != Some(ticket::Status::Dropped))
         .map(|row| row.id.as_str())
         .collect()
 }
@@ -483,7 +483,7 @@ pub async fn ticket_sync_states(app: AppHandle) -> Result<TicketSyncOverview, Ui
             .unwrap_or_default();
         Ok(TicketSyncOverview {
             tracker_set_up: current_setup()?.is_some(),
-            tracker: config::tickets()?.tracker,
+            tracker: super::tracker::Tracker::shown(&config::tickets()?.tracker),
             tickets,
         })
     })

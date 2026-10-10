@@ -83,8 +83,8 @@ pub struct EnvironmentView {
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectionView {
-    /// `apple-speech` or `whisper`. The canonical names from `stt::registry`.
-    pub engine: &'static str,
+    /// The engine that runs, named as `stt::registry` names it.
+    pub engine: choices::ResolvedEngine,
     /// A whole sentence, written by the registry. Shown as-is.
     pub reason: String,
 }
@@ -115,11 +115,13 @@ pub struct ModelView {
 }
 
 /// Progress for one model, as emitted on [`crate::events::MODEL_PROGRESS_EVENT`].
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProgressEvent {
     pub model_id: String,
+    #[specta(type = specta_typescript::Number)]
     pub downloaded_bytes: u64,
+    #[specta(type = specta_typescript::Number)]
     pub total_bytes: u64,
     /// The bytes are all here and the SHA-256 is being computed. Hashing has no
     /// sub-progress, so the bar must go indeterminate rather than sit at 100%
@@ -302,7 +304,7 @@ pub fn resolve(
     let environment = discover(locale, model_id);
     let selection = registry::resolve(preference, &environment)?;
     Ok(SelectionView {
-        engine: selection.engine.name(),
+        engine: selection.engine.into(),
         reason: selection.reason,
     })
 }

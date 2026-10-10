@@ -6,7 +6,7 @@
  */
 
 import { commands, type meet_ai_lib_recording_pause_PauseClock } from "./bindings";
-import { narrow } from "./client";
+import { call } from "./client";
 import type { RecordingStatus } from "./types";
 
 /** The paused stretches of a recording, on `RecordingStatus.pause`. */
@@ -21,10 +21,10 @@ export { isPaused } from "@/lib/elapsed";
 
 /** Pause the live recording. Resolves to the status after it. */
 export function pauseRecording(): Promise<RecordingStatus> {
-  return narrow(() => commands.pauseRecording());
+  return call(() => commands.pauseRecording());
 }
 
 /** Carry on recording into the same meeting. Resolves to the status after it. */
 export function resumeRecording(): Promise<RecordingStatus> {
-  return narrow(() => commands.resumeRecording());
+  return call(() => commands.resumeRecording());
 }

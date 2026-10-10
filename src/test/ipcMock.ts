@@ -28,6 +28,19 @@
  */
 
 import { vi } from "vitest";
+import {
+  DEFAULT_AGENT_CHOICE,
+  DEFAULT_APP_SETTINGS,
+  DEFAULT_APPEARANCE,
+  DEFAULT_AUDIO_RETENTION,
+  DEFAULT_BUILTIN_MIC_WITH_BLUETOOTH,
+  DEFAULT_CALENDAR_SOURCES,
+  DEFAULT_ENGINE_ENVIRONMENT,
+  DEFAULT_MENU_BAR_COUNTDOWN,
+  DEFAULT_NOTES_AUTO_RUN,
+  DEFAULT_NOTIFICATION_SETTINGS,
+  DEFAULT_TRACKER_SETTINGS,
+} from "@/ipc/bindings";
 import type * as Client from "@/ipc/client";
 import type {
   AgentCli,
@@ -39,11 +52,19 @@ import type {
   NotesRunFailure,
   PermissionStatus,
   RecordingStatus,
+  TrackerSettings,
 } from "@/ipc/types";
 import { NO_MEETINGS_TODAY } from "@/lib/constants";
+import { writable } from "@/lib/writable";
 import { meetingDetail, meetingSummary, ticketSummary } from "./fixtures";
 
-const IDLE: RecordingStatus = { phase: "idle", meetingId: null, startedAtMs: null, error: null };
+const IDLE: RecordingStatus = {
+  phase: "idle",
+  meetingId: null,
+  startedAtMs: null,
+  pause: { pausedAtMs: null, pausedTotalMs: 0 },
+  error: null,
+};
 
 const NOT_CHECKED: PermissionStatus = {
   state: "unknown",
@@ -52,12 +73,11 @@ const NOT_CHECKED: PermissionStatus = {
   denied: [],
 };
 
-const DEFAULT_SOURCES: Client.CalendarSources = {
-  calendarAppAvailable: true,
-  calendarApp: true,
-  configured: [],
-  connected: [],
-};
+// TUR-173: the config defaults are Rust's own (`DEFAULT_*` in bindings.ts).
+const DEFAULT_SOURCES: Client.CalendarSources = writable(DEFAULT_CALENDAR_SOURCES);
+
+/** The shipped tracker defaults, as if the user had saved them. */
+const SAVED_TRACKER: TrackerSettings = { ...DEFAULT_TRACKER_SETTINGS, chosen: true };
 
 const SIGNED_OUT: Client.CalendarAccount[] = [
   { provider: "google", account: null, state: "signed-out", remembered: true },
@@ -237,17 +257,11 @@ export const ipc = {
   cancelSync: vi.fn<typeof Client.cancelSync>(async () => {}),
   dismissUnsavedSync: vi.fn<typeof Client.dismissUnsavedSync>(async () => {}),
   openSyncedIssue: vi.fn<typeof Client.openSyncedIssue>(async () => {}),
-  trackerSettings: vi.fn<typeof Client.trackerSettings>(async () => ({
-    tracker: "linear",
-    trackerMcp: "claude.ai Linear",
-    harness: "claude-code",
-    chosen: true,
-  })),
+  trackerSettings: vi.fn<typeof Client.trackerSettings>(async () => SAVED_TRACKER),
   setTracker: vi.fn<typeof Client.setTracker>(async (tracker, trackerMcp) => ({
+    ...SAVED_TRACKER,
     tracker,
     trackerMcp,
-    harness: "claude-code",
-    chosen: true,
   })),
   trackerServers: vi.fn<typeof Client.trackerServers>(async () => []),
   // TUR-113: suggested tasks and sending on their own. No tracker set up.
@@ -277,13 +291,9 @@ export const ipc = {
   })),
   resetOnboarding: vi.fn<typeof Client.resetOnboarding>(async () => ({ completedAt: null })),
 
-  engineEnvironment: vi.fn<typeof Client.engineEnvironment>(async () => ({
-    sidecar: null,
-    whisperModel: null,
-    locale: "en-US",
-    modelId: "large-v3-turbo-q5_0",
-    modelsDir: null,
-  })),
+  engineEnvironment: vi.fn<typeof Client.engineEnvironment>(async () =>
+    writable(DEFAULT_ENGINE_ENVIRONMENT),
+  ),
   engineSelection: vi.fn<typeof Client.engineSelection>(async () => ({
     engine: "apple-speech",
     reason: "built in",
@@ -323,24 +333,25 @@ export const ipc = {
   liveTranscript: vi.fn<typeof Client.liveTranscript>(async () => EMPTY_SNAPSHOT),
 
   // TUR-76: the Dock icon goes with the window, and quitting works.
-  appSettings: vi.fn<typeof Client.appSettings>(async () => ({ showInDockWhenClosed: false })),
+  appSettings: vi.fn<typeof Client.appSettings>(async () => writable(DEFAULT_APP_SETTINGS)),
   setShowInDockWhenClosed: vi.fn<typeof Client.setShowInDockWhenClosed>(async (show) => ({
     showInDockWhenClosed: show,
   })),
   confirmQuit: vi.fn<typeof Client.confirmQuit>(async () => {}),
   // TUR-77: no countdown next to the menu-bar icon.
-  menuBarCountdown: vi.fn<typeof Client.menuBarCountdown>(async () => false),
+  menuBarCountdown: vi.fn<typeof Client.menuBarCountdown>(async () => DEFAULT_MENU_BAR_COUNTDOWN),
   setMenuBarCountdown: vi.fn<typeof Client.setMenuBarCountdown>(async (show) => show),
-  builtinMicWithBluetooth: vi.fn<typeof Client.builtinMicWithBluetooth>(async () => true),
+  builtinMicWithBluetooth: vi.fn<typeof Client.builtinMicWithBluetooth>(
+    async () => DEFAULT_BUILTIN_MIC_WITH_BLUETOOTH,
+  ),
   setBuiltinMicWithBluetooth: vi.fn<typeof Client.setBuiltinMicWithBluetooth>(async (on) => on),
   // TUR-101: notes start on their own after a call.
-  notesAutoRun: vi.fn<typeof Client.notesAutoRun>(async () => true),
+  notesAutoRun: vi.fn<typeof Client.notesAutoRun>(async () => DEFAULT_NOTES_AUTO_RUN),
   saveNotesAutoRun: vi.fn<typeof Client.saveNotesAutoRun>(async (on) => on),
   // TUR-102: follow the OS, glass on.
-  appearanceSettings: vi.fn<typeof Client.appearanceSettings>(async () => ({
-    theme: "system",
-    glass: true,
-  })),
+  appearanceSettings: vi.fn<typeof Client.appearanceSettings>(async () =>
+    writable(DEFAULT_APPEARANCE),
+  ),
   setAppearance: vi.fn<typeof Client.setAppearance>(async (appearance) => appearance),
   // TUR-155: every config.jsonc section valid.
   configProblem: vi.fn<typeof Client.configProblem>(async () => null),
@@ -349,16 +360,9 @@ export const ipc = {
   setStartAtLogin: vi.fn<typeof Client.setStartAtLogin>(async (enabled) => enabled),
 
   // TUR-78: the SPEC §3.5 detection defaults, and notifications allowed.
-  notificationSettings: vi.fn<typeof Client.notificationSettings>(async () => ({
-    remind: true,
-    remindBeforeMinutes: 1,
-    processes: true,
-    audioActivity: true,
-    minAttendees: 2,
-    callStart: true,
-    callEnd: true,
-    stopAfterSilence: true,
-  })),
+  notificationSettings: vi.fn<typeof Client.notificationSettings>(async () =>
+    writable(DEFAULT_NOTIFICATION_SETTINGS),
+  ),
   setNotificationSettings: vi.fn<typeof Client.setNotificationSettings>(
     async (settings) => settings,
   ),
@@ -395,20 +399,15 @@ export const ipc = {
   calendarCancelSignIn: vi.fn<typeof Client.calendarCancelSignIn>(async () => true),
 
   // TUR-45: the SPEC §3.5 default.
-  audioRetentionDays: vi.fn<typeof Client.audioRetentionDays>(async () => ({
-    state: "running" as const,
-    days: 7,
-  })),
+  audioRetentionDays: vi.fn<typeof Client.audioRetentionDays>(async () =>
+    writable(DEFAULT_AUDIO_RETENTION),
+  ),
 
   // TUR-65: not read yet, so no banner.
   headphoneWarning: vi.fn<typeof Client.headphoneWarning>(async () => null),
   meetingsWatchProblem: vi.fn<typeof Client.meetingsWatchProblem>(async () => null),
 
-  agentChoice: vi.fn<typeof Client.agentChoice>(async () => ({
-    harness: "claude-code",
-    model: "",
-    binaryPath: null,
-  })),
+  agentChoice: vi.fn<typeof Client.agentChoice>(async () => writable(DEFAULT_AGENT_CHOICE)),
   detectAgents: vi.fn<typeof Client.detectAgents>(async () => DETECTED_AGENTS),
   saveAgentChoice: vi.fn<typeof Client.saveAgentChoice>(async (choice) => choice),
   testAgent: vi.fn<typeof Client.testAgent>(async () => ({
@@ -422,34 +421,20 @@ export const ipc = {
 
   // TUR-171: Settings' one read, with the same answers as the commands above.
   settingsSnapshot: vi.fn<typeof Client.settingsSnapshot>(async () => ({
-    showInDockWhenClosed: false,
-    menuBarCountdown: false,
+    ...writable(DEFAULT_APP_SETTINGS),
+    menuBarCountdown: DEFAULT_MENU_BAR_COUNTDOWN,
     appProblem: null,
     appearanceProblem: null,
     detectionProblem: null,
-    audioRetention: { state: "running" as const, days: 7 },
-    builtinMicWithBluetooth: true,
+    audioRetention: writable(DEFAULT_AUDIO_RETENTION),
+    builtinMicWithBluetooth: DEFAULT_BUILTIN_MIC_WITH_BLUETOOTH,
     showRecordingOverlay: true,
-    agentChoice: { harness: "claude-code", model: "", binaryPath: null },
-    notesAutoRun: true,
+    agentChoice: writable(DEFAULT_AGENT_CHOICE),
+    notesAutoRun: DEFAULT_NOTES_AUTO_RUN,
     agentError: null,
-    notifications: {
-      remind: true,
-      remindBeforeMinutes: 1,
-      processes: true,
-      audioActivity: true,
-      minAttendees: 2,
-      callStart: true,
-      callEnd: true,
-      stopAfterSilence: true,
-    },
+    notifications: writable(DEFAULT_NOTIFICATION_SETTINGS),
     calendarSources: DEFAULT_SOURCES,
-    tracker: {
-      tracker: "linear",
-      trackerMcp: "claude.ai Linear",
-      harness: "claude-code",
-      chosen: true,
-    },
+    tracker: SAVED_TRACKER,
     trackerError: null,
   })),
 };

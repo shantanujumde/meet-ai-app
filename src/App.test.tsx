@@ -245,6 +245,7 @@ test("system audio found off during a recording says the recording goes on with 
       phase: "recording",
       meetingId: "2026-10-07-0930-meeting",
       startedAtMs: 0,
+      pause: { pausedAtMs: null, pausedTotalMs: 0 },
       error: null,
     } satisfies RecordingStatus);
     emit(PERMISSION_STATUS_EVENT, {
@@ -282,6 +283,7 @@ test("a ⌘⇧R press that is refused says why in the window", async () => {
       phase: "idle",
       meetingId: null,
       startedAtMs: null,
+      pause: { pausedAtMs: null, pausedTotalMs: 0 },
       error: refused,
     } satisfies RecordingStatus);
   });
@@ -316,6 +318,7 @@ function pushRecording(phase: RecordingStatus["phase"], meetingId: string | null
     phase,
     meetingId,
     startedAtMs: meetingId === null ? null : 1_790_000_000_000,
+    pause: { pausedAtMs: null, pausedTotalMs: 0 },
     error: null,
   };
   act(() => {
@@ -512,6 +515,7 @@ test("a recording meeting with notes off keeps its recording dot beside the mark
     phase: "recording",
     meetingId: PRIVATE.id,
     startedAtMs: 0,
+    pause: { pausedAtMs: null, pausedTotalMs: 0 },
     error: null,
   });
 

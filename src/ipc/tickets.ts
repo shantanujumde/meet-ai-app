@@ -5,14 +5,18 @@
  * Re-exported from `./client`; import from there.
  */
 
+import { writable } from "@/lib/writable";
 import {
   commands,
+  DEFAULT_TRACKER_SETTINGS,
+  type meet_ai_lib_sync_auto_TicketSyncOverview,
   type meet_ai_lib_sync_auto_TicketSyncState,
+  type meet_ai_lib_sync_auto_TicketSyncStatus,
   type meet_ai_lib_sync_check_TrackerCheck,
   TICKET_SYNC_EVENT,
 } from "./bindings";
-import { call, hasBackend, narrow, subscribe } from "./client";
-import type { TicketSummary, Tracker, TrackerServer, TrackerSettings, UiError } from "./types";
+import { call, hasBackend, subscribe } from "./client";
+import type { TicketSummary, Tracker, TrackerServer, TrackerSettings } from "./types";
 
 export { TICKET_SYNC_EVENT };
 
@@ -20,11 +24,11 @@ export { TICKET_SYNC_EVENT };
 
 export async function listTickets(): Promise<TicketSummary[]> {
   if (!hasBackend()) return [];
-  return narrow(() => commands.listTickets());
+  return call(() => commands.listTickets());
 }
 
 export function createTicket(title: string, body: string): Promise<TicketSummary> {
-  return narrow(() => commands.createTicket(title, body));
+  return call(() => commands.createTicket(title, body));
 }
 
 /**
@@ -46,17 +50,17 @@ export function startWorkPrompt(ticketId: string, meetingId: string | null): Pro
  */
 export async function meetingTasks(meetingId: string): Promise<TicketSummary[]> {
   if (!hasBackend()) return [];
-  return narrow(() => commands.meetingTasks(meetingId));
+  return call(() => commands.meetingTasks(meetingId));
 }
 
 /** Approve one suggested task: it moves to Tickets. Answers with it as Tickets lists it. */
 export function approveTask(meetingId: string, ticketId: string): Promise<TicketSummary> {
-  return narrow(() => commands.approveTask(meetingId, ticketId));
+  return call(() => commands.approveTask(meetingId, ticketId));
 }
 
 /** Approve every task of the meeting that is still a suggestion. Answers with all its tasks. */
 export function approveAllTasks(meetingId: string): Promise<TicketSummary[]> {
-  return narrow(() => commands.approveAllTasks(meetingId));
+  return call(() => commands.approveAllTasks(meetingId));
 }
 
 /** Discard one suggested task. Its number is never handed out again. */
@@ -70,21 +74,10 @@ export async function discardTask(meetingId: string, ticketId: string): Promise<
 export type TicketSyncState = meet_ai_lib_sync_auto_TicketSyncState;
 
 /** One ticket's send state, as {@link TICKET_SYNC_EVENT} carries it. */
-export type TicketSyncStatus = {
-  ticketId: string;
-  state: TicketSyncState;
-  /** Why it was not sent. Only when `state` is `failed`. */
-  error: UiError | null;
-  /** The ticket with its issue key. Only when `state` is `sent`. */
-  ticket: TicketSummary | null;
-};
+export type TicketSyncStatus = meet_ai_lib_sync_auto_TicketSyncStatus;
 
 /** Whether a tracker is set up, which one, and every ticket queued, sending or failed. */
-export type TicketSyncOverview = {
-  trackerSetUp: boolean;
-  tracker: Tracker;
-  tickets: TicketSyncStatus[];
-};
+export type TicketSyncOverview = meet_ai_lib_sync_auto_TicketSyncOverview;
 
 /** What "Send a test ticket" found, in plain words. Nothing is created. */
 export type TrackerCheck = meet_ai_lib_sync_check_TrackerCheck;
@@ -93,7 +86,7 @@ const NO_SYNC: TicketSyncOverview = { trackerSetUp: false, tracker: "linear", ti
 
 export async function ticketSyncStates(): Promise<TicketSyncOverview> {
   if (!hasBackend()) return NO_SYNC;
-  return narrow(() => commands.ticketSyncStates());
+  return call(() => commands.ticketSyncStates());
 }
 
 /** Send a failed ticket again. Returns at once; the result comes on {@link onTicketSync}. */
@@ -103,7 +96,7 @@ export async function retryTicketSync(ticketId: string): Promise<void> {
 
 /** Every change in one ticket's send state. Returns the unsubscribe function. */
 export function onTicketSync(onStatus: (status: TicketSyncStatus) => void): () => void {
-  return subscribe<TicketSyncStatus>(TICKET_SYNC_EVENT, onStatus);
+  return subscribe(TICKET_SYNC_EVENT, onStatus);
 }
 
 /** Check that the agent reaches `tracker` through `trackerMcp` (saved or not). Creates nothing. */
@@ -120,7 +113,7 @@ export function sendTestTicket(tracker: Tracker, trackerMcp: string): Promise<Tr
  * or null for a shared one.
  */
 export function syncTask(ticketId: string, meetingId: string | null): Promise<TicketSummary> {
-  return narrow(() => commands.syncTask(ticketId, meetingId));
+  return call(() => commands.syncTask(ticketId, meetingId));
 }
 
 /** Stop this ticket's running sync. `meetingId` as for {@link syncTask}. */
@@ -141,21 +134,14 @@ export async function openSyncedIssue(ticketId: string, meetingId: string | null
   await call(() => commands.openSyncedIssue(ticketId, meetingId));
 }
 
-/** What Sync uses when there is no Rust side to ask: the shipped defaults. */
-const DEFAULT_TRACKER_SETTINGS: TrackerSettings = {
-  tracker: "linear",
-  trackerMcp: "claude.ai Linear",
-  harness: "claude-code",
-  chosen: false,
-};
-
 export async function trackerSettings(): Promise<TrackerSettings> {
-  if (!hasBackend()) return DEFAULT_TRACKER_SETTINGS;
-  return narrow(() => commands.trackerSettings());
+  // The shipped defaults, from Rust (TUR-173).
+  if (!hasBackend()) return writable(DEFAULT_TRACKER_SETTINGS);
+  return call(() => commands.trackerSettings());
 }
 
 export function setTracker(tracker: Tracker, trackerMcp: string): Promise<TrackerSettings> {
-  return narrow(() => commands.setTracker(tracker, trackerMcp));
+  return call(() => commands.setTracker(tracker, trackerMcp));
 }
 
 /**
@@ -165,5 +151,5 @@ export function setTracker(tracker: Tracker, trackerMcp: string): Promise<Tracke
  */
 export async function trackerServers(): Promise<TrackerServer[]> {
   if (!hasBackend()) return [];
-  return narrow(() => commands.trackerServers());
+  return call(() => commands.trackerServers());
 }

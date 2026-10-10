@@ -13,11 +13,13 @@
  * what you want when iterating on them.
  */
 
-import { type Event, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { DEFAULT_ROOT_LABEL, NO_MEETINGS_TODAY } from "@/lib/constants";
+import { writable } from "@/lib/writable";
 import {
   AGENT_RUN_STATUS_EVENT,
   commands,
+  DEFAULT_AGENT_CHOICE,
+  DEFAULT_ENGINE_ENVIRONMENT,
   DETECTION_PROMPT_EVENT,
   HOOK_FAILED_EVENT,
   MEETINGS_CHANGED_EVENT,
@@ -32,6 +34,7 @@ import {
   TRANSCRIPT_UPDATE_EVENT,
 } from "./bindings";
 import { NO_BACKEND } from "./errors";
+import { subscribe } from "./events";
 import type {
   AgentChoice,
   AgentCli,
@@ -94,11 +97,11 @@ type Result<G> = { status: "ok"; data: G } | { status: "error"; error: unknown }
 /**
  * Call a generated command, normalising whatever it throws into a `UiError`.
  *
- * The generated functions (`./bindings`) fix each command's name and argument
- * names, and their return types are checked against the hand-written ones in
- * `./types` at every call site below, so a Rust change that is not mirrored
- * here fails `pnpm typecheck`. Commands that return `Result<_, UiError>` on the
- * Rust side come back as a result object; the rest resolve to the bare value.
+ * The generated functions (`./bindings`) fix each command's name, argument
+ * names and return type, and `./types` only renames the generated types, so a
+ * Rust change that breaks a caller fails `pnpm typecheck` (TUR-173).
+ * Commands that return `Result<_, UiError>` on the Rust side come back as a
+ * result object; the rest resolve to the bare value.
  */
 async function call<G>(run: () => Promise<G | Result<G>>): Promise<G> {
   if (!hasBackend()) throw NO_BACKEND;
@@ -120,19 +123,6 @@ function isResult<G>(value: G | Result<G>): value is Result<G> {
   return (status === "ok" && "data" in value) || (status === "error" && "error" in value);
 }
 
-/**
- * `call` for commands whose generated type is wider than the hand-written one.
- *
- * Rust sends these fields as plain `String`s (`UiError.domain`,
- * `TicketSummary.status`, `TranscriptLine.speaker`), so the generated type says
- * `string` where `./types` narrows to the values Rust actually writes. The
- * hand-written type stays the one callers see; everything else about the shape
- * is still the generated contract's.
- */
-function narrow<T>(run: () => Promise<unknown>): Promise<T> {
-  return call(run as () => Promise<T | Result<T>>);
-}
-
 // --- meetings -------------------------------------------------------------
 
 export async function listMeetings(): Promise<MeetingList> {
@@ -150,7 +140,7 @@ export async function search(query: string): Promise<SearchHit[]> {
 }
 
 export function readMeeting(id: string): Promise<MeetingDetail> {
-  return narrow(() => commands.readMeeting(id));
+  return call(() => commands.readMeeting(id));
 }
 
 export async function saveNotes(id: string, body: string): Promise<void> {
@@ -239,7 +229,7 @@ export async function meetingNotes(meetingId: string): Promise<MeetingNotes> {
  * picks itself (blank model).
  */
 export async function agentChoice(): Promise<AgentChoice> {
-  if (!hasBackend()) return { harness: "claude-code", model: "", binaryPath: null };
+  if (!hasBackend()) return writable(DEFAULT_AGENT_CHOICE);
   return call(() => commands.agentChoice());
 }
 
@@ -295,7 +285,7 @@ export async function permissionQuick(): Promise<PermissionStatus> {
  * (window, ⌘⇧R, menu bar). The window's permission state follows it.
  */
 export function onPermissionStatus(handler: (status: PermissionStatus) => void): () => void {
-  return subscribe<PermissionStatus>(PERMISSION_STATUS_EVENT, handler);
+  return subscribe(PERMISSION_STATUS_EVENT, handler);
 }
 
 export async function openPrivacySettings(pane: PrivacyPane): Promise<void> {
@@ -319,15 +309,7 @@ export function resetOnboarding(): Promise<OnboardingState> {
 
 /** Filesystem-only and sub-millisecond. Safe to await before first paint. */
 export async function engineEnvironment(): Promise<EnvironmentView> {
-  if (!hasBackend()) {
-    return {
-      sidecar: null,
-      whisperModel: null,
-      locale: "en-US",
-      modelId: "large-v3-turbo-q5_0",
-      modelsDir: null,
-    };
-  }
+  if (!hasBackend()) return writable(DEFAULT_ENGINE_ENVIRONMENT);
   return call(() => commands.engineEnvironment());
 }
 
@@ -338,7 +320,7 @@ export async function engineEnvironment(): Promise<EnvironmentView> {
  * reason it is a separate command from {@link engineEnvironment}.
  */
 export function engineSelection(): Promise<SelectionView> {
-  return narrow(() => commands.engineSelection());
+  return call(() => commands.engineSelection());
 }
 
 export async function modelCatalogue(): Promise<ModelView[]> {
@@ -354,17 +336,23 @@ export function downloadModel(id: string): Promise<string> {
 
 export async function recordingStatus(): Promise<RecordingStatus> {
   if (!hasBackend()) {
-    return { phase: "idle", meetingId: null, startedAtMs: null, error: null };
+    return {
+      phase: "idle",
+      meetingId: null,
+      startedAtMs: null,
+      pause: { pausedAtMs: null, pausedTotalMs: 0 },
+      error: null,
+    };
   }
-  return narrow(() => commands.recordingStatus());
+  return call(() => commands.recordingStatus());
 }
 
 export function toggleRecording(): Promise<RecordingStatus> {
-  return narrow(() => commands.toggleRecording());
+  return call(() => commands.toggleRecording());
 }
 
 export function stopRecording(): Promise<RecordingStatus> {
-  return narrow(() => commands.stopRecording());
+  return call(() => commands.stopRecording());
 }
 
 // --- live transcript ------------------------------------------------------
@@ -383,65 +371,36 @@ export async function liveTranscript(): Promise<LiveTranscriptSnapshot> {
 
 // --- events ---------------------------------------------------------------
 
-/**
- * Subscribe to a Tauri event, returning an unsubscribe function.
- *
- * The `listen` call is async but React effects need a synchronous cleanup, so
- * the returned function tears down whichever of the two wins the race — an
- * effect that unmounts before `listen` resolves must still not leak a listener.
- */
-function subscribe<T>(event: string, onEvent: (payload: T) => void): () => void {
-  let unlisten: UnlistenFn | undefined;
-  let cancelled = false;
-
-  if (hasBackend()) {
-    listen<T>(event, (received: Event<T>) => onEvent(received.payload))
-      .then((stop) => {
-        if (cancelled) stop();
-        else unlisten = stop;
-      })
-      .catch(() => {
-        // Nothing to listen to. The caller's state stays at whatever its last
-        // explicit fetch returned, which is the correct degraded behaviour.
-      });
-  }
-
-  return () => {
-    cancelled = true;
-    unlisten?.();
-  };
-}
-
 export function onRecordingState(handler: (status: RecordingStatus) => void): () => void {
-  return subscribe<RecordingStatus>(RECORDING_STATE_EVENT, handler);
+  return subscribe(RECORDING_STATE_EVENT, handler);
 }
 
 export function onModelProgress(handler: (progress: ModelProgress) => void): () => void {
-  return subscribe<ModelProgress>(MODEL_PROGRESS_EVENT, handler);
+  return subscribe(MODEL_PROGRESS_EVENT, handler);
 }
 
 export function onTranscriptUpdate(handler: (update: TranscriptUpdate) => void): () => void {
-  return subscribe<TranscriptUpdate>(TRANSCRIPT_UPDATE_EVENT, handler);
+  return subscribe(TRANSCRIPT_UPDATE_EVENT, handler);
 }
 
 export function onTranscriptStatus(handler: (status: TranscriptStatus) => void): () => void {
-  return subscribe<TranscriptStatus>(TRANSCRIPT_STATUS_EVENT, handler);
+  return subscribe(TRANSCRIPT_STATUS_EVENT, handler);
 }
 
 export function onMeetingsChanged(handler: (change: MeetingsChanged) => void): () => void {
-  return subscribe<MeetingsChanged>(MEETINGS_CHANGED_EVENT, handler);
+  return subscribe(MEETINGS_CHANGED_EVENT, handler);
 }
 
 /** A user hook failed (TUR-63), for every meeting: filter by `meetingId`. */
 export type HookFailed = meet_ai_lib_hooks_app_HookFailed;
 
 export function onHookFailed(handler: (failed: HookFailed) => void): () => void {
-  return subscribe<HookFailed>(HOOK_FAILED_EVENT, handler);
+  return subscribe(HOOK_FAILED_EVENT, handler);
 }
 
 /** Every notes-run change, for every meeting — filter by `meetingId`. */
 export function onNotesRunStatus(handler: (status: NotesRunStatus) => void): () => void {
-  return subscribe<NotesRunStatus>(AGENT_RUN_STATUS_EVENT, handler);
+  return subscribe(AGENT_RUN_STATUS_EVENT, handler);
 }
 
 /**
@@ -451,7 +410,7 @@ export function onNotesRunStatus(handler: (status: NotesRunStatus) => void): () 
 export type DetectionPrompt = meet_ai_lib_detection_notify_Prompt;
 
 export function onDetectionPrompt(handler: (prompt: DetectionPrompt) => void): () => void {
-  return subscribe<DetectionPrompt>(DETECTION_PROMPT_EVENT, handler);
+  return subscribe(DETECTION_PROMPT_EVENT, handler);
 }
 
 // --- today's meetings (TUR-28) ----------------------------------------------
@@ -490,10 +449,11 @@ export * from "./brief";
 export * from "./calendar";
 // TUR-155: a bad value in config.jsonc, for the Settings cards.
 export * from "./configProblem";
-export * from "./headphones";
 // Closing and quitting (TUR-76). Re-exported, so every caller (and
 // `@/test/ipcMock`) keeps the one `@/ipc/client` import; `call` and
 // `subscribe` are exported for such modules.
+export * from "./events";
+export * from "./headphones";
 export * from "./lifecycle";
 export * from "./logs";
 export * from "./meetingActions";
@@ -510,4 +470,4 @@ export * from "./settingsSnapshot";
 export * from "./speech";
 // Tickets, suggested tasks and sending them to the tracker (TUR-113).
 export * from "./tickets";
-export { call, narrow, subscribe };
+export { call, subscribe };

@@ -548,8 +548,8 @@ export const commands = {
 	 *  default, or `None` when all of it was valid.
 	 */
 	configProblem: (section: meet_ai_lib_config_problem_ConfigSection) => typedError<{
-	/**  Which error enum this came from: `stt`, `model`, or `app`. */
-	domain: string,
+	/**  Which error enum this came from. */
+	domain: meet_ai_lib_error_ErrorDomain,
 	/**  The stable variant tag. Safe to `switch` on. */
 	kind: string,
 	/**  The error's own sentence. Display it; do not parse it. */
@@ -564,6 +564,30 @@ export const commands = {
 
 /* Constants */
 export const AGENT_RUN_STATUS_EVENT = "agent-run://status" as const;
+
+export const DEFAULT_AGENT_CHOICE = {"binaryPath":null,"harness":"claude-code","model":""} as const;
+
+export const DEFAULT_APPEARANCE = {"glass":true,"theme":"system"} as const;
+
+export const DEFAULT_APP_SETTINGS = {"showInDockWhenClosed":false} as const;
+
+export const DEFAULT_AUDIO_RETENTION = {"days":7,"state":"running"} as const;
+
+export const DEFAULT_BUILTIN_MIC_WITH_BLUETOOTH = true as const;
+
+export const DEFAULT_CALENDAR_SOURCES = {"calendarApp":true,"calendarAppAvailable":true,"configured":[],"connected":[]} as const;
+
+export const DEFAULT_ENGINE_ENVIRONMENT = {"locale":"en-US","modelId":"large-v3-turbo-q5_0","modelsDir":null,"sidecar":null,"whisperModel":null} as const;
+
+export const DEFAULT_MENU_BAR_COUNTDOWN = false as const;
+
+export const DEFAULT_NOTES_AUTO_RUN = true as const;
+
+export const DEFAULT_NOTIFICATION_SETTINGS = {"audioActivity":true,"callEnd":true,"callStart":true,"minAttendees":2,"processes":true,"remind":true,"remindBeforeMinutes":1,"stopAfterSilence":true} as const;
+
+export const DEFAULT_TODAYS_MEETINGS = {"events":[],"minAttendees":2,"refreshMinutes":15,"unreadable":[]} as const;
+
+export const DEFAULT_TRACKER_SETTINGS = {"chosen":false,"harness":"claude-code","tracker":"linear","trackerMcp":"claude.ai Linear"} as const;
 
 export const DETECTION_PROMPT_EVENT = "detection://prompt" as const;
 
@@ -730,7 +754,7 @@ export type meet_ai_lib_brief_BriefTicket = {
 	id: string,
 	title: string,
 	/**  `open` or `in_progress`; `None` when the file has no valid status. */
-	status: string | null,
+	status: store_ticket_Status | null,
 };
 
 /**  One provider's sign-in, for the Settings card. */
@@ -776,6 +800,14 @@ export type meet_ai_lib_detection_popup_Card =
  *  recording ([`countdown`]).
  */
 { kind: "countdown"; line: string; seconds: number };
+
+/**
+ *  What the window receives: the files that changed. The list refreshes on any
+ *  change; it never moves the selection.
+ */
+export type meet_ai_lib_watch_Changed = {
+	paths: string[],
+};
 
 /**  One `git log` line. */
 export type meet_ai_lib_brief_Commit = {
@@ -862,6 +894,18 @@ export type meet_ai_lib_engine_EnvironmentView = {
 	 */
 	modelsDir: string | null,
 };
+
+/**
+ *  [`UiError::domain`]: an enum, so the window's type is the closed union
+ *  it branches on (TUR-173) rather than a `string`.
+ */
+export type meet_ai_lib_error_ErrorDomain = 
+/**  `stt::Error`. */
+"stt" | 
+/**  `modelfetch::Error`. */
+"model" | 
+/**  The app shell itself, and the crates it maps into it. */
+"app";
 
 /**  Why a run wrote no notes, in plain words. */
 export type meet_ai_lib_agent_run_Failure = {
@@ -962,6 +1006,31 @@ export type stt_session_LiveLine = {
 	/**  Already whitespace-collapsed and known non-empty. */
 	text: string,
 };
+
+/**
+ *  What the live pane is told.
+ * 
+ *  Tagged for serde so it can go straight over a Tauri event channel without a
+ *  second translation layer inventing its own names.
+ */
+export type stt_session_LiveUpdate = 
+/**  Replace this speaker's live hypothesis with this line. */
+{
+	kind: "volatile",
+} & stt_session_LiveLine | 
+/**
+ *  This speaker's tail is settled: clear it and append this line. The same
+ *  line — minus `seq` and the fractional second — also reached the sink.
+ */
+{
+	kind: "final",
+} & stt_session_LiveLine | 
+/**
+ *  Clear this speaker's tail without appending anything. Sent when a
+ *  hypothesis is withdrawn and at [`SttSession::finish`] time, so a guess
+ *  that never finalized cannot sit on screen for the rest of the meeting.
+ */
+{ kind: "dropped"; speaker: meeting_format_Speaker; seq: number };
 
 /**  Everything the brief view shows for one meeting title. */
 export type meet_ai_lib_brief_MeetingBrief = {
@@ -1271,6 +1340,19 @@ export type meet_ai_lib_brief_PreviousMeeting = {
 	openTickets: meet_ai_lib_brief_BriefTicket[],
 };
 
+/**  Progress for one model, as emitted on [`crate::events::MODEL_PROGRESS_EVENT`]. */
+export type meet_ai_lib_engine_ProgressEvent = {
+	modelId: string,
+	downloadedBytes: number,
+	totalBytes: number,
+	/**
+	 *  The bytes are all here and the SHA-256 is being computed. Hashing has no
+	 *  sub-progress, so the bar must go indeterminate rather than sit at 100%
+	 *  looking frozen.
+	 */
+	verifying: boolean,
+};
+
 /**  What the window hears on [`DETECTION_PROMPT_EVENT`]. */
 export type meet_ai_lib_detection_notify_Prompt = {
 	/**  What was noticed. */
@@ -1385,8 +1467,8 @@ export type meet_ai_lib_engine_choices_ResolvedEngine = "apple-speech" | "whispe
 
 /**  Which engine this Mac will actually use, and why. */
 export type meet_ai_lib_engine_SelectionView = {
-	/**  `apple-speech` or `whisper`. The canonical names from `stt::registry`. */
-	engine: string,
+	/**  The engine that runs, named as `stt::registry` names it. */
+	engine: meet_ai_lib_engine_choices_ResolvedEngine,
 	/**  A whole sentence, written by the registry. Shown as-is. */
 	reason: string,
 };
@@ -1491,6 +1573,12 @@ export type meeting_format_Speaker =
 "you" | 
 /**  The system-audio channel — everyone else on the call. */
 "others";
+
+/**
+ *  A line's speaker as `transcript.md` writes it (L5): `You` or `Others`,
+ *  capitalised, unlike the live pane's lower-case `meeting_format::Speaker`.
+ */
+export type meet_ai_lib_meetings_view_SpeakerLabel = "You" | "Others";
 
 /**  One language the spoken-language picker offers. */
 export type meet_ai_lib_engine_choices_SpokenLanguageOption = {
@@ -1623,6 +1711,9 @@ export type meet_ai_lib_recording_Status = {
 	pause: meet_ai_lib_recording_pause_PauseClock,
 };
 
+/**  `status:` values (SPEC §3.3). */
+export type store_ticket_Status = "open" | "in_progress" | "done" | "dropped";
+
 /**  `appearance.theme`: which colour scheme the window uses. */
 export type meet_ai_lib_config_appearance_section_Theme = 
 /**  Follow the OS, and change with it. */
@@ -1636,7 +1727,7 @@ export type meet_ai_lib_tickets_TicketSummary = {
 	 *  `open`, `in_progress`, `done` or `dropped`; `None` when missing or
 	 *  not one of those.
 	 */
-	status: string | null,
+	status: store_ticket_Status | null,
 	/**  The meeting folder id it came from; `None` for a hand-made ticket. */
 	meeting: string | null,
 	body: string,
@@ -1671,8 +1762,8 @@ export type meet_ai_lib_tickets_TicketSummary = {
 export type meet_ai_lib_sync_auto_TicketSyncOverview = {
 	/**  A tracker is chosen in Settings, Tracker and an agent is chosen. */
 	trackerSetUp: boolean,
-	/**  `linear`, `jira` or `github`, the default when none is set up. */
-	tracker: string,
+	/**  The default when none is set up. */
+	tracker: meet_ai_lib_sync_tracker_Tracker,
 	tickets: meet_ai_lib_sync_auto_TicketSyncStatus[],
 };
 
@@ -1741,6 +1832,13 @@ export type meet_ai_lib_calendar_TodaysMeetings = {
 	unreadable: meet_ai_lib_calendar_read_UnreadableCalendar[],
 };
 
+/**
+ *  The trackers the Sync prompt knows how to name. An enum, so the window's
+ *  type is the union it switches on (TUR-173); `config.jsonc` still holds the
+ *  plain string.
+ */
+export type meet_ai_lib_sync_tracker_Tracker = "linear" | "jira" | "github";
+
 /**  What the check found, in plain words. */
 export type meet_ai_lib_sync_check_TrackerCheck = {
 	/**  The team, project or repository new tickets would go to. */
@@ -1760,12 +1858,11 @@ export type meet_ai_lib_sync_tracker_TrackerServer = {
 
 /**  The tracker settings as the window sees them. */
 export type meet_ai_lib_sync_tracker_TrackerSettings = {
-	/**  `linear`, `jira` or `github`. */
-	tracker: string,
+	tracker: meet_ai_lib_sync_tracker_Tracker,
 	/**  The MCP server name as the agent's CLI lists it. */
 	trackerMcp: string,
-	/**  `agent.harness`: `claude-code`, `codex` or `none`. */
-	harness: string,
+	/**  `agent.harness`. */
+	harness: meet_ai_lib_agent_setup_AgentHarness,
 	/**
 	 *  Whether `config.jsonc` names the tracker and server itself. False when
 	 *  `tracker` and `tracker_mcp` are only the shipped defaults: then no
@@ -1781,14 +1878,14 @@ export type meet_ai_lib_meetings_view_TranscriptLine = {
 	/**  `HH:MM:SS`, the utterance *start* (SPEC §3.4). */
 	time: string,
 	/**  `You` or `Others` (L5). Kept as the literal spec string. */
-	speaker: string,
+	speaker: meet_ai_lib_meetings_view_SpeakerLabel,
 	text: string,
 };
 
 /**  An error as the webview sees it. */
 export type meet_ai_lib_error_UiError = {
-	/**  Which error enum this came from: `stt`, `model`, or `app`. */
-	domain: string,
+	/**  Which error enum this came from. */
+	domain: meet_ai_lib_error_ErrorDomain,
 	/**  The stable variant tag. Safe to `switch` on. */
 	kind: string,
 	/**  The error's own sentence. Display it; do not parse it. */

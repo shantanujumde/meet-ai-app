@@ -218,7 +218,13 @@ describe("watchLiveTranscript", () => {
   beforeEach(() => {
     useTranscriptStore.setState({ live: EMPTY_LIVE });
     useRecordingStore.setState({
-      status: { phase: "idle", meetingId: null, startedAtMs: null, error: null },
+      status: {
+        phase: "idle",
+        meetingId: null,
+        startedAtMs: null,
+        pause: { pausedAtMs: null, pausedTotalMs: 0 },
+        error: null,
+      },
     });
     liveTranscript.mockResolvedValue({
       status: { state: "idle", engine: null, detail: null },
@@ -232,7 +238,13 @@ describe("watchLiveTranscript", () => {
   const live = () => useTranscriptStore.getState().live;
   const startRecording = (meetingId: string) =>
     useRecordingStore.setState({
-      status: { phase: "recording", meetingId, startedAtMs: 0, error: null },
+      status: {
+        phase: "recording",
+        meetingId,
+        startedAtMs: 0,
+        pause: { pausedAtMs: null, pausedTotalMs: 0 },
+        error: null,
+      },
     });
 
   test("events fold into the store", () => {

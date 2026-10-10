@@ -34,7 +34,7 @@ export function setShowInDockWhenClosed(show: boolean): Promise<AppSettings> {
  * until the user answers "Stop recording and quit?".
  */
 export function onQuitConfirm(handler: () => void): () => void {
-  return subscribe<null>(QUIT_CONFIRM_EVENT, () => handler());
+  return subscribe(QUIT_CONFIRM_EVENT, () => handler());
 }
 
 /** "Stop and quit": Rust stops the recording through its normal stop path and quits. */
@@ -69,5 +69,5 @@ export function setStartAtLogin(enabled: boolean): Promise<boolean> {
  * and "Calendar not connected".
  */
 export function onNavigate(handler: (to: NavigateTo) => void): () => void {
-  return subscribe<NavigateTo>(NAVIGATE_EVENT, handler);
+  return subscribe(NAVIGATE_EVENT, handler);
 }

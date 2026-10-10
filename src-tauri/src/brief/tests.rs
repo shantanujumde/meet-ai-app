@@ -179,16 +179,16 @@ fn title_match_shows_last_time_and_commits_since() {
         previous.decisions.as_deref(),
         Some("- Decided in 2026-09-08-1430-standup.")
     );
-    let open: Vec<(&str, Option<&str>)> = previous
+    let open: Vec<(&str, Option<Status>)> = previous
         .open_tickets
         .iter()
-        .map(|t| (t.id.as_str(), t.status.as_deref()))
+        .map(|t| (t.id.as_str(), t.status))
         .collect();
     assert_eq!(
         open,
         [
-            ("TICK-0001", Some("open")),
-            ("TICK-0002", Some("in_progress"))
+            ("TICK-0001", Some(Status::Open)),
+            ("TICK-0002", Some(Status::InProgress))
         ]
     );
     assert_eq!(previous.open_tickets[0].title, "Task TICK-0001");

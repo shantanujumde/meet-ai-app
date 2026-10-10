@@ -14,6 +14,7 @@ const RECORDING: RecordingStatus = {
   phase: "recording",
   meetingId: "2026-10-03-1800-meeting",
   startedAtMs: 1,
+  pause: { pausedAtMs: null, pausedTotalMs: 0 },
   error: null,
 };
 

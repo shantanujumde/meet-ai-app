@@ -25,5 +25,5 @@ export async function headphoneWarning(): Promise<HeadphoneWarning | null> {
 
 /** Every change of the warning, for whichever meeting is recording: filter by `meetingId`. */
 export function onHeadphoneWarning(handler: (warning: HeadphoneWarning) => void): () => void {
-  return subscribe<HeadphoneWarning>(HEADPHONE_WARNING_EVENT, handler);
+  return subscribe(HEADPHONE_WARNING_EVENT, handler);
 }

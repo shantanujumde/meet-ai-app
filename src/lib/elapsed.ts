@@ -9,10 +9,14 @@
 import type { RecordingStatus } from "@/ipc/types";
 
 /** The parts of a status the timer reads. */
-export type TimerStatus = Pick<RecordingStatus, "startedAtMs" | "pause">;
+export type TimerStatus = Pick<RecordingStatus, "startedAtMs"> & {
+  pause?: RecordingStatus["pause"];
+};
 
 /** Whether `status` is a recording that is paused right now. */
-export function isPaused(status: Pick<RecordingStatus, "phase" | "pause">): boolean {
+export function isPaused(
+  status: Pick<RecordingStatus, "phase"> & { pause?: RecordingStatus["pause"] },
+): boolean {
   return status.phase === "recording" && (status.pause?.pausedAtMs ?? null) !== null;
 }
 

@@ -26,6 +26,7 @@ const NULL_KEYS: [&str; 7] = [
 
 /// `status:` values (SPEC §3.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Open,

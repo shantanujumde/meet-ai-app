@@ -34,7 +34,14 @@ const ID = "2026-09-30-1015-meeting";
 
 function recording(status: Partial<Omit<RecordingStatus, "error">>) {
   useRecordingStore.setState({
-    status: { phase: "idle", meetingId: null, startedAtMs: null, error: null, ...status },
+    status: {
+      phase: "idle",
+      meetingId: null,
+      startedAtMs: null,
+      pause: { pausedAtMs: null, pausedTotalMs: 0 },
+      error: null,
+      ...status,
+    },
   });
 }
 

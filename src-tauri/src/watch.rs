@@ -27,7 +27,7 @@ use crate::{meetings, search};
 
 /// What the window receives: the files that changed. The list refreshes on any
 /// change; it never moves the selection.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, specta::Type)]
 pub struct Changed {
     pub paths: Vec<String>,
 }

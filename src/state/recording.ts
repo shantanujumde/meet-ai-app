@@ -31,6 +31,7 @@ const IDLE: RecordingStatus = {
   phase: "idle",
   meetingId: null,
   startedAtMs: null,
+  pause: { pausedAtMs: null, pausedTotalMs: 0 },
   error: null,
 };
 

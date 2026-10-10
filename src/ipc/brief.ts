@@ -5,11 +5,11 @@
  */
 
 import { commands } from "./bindings";
-import { hasBackend, narrow } from "./client";
+import { call, hasBackend } from "./client";
 import type { MeetingBrief } from "./types";
 
 /** Last time's notes and the commits since, for the meeting called `title` (TUR-32). */
 export async function meetingBrief(title: string): Promise<MeetingBrief> {
   if (!hasBackend()) return { title, previous: null, commits: null };
-  return narrow(() => commands.meetingBrief(title));
+  return call(() => commands.meetingBrief(title));
 }

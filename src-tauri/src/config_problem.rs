@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn a_problem_is_an_invalid_config_error_with_its_words() {
         let error = as_error(Some("appearance.theme 3 is not valid".into())).unwrap();
-        assert_eq!((error.domain, error.kind), ("app", INVALID_CONFIG));
+        assert_eq!((error.domain.as_str(), error.kind), ("app", INVALID_CONFIG));
         assert_eq!(error.message, "appearance.theme 3 is not valid");
         assert!(as_error(None).is_none());
     }

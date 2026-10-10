@@ -6,11 +6,11 @@
  * Re-exported from `./client`; import from there.
  */
 
-import { commands } from "./bindings";
+import { commands, DEFAULT_NOTES_AUTO_RUN as RUST_DEFAULT } from "./bindings";
 import { call, hasBackend } from "./client";
 
-/** On unless `config.jsonc` turns it off. */
-export const DEFAULT_NOTES_AUTO_RUN = true;
+/** On unless `config.jsonc` turns it off. From Rust (TUR-173). */
+export const DEFAULT_NOTES_AUTO_RUN: boolean = RUST_DEFAULT;
 
 /** The setting as saved. */
 export async function notesAutoRun(): Promise<boolean> {
