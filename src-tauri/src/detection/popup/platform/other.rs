@@ -13,3 +13,8 @@ pub fn show(window: &WebviewWindow) -> tauri::Result<()> {
     window.show()?;
     window.set_always_on_top(true)
 }
+
+/// Hide the window, keeping it for the next show.
+pub fn hide(window: &WebviewWindow) -> tauri::Result<()> {
+    window.hide()
+}

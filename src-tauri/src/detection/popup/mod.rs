@@ -50,7 +50,7 @@ mod window;
 
 pub use countdown::CountdownEnd;
 // TUR-146: the recording overlay is the same kind of panel, shown the same way.
-pub(crate) use platform::{make_panel, show as show_floating};
+pub(crate) use platform::{hide as hide_floating, make_panel, show as show_floating};
 
 /// How long a prompt stays up unanswered. Unanswered is "not now": nothing
 /// records.

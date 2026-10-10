@@ -29,7 +29,10 @@ block2 = "=0.6.2"
 cpal = "=0.18.2"
 earshot = "=1.2.2"
 hound = "=3.5.1"
-objc2 = "=0.6.4"
+# `exception`: `objc2::exception::catch` around our AppKit calls, so an
+# NSException is logged rather than aborting the app (TUR-180). Already on in
+# the tree through wry; named here because we call it.
+objc2 = { version = "=0.6.4", features = ["exception"] }
 objc2-av-foundation = { version = "=0.3.2", default-features = false }
 objc2-core-audio = "=0.3.2"
 objc2-core-audio-types = "=0.3.2"
