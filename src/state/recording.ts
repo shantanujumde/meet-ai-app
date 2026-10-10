@@ -54,14 +54,30 @@ type RecordingStore = {
   applyFromBackend: (status: RecordingStatus) => void;
 };
 
+/**
+ * How many state events this window has heard (TUR-170). Every change Rust
+ * makes arrives as an event, in order, so the events are the truth; a
+ * command's answer is applied only if no event arrived while it was on its
+ * way, or a slow answer (a `starting` read just before `recording` landed)
+ * would put the window back on an older state, with no later event to fix it
+ * until Stop.
+ */
+let heard = 0;
+
+/** `status`, unless an event arrived since `asked` (a `heard` count). */
+function answer(status: RecordingStatus, asked: number): Partial<RecordingStore> {
+  return asked === heard ? withError(status) : {};
+}
+
 export const useRecordingStore = create<RecordingStore>((set, get) => ({
   status: IDLE,
   error: null,
   busy: false,
 
   async refresh() {
+    const asked = heard;
     try {
-      set(withError(await recordingStatus()));
+      set(answer(await recordingStatus(), asked));
     } catch (thrown) {
       set({ error: toUiError(thrown) });
     }
@@ -88,6 +104,7 @@ export const useRecordingStore = create<RecordingStore>((set, get) => ({
   },
 
   applyFromBackend(status) {
+    heard += 1;
     set(withError(status));
   },
 }));
@@ -100,8 +117,9 @@ async function request(command: () => Promise<RecordingStatus>): Promise<void> {
   const { busy } = useRecordingStore.getState();
   if (busy) return;
   useRecordingStore.setState({ busy: true, error: null });
+  const asked = heard;
   try {
-    useRecordingStore.setState(withError(await command()));
+    useRecordingStore.setState(answer(await command(), asked));
   } catch (thrown) {
     useRecordingStore.setState({ error: toUiError(thrown) });
   } finally {
@@ -173,11 +191,13 @@ function wasDismissed(error: UiError): boolean {
  * development does not leave two listeners running.
  */
 export function watchRecordingState(): () => void {
-  void useRecordingStore.getState().refresh();
   // A recording Rust stopped by itself (TUR-97), or a ⌘⇧R press it refused
   // (TUR-127), rides in on this same event as an idle status with `error`
-  // set, and uses the same banner as a refused button press.
-  return onRecordingState((status) => {
+  // set, and uses the same banner as a refused button press. Listening
+  // first, then reading (TUR-170): a change between the two is heard.
+  const stop = onRecordingState((status) => {
     useRecordingStore.getState().applyFromBackend(status);
   });
+  void useRecordingStore.getState().refresh();
+  return stop;
 }
