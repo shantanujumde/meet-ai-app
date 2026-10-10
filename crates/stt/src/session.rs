@@ -78,6 +78,8 @@ mod seq_counter;
 pub use seq_counter::SeqCounter;
 mod shared_collector;
 pub use shared_collector::SharedCollector;
+mod shared_sink;
+pub use shared_sink::SharedSink;
 
 /// One line on its way to the live pane.
 ///
@@ -225,40 +227,6 @@ impl CollectingListener {
 impl LiveListener for CollectingListener {
     fn on_update(&mut self, update: &LiveUpdate) {
         self.0.lock().expect("listener mutex").push(update.clone());
-    }
-}
-
-/// A [`TranscriptSink`] that two live sessions can write to at once.
-///
-/// One meeting is two tracks and therefore two sessions, but one
-/// `transcript.md`. Wrap the real sink once and hand each session a clone.
-#[derive(Clone)]
-pub struct SharedSink(Arc<std::sync::Mutex<dyn TranscriptSink + Send>>);
-
-impl SharedSink {
-    pub fn new<S: TranscriptSink + Send + 'static>(sink: S) -> Self {
-        Self(Arc::new(std::sync::Mutex::new(sink)))
-    }
-
-    /// Drops this handle and says whether it was the last one, so nothing
-    /// can write through the sink any more. A session that finished cleanly
-    /// has dropped its clone; one that panicked may have left a thread holding
-    /// one. The count cannot go up between the check and the drop: a clone
-    /// needs a handle, there are no `Weak` ones, and at a count of one the
-    /// only handle is this one. (`Arc::into_inner` would say it in one call,
-    /// but needs a sized type, and the sink is `dyn`.)
-    pub fn release(self) -> bool {
-        Arc::strong_count(&self.0) == 1
-    }
-}
-
-impl TranscriptSink for SharedSink {
-    fn write(&mut self, utterance: &Utterance) -> Result<(), Error> {
-        self.0.lock().expect("sink mutex").write(utterance)
-    }
-
-    fn flush(&mut self) -> Result<(), Error> {
-        self.0.lock().expect("sink mutex").flush()
     }
 }
 
