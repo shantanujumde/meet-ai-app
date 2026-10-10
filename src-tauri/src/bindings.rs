@@ -4,6 +4,8 @@
 //! test below (`just bindings`). It never needs the app to run, so it works in
 //! CI. Adding a command: put `#[specta::specta]` under its `#[tauri::command]`
 //! and list it here.
+//! Then list it in `app_commands.rs` and grant `allow-<command>` to the window
+//! that calls it in `capabilities/`, or Tauri refuses the call (TUR-158).
 
 use tauri_specta::{Builder, collect_commands};
 
@@ -90,8 +92,6 @@ pub fn builder() -> Builder<tauri::Wry> {
             agent_run::set_meeting_notes,
             crate::calendar::todays_meetings,
             crate::calendar::calendar_refresh_minutes,
-            crate::calendar::signin::calendar_sign_in,
-            crate::calendar::signin::calendar_sign_out,
             crate::calendar::signin::calendar_accounts,
             crate::calendar::sources::calendar_sources,
             crate::calendar::sources::set_calendar_app,

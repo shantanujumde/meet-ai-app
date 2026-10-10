@@ -16,8 +16,8 @@ import { SettingsSection } from "@/ui/settings/SettingsSection";
 
 /**
  * Open the link in the user's browser. The webview does not follow a
- * `target="_blank"` link by itself; the opener plugin's default scope allows
- * https URLs.
+ * `target="_blank"` link by itself. The main window's capability allows
+ * opening only this link's address (TUR-158).
  */
 function openLink(event: ReactMouseEvent<HTMLAnchorElement>, url: string) {
   event.preventDefault();

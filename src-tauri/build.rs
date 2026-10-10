@@ -1,5 +1,15 @@
+// TUR-158: the app command list, shared with the crate's tests.
+#[path = "src/app_commands.rs"]
+mod app_commands;
+
 fn main() {
-    let mut attributes = tauri_build::Attributes::new();
+    println!("cargo:rerun-if-changed=src/app_commands.rs");
+    // Declaring the app's commands turns on Tauri's checks for them: a window
+    // may call only the commands its capability grants (`allow-<command>`),
+    // and a capability naming an unknown one fails this build. Without it
+    // every window, the prompt card too, could call every command.
+    let manifest = tauri_build::AppManifest::new().commands(app_commands::APP_COMMANDS);
+    let mut attributes = tauri_build::Attributes::new().app_manifest(manifest);
     if windows_msvc() {
         // tauri-build links its app manifest into the app binary only, so on
         // Windows every test binary of this crate died at start with

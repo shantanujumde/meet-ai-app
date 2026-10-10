@@ -20,8 +20,8 @@ export const LANGUAGES_SOURCE_URL =
 
 /**
  * Open the source in the user's browser. The webview does not follow a
- * `target="_blank"` link by itself; the opener plugin's default scope allows
- * https URLs.
+ * `target="_blank"` link by itself. The main window's capability allows
+ * opening only this link's address (TUR-158).
  */
 function openSource(event: ReactMouseEvent<HTMLAnchorElement>) {
   event.preventDefault();

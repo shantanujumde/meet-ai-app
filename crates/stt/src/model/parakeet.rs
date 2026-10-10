@@ -146,7 +146,9 @@ pub const CREDIT: &str = "Parakeet speech model: parakeet-tdt-0.6b-v3 by NVIDIA,
                           Creative Commons Attribution 4.0 licence (CC-BY-4.0). ONNX export by \
                           istupakov. Not changed by meet-ai.";
 
-/// Where the model and its licence are published, for the About link.
+/// Where the model and its licence are published, for the About link. The
+/// main window may open it only inside its opener scope
+/// (`src-tauri/capabilities/default.json`); `src-tauri/src/app_commands.rs` tests it.
 pub const CREDIT_URL: &str = "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3";
 
 #[cfg(test)]

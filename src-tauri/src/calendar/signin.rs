@@ -232,9 +232,10 @@ async fn with_auth_on_blocking_pool<T: Send + 'static>(
 /// 5 minutes; a callback without this sign-in's `state` is refused and does
 /// not end the wait), `calendar-sign-in-failed` (a bad reply, such as a
 /// provider error; nothing is stored), `calendar-unreachable`.
-#[tauri::command]
-#[specta::specta]
-pub async fn calendar_sign_in(
+///
+/// Not a command (TUR-158): the webview signs in through `calendar_connect`,
+/// which also adds the provider to `calendar.providers`.
+pub(crate) async fn calendar_sign_in(
     app: AppHandle,
     provider: SignInProvider,
 ) -> Result<CalendarAccount, UiError> {
@@ -253,9 +254,12 @@ pub async fn calendar_sign_in(
 }
 
 /// Sign out: forget the access token and delete the stored refresh token.
-#[tauri::command]
-#[specta::specta]
-pub async fn calendar_sign_out(app: AppHandle, provider: SignInProvider) -> Result<(), UiError> {
+/// Not a command (TUR-158): `calendar_disconnect` also drops the provider
+/// from `calendar.providers`, which this alone would leave behind.
+pub(crate) async fn calendar_sign_out(
+    app: AppHandle,
+    provider: SignInProvider,
+) -> Result<(), UiError> {
     with_auth_on_blocking_pool(app, move |_, auth| {
         auth.sign_out(provider.into()).map_err(UiError::from)
     })

@@ -100,7 +100,6 @@ Pin these exactly in `Cargo.toml` and commit `Cargo.lock`. 🆕 = new major with
 | `tauri-plugin-global-shortcut` | **2.3.2** | |
 | `tauri-plugin-dialog` | **2.7.3** | |
 | `tauri-plugin-opener` | **2.5.5** | |
-| `tauri-plugin-fs` | **2.5.2** | |
 | `tauri-plugin-log` | **2.9.1** | |
 | `tauri-plugin-single-instance` | **2.4.4** | |
 | `tauri-plugin-autostart` | **2.5.1** | Start at login (TUR-58); 2.6+ needs tauri 2.12 |
@@ -452,7 +451,7 @@ cd ../..
 cd src-tauri && cargo add \
   tauri@2.11.5 tauri-plugin-clipboard-manager@2.3.3 tauri-plugin-notification@2.4.0 \
   tauri-plugin-global-shortcut@2.3.2 tauri-plugin-dialog@2.7.3 tauri-plugin-opener@2.5.5 \
-  tauri-plugin-fs@2.5.2 tauri-plugin-log@2.9.1 tauri-plugin-single-instance@2.4.4 \
+  tauri-plugin-log@2.9.1 tauri-plugin-single-instance@2.4.4 \
   tauri-plugin-updater@2.11.0 \
   tokio@1.53.1 --features tokio/rt-multi-thread,tokio/macros,tokio/fs,tokio/process,tokio/sync,tokio/time
 cargo add anyhow@1.0.104 tracing@0.1.44 tracing-subscriber@0.3.23 crash-handler@0.7.0
@@ -482,7 +481,7 @@ pnpm add react@19.2.8 react-dom@19.2.8 zustand@5.0.15 react-router@8.3.1 \
   @tauri-apps/api@2.11.1 @tauri-apps/plugin-clipboard-manager@2.3.3 \
   @tauri-apps/plugin-notification@2.4.0 @tauri-apps/plugin-global-shortcut@2.3.2 \
   @tauri-apps/plugin-dialog@2.7.3 @tauri-apps/plugin-opener@2.5.5 \
-  @tauri-apps/plugin-fs@2.5.2 @tauri-apps/plugin-log@2.9.1 \
+  @tauri-apps/plugin-log@2.9.1 \
   @tauri-apps/plugin-updater@2.11.0
 
 pnpm add -D typescript@7.0.2 vite@8.2.2 @vitejs/plugin-react@6.1.1 \

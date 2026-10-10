@@ -1,13 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "prompt",
-  "description": "The \"Record this meeting?\" card window (TUR-59, TUR-108): it hears its prompt and the recording state, and pops up its chevron's native menu (made, shown, and freed when the next one replaces it).",
+  "description": "The \"Record this meeting?\" card window (TUR-59, TUR-108): it hears its prompt and the recording state, reads its card and the saved appearance, sends its answer, and pops up its chevron's native menu (made, shown, and freed when the next one replaces it). No other app command (TUR-158): it shows calendar-controlled titles.",
   "windows": ["prompt"],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:menu:allow-new",
     "core:menu:allow-popup",
-    "core:resources:allow-close"
+    "core:resources:allow-close",
+    "allow-prompt-popup-current",
+    "allow-answer-prompt-popup",
+    "allow-appearance-settings"
   ]
 }

@@ -348,18 +348,6 @@ export const commands = {
 	 */
 	calendarRefreshMinutes: () => __TAURI_INVOKE<number>("calendar_refresh_minutes"),
 	/**
-	 *  Sign in to Google or Microsoft in the browser, and return the account.
-	 * 
-	 *  Errors: `calendar-not-configured` (no client id; the message names the
-	 *  `config.jsonc` key), `calendar-sign-in-cancelled` (said no, or no reply in
-	 *  5 minutes; a callback without this sign-in's `state` is refused and does
-	 *  not end the wait), `calendar-sign-in-failed` (a bad reply, such as a
-	 *  provider error; nothing is stored), `calendar-unreachable`.
-	 */
-	calendarSignIn: (provider: meet_ai_lib_calendar_signin_SignInProvider) => typedError<meet_ai_lib_calendar_signin_CalendarAccount, meet_ai_lib_error_UiError>(__TAURI_INVOKE("calendar_sign_in", { provider })),
-	/**  Sign out: forget the access token and delete the stored refresh token. */
-	calendarSignOut: (provider: meet_ai_lib_calendar_signin_SignInProvider) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("calendar_sign_out", { provider })),
-	/**
 	 *  Both providers' sign-in state. The first call after a launch refreshes
 	 *  each stored sign-in once, to learn the account and whether it still works.
 	 */

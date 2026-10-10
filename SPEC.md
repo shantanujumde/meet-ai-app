@@ -73,7 +73,7 @@ This spec is the reconciled version. Every change is traceable to evidence in `d
 | `tauri-plugin-global-shortcut` | ⌘⇧R start/stop |
 | `tauri-plugin-dialog` | Pick meetings root, pick repo path |
 | `tauri-plugin-opener` | Reveal folder in Finder, open ticket in editor |
-| `tauri-plugin-fs` | Scoped reads for the UI |
+| `tauri-plugin-fs` | Scoped reads for the UI (removed, A36) |
 | `tauri-plugin-log` | Frontend logs into the same file as Rust |
 | `tauri-plugin-single-instance` | Two recorders would fight over the tap |
 
@@ -546,6 +546,10 @@ Both v2 targets — public release and Windows — are additive **only if** the 
 ---
 
 ## Amendments
+
+### A36 — 2026-10-10 · Each window may call only what its own page uses; `tauri-plugin-fs` removed (amends §2.2; TUR-158)
+
+Every window could call every app command, and the main window held plugin permissions its page never used (fs, notification, updater, global-shortcut, the opener's default http(s)/mailto scope). Decisions: `tauri-plugin-fs` is removed (nothing read through it). `src-tauri/build.rs` declares the app's commands, so a window may call only the commands its capability grants, and a capability naming an unknown one fails the build. The main window gets every command but the small windows' own; the "Record this meeting?" card only its card, its answer and the saved appearance; the recording overlay only the recording status, pause, resume, stop, the live transcript, "show main window" and the saved appearance. The main window's opener scope is its two links (the model credit on huggingface.co, the Whisper language list on github.com); every other address opens from Rust after a check. `calendar_sign_in`/`calendar_sign_out` are no longer commands; the page uses `calendar_connect`/`calendar_disconnect`.
 
 ### A35 — 2026-10-10 · Zoom, Teams and Webex need a call signal too; a reminder held by a recording is asked when it stops (amends A30's fallback rule and the TUR-27/TUR-30 rules; TUR-169)
 
