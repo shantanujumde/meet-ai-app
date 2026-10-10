@@ -47,9 +47,11 @@ pub struct MeetingProcess {
     pub name: String,
     /// What to call the app in the prompt, e.g. `Zoom`.
     pub label: String,
-    /// The app is open all day (Slack, Discord), so it being open says nothing
-    /// on its own. It only prompts when a call signal — a calendar event or
-    /// audio activity — happened recently too. See [`crate::Detector`].
+    /// The app may be open all day (Slack, Discord, and Zoom, Teams or Webex
+    /// started at login), so it being open says nothing on its own. It only
+    /// prompts when a call signal — a calendar event or audio activity —
+    /// happened recently too. Every app in the list has it since TUR-169.
+    /// See [`crate::Detector`].
     pub needs_call_signal: bool,
 }
 
@@ -230,23 +232,15 @@ mod tests {
     }
 
     #[test]
-    fn only_apps_open_all_day_need_a_call_signal() {
+    fn every_app_needs_a_call_signal() {
         let list = parse(PROCESSES_JSON).expect("processes.json must parse");
         for os in ["macos", "windows", "linux"] {
-            let needing: Vec<String> = for_os(list.clone(), os)
-                .into_iter()
-                .filter(|p| p.needs_call_signal)
-                .map(|p| p.label)
-                .collect();
-            // TUR-143: the chat apps added for macOS are open all day too.
-            let expected: &[&str] = if os == "macos" {
-                &[
-                    "Slack", "Discord", "WhatsApp", "FaceTime", "Telegram", "Signal",
-                ]
-            } else {
-                &["Slack", "Discord"]
-            };
-            assert_eq!(needing, expected, "{os}");
+            let apps = for_os(list.clone(), os);
+            assert!(!apps.is_empty(), "{os}");
+            // TUR-169: Zoom, Teams and Webex start at login and stay open too.
+            for app in apps {
+                assert!(app.needs_call_signal, "{os} {}", app.name);
+            }
         }
     }
 

@@ -74,7 +74,7 @@ pub struct DetectionLoop {
 }
 
 impl DetectionLoop {
-    /// A calendar event was just seen, so Slack or Discord being open now
+    /// A calendar event was just seen, so a meeting app being open now
     /// counts as a call (see [`crate::detector`]). Polls at once rather than
     /// waiting out the interval. (Audio activity has its own
     /// [`Self::audio_activity`], which counts as a call signal too.)
@@ -183,16 +183,22 @@ mod tests {
         };
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
+        // A long interval: each call signal (TUR-169: Zoom asks only with
+        // one) wakes the loop for exactly one poll.
         let running = spawn(
             source,
-            Duration::from_millis(1),
+            Duration::from_secs(3600),
             || false,
             move |signal| {
                 sink.lock().expect("not poisoned").push(signal);
             },
         )
         .expect("spawns");
-        wait_polls(&polled, 8);
+        wait_polls(&polled, 1);
+        for _ in 0..4 {
+            running.call_signal();
+            wait_polls(&polled, 1);
+        }
         running.stop();
 
         let zoom_signal = Signal::Process {
