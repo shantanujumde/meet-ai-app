@@ -619,3 +619,23 @@ describe("Review switching and re-reading", () => {
     await waitFor(() => expect(ipc.saveNotes).toHaveBeenLastCalledWith(ID, "abcdef"));
   });
 });
+
+describe("Review: opening another meeting (TUR-171)", () => {
+  test("asks the agent setup and runs the CLI check once per session, not per meeting", async () => {
+    copyPromptFallback.mockResolvedValue(false);
+    readMeeting.mockImplementation(async (id) => meetingDetail({ summary: { id } }));
+    const first = renderReview(ID);
+    expect(await screen.findByRole("button", { name: "Show in Finder" })).toBeTruthy();
+    await waitFor(() => expect(ipc.detectAgents).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(ipc.notesAutoRun).toHaveBeenCalledTimes(1));
+    first.unmount();
+
+    renderReview("2026-09-30-1130-meeting");
+    expect(await screen.findByRole("button", { name: "Show in Finder" })).toBeTruthy();
+    await act(async () => {});
+    expect(copyPromptFallback).toHaveBeenCalledTimes(1);
+    expect(ipc.agentChoice).toHaveBeenCalledTimes(1);
+    expect(ipc.detectAgents).toHaveBeenCalledTimes(1);
+    expect(ipc.notesAutoRun).toHaveBeenCalledTimes(1);
+  });
+});

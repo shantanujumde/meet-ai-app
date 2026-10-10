@@ -7,7 +7,7 @@
  */
 
 import { commands } from "./bindings";
-import { call, hasBackend } from "./client";
+import { call, hasBackend, narrow } from "./client";
 import type { EngineChoice, EngineChoices, ModelCredit } from "./types";
 
 /**
@@ -16,7 +16,7 @@ import type { EngineChoice, EngineChoices, ModelCredit } from "./types";
  * await it before painting.
  */
 export function engineChoices(): Promise<EngineChoices> {
-  return call(() => commands.engineChoices());
+  return narrow(() => commands.engineChoices());
 }
 
 /**
@@ -25,7 +25,7 @@ export function engineChoices(): Promise<EngineChoices> {
  * the picker as saved.
  */
 export function setTranscription(engine: EngineChoice, model: string): Promise<EngineChoices> {
-  return call(() => commands.setTranscription(engine, model));
+  return narrow(() => commands.setTranscription(engine, model));
 }
 
 /**
@@ -34,7 +34,7 @@ export function setTranscription(engine: EngineChoice, model: string): Promise<E
  * picker as saved.
  */
 export function setSpokenLanguage(language: string): Promise<EngineChoices> {
-  return call(() => commands.setSpokenLanguage(language));
+  return narrow(() => commands.setSpokenLanguage(language));
 }
 
 /**

@@ -24,13 +24,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useCliFound } from "@/hooks/useCliFound";
 import { useNotesRun } from "@/hooks/useNotesRun";
-import {
-  copyPromptFallback,
-  readMeeting,
-  renameMeeting,
-  revealMeeting,
-  wrapUpPrompt,
-} from "@/ipc/client";
+import { readMeeting, renameMeeting, revealMeeting, wrapUpPrompt } from "@/ipc/client";
 import type { MeetingDetail, MeetingList, TranscriptLine, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { showsCopyPrompt } from "@/lib/copyPrompt";
@@ -38,6 +32,7 @@ import { osText } from "@/lib/osText";
 import { MEETINGS } from "@/lib/routes";
 import { useAppStore } from "@/state/app";
 import { useRecordingStore } from "@/state/recording";
+import { sessionCopyPromptFallback } from "@/state/session";
 import { useTranscriptStore } from "@/state/transcript";
 import { CopyPromptButton } from "@/ui/CopyPromptButton";
 import { HookFailedNote } from "@/ui/HookFailedNote";
@@ -87,14 +82,14 @@ function MeetingReview({ id }: { id: string }) {
   }, []);
 
   // A11's fallback: with no agent to run, a meeting is wrapped up by copying
-  // its prompt. Asked once; a failed answer counts as "no", since the button
+  // its prompt. Asked once per session (TUR-171); a failed answer counts as "no", since the button
   // is an extra and the meeting reads fine without it.
   // Null until asked, so the notes' start button does not flash up before
   // the answer says Copy prompt stands in for it.
   const [harnessIsNone, setHarnessIsNone] = useState<boolean | null>(null);
   useEffect(() => {
     let current = true;
-    copyPromptFallback().then(
+    sessionCopyPromptFallback().then(
       (answer) => {
         if (current) setHarnessIsNone(answer);
       },
@@ -196,7 +191,6 @@ function MeetingReview({ id }: { id: string }) {
   }, [id, refreshSummary]);
 
   const recording = useRecordingStore((state) => state.status);
-  const live = useTranscriptStore((state) => state.live);
   const isLive = recording.meetingId === id && recording.phase !== "idle";
 
   // A run writing notes and the switch moving both change how this meeting
@@ -294,7 +288,7 @@ function MeetingReview({ id }: { id: string }) {
       />
 
       {isLive ? (
-        <LiveTranscript live={live} />
+        <LiveTranscriptPane />
       ) : (
         <section className="section" aria-labelledby="transcript-heading">
           <div className="section__header">
@@ -362,6 +356,17 @@ function MeetingReview({ id }: { id: string }) {
   );
 }
 
+/**
+ * The live pane, with its own subscription to the live transcript (TUR-171).
+ * The transcript changes several times a second while a meeting records; read
+ * up in the page, every change re-rendered the header, the notes and the
+ * tasks too, and on any meeting's page, recording or not.
+ */
+function LiveTranscriptPane() {
+  const live = useTranscriptStore((state) => state.live);
+  return <LiveTranscript live={live} />;
+}
+
 /** Meeting `id`'s title in the meeting list, if the list has it. */
 function listedTitle(list: MeetingList | null, id: string): string | undefined {
   return list?.meetings.find((meeting) => meeting.id === id)?.title;
@@ -369,9 +374,9 @@ function listedTitle(list: MeetingList | null, id: string): string | undefined {
 
 /**
  * One line of the finished transcript. Memoised: a two-hour meeting is
- * thousands of rows, and this screen re-renders on every live-transcript
- * event — including while a *different* meeting records — so without it each
- * event re-rendered every line of this one.
+ * thousands of rows, and the screen still re-renders on a rename, a notes run
+ * or a recording starting and stopping. (It no longer re-renders on every
+ * live-transcript event: {@link LiveTranscriptPane} reads those, TUR-171.)
  */
 const TranscriptRow = memo(function TranscriptRow({
   line,

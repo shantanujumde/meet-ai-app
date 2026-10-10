@@ -4,17 +4,26 @@
  *
  * Every change saves at once. There is no Save button to forget, and the
  * onboarding step and Settings stay the same screen.
+ *
+ * Detection runs CLIs, so its answer is kept for the session (TUR-171): a
+ * second visit shows it at once, and "Check again" asks anew. In Settings the
+ * saved pick comes from the visit's snapshot.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { agentChoice, detectAgents, saveAgentChoice } from "@/ipc/client";
+import { agentChoice, type SettingsSnapshot, saveAgentChoice } from "@/ipc/client";
 import type { AgentChoice, AgentCli, AgentHarness, UiError } from "@/ipc/types";
 import { toUiError } from "@/ipc/types";
 import { useSavedAgent } from "@/state/savedAgent";
+import { rememberAgentChoice, sessionDetectAgents } from "@/state/session";
+import { readOrThrow, useSnapshotLoad } from "../settings/snapshot";
 import { detectKey } from "./agents";
 
 /** What detection is asked when config.jsonc could not be read: no path for either agent. */
 const NO_CHOICE: AgentChoice = { harness: "none", model: "", binaryPath: null };
+
+const pickChoice = (snapshot: SettingsSnapshot) =>
+  readOrThrow(snapshot.agentChoice, snapshot.agentError);
 
 export function useAgentSetup() {
   // Null until config.jsonc answers, and while it names an agent meet-ai
@@ -44,11 +53,11 @@ export function useAgentSetup() {
     setChoice(next);
   }, []);
 
-  const detect = useCallback(async (basis: AgentChoice | null) => {
+  const detect = useCallback(async (basis: AgentChoice | null, fresh = false) => {
     const run = ++detectRun.current;
     setDetecting(true);
     try {
-      const found = await detectAgents(basis ?? NO_CHOICE);
+      const found = await sessionDetectAgents(basis ?? NO_CHOICE, fresh);
       if (run !== detectRun.current) return;
       setAgents(found);
       setDetectError(null);
@@ -59,9 +68,10 @@ export function useAgentSetup() {
     }
   }, []);
 
+  const load = useSnapshotLoad(pickChoice, agentChoice);
   useEffect(() => {
     let live = true;
-    agentChoice().then(
+    load().then(
       (loaded) => {
         if (!live) return;
         apply(loaded);
@@ -78,7 +88,7 @@ export function useAgentSetup() {
     return () => {
       live = false;
     };
-  }, [apply, detect]);
+  }, [apply, detect, load]);
 
   const save = useCallback(
     async (next: AgentChoice) => {
@@ -91,6 +101,8 @@ export function useAgentSetup() {
         // A newer save started meanwhile: its answer is the one to show.
         if (run !== saveRun.current) return;
         apply(saved);
+        // Before Tracker hears of it, so it asks a new agent for its servers.
+        rememberAgentChoice(saved, previous);
         // TUR-170: Tracker, on the same page, follows the saved agent.
         useSavedAgent.getState().publish(saved);
         setLoadError(null);
@@ -141,7 +153,7 @@ export function useAgentSetup() {
     [save],
   );
 
-  const checkAgain = useCallback(() => void detect(current.current), [detect]);
+  const checkAgain = useCallback(() => void detect(current.current, true), [detect]);
 
   return {
     choice,

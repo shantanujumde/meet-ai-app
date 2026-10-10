@@ -115,6 +115,7 @@
     "allow-meetings-watch-problem",
     "allow-show-recording-overlay",
     "allow-set-show-recording-overlay",
+    "allow-settings-snapshot",
     "allow-config-problem"
   ]
 }

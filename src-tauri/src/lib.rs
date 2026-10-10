@@ -52,6 +52,8 @@ mod recording_state;
 mod retention;
 mod search;
 mod settings_links;
+// TUR-171: every saved setting Settings shows, from one config read.
+mod settings_snapshot;
 // TUR-58: the record shortcut per OS.
 mod shortcut;
 mod sync;

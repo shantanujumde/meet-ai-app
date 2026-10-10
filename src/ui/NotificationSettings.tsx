@@ -51,6 +51,7 @@ import {
   openNotificationSettings,
   osNotificationsBlocked,
   type NotificationSettings as Settings,
+  type SettingsSnapshot,
   sendTestReminder,
   setNotificationSettings,
 } from "@/ipc/client";
@@ -61,6 +62,7 @@ import { NeverDetectList } from "./NeverDetectList";
 import { Button } from "./primitives";
 import { Switch } from "./SettingSwitch";
 import { SETTINGS_SELECT, SettingsRow, SettingsSection } from "./settings/SettingsSection";
+import { useSnapshotLoad } from "./settings/snapshot";
 import { ConfigProblemNote, useConfigProblem } from "./settings/useConfigProblem";
 import { ErrorState } from "./states";
 
@@ -97,6 +99,8 @@ export function leadLabel(minutes: number): string {
   return `${minutes} ${minutes === 1 ? "minute" : "minutes"} before`;
 }
 
+const pick = (snapshot: SettingsSnapshot) => snapshot.notifications;
+
 export function NotificationSettings() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [busy, setBusy] = useState(false);
@@ -104,10 +108,11 @@ export function NotificationSettings() {
   const [blocked, setBlocked] = useState(false);
   const [testNote, setTestNote] = useState<string | null>(null);
   const problem = useConfigProblem("detection", settings);
+  const load = useSnapshotLoad(pick, notificationSettings);
 
   useEffect(() => {
     let live = true;
-    notificationSettings()
+    load()
       .then((saved) => {
         if (live) setSettings(saved);
       })
@@ -123,7 +128,7 @@ export function NotificationSettings() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [load]);
 
   const save = async (change: Partial<Settings>) => {
     if (settings === null) return;

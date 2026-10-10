@@ -16,7 +16,6 @@ import {
   downloadModel,
   engineChoices,
   engineEnvironment,
-  engineSelection,
   modelCatalogue,
   onModelProgress,
   setSpokenLanguage,
@@ -33,7 +32,6 @@ export function useSpeech() {
   const [environmentError, setEnvironmentError] = useState<UiError | null>(null);
   const [choices, setChoices] = useState<EngineChoices | null>(null);
   const [choicesError, setChoicesError] = useState<UiError | null>(null);
-  const [selectionError, setSelectionError] = useState<UiError | null>(null);
   const [checking, setChecking] = useState(true);
   const [saveError, setSaveError] = useState<UiError | null>(null);
   const [models, setModels] = useState<ModelView[] | null>(null);
@@ -58,18 +56,18 @@ export function useSpeech() {
    * The probe-backed half: the picker, and whether the saved engine can run.
    * The second is the old card's error row ("This Mac will use the
    * downloadable speech model"), kept because a saved Whisper whose model was
-   * since removed is only caught there.
+   * since removed is only caught there. Both come from one probe
+   * (`selectionError` in the choices, TUR-171); asking `engineSelection`
+   * as well ran the ~160 ms probe twice.
    */
   const check = useCallback(async () => {
     setChecking(true);
-    const [picked, selected] = await Promise.allSettled([engineChoices(), engineSelection()]);
-    if (picked.status === "fulfilled") {
-      applyChoices(picked.value);
+    try {
+      applyChoices(await engineChoices());
       setChoicesError(null);
-    } else {
-      setChoicesError(toUiError(picked.reason));
+    } catch (thrown) {
+      setChoicesError(toUiError(thrown));
     }
-    setSelectionError(selected.status === "rejected" ? toUiError(selected.reason) : null);
     setChecking(false);
   }, [applyChoices]);
 
@@ -111,18 +109,19 @@ export function useSpeech() {
 
   /** Show `picked` at once, save it with `write`, and let only the newest save land. */
   const saveWith = useCallback(
-    async (picked: EngineChoices, write: () => Promise<EngineChoices>, after?: () => void) => {
+    async (picked: EngineChoices, write: () => Promise<EngineChoices>) => {
       const before = current.current;
       if (!before) return;
       const run = ++saveRun.current;
       applyChoices(picked);
       setSaveError(null);
       try {
+        // Whether the saved engine can run is the probe's answer, not
+        // ours: the saved choices carry it (TUR-171).
         const saved = await write();
         // A newer save started meanwhile: its answer is the one to show.
         if (run !== saveRun.current) return;
         applyChoices(saved);
-        after?.();
       } catch (thrown) {
         if (run !== saveRun.current) return;
         applyChoices(before);
@@ -136,16 +135,7 @@ export function useSpeech() {
     (engine: EngineChoice, model: string) => {
       const was = current.current;
       if (!was) return Promise.resolve();
-      return saveWith(
-        { ...was, engine, model },
-        () => setTranscription(engine, model),
-        () => {
-          // Whether the saved engine can run is the probe's answer, not ours.
-          engineSelection()
-            .then(() => setSelectionError(null))
-            .catch((thrown: unknown) => setSelectionError(toUiError(thrown)));
-        },
-      );
+      return saveWith({ ...was, engine, model }, () => setTranscription(engine, model));
     },
     [saveWith],
   );
@@ -234,7 +224,8 @@ export function useSpeech() {
     environmentError,
     choices,
     choicesError,
-    selectionError,
+    /** Why the saved engine cannot run here, as the probe says; null when it can. */
+    selectionError: choices?.selectionError ?? null,
     checking,
     saveError,
     models,

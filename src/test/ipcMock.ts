@@ -93,6 +93,7 @@ const APPLE_READY: EngineChoices = {
     { code: "mr", name: "Marathi" },
   ],
   configProblem: null,
+  selectionError: null,
   honoursLanguage: true,
   languageIgnoredReason: null,
 };
@@ -418,15 +419,57 @@ export const ipc = {
     seconds: 9.6,
   })),
   cancelAgentTest: vi.fn<typeof Client.cancelAgentTest>(async () => {}),
+
+  // TUR-171: Settings' one read, with the same answers as the commands above.
+  settingsSnapshot: vi.fn<typeof Client.settingsSnapshot>(async () => ({
+    showInDockWhenClosed: false,
+    menuBarCountdown: false,
+    appProblem: null,
+    appearanceProblem: null,
+    detectionProblem: null,
+    audioRetention: { state: "running" as const, days: 7 },
+    builtinMicWithBluetooth: true,
+    showRecordingOverlay: true,
+    agentChoice: { harness: "claude-code", model: "", binaryPath: null },
+    notesAutoRun: true,
+    agentError: null,
+    notifications: {
+      remind: true,
+      remindBeforeMinutes: 1,
+      processes: true,
+      audioActivity: true,
+      minAttendees: 2,
+      callStart: true,
+      callEnd: true,
+      stopAfterSilence: true,
+    },
+    calendarSources: DEFAULT_SOURCES,
+    tracker: {
+      tracker: "linear",
+      trackerMcp: "claude.ai Linear",
+      harness: "claude-code",
+      chosen: true,
+    },
+    trackerError: null,
+  })),
 };
 
 type Handler = (payload: never) => void;
 
 const listeners = new Map<string, Set<Handler>>();
 
+/** How many times each event was subscribed to since the last reset (TUR-171). */
+const subscribeCounts = new Map<string, number>();
+
+/** How many times the window subscribed to `event`: once, for a listener kept across renders. */
+export function subscribeCount(event: string): number {
+  return subscribeCounts.get(event) ?? 0;
+}
+
 /** A stand-in for one of `client.ts`'s `on…` subscribers, keyed by event name. */
 function subscriber<T>(event: string): (handler: (payload: T) => void) => () => void {
   return (handler) => {
+    subscribeCounts.set(event, subscribeCount(event) + 1);
     const handlers = listeners.get(event) ?? new Set<Handler>();
     handlers.add(handler);
     listeners.set(event, handlers);
@@ -477,4 +520,5 @@ export function mockClient(actual: typeof Client): typeof Client {
 export function resetIpcMock(): void {
   for (const mock of Object.values(ipc)) mock.mockReset();
   listeners.clear();
+  subscribeCounts.clear();
 }

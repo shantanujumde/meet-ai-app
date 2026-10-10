@@ -117,6 +117,10 @@ pub struct EngineChoices {
     /// `language_ignored_reason` says why; the saved value is kept.
     pub honours_language: bool,
     pub language_ignored_reason: Option<String>,
+    /// Why the saved engine cannot run here, from the same probe as the rest
+    /// (TUR-171); `None` when it can. Settings used to ask `engine_selection`
+    /// for this, which ran the probe a second time.
+    pub selection_error: Option<UiError>,
 }
 
 /// One language the spoken-language picker offers.
@@ -152,13 +156,11 @@ pub fn choices() -> EngineChoices {
         problem,
     } = config::transcription_checked();
     let environment = super::discover(super::DEFAULT_LOCALE, &transcription.model);
+    let (options, selected) = registry::options_and_resolve(transcription.engine, &environment);
     EngineChoices {
         config_problem: problem,
-        ..view(
-            &transcription,
-            registry::options(&environment),
-            &environment,
-        )
+        selection_error: selected.err().map(UiError::from),
+        ..view(&transcription, options, &environment)
     }
 }
 
@@ -183,6 +185,7 @@ fn view(
         config_problem: None,
         honours_language: language.honours_language,
         language_ignored_reason: language.reason,
+        selection_error: None,
     }
 }
 
@@ -212,7 +215,7 @@ fn language_support(
 /// return the picker as saved.
 pub fn save_choice(engine: EngineChoice, model: &str) -> Result<EngineChoices, UiError> {
     let environment = super::discover(super::DEFAULT_LOCALE, model);
-    let options = registry::options(&environment);
+    let (options, selected) = registry::options_and_resolve(engine.into(), &environment);
     check(engine, model, &environment, &options)?;
     config::set_transcription(engine.into(), model)?;
     let saved = Transcription {
@@ -220,7 +223,10 @@ pub fn save_choice(engine: EngineChoice, model: &str) -> Result<EngineChoices, U
         model: model.to_string(),
         ..config::transcription()
     };
-    Ok(view(&saved, options, &environment))
+    Ok(EngineChoices {
+        selection_error: selected.err().map(UiError::from),
+        ..view(&saved, options, &environment)
+    })
 }
 
 /// Save `transcription.language`: `auto` or a whisper code. Anything else is

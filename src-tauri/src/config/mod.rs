@@ -74,6 +74,11 @@ mod file;
 mod file_tests;
 // TUR-155: decoding a section key by key.
 mod keyed;
+// TUR-171: one read of config.jsonc for a batch of readers (Settings).
+mod once;
+pub use once::read_once;
+#[cfg(test)]
+pub(crate) use once::read_once_in;
 // TUR-63: `hooks`, the user's own commands.
 mod hooks_section;
 // TUR-76: `app.show_in_dock_when_closed`.
@@ -181,8 +186,14 @@ fn default_model() -> String {
     crate::engine::default_model()
 }
 
-/// `~/Meetings/.app`, the folder `config.jsonc` lives in.
+/// `~/Meetings/.app`, the folder `config.jsonc` lives in. Inside
+/// [`read_once`], the one it found.
 fn app_dir() -> Result<PathBuf, UiError> {
+    once::app_dir().unwrap_or_else(find_app_dir)
+}
+
+/// [`app_dir`], looked up now: the root pointer is read.
+fn find_app_dir() -> Result<PathBuf, UiError> {
     crate::meetings::root().map(|root| meeting_format::layout::app_dir(&root))
 }
 
@@ -195,7 +206,7 @@ fn path() -> Option<PathBuf> {
 /// like `transcription`, must never stop the app from starting.
 fn raw_or_empty() -> String {
     path()
-        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|path| once::read(&path).ok())
         .unwrap_or_default()
 }
 
@@ -226,7 +237,7 @@ pub fn transcription() -> Transcription {
     let Some(path) = path() else {
         return Transcription::default();
     };
-    let Ok(raw) = std::fs::read_to_string(&path) else {
+    let Ok(raw) = once::read(&path) else {
         return Transcription::default();
     };
     parse(&raw)

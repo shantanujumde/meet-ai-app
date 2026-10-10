@@ -73,7 +73,7 @@ fn read_raw() -> Result<Option<RawAudioSection>, ConfigError> {
 
 /// [`read_raw`] for the `config.jsonc` at `path`.
 fn read_raw_at(path: &std::path::Path) -> Result<Option<RawAudioSection>, ConfigError> {
-    match std::fs::read_to_string(path) {
+    match super::once::read(path) {
         Ok(raw) => parse_raw(&raw),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(ConfigError::Io(error)),

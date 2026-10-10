@@ -7,13 +7,15 @@
 
 import { Clock } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { notesAutoRun, saveNotesAutoRun } from "@/ipc/client";
+import { notesAutoRun, type SettingsSnapshot, saveNotesAutoRun } from "@/ipc/client";
 import { toUiError, type UiError } from "@/ipc/types";
+import { rememberNotesAutoRun } from "@/state/session";
 import { IconSquare } from "@/ui/icons";
 import { Row, rowDetailVariants } from "@/ui/primitives";
 import { Radio } from "@/ui/Radio";
 import { SettingsSection } from "@/ui/settings/SettingsSection";
 import { ErrorState } from "@/ui/states";
+import { readOrThrow, useSnapshotLoad } from "../settings/snapshot";
 
 export const NOTES_AUTO_LABEL = "Automatically after the call";
 export const NOTES_MANUAL_LABEL = "Only when I click";
@@ -33,15 +35,19 @@ const CHOICES = [
   },
 ] as const;
 
+const pick = (snapshot: SettingsSnapshot) =>
+  readOrThrow(snapshot.notesAutoRun, snapshot.agentError);
+
 export function NotesWhenSetting() {
   const group = useId();
   const [on, setOn] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<UiError | null>(null);
+  const load = useSnapshotLoad(pick, notesAutoRun);
 
   useEffect(() => {
     let live = true;
-    notesAutoRun()
+    load()
       .then((saved) => {
         if (live) setOn(saved);
       })
@@ -51,13 +57,15 @@ export function NotesWhenSetting() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [load]);
 
   const change = async (next: boolean) => {
     setBusy(true);
     setError(null);
     try {
-      setOn(await saveNotesAutoRun(next));
+      const saved = await saveNotesAutoRun(next);
+      setOn(saved);
+      rememberNotesAutoRun(saved);
     } catch (thrown) {
       setError(toUiError(thrown));
     } finally {

@@ -46,6 +46,7 @@ function choices(overrides: Partial<EngineChoices> = {}): EngineChoices {
       { code: "mr", name: "Marathi" },
     ],
     configProblem: null,
+    selectionError: null,
     honoursLanguage: true,
     languageIgnoredReason: null,
     ...overrides,
@@ -481,5 +482,40 @@ describe("EngineSummary: Parakeet without ONNX Runtime (TUR-62)", () => {
     if (!(row instanceof HTMLElement)) throw new Error("no Parakeet row");
     expect(within(row).queryByRole("button", { name: "Download" })).toBeNull();
     expect(within(row).queryByText(/download, then kept/)).toBeNull();
+  });
+});
+
+describe("Speech card: one probe (TUR-171)", () => {
+  const UNAVAILABLE = {
+    domain: "stt" as const,
+    kind: "engine-unavailable",
+    message: "Apple's speech engine cannot be used",
+  };
+
+  test("the saved engine's error comes with the choices, and no second probe runs", async () => {
+    engineChoices.mockResolvedValue(choices({ selectionError: UNAVAILABLE }));
+    await renderCard();
+
+    expect(
+      await screen.findByText("This Mac will use the downloadable speech model"),
+    ).toBeInTheDocument();
+    expect(engineChoices).toHaveBeenCalledTimes(1);
+    expect(ipc.engineSelection).not.toHaveBeenCalled();
+  });
+
+  test("a save that makes the engine runnable clears the error from its own answer", async () => {
+    const user = userEvent.setup();
+    engineChoices.mockResolvedValue(choices({ selectionError: UNAVAILABLE }));
+    setTranscription.mockResolvedValue(choices({ engine: "apple-speech" }));
+    await renderCard();
+    expect(
+      await screen.findByText("This Mac will use the downloadable speech model"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByText("Apple (built in)"));
+    await waitFor(() =>
+      expect(screen.queryByText("This Mac will use the downloadable speech model")).toBeNull(),
+    );
+    expect(ipc.engineSelection).not.toHaveBeenCalled();
   });
 });

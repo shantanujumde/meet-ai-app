@@ -141,12 +141,17 @@ function Bootstrap() {
 
   // TUR-77: the menu bar's "Open brief" and "Calendar not connected" open
   // the window on a screen. Not during setup, which keeps the user inside.
+  // Subscribed once (TUR-171): `navigate` changes identity with every
+  // location change, and re-subscribing each time left a gap in which an
+  // "Open brief" from the menu bar was dropped. The ref has the newest one.
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
   useEffect(() => {
     return onNavigate((to) => {
       if (useAppStore.getState().onboarding?.completedAt === null) return;
-      navigate(navigationPath(to));
+      navigateRef.current(navigationPath(to));
     });
-  }, [navigate]);
+  }, []);
 
   // Refs, not effect state: `navigate` changes identity with every location
   // change, so the effect below re-subscribes often, and the meeting already

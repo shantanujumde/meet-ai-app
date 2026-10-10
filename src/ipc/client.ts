@@ -506,6 +506,7 @@ export * from "./notifications";
 export * from "./overlay";
 export * from "./recordingPause";
 export * from "./retention";
+export * from "./settingsSnapshot";
 export * from "./speech";
 // Tickets, suggested tasks and sending them to the tracker (TUR-113).
 export * from "./tickets";

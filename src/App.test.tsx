@@ -9,7 +9,7 @@ import {
 import type { PermissionStatus, RecordingStatus, UiError } from "@/ipc/types";
 import { useRecordingStore } from "@/state/recording";
 import { meetingDetail, meetingSummary, transcriptLine } from "@/test/fixtures";
-import { emit, ipc, listening } from "@/test/ipcMock";
+import { emit, ipc, listening, subscribeCount } from "@/test/ipcMock";
 import { App } from "./App";
 
 /**
@@ -580,6 +580,20 @@ test("the menu bar's Open brief and Calendar not connected open those screens", 
 
   act(() => emit(NAVIGATE_EVENT, { to: "settings" }));
   await waitFor(() => expect(window.location.hash).toBe("#/settings"));
+});
+
+test("the menu bar's navigation listener is subscribed once, not on every route (TUR-171)", async () => {
+  await renderFinishedApp();
+  await waitFor(() => expect(listening(NAVIGATE_EVENT)).toBe(true));
+  expect(subscribeCount(NAVIGATE_EVENT)).toBe(1);
+
+  act(() => emit(NAVIGATE_EVENT, { to: "settings" }));
+  await waitFor(() => expect(window.location.hash).toBe("#/settings"));
+  act(() => emit(NAVIGATE_EVENT, { to: "brief", title: "Weekly sync" }));
+  await waitFor(() => expect(window.location.hash).toBe("#/brief?title=Weekly+sync"));
+
+  // Two route changes, and still the one subscription that heard both.
+  expect(subscribeCount(NAVIGATE_EVENT)).toBe(1);
 });
 
 test("a navigation from the menu bar does not pull a user out of setup", async () => {

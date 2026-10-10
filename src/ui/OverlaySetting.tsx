@@ -5,18 +5,22 @@
  */
 
 import { PictureInPicture2 } from "lucide-react";
-import { setShowRecordingOverlay, showRecordingOverlay } from "@/ipc/client";
+import { type SettingsSnapshot, setShowRecordingOverlay, showRecordingOverlay } from "@/ipc/client";
 import { SettingSwitch } from "./SettingSwitch";
+import { useSnapshotLoad } from "./settings/snapshot";
 
 export const OVERLAY_SETTING_LABEL = "Show the recording window over other apps";
 
+const pick = (snapshot: SettingsSnapshot) => snapshot.showRecordingOverlay;
+
 export function OverlaySetting() {
+  const load = useSnapshotLoad(pick, showRecordingOverlay);
   return (
     <SettingSwitch
       icon={PictureInPicture2}
       label={OVERLAY_SETTING_LABEL}
       detail="While recording, a small window floats on top with the timer, the latest words, Pause and Stop."
-      load={showRecordingOverlay}
+      load={load}
       save={setShowRecordingOverlay}
     />
   );

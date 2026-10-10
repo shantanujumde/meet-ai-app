@@ -72,7 +72,7 @@ impl From<SignInProvider> for Provider {
 pub const NO_CALENDAR_APP: &str =
     "This system has no Calendar app. Sign in with Google or Microsoft instead.";
 
-fn current() -> CalendarSources {
+pub(crate) fn current() -> CalendarSources {
     CalendarSources::new(&config::calendar(), crate::platform::HAS_CALENDAR_APP)
 }
 
