@@ -18,8 +18,15 @@ use crate::{Error, Signal};
 /// every five seconds is nothing next to what the meeting app itself costs.
 pub const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
+/// How often the process list is read while a recording runs (TUR-172).
+/// Nothing prompts then; a read only marks the meeting apps seen as handled
+/// (rule 1 in [`crate::detector`]), so the call being recorded does not
+/// prompt at Stop. The first poll of a recording still reads at once.
+pub const RECORDING_POLL_INTERVAL: Duration = Duration::from_secs(30);
+
 /// Where the running processes come from. The real one is
-/// [`SysinfoProcesses`]; tests pass a fake.
+/// [`SysinfoProcesses`], which lists only the meeting apps in
+/// `processes.json`, the only ones detection looks at; tests pass a fake.
 pub trait ProcessSource: Send + 'static {
     fn running(&mut self) -> Result<Vec<RunningProcess>, Error>;
 }
@@ -52,15 +59,35 @@ impl ProcessSource for SysinfoProcesses {
             true,
             ProcessRefreshKind::nothing(),
         );
+        // Only the meeting apps are kept, so a poll allocates a name for
+        // each of those rather than for every process (TUR-172).
         Ok(self
             .system
             .processes()
             .iter()
-            .map(|(pid, process)| {
-                RunningProcess::new(pid.as_u32(), process.name().to_string_lossy())
+            .filter_map(|(pid, process)| {
+                let name = process.name().to_string_lossy();
+                crate::processes::find(&name).map(|_| RunningProcess::new(pid.as_u32(), name))
             })
             .collect())
     }
+}
+
+/// Whether a poll at `now` reads the process list: always when not
+/// recording; while recording, the first poll and then one every
+/// [`RECORDING_POLL_INTERVAL`]. `read_while_recording` is when the last
+/// read during this recording was, cleared once it stops.
+fn reads_now(recording: bool, read_while_recording: &mut Option<Instant>, now: Instant) -> bool {
+    if !recording {
+        *read_while_recording = None;
+        return true;
+    }
+    let due = read_while_recording
+        .is_none_or(|at| now.saturating_duration_since(at) >= RECORDING_POLL_INTERVAL);
+    if due {
+        *read_while_recording = Some(now);
+    }
+    due
 }
 
 enum Message {
@@ -116,17 +143,27 @@ where
     // Audio activity waiting for a process list to be weighed against; kept
     // across a failed read, so it is not lost.
     let mut audio_activity: Option<Instant> = None;
+    let mut read_while_recording: Option<Instant> = None;
     let worker = Worker::spawn("meet-ai-detection", interval, move |message| {
         match message {
             Some(Message::CallSignal(at)) => detector.call_signal(at),
             Some(Message::AudioActivity(at)) => audio_activity = Some(at),
             None => {}
         }
+        let recording = recording();
+        if !reads_now(recording, &mut read_while_recording, Instant::now()) {
+            // Recording: nothing would prompt. The activity still counts as a
+            // call signal, and is not kept to prompt once the recording stops.
+            if let Some(at) = audio_activity.take() {
+                detector.call_signal(at);
+            }
+            return;
+        }
         match source.running() {
             Ok(running) => {
                 let signals = match audio_activity.take() {
-                    Some(at) => detector.audio_activity(&running, recording(), at),
-                    None => detector.observe(&running, recording(), Instant::now()),
+                    Some(at) => detector.audio_activity(&running, recording, at),
+                    None => detector.observe(&running, recording, Instant::now()),
                 };
                 for signal in signals {
                     emit(signal);
@@ -228,11 +265,43 @@ mod tests {
             move |signal| sink.lock().expect("not poisoned").push(signal),
         )
         .expect("spawns");
-        wait_polls(&polled, 3);
+        // While recording: one read at once, then none for
+        // RECORDING_POLL_INTERVAL, however often the loop ticks (TUR-172).
+        wait_polls(&polled, 1);
+        assert!(
+            polled.recv_timeout(Duration::from_millis(100)).is_err(),
+            "no second read while recording"
+        );
         recording.store(false, Ordering::SeqCst);
         wait_polls(&polled, 3);
         running.stop();
         assert!(seen.lock().expect("not poisoned").is_empty());
+    }
+
+    #[test]
+    fn while_recording_the_list_is_read_at_once_then_every_30_s() {
+        let start = Instant::now();
+        let mut last = None;
+        assert!(reads_now(false, &mut last, start));
+        assert!(reads_now(true, &mut last, start));
+        assert!(!reads_now(true, &mut last, start + POLL_INTERVAL));
+        assert!(!reads_now(true, &mut last, start + Duration::from_secs(29)));
+        assert!(reads_now(true, &mut last, start + RECORDING_POLL_INTERVAL));
+        // Stopped: every poll reads, and the next recording reads at once.
+        let later = start + Duration::from_secs(31);
+        assert!(reads_now(false, &mut last, later));
+        assert!(reads_now(true, &mut last, later));
+    }
+
+    #[test]
+    fn the_real_list_holds_only_meeting_apps() {
+        let running = SysinfoProcesses::new().running().expect("lists");
+        // The test runner itself is running and is no meeting app.
+        assert!(
+            running
+                .iter()
+                .all(|process| crate::processes::find(&process.name).is_some())
+        );
     }
 
     #[test]
