@@ -10,6 +10,25 @@ vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
 );
 
+const shortcut = vi.hoisted(() => ({ available: true }));
+vi.mock("@/ipc/shortcut", () => ({
+  recordShortcutAvailable: () => Promise.resolve(shortcut.available),
+}));
+
+async function renderEmpty() {
+  ipc.listMeetings.mockResolvedValue({
+    root: "/Users/test/Meetings",
+    rootExists: true,
+    meetings: [],
+  });
+  await useAppStore.getState().loadMeetings();
+  render(
+    <MemoryRouter>
+      <Meetings />
+    </MemoryRouter>,
+  );
+}
+
 describe("Meetings list", () => {
   test("every row button is left-aligned so names and dates line up", async () => {
     ipc.listMeetings.mockResolvedValue({
@@ -31,5 +50,20 @@ describe("Meetings list", () => {
       const row = (await screen.findByText(title)).closest("button");
       expect(row?.className).toContain("text-start");
     }
+  });
+
+  test("the empty list points at the shortcut while it is meet-ai's (TUR-169)", async () => {
+    shortcut.available = true;
+    await renderEmpty();
+    expect(await screen.findByText(/^Press ⌘⇧R from anywhere/)).toBeInTheDocument();
+  });
+
+  test("a shortcut another app owns is not advertised (TUR-169)", async () => {
+    shortcut.available = false;
+    await renderEmpty();
+    expect(
+      await screen.findByText(/⌘⇧R is unavailable because another app is using it/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Press ⌘⇧R/)).toBeNull();
   });
 });

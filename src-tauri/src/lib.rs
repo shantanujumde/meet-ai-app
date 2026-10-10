@@ -138,10 +138,10 @@ pub fn run() {
         .manage(retention::AudioRetention::default())
         // TUR-76: closing the main window hides it rather than quitting.
         .manage(lifecycle::Lifecycle::default())
-        // TUR-77: the menu bar's Record names the meeting from the event clicked.
-        .manage(recording::auto_title::PinnedEvent::default())
         // TUR-146: wakes the overlay worker.
         .manage(overlay::Overlay::default())
+        // TUR-169: whether the record shortcut is ours, for the window.
+        .manage(shortcut::RecordShortcut::default())
         .on_window_event(lifecycle::on_window_event)
         .setup(|_app| {
             // TUR-46: first, so a panic anywhere below leaves a crash file.
@@ -316,9 +316,16 @@ pub(crate) fn spawn_toggle(app: &tauri::AppHandle, source: &'static str) {
 /// shortcut would be a wildly disproportionate response.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn register_record_shortcut<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager as _;
     use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
 
-    match app.global_shortcut().register(RECORD_SHORTCUT) {
+    let registered = app.global_shortcut().register(RECORD_SHORTCUT);
+    // TUR-169: the window says the shortcut is unavailable instead of
+    // advertising one that does nothing.
+    if let Some(state) = app.try_state::<shortcut::RecordShortcut>() {
+        state.registered(registered.is_ok());
+    }
+    match registered {
         Ok(()) => tracing::info!(shortcut = RECORD_SHORTCUT, "recording shortcut registered"),
         Err(error) => tracing::warn!(
             %error,

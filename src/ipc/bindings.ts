@@ -487,6 +487,11 @@ export const commands = {
 } | null>("prompt_popup_current"),
 	/**  A popup button was pressed for card `id`. */
 	answerPromptPopup: (id: number, answer: meet_ai_lib_detection_popup_PopupAnswer) => typedError<null, meet_ai_lib_error_UiError>(__TAURI_INVOKE("answer_prompt_popup", { id, answer })),
+	/**
+	 *  Is the record shortcut meet-ai's (TUR-169)? `false` when registering it
+	 *  failed, most likely because another app owns it.
+	 */
+	recordShortcutAvailable: () => __TAURI_INVOKE<boolean>("record_shortcut_available"),
 	/**  Whether meet-ai starts when the user logs in. */
 	startAtLogin: () => typedError<boolean, meet_ai_lib_error_UiError>(__TAURI_INVOKE("start_at_login")),
 	/**  Turn "Start at login" on or off, and return what the OS now says. */
