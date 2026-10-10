@@ -36,9 +36,10 @@
 //! testable here without an `AppHandle`, Core Audio or a microphone grant; the
 //! recording-specific parts (what a failed tick means) live in `recording.rs`.
 
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::thread::JoinHandle;
+use std::sync::mpsc;
 use std::time::Duration;
+
+use crate::worker::{self, Worker, panic_message};
 
 /// A named worker thread that calls `tick` on some state every `interval`
 /// until told to stop, and hands the state back when it is.
@@ -47,10 +48,9 @@ use std::time::Duration;
 /// and has to be able to let go of its own handle ([`Ticker::detach`]), and a
 /// thread joining itself deadlocks.
 pub(super) struct Ticker<T> {
-    /// Sending on (or dropping) this wakes the thread out of its wait at once,
-    /// so stopping never waits out the rest of an interval.
-    stop: mpsc::Sender<()>,
-    thread: JoinHandle<Option<T>>,
+    /// Stopping wakes the thread out of its wait at once, so stopping never
+    /// waits out the rest of an interval.
+    worker: Worker<Option<T>>,
 }
 
 impl<T: Send + 'static> Ticker<T> {
@@ -78,33 +78,29 @@ impl<T: Send + 'static> Ticker<T> {
         F: FnMut(&mut T) -> Result<(), E> + Send + 'static,
         G: FnOnce(T, E) -> Option<T> + Send + 'static,
     {
-        let (stop, stopped) = mpsc::channel::<()>();
         let (hand_over, handed) = mpsc::sync_channel::<T>(1);
 
-        let spawned = std::thread::Builder::new()
-            .name(name.to_string())
-            .spawn(move || {
-                // Only fails if the spawner dropped the sender without sending,
-                // which it never does; returning `None` is just the total
-                // answer.
-                let Ok(mut state) = handed.recv() else {
-                    return None;
-                };
-                loop {
-                    match stopped.recv_timeout(interval) {
-                        Err(RecvTimeoutError::Timeout) => {}
-                        // An explicit stop, or the handle dropped by
-                        // `detach`: either way nobody wants more ticks.
-                        Ok(()) | Err(RecvTimeoutError::Disconnected) => return Some(state),
-                    }
-                    if let Err(error) = tick(&mut state) {
-                        return on_fail(state, error);
-                    }
+        let spawned = worker::spawn(name, move |stop| {
+            // Only fails if the spawner dropped the sender without sending,
+            // which it never does; returning `None` is just the total
+            // answer.
+            let Ok(mut state) = handed.recv() else {
+                return None;
+            };
+            loop {
+                // An explicit stop, or the handle dropped by `detach`: either
+                // way nobody wants more ticks.
+                if !stop.wait(interval) {
+                    return Some(state);
                 }
-            });
+                if let Err(error) = tick(&mut state) {
+                    return on_fail(state, error);
+                }
+            }
+        });
 
-        let thread = match spawned {
-            Ok(thread) => thread,
+        let worker = match spawned {
+            Ok(worker) => worker,
             Err(error) => return Err((state, error)),
         };
         // The receiver is alive: the thread's first act is to block on it, and
@@ -115,7 +111,7 @@ impl<T: Send + 'static> Ticker<T> {
                 std::io::Error::other("the ticker thread exited before it was handed its state"),
             ));
         }
-        Ok(Self { stop, thread })
+        Ok(Self { worker })
     }
 
     /// Stop ticking, wait for the thread to exit, and take the state back.
@@ -129,12 +125,8 @@ impl<T: Send + 'static> Ticker<T> {
     /// Must not be called from the ticker's own thread (a self-join
     /// deadlocks); a failure on that thread uses [`Ticker::detach`] instead.
     pub(super) fn stop(self) -> Result<Option<T>, String> {
-        // A send error only means the thread has already left its loop
-        // (a failed tick), which is exactly the case where there is nothing
-        // to wake.
-        let _ = self.stop.send(());
-        self.thread
-            .join()
+        self.worker
+            .stop()
             .map_err(|payload| format!("the ticker thread panicked: {}", panic_message(&*payload)))
     }
 
@@ -142,17 +134,6 @@ impl<T: Send + 'static> Ticker<T> {
     /// runs on the ticker thread itself and is about to return from it.
     pub(super) fn detach(self) {
         drop(self);
-    }
-}
-
-/// The text of a panic payload, for a log line or an error message.
-pub(super) fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
-    if let Some(message) = payload.downcast_ref::<&str>() {
-        message
-    } else if let Some(message) = payload.downcast_ref::<String>() {
-        message
-    } else {
-        "no message"
     }
 }
 
