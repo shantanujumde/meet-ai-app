@@ -1170,3 +1170,52 @@ fn a_kept_issue_read_back_is_only_saved_to_its_own_meetings_ticket() {
     assert_eq!(first.external_id.as_deref(), Some("ENG-42"));
     assert_eq!(harness.runs(), 2);
 }
+
+/// TUR-160: quitting mid-Sync stops the CLI and everything it started,
+/// writes nothing to the ticket, and a Sync pressed after that is refused.
+/// Before, the CLI outlived the app and still made the issue.
+#[test]
+fn shutdown_stops_a_running_sync_and_leaves_no_cli_behind() {
+    let root = meetings_root();
+    let before = fs::read(ticket_path(root.path())).unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let cli = fake_cli(bin.path(), "claude");
+    let pid_file = bin.path().join("grandchild.pid");
+    cli.set("grandchild_pid_file", pid_file.display().to_string())
+        .set("sleep", "30");
+    let agent = agent_config(HarnessChoice::ClaudeCode, cli.path().to_path_buf());
+    let runs = SyncRuns::default();
+    let press = || {
+        sync_in(
+            &runs,
+            None,
+            || Ok(root.path().to_path_buf()),
+            "TICK-0001",
+            Some(MEETING),
+            || Ok((harness_for(&agent)?, settings())),
+        )
+    };
+
+    std::thread::scope(|scope| {
+        let sync = scope.spawn(press);
+        // The CLI is up and has started a child of its own.
+        let grandchild = test_support::wait_for_pid_file(&pid_file);
+        assert_eq!(runs.running_tickets().len(), 1);
+
+        let started = std::time::Instant::now();
+        runs.shutdown(Duration::from_secs(3));
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "the run did not end within the bound"
+        );
+        assert!(runs.running_tickets().is_empty());
+        assert!(
+            test_support::process_is_gone(grandchild, Duration::from_secs(5)),
+            "the CLI's child is still running"
+        );
+        assert_eq!(sync.join().unwrap().unwrap_err().kind, "agent-cancelled");
+    });
+
+    assert_eq!(fs::read(ticket_path(root.path())).unwrap(), before);
+    assert_eq!(press().unwrap_err().kind, "app-quitting");
+}

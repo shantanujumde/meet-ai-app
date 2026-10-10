@@ -221,7 +221,8 @@ export const commands = {
 	saveAgentChoice: (choice: meet_ai_lib_agent_setup_AgentChoice) => typedError<meet_ai_lib_agent_setup_AgentChoice, meet_ai_lib_error_UiError>(__TAURI_INVOKE("save_agent_choice", { choice })),
 	/**
 	 *  Run the sample meeting through the picked CLI, the same way the notes run
-	 *  after a call does, and return what came back.
+	 *  after a call does, and return what came back. Quitting stops it
+	 *  ([`TestRuns::shutdown`], TUR-160).
 	 */
 	testAgent: (choice: meet_ai_lib_agent_setup_AgentChoice) => typedError<meet_ai_lib_agent_setup_AgentTestResult, meet_ai_lib_error_UiError>(__TAURI_INVOKE("test_agent", { choice })),
 	/**
@@ -396,8 +397,9 @@ export const commands = {
 	/**  `audio.retention_days` as the retention job reads it, for Settings. */
 	audioRetentionDays: () => __TAURI_INVOKE<meet_ai_lib_retention_AudioRetentionSetting>("audio_retention_days"),
 	/**
-	 *  "Stop and quit": let the held quit through. The exit hook in `lib.rs`
-	 *  stops the recording the same way the Stop button does.
+	 *  "Stop and quit": let the held quit through. The recording is then
+	 *  stopped the same way the Stop button does, off the main thread
+	 *  ([`QuitAction::FinishFirst`]).
 	 */
 	confirmQuit: () => __TAURI_INVOKE<void>("confirm_quit"),
 	/**  `app` from `config.jsonc`, defaults when missing or not valid. */

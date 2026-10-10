@@ -33,6 +33,8 @@ use crate::folder_move::FolderGate;
 mod test_run;
 mod view;
 
+pub use test_run::TestRuns;
+
 // --- what crosses the IPC boundary -----------------------------------------
 
 /// `agent.harness`: which CLI runs the notes, or none (copy prompt instead).
@@ -205,11 +207,17 @@ pub async fn save_notes_auto_run(app: AppHandle, on: bool) -> Result<bool, UiErr
 }
 
 /// Run the sample meeting through the picked CLI, the same way the notes run
-/// after a call does, and return what came back.
+/// after a call does, and return what came back. Quitting stops it
+/// ([`TestRuns::shutdown`], TUR-160).
 #[tauri::command]
 #[specta::specta]
-pub async fn test_agent(choice: AgentChoice) -> Result<AgentTestResult, UiError> {
-    on_blocking_pool(move || test_run::run(&choice)).await?
+pub async fn test_agent(app: AppHandle, choice: AgentChoice) -> Result<AgentTestResult, UiError> {
+    on_blocking_pool(move || {
+        let runs = app.state::<TestRuns>();
+        let claim = runs.claim()?;
+        test_run::run(&choice, &claim.cancel)
+    })
+    .await?
 }
 
 // --- between the screen and the config -------------------------------------

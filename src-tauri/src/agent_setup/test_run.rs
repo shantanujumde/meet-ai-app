@@ -9,13 +9,15 @@
 //! logged; a failure is logged by its kind only.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use agent::{AgentError, ClaudeHarness, CodexHarness, Install, Job};
+use agent::{AgentError, CancelHandle, ClaudeHarness, CodexHarness, Install, Job};
 use prompts::notes::{Notes, notes_schema};
 use prompts::wrap_up::{DEFAULT_WRAP_UP, Target, WrapUpInput, render_wrap_up, render_wrap_up_from};
 
 use super::{AgentChoice, AgentCliId, AgentHarness, AgentTestResult, AgentTestTask};
+use crate::cancels::{Cancels, Claim};
 use crate::config;
 use crate::error::UiError;
 use crate::meetings;
@@ -32,8 +34,41 @@ pub(super) const SAMPLE_TRANSCRIPT: &str = "\
 /// The sample meeting's title, as the prompt shows it.
 const SAMPLE_TITLE: &str = "meet-ai test run";
 
-/// Find the picked CLI and run the sample through it.
-pub(super) fn run(choice: &AgentChoice) -> Result<AgentTestResult, UiError> {
+/// The Test runs going, so quitting stops their CLIs (TUR-160). Managed
+/// Tauri state. Each press gets its own key: two Tests side by side are
+/// allowed, as before.
+#[derive(Debug, Default)]
+pub struct TestRuns {
+    runs: Cancels<u64>,
+    next: AtomicU64,
+}
+
+impl TestRuns {
+    /// A place for one Test run, refused once the app is quitting.
+    pub(super) fn claim(&self) -> Result<Claim<'_, u64>, UiError> {
+        let key = self.next.fetch_add(1, Ordering::Relaxed);
+        self.runs.claim(key).map_err(|_refused| {
+            UiError::app(
+                "app-quitting",
+                "meet-ai is quitting, so the test did not run.",
+            )
+        })
+    }
+
+    /// The app is quitting: start no more Test runs, cancel the ones going,
+    /// which kills their CLIs' process trees, and wait up to `wait` for them
+    /// to end. On unix the CLI leads its own process group, so without this
+    /// it outlived the app.
+    pub fn shutdown(&self, wait: Duration) {
+        let left = self.runs.shutdown(wait);
+        if left > 0 {
+            tracing::warn!(left, "agent test runs still going at quit");
+        }
+    }
+}
+
+/// Find the picked CLI and run the sample through it; `cancel` stops it.
+pub(super) fn run(choice: &AgentChoice, cancel: &CancelHandle) -> Result<AgentTestResult, UiError> {
     let harness = harness_for(choice)?;
     let timeout = timeout();
     // No meetings folder yet (it is picked in the step before) only means
@@ -45,6 +80,7 @@ pub(super) fn run(choice: &AgentChoice) -> Result<AgentTestResult, UiError> {
         timeout,
         std::env::temp_dir(),
         root.as_deref(),
+        cancel,
     )
 }
 
@@ -107,19 +143,21 @@ fn timeout() -> Duration {
 ///
 /// `model` blank lets the CLI pick its own. `work_root` is where the run's
 /// fresh folder is made. `meetings_root` is where a saved wrap-up template
-/// is looked for; `None` uses the built-in one.
+/// is looked for; `None` uses the built-in one. `cancel` stops the CLI.
 pub(super) fn run_sample(
     harness: &dyn agent::Harness,
     model: Option<&str>,
     timeout: Duration,
     work_root: PathBuf,
     meetings_root: Option<&Path>,
+    cancel: &CancelHandle,
 ) -> Result<AgentTestResult, UiError> {
     let mut job = Job::notes(sample_prompt(meetings_root)?, notes_schema().clone());
     let model = model.map(str::trim).filter(|model| !model.is_empty());
     job.model = model.map(str::to_owned);
     job.timeout = timeout;
     job.work_root = work_root;
+    job.cancel = cancel.clone();
 
     let started = Instant::now();
     let reply = harness.run(&job).map_err(|error| {

@@ -13,6 +13,8 @@ mod autostart;
 mod bindings;
 mod brief;
 mod calendar;
+// TUR-160: agent runs by key, so quitting can stop them all.
+mod cancels;
 // TUR-58: `meet-ai --toggle-recording`.
 mod cli;
 mod commands;
@@ -128,6 +130,8 @@ pub fn run() {
         .manage(search::SearchIndex::default())
         .manage(agent_run::AgentRuns::default())
         .manage(sync::SyncRuns::default())
+        // TUR-160: the agent Test runs, so quitting stops them.
+        .manage(agent_setup::TestRuns::default())
         // TUR-113: tickets go to the tracker on their own, one at a time.
         .manage(sync::auto::AutoSync::default())
         .manage(detection::Detection::default())
@@ -219,21 +223,11 @@ pub fn run() {
             // TUR-76: hold ⌘Q / the menu-bar Quit while recording, and
             // reopen the hidden window on a Dock click.
             lifecycle::on_run_event(app, &event);
-            // TUR-97: a normal quit mid-recording (⌘Q, the menu bar's Quit, a
-            // logout asking apps to quit) used to leave the files exactly as a
-            // `kill -9` does — up to one checkpoint of audio past the header
-            // and the meeting labelled Interrupted. `Exit` is the last event
-            // before the process ends, so stop the recording here the same way
-            // the Stop button does. A no-op when nothing is recording; a hard
-            // kill never reaches this, which is what the checkpoints are for.
+            // TUR-97/TUR-160: `Exit` is the last event before the process
+            // ends. Stop every agent CLI and finish the recording in whatever
+            // phase it is, bounded; a held quit has already done it.
             if let tauri::RunEvent::Exit = event {
-                use tauri::Manager as _;
-                // TUR-10: first, so the stop below starts no notes run, and a
-                // run already going has its agent stopped before it answers.
-                agent_run::shutdown(app);
-                if let Err(error) = app.state::<recording::Recorder>().stop(app) {
-                    tracing::error!(message = %error.message, "could not finish the recording on quit");
-                }
+                lifecycle::quit::on_exit(app);
             }
         });
 }

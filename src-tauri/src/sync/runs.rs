@@ -5,12 +5,10 @@
 //! `TICK-NNNN`. Keying by the pair, like [`super::save::Key`], keeps syncing
 //! one from refusing or cancelling the other.
 
-use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard, PoisonError};
-
-use agent::CancelHandle;
+use std::time::Duration;
 
 use super::save::{Key, Unsaved, key};
+use crate::cancels::{self, Cancels, Refused};
 use crate::error::UiError;
 use crate::meetings;
 
@@ -20,39 +18,33 @@ use crate::meetings;
 /// Retry saves them instead of making another (`save.rs`).
 #[derive(Debug, Default)]
 pub struct SyncRuns {
-    running: Mutex<HashMap<Key, CancelHandle>>,
+    running: Cancels<Key>,
     pub(super) unsaved: Unsaved,
 }
 
-impl SyncRuns {
-    fn lock(&self) -> MutexGuard<'_, HashMap<Key, CancelHandle>> {
-        // The map holds only cancel flags, so a panic mid-insert leaves
-        // nothing half-written worth refusing over.
-        self.running.lock().unwrap_or_else(PoisonError::into_inner)
-    }
+/// One ticket's place in [`SyncRuns`]; dropping it frees the ticket.
+pub(super) type Claim<'a> = cancels::Claim<'a, Key>;
 
+impl SyncRuns {
     /// Marks `ticket_id` of `meeting_id` (`None` for a shared ticket) as
-    /// syncing until the returned claim is dropped.
+    /// syncing until the returned claim is dropped. Refused once the app is
+    /// quitting ([`SyncRuns::shutdown`]).
     pub(super) fn claim(
         &self,
         ticket_id: &str,
         meeting_id: Option<&str>,
     ) -> Result<Claim<'_>, UiError> {
-        let mut runs = self.lock();
-        let key = key(ticket_id, meeting_id);
-        if runs.contains_key(&key) {
-            return Err(UiError::app(
-                "sync-busy",
-                format!("{ticket_id} is already being synced."),
-            ));
-        }
-        let cancel = CancelHandle::new();
-        runs.insert(key.clone(), cancel.clone());
-        Ok(Claim {
-            runs: self,
-            key,
-            cancel,
-        })
+        self.running
+            .claim(key(ticket_id, meeting_id))
+            .map_err(|refused| match refused {
+                Refused::Busy => {
+                    UiError::app("sync-busy", format!("{ticket_id} is already being synced."))
+                }
+                Refused::Closed => UiError::app(
+                    "app-quitting",
+                    format!("meet-ai is quitting, so {ticket_id} was not synced."),
+                ),
+            })
     }
 
     /// Writes the kept issues a folder move kept from being written; for the
@@ -63,28 +55,25 @@ impl SyncRuns {
 
     /// Stops the Sync run for `ticket_id` of `meeting_id`, if there is one.
     pub(super) fn cancel(&self, ticket_id: &str, meeting_id: Option<&str>) {
-        if let Some(cancel) = self.lock().get(&key(ticket_id, meeting_id)) {
-            cancel.cancel();
-        }
+        self.running.cancel(&key(ticket_id, meeting_id));
     }
 
     /// The (meeting, ticket id) pairs with a Sync run going, for the
     /// retention job (TUR-45). The meeting is `None` for a shared ticket.
     pub fn running_tickets(&self) -> Vec<(Option<String>, String)> {
-        self.lock().keys().cloned().collect()
+        self.running.keys()
     }
-}
 
-/// One ticket's place in [`SyncRuns`]; dropping it frees the ticket.
-pub(super) struct Claim<'a> {
-    runs: &'a SyncRuns,
-    key: Key,
-    pub(super) cancel: CancelHandle,
-}
-
-impl Drop for Claim<'_> {
-    fn drop(&mut self) {
-        self.runs.lock().remove(&self.key);
+    /// The app is quitting (TUR-160): start no more Sync runs, cancel every
+    /// one going, which kills its CLI's process tree, and wait up to `wait`
+    /// for them to end. Without this the CLI outlived the app and still made
+    /// the issue, with nobody left to save the link, so the next Sync made a
+    /// second one.
+    pub fn shutdown(&self, wait: Duration) {
+        let left = self.running.shutdown(wait);
+        if left > 0 {
+            tracing::warn!(left, "Sync runs still going at quit");
+        }
     }
 }
 
