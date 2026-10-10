@@ -390,6 +390,8 @@ export const ipc = {
     remembered: true,
   })),
   calendarDisconnect: vi.fn<typeof Client.calendarDisconnect>(async () => DEFAULT_SOURCES),
+  // TUR-174: a sign-in was waiting, and now is not.
+  calendarCancelSignIn: vi.fn<typeof Client.calendarCancelSignIn>(async () => true),
 
   // TUR-45: the SPEC §3.5 default.
   audioRetentionDays: vi.fn<typeof Client.audioRetentionDays>(async () => ({

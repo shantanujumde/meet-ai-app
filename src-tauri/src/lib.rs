@@ -140,6 +140,7 @@ pub fn run() {
         .manage(calendar::CalendarState::default())
         // TUR-44: Google and Microsoft sign-in; TUR-47/48 read access tokens from it.
         .manage(calendar::signin::auth())
+        .manage(calendar::cancel::SignInCancels::default())
         .manage(retention::AudioRetention::default())
         // TUR-76: closing the main window hides it rather than quitting.
         .manage(lifecycle::Lifecycle::default())

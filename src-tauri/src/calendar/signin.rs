@@ -13,7 +13,6 @@
 //! [`CalendarAuth::access_token`](::calendar::oauth::CalendarAuth::access_token).
 
 use std::sync::OnceLock;
-use std::sync::mpsc;
 use std::time::Duration;
 
 use ::calendar::oauth::{
@@ -24,6 +23,8 @@ use oauth2::{HttpRequest, HttpResponse, SyncHttpClient as _};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager as _};
 
+use super::cancel::SignInCancels;
+use super::loopback::Ended;
 use crate::config;
 use crate::error::UiError;
 
@@ -186,11 +187,13 @@ impl HttpClient for ReqwestHttp {
 /// Sign in: listen on a random loopback port, open the browser with
 /// `open`, wait up to `timeout` for the redirect, then finish the flow.
 ///
-/// Blocking. A timeout, or a listener that stops without a reply, is
-/// [`SignInError::Cancelled`]. The browser cannot tell us it was closed, so
-/// a closed tab ends as the timeout.
+/// Blocking. A timeout, a listener that stops without a reply, or a cancel
+/// through `cancels` (TUR-174) is [`SignInError::Cancelled`]. The browser
+/// cannot tell us it was closed, so a closed tab ends as the timeout unless
+/// the user presses Cancel.
 pub fn sign_in_blocking(
     auth: &CalendarAuth,
+    cancels: &SignInCancels,
     provider: ProviderId,
     open: impl FnOnce(&str) -> Result<(), String>,
     timeout: Duration,
@@ -202,6 +205,8 @@ pub fn sign_in_blocking(
     })?;
     let pending = auth.begin_sign_in(provider, oauth::redirect_uri(listener.port()))?;
     listener.expect_state(pending.state());
+    // Cancellable until this returns.
+    let _registered = cancels.register(provider, listener.canceller());
     if let Err(detail) = open(pending.authorize_url()) {
         return Err(SignInError::Failed {
             provider,
@@ -210,9 +215,7 @@ pub fn sign_in_blocking(
     }
     match listener.next_callback(timeout) {
         Ok(url) => auth.finish_sign_in(pending, &url),
-        Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
-            Err(SignInError::Cancelled { provider })
-        }
+        Err(Ended::TimedOut | Ended::Cancelled) => Err(SignInError::Cancelled { provider }),
     }
 }
 
@@ -229,8 +232,8 @@ async fn with_auth_on_blocking_pool<T: Send + 'static>(
 ///
 /// Errors: `calendar-not-configured` (no client id; the message names the
 /// `config.jsonc` key), `calendar-sign-in-cancelled` (said no, or no reply in
-/// 5 minutes; a callback without this sign-in's `state` is refused and does
-/// not end the wait), `calendar-sign-in-failed` (a bad reply, such as a
+/// 5 minutes, or [`super::cancel::calendar_cancel_sign_in`]; a callback
+/// without this sign-in's `state` is refused and does not end the wait), `calendar-sign-in-failed` (a bad reply, such as a
 /// provider error; nothing is stored), `calendar-unreachable`.
 ///
 /// Not a command (TUR-158): the webview signs in through `calendar_connect`,
@@ -246,9 +249,16 @@ pub(crate) async fn calendar_sign_in(
                 .open_url(url, None::<&str>)
                 .map_err(|error| error.to_string())
         };
-        sign_in_blocking(auth, provider.into(), open, oauth::SIGN_IN_TIMEOUT)
-            .map(CalendarAccount::from)
-            .map_err(UiError::from)
+        let cancels = app.state::<SignInCancels>();
+        sign_in_blocking(
+            auth,
+            &cancels,
+            provider.into(),
+            open,
+            oauth::SIGN_IN_TIMEOUT,
+        )
+        .map(CalendarAccount::from)
+        .map_err(UiError::from)
     })
     .await?
 }
@@ -369,6 +379,7 @@ mod tests {
         let (auth, store) = test_auth(true);
         let account = sign_in_blocking(
             &auth,
+            &SignInCancels::default(),
             ProviderId::Microsoft,
             |url| {
                 assert!(param(url, "redirect_uri").starts_with("http://127.0.0.1:"));
@@ -409,6 +420,7 @@ mod tests {
         let (auth, store) = test_auth(true);
         let error = sign_in_blocking(
             &auth,
+            &SignInCancels::default(),
             ProviderId::Google,
             |url| {
                 send_to_listener(url, |_| "state=forged&code=evil".into());
@@ -428,6 +440,7 @@ mod tests {
         let mut browser = None;
         let account = sign_in_blocking(
             &auth,
+            &SignInCancels::default(),
             ProviderId::Microsoft,
             |url| {
                 let url = url.to_owned();
@@ -461,6 +474,7 @@ mod tests {
         let mut port = 0;
         let error = sign_in_blocking(
             &auth,
+            &SignInCancels::default(),
             ProviderId::Google,
             |url| {
                 port = Url::parse(&param(url, "redirect_uri"))
@@ -487,10 +501,35 @@ mod tests {
     }
 
     #[test]
+    fn cancel_ends_the_wait_at_once_and_stores_nothing() {
+        let (auth, store) = test_auth(true);
+        let cancels = SignInCancels::default();
+        let started = std::time::Instant::now();
+        let error = std::thread::scope(|scope| {
+            let waiting = scope
+                .spawn(|| sign_in_blocking(&auth, &cancels, ProviderId::Google, |_| Ok(()), WAIT));
+            // The user presses Cancel once the browser has opened.
+            let deadline = std::time::Instant::now() + WAIT;
+            while !cancels.cancel(ProviderId::Google) {
+                assert!(std::time::Instant::now() < deadline, "never waiting");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            waiting.join().unwrap().unwrap_err()
+        });
+        assert!(started.elapsed() < WAIT, "{:?}", started.elapsed());
+        assert!(matches!(error, SignInError::Cancelled { .. }), "{error:?}");
+        assert_eq!(UiError::from(error).kind, "calendar-sign-in-cancelled");
+        assert_eq!(store.stored(ProviderId::Google), None);
+        // Nothing left to cancel.
+        assert!(!cancels.cancel(ProviderId::Google));
+    }
+
+    #[test]
     fn no_client_id_is_not_configured_and_opens_no_browser() {
         let (auth, _) = test_auth(false);
         let error = sign_in_blocking(
             &auth,
+            &SignInCancels::default(),
             ProviderId::Google,
             |_| panic!("opened the browser without a client id"),
             WAIT,
@@ -510,6 +549,7 @@ mod tests {
         let (auth, _) = test_auth(true);
         let error = sign_in_blocking(
             &auth,
+            &SignInCancels::default(),
             ProviderId::Google,
             |_| Err("no browser".into()),
             WAIT,

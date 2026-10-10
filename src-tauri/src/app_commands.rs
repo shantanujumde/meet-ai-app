@@ -79,6 +79,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "set_calendar_app",
     "calendar_connect",
     "calendar_disconnect",
+    "calendar_cancel_sign_in",
     "meeting_brief",
     "audio_retention_days",
     "confirm_quit",

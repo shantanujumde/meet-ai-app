@@ -31,6 +31,7 @@ export const NO_MEETINGS_TODAY: TodaysMeetings = {
   events: [],
   refreshMinutes: 15,
   minAttendees: 2,
+  unreadable: [],
 };
 
 /**

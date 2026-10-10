@@ -10,7 +10,11 @@
 //! [`START_TOLERANCE`] of each other and either:
 //!
 //! - both carry an iCalendar UID and it is the same, or
-//! - their titles match, ignoring case and surrounding spaces.
+//! - at most one carries a UID and their titles match, ignoring case and
+//!   surrounding spaces, and are not empty (TUR-174).
+//!
+//! Two different UIDs are always two meetings, and two untitled events are
+//! never matched by title: either would drop one event's id and join link.
 //!
 //! The start is checked even for a UID match: every occurrence of a
 //! repeating meeting shares one UID, and Monday's standup is not Tuesday's.
@@ -49,11 +53,17 @@ pub fn same_meeting(a: &Event, b: &Event) -> bool {
     if (a.start - b.start).abs() > START_TOLERANCE {
         return false;
     }
-    let same_uid = matches!(
-        (uid(a), uid(b)),
-        (Some(left), Some(right)) if left == right
-    );
-    same_uid || normalized(&a.title) == normalized(&b.title)
+    match (uid(a), uid(b)) {
+        // TUR-174: two UIDs settle it. Two "Interview" slots at 10:00 with
+        // their own UIDs are two meetings, whatever their titles say.
+        (Some(left), Some(right)) => left == right,
+        _ => {
+            let title = normalized(&a.title);
+            // An empty title says nothing: two untitled holds at the same
+            // time are not one meeting.
+            !title.is_empty() && title == normalized(&b.title)
+        }
+    }
 }
 
 /// A non-blank UID, trimmed.
@@ -195,6 +205,47 @@ mod tests {
         ]);
         assert_eq!(ids(&merged), ["ek-1"]);
         assert_eq!(merged[0].ical_uid.as_deref(), Some("uid-42"));
+    }
+
+    #[test]
+    fn the_same_title_with_different_uids_is_two_meetings() {
+        let link = "https://zoom.us/j/2";
+        let merged = merge_events(vec![
+            vec![with_uid(event("ek-1", "Interview", "10:00:00"), "uid-a")],
+            vec![with_link(
+                with_uid(event("g-1", "Interview", "10:00:00"), "uid-b"),
+                link,
+            )],
+        ]);
+        assert_eq!(ids(&merged), ["ek-1", "g-1"]);
+        assert_eq!(merged[0].join_url, None);
+        assert_eq!(merged[1].join_url.as_deref(), Some(link));
+    }
+
+    #[test]
+    fn the_same_title_with_one_uid_is_still_one_meeting() {
+        let merged = merge_events(vec![
+            vec![event("ek-1", "Interview", "10:00:00")],
+            vec![with_uid(event("g-1", "Interview", "10:00:00"), "uid-b")],
+        ]);
+        assert_eq!(ids(&merged), ["ek-1"]);
+        assert_eq!(merged[0].ical_uid.as_deref(), Some("uid-b"));
+    }
+
+    #[test]
+    fn untitled_events_at_the_same_time_are_never_merged_by_title() {
+        let merged = merge_events(vec![
+            vec![event("ek-1", "", "12:00:00")],
+            vec![event("g-1", "   ", "12:00:00")],
+            vec![event("ms-1", "", "12:00:00")],
+        ]);
+        assert_eq!(ids(&merged), ["ek-1", "g-1", "ms-1"]);
+        // An untitled pair sharing one UID is still one meeting.
+        let merged = merge_events(vec![
+            vec![with_uid(event("ek-1", "", "12:00:00"), "uid-c")],
+            vec![with_uid(event("g-1", "", "12:00:00"), "uid-c")],
+        ]);
+        assert_eq!(ids(&merged), ["ek-1"]);
     }
 
     #[test]

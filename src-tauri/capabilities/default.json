@@ -86,6 +86,7 @@
     "allow-set-calendar-app",
     "allow-calendar-connect",
     "allow-calendar-disconnect",
+    "allow-calendar-cancel-sign-in",
     "allow-meeting-brief",
     "allow-audio-retention-days",
     "allow-confirm-quit",
