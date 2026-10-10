@@ -4,18 +4,18 @@
 //! - [`run_hook`]: one hook, start to finish, with no Tauri in it. The shell
 //!   is the platform's ([`platform::invocation`]); the folder goes in
 //!   `MEETAI_MEETING_DIR` and as the last argument; output is capped and
-//!   logged; past the timeout the whole process tree is killed, with the
-//!   same [`agent::ProcessTree`] the agent runs use (TUR-54).
-//! - [`app`]: when each moment fires, and the "hook failed" note.
+//!   logged; past the timeout, and once it exits, the whole process tree is
+//!   killed by [`agent::process::run_capped`], the agent runs' own runner
+//!   (TUR-54, TUR-167).
+//! - [`app`]: when each moment fires, and the "hook failed" note. A running
+//!   hook holds the folder gate, so the meetings folder never moves under it.
 //!
 //! A hook never blocks or breaks a meeting: it runs on a thread of its own,
 //! and its failure is only logged and shown.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{ExitStatus, Stdio};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::process::ExitStatus;
+use std::time::Duration;
 
 pub mod app;
 mod platform;
@@ -26,13 +26,6 @@ pub const MEETING_DIR_ENV: &str = "MEETAI_MEETING_DIR";
 /// Most bytes of stdout and of stderr kept for the log; the rest is read and
 /// dropped, so a chatty hook never stalls on a full pipe.
 pub const OUTPUT_CAP: usize = 64 * 1024;
-
-/// How often a running hook is checked on.
-const POLL: Duration = Duration::from_millis(25);
-
-/// How long, after the hook exits, its output may take to arrive. A child it
-/// left running can hold the pipes open; the log then has what came so far.
-const DRAIN_WAIT: Duration = Duration::from_secs(1);
 
 /// The three moments a hook can run at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,13 +94,17 @@ pub struct Report {
 }
 
 // Adapted from github.com/fastrepl/anarlog/crates/hooks/src/runner.rs @ 93deb8642e75a0a2f8ece1bed186da4362213edd (MIT)
-/// `command` with a leading `~` and every `$HOME` made the home folder, so
-/// `~/bin/x.sh` works under `cmd` too. Unchanged when there is no home.
+/// `command` with a leading `~` and every whole `$HOME` made the home folder,
+/// so `~/bin/x.sh` works under `cmd` and PowerShell, which expand neither.
+/// Only for Windows: `sh` expands both itself, and knows quoting
+/// ([`run_hook`]). A whole `$HOME` is one followed by the end, a slash, a
+/// quote or a space, so `$HOMEBREW_PREFIX` stays. Unchanged when there is no
+/// home.
 pub fn expand_home(command: &str, home: Option<&Path>) -> String {
     let Some(home) = home.and_then(Path::to_str) else {
         return command.to_owned();
     };
-    let command = command.replace("$HOME", home);
+    let command = replace_home_tokens(command, home);
     match command.strip_prefix('~') {
         Some(rest) if rest.is_empty() || rest.starts_with(['/', '\\', ' ']) => {
             format!("{home}{rest}")
@@ -116,57 +113,48 @@ pub fn expand_home(command: &str, home: Option<&Path>) -> String {
     }
 }
 
+/// Every `$HOME` in `command` that is a whole token, made `home`.
+fn replace_home_tokens(command: &str, home: &str) -> String {
+    const TOKEN: &str = "$HOME";
+    let mut out = String::with_capacity(command.len());
+    let mut rest = command;
+    while let Some(at) = rest.find(TOKEN) {
+        let after = &rest[at + TOKEN.len()..];
+        let whole = after.is_empty() || after.starts_with(['/', '\\', '"', '\'', ' ']);
+        out.push_str(&rest[..at]);
+        out.push_str(if whole { home } else { TOKEN });
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Run `command` for the meeting in `meeting_dir`, waiting at most `timeout`.
 /// Never panics; every failure is in the [`Report`].
 pub fn run_hook(command: &str, meeting_dir: &Path, timeout: Duration) -> Report {
-    let command = expand_home(command, dirs::home_dir().as_deref());
-    let invocation = platform::invocation(platform::is_windows(), &command, meeting_dir);
+    let windows = platform::is_windows();
+    let command = if windows {
+        expand_home(command, dirs::home_dir().as_deref())
+    } else {
+        command.to_owned()
+    };
+    let invocation = platform::invocation(windows, &command, meeting_dir);
     let mut cmd = platform::command(&invocation);
     cmd.env(MEETING_DIR_ENV, meeting_dir)
-        .current_dir(meeting_dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut tree = match agent::ProcessTree::spawn(cmd) {
-        Ok(tree) => tree,
-        Err(error) => {
-            return Report {
-                outcome: Outcome::NotStarted {
-                    error: error.to_string(),
-                },
-                stdout: String::new(),
-                stderr: String::new(),
-            };
-        }
-    };
-    let stdout = tree.take_stdout().map(read_capped);
-    let stderr = tree.take_stderr().map(read_capped);
-    let outcome = wait(&mut tree, timeout);
-    Report {
-        outcome,
-        stdout: collect(stdout),
-        stderr: collect(stderr),
-    }
-}
-
-/// Wait for the tree's child, killing the whole tree past `timeout`.
-fn wait(tree: &mut agent::ProcessTree, timeout: Duration) -> Outcome {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match tree.try_wait() {
-            Ok(Some(status)) => return exited(status),
-            Ok(None) if Instant::now() >= deadline => {
-                tree.stop();
-                return Outcome::TimedOut;
-            }
-            Ok(None) => std::thread::sleep(POLL),
-            Err(error) => {
-                tree.stop();
-                return Outcome::NotStarted {
-                    error: error.to_string(),
-                };
-            }
-        }
+        .current_dir(meeting_dir);
+    match agent::process::run_capped(cmd, timeout, OUTPUT_CAP) {
+        Ok(run) => Report {
+            outcome: run.status.map_or(Outcome::TimedOut, exited),
+            stdout: run.stdout,
+            stderr: run.stderr,
+        },
+        Err(error) => Report {
+            outcome: Outcome::NotStarted {
+                error: error.to_string(),
+            },
+            stdout: String::new(),
+            stderr: String::new(),
+        },
     }
 }
 
@@ -178,42 +166,6 @@ fn exited(status: ExitStatus) -> Outcome {
             code: status.code(),
         }
     }
-}
-
-/// Read `pipe` on a thread of its own, keeping the first [`OUTPUT_CAP`] bytes.
-fn read_capped(pipe: impl Read + Send + 'static) -> mpsc::Receiver<String> {
-    let (send, receive) = mpsc::channel();
-    let spawned = std::thread::Builder::new()
-        .name("meet-ai-hook-output".to_owned())
-        .spawn(move || {
-            let _ = send.send(capped(pipe, OUTPUT_CAP));
-        });
-    if let Err(error) = spawned {
-        tracing::warn!(%error, "could not read a hook's output");
-    }
-    receive
-}
-
-/// The first `cap` bytes of `pipe` as text, reading the rest to the end.
-fn capped(mut pipe: impl Read, cap: usize) -> String {
-    let mut kept = Vec::new();
-    let mut buf = [0_u8; 8192];
-    loop {
-        match pipe.read(&mut buf) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => {
-                let room = cap.saturating_sub(kept.len());
-                kept.extend_from_slice(&buf[..n.min(room)]);
-            }
-        }
-    }
-    String::from_utf8_lossy(&kept).into_owned()
-}
-
-fn collect(output: Option<mpsc::Receiver<String>>) -> String {
-    output
-        .and_then(|receive| receive.recv_timeout(DRAIN_WAIT).ok())
-        .unwrap_or_default()
 }
 
 /// Run the hook for `moment`, if one is set, and log what it did. Returns the

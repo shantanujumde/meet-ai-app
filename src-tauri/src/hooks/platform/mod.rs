@@ -59,12 +59,25 @@ pub fn invocation(windows: bool, command: &str, meeting_dir: &Path) -> Invocatio
     let mut line = OsString::from("\"");
     line.push(command);
     line.push(" \"");
-    line.push(meeting_dir);
+    line.push(cmd_folder(meeting_dir));
     line.push("\"\"");
     Invocation {
         program: "cmd",
         args: vec!["/D".into(), "/S".into(), "/C".into()],
         raw_tail: Some(line),
+    }
+}
+
+/// The folder as it goes on a `cmd` line. `cmd` expands `%NAME%` even inside
+/// quotes, so a folder holding a `%` (`x%COMSPEC%`) is passed as a reference
+/// to [`super::MEETING_DIR_ENV`] instead: `cmd` expands that once, and never
+/// expands the value it put in (TUR-167). Any other folder goes as written,
+/// so a command with a stray `%` of its own still works.
+fn cmd_folder(meeting_dir: &Path) -> OsString {
+    if meeting_dir.as_os_str().to_string_lossy().contains('%') {
+        format!("%{}%", super::MEETING_DIR_ENV).into()
+    } else {
+        meeting_dir.into()
     }
 }
 
@@ -124,11 +137,42 @@ mod tests {
     }
 
     #[test]
+    fn windows_never_puts_a_folder_holding_a_percent_on_the_cmd_line() {
+        let got = invocation(true, "x.bat", Path::new("C:\\M\\x%COMSPEC%"));
+        assert_eq!(
+            got.raw_tail,
+            Some(OsString::from("\"x.bat \"%MEETAI_MEETING_DIR%\"\""))
+        );
+        // PowerShell `-File` arguments are never expanded: the folder as is.
+        let got = invocation(true, "x.ps1", Path::new("C:\\M\\x%COMSPEC%"));
+        assert_eq!(got.args.last(), Some(&OsString::from("C:\\M\\x%COMSPEC%")));
+    }
+
+    #[test]
     fn windows_runs_a_ps1_file_with_powershell() {
         let got = invocation(true, "\"C:\\h\\My X.PS1\" ", Path::new("C:\\M"));
         assert_eq!(got.program, "powershell");
         assert_eq!(got.args.last(), Some(&OsString::from("C:\\M")));
         assert!(got.args.contains(&OsString::from("C:\\h\\My X.PS1")));
         assert!(got.args.contains(&OsString::from("-NoProfile")));
+    }
+}
+
+/// TUR-167 on a real `cmd`: a folder holding `%NAME%` reaches the hook as
+/// written. Only Windows has `cmd`; CI's Windows job runs it.
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use std::time::Duration;
+
+    #[test]
+    fn a_folder_holding_a_percent_reaches_the_hook_unexpanded() {
+        let dir = tempfile::tempdir().unwrap();
+        let meeting = dir.path().join("x%COMSPEC%y");
+        std::fs::create_dir(&meeting).unwrap();
+        let report = super::super::run_hook("echo arg=", &meeting, Duration::from_secs(20));
+        assert!(report.outcome.is_ok(), "{report:?}");
+        let shown = meeting.to_string_lossy().into_owned();
+        assert!(report.stdout.contains(&shown), "{report:?}");
+        assert!(!report.stdout.contains("cmd.exe"), "{report:?}");
     }
 }
