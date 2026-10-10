@@ -3,8 +3,8 @@
 //!
 //! `cpal` is the same API on every OS, so this builds (and its conversion is
 //! tested) everywhere; which device to open, and how a callback's time maps
-//! onto the host clock, stay in `crate::platform`. Linux uses it; Windows
-//! (TUR-37) still has its own copy in `platform/windows_loopback.rs`.
+//! onto the host clock, stay in `crate::platform`. Linux and Windows (since
+//! TUR-177) both use it.
 
 use std::time::Duration;
 
@@ -154,6 +154,7 @@ where
     let mut scratch = vec![0.0f32; CALLBACK_CONVERT_SAMPLES];
     let on_packet = move |data: &Data, info: &InputCallbackInfo| {
         if let Some(samples) = to_f32(data, &mut scratch) {
+            // cpal 0.18.2 does not pass WASAPI's AUDCLNT_BUFFERFLAGS_SILENT on.
             capture.packet(samples, stamp(info), false);
         }
     };

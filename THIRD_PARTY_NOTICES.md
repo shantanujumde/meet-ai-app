@@ -372,12 +372,10 @@ SOFTWARE.
 - Files:
   - `crates/audio/src/loopback/buffer.rs` (`safe_buffer_size`: about 80 ms
     of frames, clamped) from `crates/scap-cpal/src/lib.rs` (TUR-37)
-  - `crates/audio/src/platform/windows_loopback.rs` (`start_keepalive`: a
-    render stream of zeros on the captured device, from
-    `build_silence_keepalive`) from `crates/scap-cpal/src/lib.rs` (TUR-37)
-  - `crates/audio/src/loopback/cpal_stream.rs` (`start_silence`: the same
-    render stream of zeros, for the Linux default sink, from
-    `build_silence_keepalive`) from `crates/scap-cpal/src/lib.rs` (TUR-38)
+  - `crates/audio/src/loopback/cpal_stream.rs` (`start_silence`: a render
+    stream of zeros on the captured device, for the Linux default sink and
+    the Windows output device, from `build_silence_keepalive`) from
+    `crates/scap-cpal/src/lib.rs` (TUR-37, TUR-38, TUR-177)
 
 ```
 MIT License
