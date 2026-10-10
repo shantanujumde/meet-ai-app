@@ -46,6 +46,8 @@ function choices(overrides: Partial<EngineChoices> = {}): EngineChoices {
       { code: "mr", name: "Marathi" },
     ],
     configProblem: null,
+    honoursLanguage: true,
+    languageIgnoredReason: null,
     ...overrides,
   };
 }

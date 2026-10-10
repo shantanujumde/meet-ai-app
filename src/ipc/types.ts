@@ -197,6 +197,10 @@ export type EngineChoices = {
   spokenLanguages: SpokenLanguageOption[];
   /** What in `transcription` was not valid and is shown as its default (TUR-155). */
   configProblem: string | null;
+  /** Whether the engine that will run uses `spokenLanguage` (TUR-157); false disables the picker. */
+  honoursLanguage: boolean;
+  /** Why the picker is disabled, in one sentence; null when `honoursLanguage`. */
+  languageIgnoredReason: string | null;
 };
 
 /** One language whisper can be told the audio is in. */

@@ -93,6 +93,8 @@ const APPLE_READY: EngineChoices = {
     { code: "mr", name: "Marathi" },
   ],
   configProblem: null,
+  honoursLanguage: true,
+  languageIgnoredReason: null,
 };
 
 const CANCELLED: NotesRunFailure = {
