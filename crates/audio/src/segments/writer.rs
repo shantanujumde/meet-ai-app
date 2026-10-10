@@ -109,7 +109,16 @@ impl SegmentsWriter {
     /// writer that never got the chance to run this method, which is exactly
     /// the failure F1 exists to catch.
     pub fn close_segment(&mut self, close_anchor: Anchor, next: SegmentOpen) {
-        self.current_mut().anchors.push(close_anchor);
+        self.checkpoint_anchor(close_anchor);
+        self.open_segment(next);
+    }
+
+    /// Open the next segment after the current one, whose last anchor is
+    /// already its close anchor: the session latches that with
+    /// [`SegmentsWriter::checkpoint_anchor`] and writes it to disk before its
+    /// headers are patched, then opens the next segment once the new sources
+    /// are aligned (TUR-162). Same result as [`SegmentsWriter::close_segment`].
+    pub fn open_segment(&mut self, next: SegmentOpen) {
         let idx = self.segments.len() as u32;
         self.segments.push(Self::segment(idx, next));
     }

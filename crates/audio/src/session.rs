@@ -25,6 +25,9 @@ mod segment;
 mod system_drop;
 // TUR-146: pause and resume.
 mod pause;
+// TUR-162: ending a segment in §7's order, and riding out a failed checkpoint.
+mod finish;
+mod retry;
 
 pub use self::pause::PauseSwitch;
 use self::segment::{Paths, align_and_pad, reopen_segment, segment_open};
@@ -194,9 +197,13 @@ pub struct RecordingSession {
     mic_path: PathBuf,
     sys_path: PathBuf,
     segments_path: PathBuf,
-    start_host_ns: u64,
     started: Instant,
+    /// When `segments.json` last reached the disk: the last good checkpoint,
+    /// or the segment boundary that wrote it. Not moved by a failed
+    /// checkpoint, so the next tick tries again (TUR-162).
     last_checkpoint: Instant,
+    /// The failed checkpoints since then.
+    checkpoint_retry: retry::CheckpointRetry,
     /// Kept so [`reopen_segment`] can hand them to the rebuilt sources. Only
     /// macOS and Windows (TUR-37) watch for device changes today, so only
     /// they read it back.
@@ -325,9 +332,9 @@ impl RecordingSession {
             mic_path,
             sys_path,
             segments_path,
-            start_host_ns,
             started: Instant::now(),
             last_checkpoint: Instant::now(),
+            checkpoint_retry: retry::CheckpointRetry::default(),
             tees,
             last_output_device,
             last_input_device,
@@ -405,7 +412,7 @@ impl RecordingSession {
         self.reopen_with(reason, new_mic, || None)?;
         self.last_output_device = crate::platform::default_output_device().ok();
         self.last_input_device = crate::platform::default_input_device().ok();
-        self.last_checkpoint = Instant::now();
+        self.segments_written();
         Ok(())
     }
 
@@ -456,7 +463,7 @@ impl RecordingSession {
                     tracing::info!("default output device changed — reopening segment");
                     self.reopen(segments::reason::DEFAULT_OUTPUT_DEVICE_CHANGED)?;
                     self.last_input_device = crate::platform::default_input_device().ok();
-                    self.last_checkpoint = Instant::now();
+                    self.segments_written();
                 }
                 self.last_output_device = Some(current);
             }
@@ -465,57 +472,63 @@ impl RecordingSession {
                     tracing::info!("default input device changed — reopening segment");
                     self.reopen(segments::reason::DEFAULT_INPUT_DEVICE_CHANGED)?;
                     self.last_output_device = crate::platform::default_output_device().ok();
-                    self.last_checkpoint = Instant::now();
+                    self.segments_written();
                 }
                 self.last_input_device = Some(current);
             }
         }
 
         if self.last_checkpoint.elapsed() >= Duration::from_secs(CHECKPOINT_INTERVAL_S) {
-            checkpoint(
+            match checkpoint(
                 &mut *self.mic,
                 &mut self.sys,
                 &mut self.writer,
                 &self.segments_path,
-            )?;
-            self.last_checkpoint = Instant::now();
-            tracing::info!("checkpoint at {:.0}s", self.started.elapsed().as_secs_f64());
+            ) {
+                Ok(()) => {
+                    self.segments_written();
+                    tracing::info!("checkpoint at {:.0}s", self.started.elapsed().as_secs_f64());
+                }
+                // TUR-162: the previous checkpoint is still whole on disk, so
+                // one failure is retried at the next tick; only a run of them
+                // ends the recording.
+                Err(e) => {
+                    let since_good = self.last_checkpoint.elapsed();
+                    self.checkpoint_retry.failed(e, since_good)?;
+                }
+            }
         }
         Ok(())
     }
 
-    /// Stop cleanly: both channels stopped (WAV headers finalised), a final
-    /// anchor latched, and `segments.json` written — contract §7's "equality
-    /// on graceful stop", taken only after both streams are fully stopped so
-    /// it is exact rather than a checkpoint's necessarily-slightly-behind
-    /// approximation.
+    /// `segments.json` just reached the disk: the next checkpoint is due one
+    /// interval from now, and any run of failed ones is over.
+    fn segments_written(&mut self) {
+        self.last_checkpoint = Instant::now();
+        self.checkpoint_retry.succeeded();
+    }
+
+    /// Stop cleanly: both channels stopped, a final anchor latched,
+    /// `segments.json` written, then the WAV headers finalised (§7's order,
+    /// TUR-162) — contract §7's "equality on graceful stop", taken only after
+    /// both streams are fully stopped so it is exact rather than a
+    /// checkpoint's necessarily-slightly-behind approximation.
+    ///
+    /// A system track that will not finish still leaves `segments.json`
+    /// written for what was made durable, and the microphone finished; its
+    /// error comes back after that.
     pub fn stop(mut self) -> Result<StopReport, String> {
         tracing::info!("stopping");
-        self.mic
-            .stop()
-            .map_err(|e| format!("stopping microphone: {e}"))?;
-        if let Some(source) = self.sys.as_mut() {
-            source
-                .stop()
-                .map_err(|e| format!("stopping system audio: {e}"))?;
+        let ended = finish::end_segment(
+            &mut *self.mic,
+            &mut self.sys,
+            &mut self.writer,
+            &self.segments_path,
+            "stop",
+        )?;
+        if let Some(e) = ended.sys_error {
+            return Err(format!("stopping system audio: {e}"));
         }
-
-        let (mic_ns, mic_frames) = self.mic.position().unwrap_or((self.start_host_ns, 0));
-        let (sys_ns, sys_frames) = self
-            .sys
-            .as_deref()
-            .and_then(|source| source.position())
-            .unwrap_or((0, 0));
-        self.writer.update_frames(mic_frames, sys_frames);
-        self.writer.checkpoint_anchor(Anchor {
-            mic_host_ns: mic_ns,
-            mic_frames,
-            sys_host_ns: sys_ns,
-            sys_frames,
-        });
-        self.writer
-            .write_atomic(&self.segments_path)
-            .map_err(|e| format!("writing segments.json: {e}"))?;
 
         Ok(StopReport {
             mic_path: self.mic_path,

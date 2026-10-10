@@ -26,6 +26,9 @@ mod tap_rate;
 /// The fresh UUID each process tap is created with.
 mod tap_uuid;
 
+/// The tap's Core Audio objects, each destroyed when its guard drops (TUR-162).
+mod tap_guard;
+
 /// Default-output/input-device polling, for detecting the AirPods swap SPEC
 /// §5's exit gate names — see the module docs for why this polls instead of
 /// registering a Core Audio property listener.

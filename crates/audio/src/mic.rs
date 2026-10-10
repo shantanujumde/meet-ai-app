@@ -9,7 +9,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::JoinHandle;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
@@ -27,6 +26,7 @@ use crate::platform::input_callback_ns;
 use crate::rate_meter::{CallbackMeter, FixedRates, Rates};
 use crate::tee::Tee;
 use crate::track::{IDLE_POLL, TrackWriter};
+use crate::worker::Worker;
 use crate::{AudioSource, Channel, Error};
 
 /// Ring buffer capacity, in raw (device-rate, interleaved) samples. 4 s at
@@ -37,11 +37,14 @@ const RING_CAPACITY_SAMPLES: usize = 48_000 * 2 * 4;
 
 /// Everything [`MicSource::start`] needs to hand back once the stream is
 /// actually live.
+///
+/// Dropped whole, as a build that finished after [`MicSource::start`] gave
+/// up on it is (TUR-162), it tears itself down: the fields drop in order, so
+/// the stream stops (`cpal`'s own drop) and then the [`Worker`] is joined.
 struct Built {
     stream: Stream,
     rates: Arc<FixedRates>,
-    worker: JoinHandle<()>,
-    running: Arc<AtomicBool>,
+    worker: Worker,
     track: TrackWriter,
 }
 
@@ -51,8 +54,7 @@ struct Built {
 /// touches the filesystem.
 pub struct MicSource {
     stream: Option<Stream>,
-    worker: Option<JoinHandle<()>>,
-    running: Arc<AtomicBool>,
+    worker: Option<Worker>,
     track: Option<TrackWriter>,
     /// The live-transcription copy, if one was asked for ([`AudioSource::tee`]).
     tee: Option<Tee>,
@@ -71,7 +73,6 @@ impl MicSource {
         Self {
             stream: None,
             worker: None,
-            running: Arc::new(AtomicBool::new(false)),
             track: None,
             tee: None,
             rates: None,
@@ -104,6 +105,24 @@ impl MicSource {
             }
             feed.push(&mut pipeline, &*rates, &scratch[..popped]);
         }
+    }
+
+    /// Stop the stream and join the worker; the track stays, so
+    /// [`AudioSource::position`] still answers and the header can be patched.
+    fn halt(&mut self) {
+        if let Some(stream) = self.stream.take() {
+            let _ = stream.pause();
+        }
+        if let Some(mut worker) = self.worker.take() {
+            worker.halt();
+        }
+    }
+}
+
+impl Drop for MicSource {
+    fn drop(&mut self) {
+        // TUR-162: never leave the worker polling an abandoned ring.
+        self.halt();
     }
 }
 
@@ -160,7 +179,6 @@ impl MicSource {
         let (mut producer, consumer) = rb.split();
         // Each packet's capture time rides next to its samples (TUR-151).
         let (mut marks, clock) = time_marks(channels);
-        let running = Arc::new(AtomicBool::new(true));
 
         // The delivered-rate meter (TUR-84's, TUR-87): integers and atomics.
         let mut meter = CallbackMeter::new(Arc::clone(&rates), channels);
@@ -222,22 +240,17 @@ impl MicSource {
             .play()
             .map_err(|e| Error::NoDevice(format!("failed to start input stream: {e}")))?;
 
-        let worker = std::thread::Builder::new()
-            .name("meet-rec-mic-worker".to_string())
-            .spawn({
-                let track = track.clone();
-                let running = Arc::clone(&running);
-                let rates = Arc::clone(&rates);
-                let pipeline = Pipeline::new("microphone", channels, device_rate);
-                move || Self::worker_loop(consumer, pipeline, rates, track, clock, running, tee)
-            })
-            .expect("spawning the mic worker thread");
+        let worker = Worker::spawn("meet-rec-mic-worker", {
+            let track = track.clone();
+            let rates = Arc::clone(&rates);
+            let pipeline = Pipeline::new("microphone", channels, device_rate);
+            move |running| Self::worker_loop(consumer, pipeline, rates, track, clock, running, tee)
+        })?;
 
         Ok(Built {
             stream,
             rates,
             worker,
-            running,
             track,
         })
     }
@@ -245,48 +258,33 @@ impl MicSource {
 
 impl AudioSource for MicSource {
     fn start(&mut self, dest: PathBuf) -> Result<(), Error> {
-        let (tx, rx) = std::sync::mpsc::channel();
         let tee = self.tee.clone();
-        std::thread::Builder::new()
-            .name("meet-rec-mic-init".to_string())
-            .spawn(move || {
-                let _ = tx.send(Self::build(dest, tee));
-            })
-            .expect("spawning the mic init thread");
-
-        let built = match rx.recv_timeout(crate::AUDIO_PERMISSION_TIMEOUT) {
-            Ok(result) => result?,
-            Err(_) => {
-                // The init thread is still blocked inside Core Audio and has
-                // no way to be cancelled — see `MicSource::build`'s doc. It
-                // is deliberately leaked here rather than joined: the
-                // alternative is this method hanging with it, which is
-                // exactly the failure this timeout exists to turn into a
-                // reportable error.
-                return Err(Error::PermissionDenied);
-            }
-        };
+        // On a timeout the init thread is still blocked inside Core Audio
+        // and has no way to be cancelled (see `MicSource::build`'s doc), so
+        // it is leaked rather than joined: the alternative is this method
+        // hanging with it. If it finishes later, its `Built` is dropped
+        // there and stops itself (TUR-162).
+        let built = crate::init_thread::run_bounded(
+            "meet-rec-mic-init",
+            crate::AUDIO_PERMISSION_TIMEOUT,
+            move || Self::build(dest, tee),
+        )?;
 
         self.stream = Some(built.stream);
         self.rates = Some(built.rates);
         self.worker = Some(built.worker);
-        self.running = built.running;
         self.track = Some(built.track);
         Ok(())
     }
 
     fn stop(&mut self) -> Result<(), Error> {
-        self.running.store(false, Ordering::Release);
-        if let Some(stream) = self.stream.take() {
-            let _ = stream.pause();
-        }
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-        if let Some(track) = &self.track {
-            track.finish()?;
-        }
-        Ok(())
+        self.stop_capture()?;
+        self.patch_header()
+    }
+
+    fn stop_capture(&mut self) -> Result<(), Error> {
+        self.halt();
+        self.fsync_data()
     }
 
     fn channel(&self) -> Channel {
@@ -404,5 +402,42 @@ fn choose_device(host: &cpal::Host) -> Result<cpal::Device, Error> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TUR-162: a `MicSource` dropped without `stop` (a start that timed
+    /// out and finished later, or one a caller let go of) used to leave its
+    /// worker polling forever. The drop now joins it. The worker here is the
+    /// real one, over a ring nothing ever writes to, as after the stream
+    /// stopped.
+    #[test]
+    fn dropping_a_running_mic_source_ends_its_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let track = TrackWriter::open(&dir.path().join("mic.wav"), "microphone").unwrap();
+        let rates = FixedRates::new("microphone", 48_000);
+        let (_producer, consumer) = HeapRb::<f32>::new(64).split();
+        let (_marks, clock) = time_marks(1);
+        let worker = Worker::spawn("test-mic-worker", {
+            let rates = Arc::clone(&rates);
+            let pipeline = Pipeline::new("microphone", 1, 48_000);
+            move |running| {
+                MicSource::worker_loop(consumer, pipeline, rates, track, clock, running, None)
+            }
+        })
+        .unwrap();
+        let mut source = MicSource::new();
+        source.worker = Some(worker);
+        assert_eq!(Arc::strong_count(&rates), 2, "the worker holds the rates");
+
+        drop(source);
+        assert_eq!(
+            Arc::strong_count(&rates),
+            1,
+            "the worker had returned by the time the drop did"
+        );
     }
 }

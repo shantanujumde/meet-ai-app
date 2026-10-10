@@ -6,6 +6,8 @@ use crate::wav_writer::WavWriter;
 
 // TUR-151: frame-0 start alignment, and the head-pad on a reopened file.
 mod align;
+// TUR-162: headers never ahead of segments.json, and checkpoint retries.
+mod crash_safety;
 
 /// A hardware-free `AudioSource` for exercising [`align_and_pad`]'s
 /// alignment maths, which is the one piece of the device-change handling
@@ -181,11 +183,13 @@ impl AudioSource for StubSource {
     }
 
     fn stop(&mut self) -> Result<(), AudioError> {
-        if let Some(writer) = self.writer.as_mut() {
-            writer.fsync_data()?;
-            writer.patch_header()?;
-        }
-        Ok(())
+        self.stop_capture()?;
+        self.patch_header()
+    }
+
+    /// Like a real source's: the data is fsynced, the header left alone.
+    fn stop_capture(&mut self) -> Result<(), AudioError> {
+        self.fsync_data()
     }
 
     fn channel(&self) -> Channel {

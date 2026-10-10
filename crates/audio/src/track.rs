@@ -111,8 +111,9 @@ impl TrackWriter {
         self.lock().writer.patch_header()
     }
 
-    /// Both, under one lock: what a source's `stop` does once its worker
-    /// has finished.
+    /// Both, under one lock. Test shorthand only: a source's stop fsyncs,
+    /// and patches the header only after `segments.json` (TUR-162).
+    #[cfg(test)]
     pub(crate) fn finish(&self) -> io::Result<()> {
         let mut track = self.lock();
         track.writer.fsync_data()?;

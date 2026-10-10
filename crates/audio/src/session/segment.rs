@@ -10,12 +10,14 @@
 //! the segment carries on microphone-only, exactly as a tap that fails to
 //! start already did. Only the microphone can fail a segment, and when it
 //! does, every source this reopen started is stopped first, so no worker
-//! thread outlives it and every WAV header is patched.
+//! thread outlives it. Their headers are left alone: nothing they wrote is
+//! in any `segments.json` (TUR-162).
 
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::Tees;
+use super::finish::end_segment;
 use crate::AudioSource;
 use crate::segments::{Anchor, SAMPLE_RATE_HZ, SegmentOpen, SegmentsWriter};
 
@@ -77,10 +79,11 @@ fn frame_zero_ns((host_ns, frames): (u64, u64)) -> u64 {
 }
 
 /// Stop a source being given up on, logging rather than returning a failure:
-/// the caller is already on its way out, and the stop is what patches the
-/// WAV header and ends the worker thread.
+/// the caller is already on its way out, and the stop is what ends the
+/// worker thread. Never patches the header (TUR-162): whatever this source
+/// wrote is in no `segments.json`, so its header must not declare it.
 pub(super) fn stop_quietly(source: &mut dyn AudioSource, what: &str) {
-    if let Err(e) = source.stop() {
+    if let Err(e) = source.stop_capture() {
         tracing::warn!("could not stop the {what} cleanly: {e}");
     }
 }
@@ -183,18 +186,24 @@ pub(super) fn segment_open(
 /// tests at fakes.
 ///
 /// Stops both channels *first*, then reads their final position — never the
-/// other order. `stop()` halts the capture stream and joins its worker
-/// thread before its own internal `fsync_data`/`patch_header`, so once it
-/// returns, `position()` and the just-patched header are guaranteed to agree
-/// exactly. Reading `position()` first and calling `stop()` after would
-/// leave a window where the (still-running) worker thread appends more audio
-/// that `stop()`'s internal fsync then picks up — so the header would end up
-/// declaring more frames than the close anchor this function commits to
-/// `segments.json`, reproducing the exact header-ahead-of-segments bug
-/// `WavWriter::patch_header`'s `synced_frames` freeze was built to prevent
-/// one layer down (TUR-54; `crate::wav_writer`). Caught by running this
-/// function against real hardware and checking `drift-check`'s own invariant
-/// check, not by inspection.
+/// other order. `stop_capture()` halts the capture stream and joins its
+/// worker thread before its own `fsync_data`, so once it returns,
+/// `position()` and the synced frames agree exactly. Reading `position()`
+/// first and stopping after would leave a window where the (still-running)
+/// worker thread appends more audio that the fsync then picks up — so the
+/// header would end up declaring more frames than the close anchor this
+/// function commits to `segments.json`, reproducing the exact
+/// header-ahead-of-segments bug `WavWriter::patch_header`'s `synced_frames`
+/// freeze was built to prevent one layer down (TUR-54;
+/// `crate::wav_writer`). Caught by running this function against real
+/// hardware and checking `drift-check`'s own invariant check, not by
+/// inspection.
+///
+/// The close anchor is written to `segments.json` before either header is
+/// patched, and both before the new sources start (TUR-162): the new
+/// writers append after the declared length, so the headers must be final
+/// by then, and a crash while the new tap waits for its permission or first
+/// frame (up to about 50 s) leaves headers that `segments.json` covers.
 ///
 /// The system track never fails this (TUR-87): an old tap that will not
 /// stop, a new one that will not start, or one whose first frame is late
@@ -216,51 +225,39 @@ pub(super) fn reopen_segment(
     new_mic: impl FnOnce() -> Box<dyn AudioSource>,
     new_sys: impl FnOnce() -> Option<Box<dyn AudioSource>>,
 ) -> Result<(), String> {
-    let close = stop_for(&mut **mic, sys, "reopen")?;
+    stop_for(&mut **mic, sys, writer, paths.segments, "reopen")?;
     open_next(
-        mic, sys, writer, paths, reason, tees, want_sys, close, new_mic, new_sys,
+        mic, sys, writer, paths, reason, tees, want_sys, new_mic, new_sys,
     )
 }
 
 /// The first half of [`reopen_segment`], and all of a pause (TUR-146): stop
 /// both channels, *then* read where each ended (the order that function's
-/// docs explain), as the anchor that closes the segment. `why` names the
-/// caller in the errors and the log.
+/// docs explain), latch that as the segment's close anchor, write
+/// `segments.json`, and patch the headers ([`end_segment`], TUR-162). `why`
+/// names the caller in the errors and the log.
 ///
-/// Only the microphone can fail this; a system track that will not stop is
-/// logged, and the next segment builds a fresh tap.
+/// Only the microphone (or the `segments.json` write) can fail this; a
+/// system track that will not stop is logged, and the next segment builds a
+/// fresh tap.
 pub(super) fn stop_for(
     mic: &mut dyn AudioSource,
     sys: &mut Option<Box<dyn AudioSource>>,
+    writer: &mut SegmentsWriter,
+    segments_path: &Path,
     why: &str,
 ) -> Result<Anchor, String> {
-    mic.stop()
-        .map_err(|e| format!("stopping microphone for {why}: {e}"))?;
-    if let Some(s) = sys.as_mut()
-        && let Err(e) = s.stop()
-    {
+    let ended = end_segment(mic, sys, writer, segments_path, why)?;
+    if let Some(e) = ended.sys_error {
         tracing::warn!("stopping system audio for {why} failed ({e}); trying a fresh tap");
     }
-
-    let mic_close = mic
-        .position()
-        .ok_or_else(|| format!("microphone stopped producing audio before a segment {why}"))?;
-    let sys_close = match sys.as_deref() {
-        Some(s) => s.position().unwrap_or((0, 0)),
-        None => (0, 0),
-    };
-    Ok(Anchor {
-        mic_host_ns: mic_close.0,
-        mic_frames: mic_close.1,
-        sys_host_ns: sys_close.0,
-        sys_frames: sys_close.1,
-    })
+    Ok(ended.close)
 }
 
 /// The second half of [`reopen_segment`], and all of a resume (TUR-146):
 /// start the sources `new_mic` and `new_sys` build into the same files,
-/// align them, close the old segment at `close` (from [`stop_for`]) and open
-/// the next one with `reason`.
+/// align them, and open the next segment with `reason` after the one
+/// [`stop_for`] closed.
 ///
 /// The system track never fails this (TUR-87); a microphone failure returns
 /// `Err` after stopping every source this call started, and leaves `mic`,
@@ -274,7 +271,6 @@ pub(super) fn open_next(
     reason: &str,
     tees: &Tees,
     want_sys: bool,
-    close: Anchor,
     new_mic: impl FnOnce() -> Box<dyn AudioSource>,
     new_sys: impl FnOnce() -> Option<Box<dyn AudioSource>>,
 ) -> Result<(), String> {
@@ -317,8 +313,7 @@ pub(super) fn open_next(
     };
     let next_open = segment_open(new_start_host_ns, &*next_mic, next_sys.as_deref(), reason);
 
-    writer.update_frames(close.mic_frames, close.sys_frames);
-    writer.close_segment(close, next_open);
+    writer.open_segment(next_open);
     *mic = next_mic;
     *sys = next_sys;
     writer
