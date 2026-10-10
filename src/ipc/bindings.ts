@@ -801,6 +801,13 @@ export type meet_ai_lib_engine_choices_EngineChoices = {
 	 *  (TUR-155), such as `"engine": "whispr"`; `None` when all of it was.
 	 */
 	configProblem: string | null,
+	/**
+	 *  Whether the engine that will run (and, for whisper, its model) uses
+	 *  `spoken_language` (TUR-157). When false the picker is disabled and
+	 *  `language_ignored_reason` says why; the saved value is kept.
+	 */
+	honoursLanguage: boolean,
+	languageIgnoredReason: string | null,
 };
 
 /**  What the filesystem says, with no subprocess involved. */

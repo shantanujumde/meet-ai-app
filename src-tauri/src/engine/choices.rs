@@ -112,6 +112,11 @@ pub struct EngineChoices {
     /// What in `transcription` was not valid and is shown as its default
     /// (TUR-155), such as `"engine": "whispr"`; `None` when all of it was.
     pub config_problem: Option<String>,
+    /// Whether the engine that will run (and, for whisper, its model) uses
+    /// `spoken_language` (TUR-157). When false the picker is disabled and
+    /// `language_ignored_reason` says why; the saved value is kept.
+    pub honours_language: bool,
+    pub language_ignored_reason: Option<String>,
 }
 
 /// One language the spoken-language picker offers.
@@ -149,12 +154,21 @@ pub fn choices() -> EngineChoices {
     let environment = super::discover(super::DEFAULT_LOCALE, &transcription.model);
     EngineChoices {
         config_problem: problem,
-        ..view(&transcription, registry::options(&environment))
+        ..view(
+            &transcription,
+            registry::options(&environment),
+            &environment,
+        )
     }
 }
 
-fn view(transcription: &Transcription, options: registry::EngineOptions) -> EngineChoices {
+fn view(
+    transcription: &Transcription,
+    options: registry::EngineOptions,
+    environment: &Environment,
+) -> EngineChoices {
     let parakeet_model = super::parakeet::view(&super::ModelDirs::discover());
+    let language = language_support(transcription.engine, options.auto, environment);
     EngineChoices {
         engine: transcription.engine.into(),
         model: transcription.model.clone(),
@@ -167,6 +181,30 @@ fn view(transcription: &Transcription, options: registry::EngineOptions) -> Engi
         spoken_language: transcription.language.clone(),
         spoken_languages: spoken_languages(),
         config_problem: None,
+        honours_language: language.honours_language,
+        language_ignored_reason: language.reason,
+    }
+}
+
+/// [`registry::language_support`] for the saved engine, with `auto` read as
+/// what it resolves to here. Nothing ready yet leaves the picker on.
+fn language_support(
+    engine: Preference,
+    auto: Option<Kind>,
+    environment: &Environment,
+) -> registry::LanguageSupport {
+    let kind = match engine {
+        Preference::Auto => auto,
+        Preference::AppleSpeech => Some(Kind::AppleSpeech),
+        Preference::Whisper => Some(Kind::Whisper),
+        Preference::Parakeet => Some(Kind::Parakeet),
+    };
+    match kind {
+        Some(kind) => registry::language_support(kind, environment),
+        None => registry::LanguageSupport {
+            honours_language: true,
+            reason: None,
+        },
     }
 }
 
@@ -182,7 +220,7 @@ pub fn save_choice(engine: EngineChoice, model: &str) -> Result<EngineChoices, U
         model: model.to_string(),
         ..config::transcription()
     };
-    Ok(view(&saved, options))
+    Ok(view(&saved, options, &environment))
 }
 
 /// Save `transcription.language`: `auto` or a whisper code. Anything else is
@@ -325,7 +363,7 @@ mod tests {
             language: "auto".into(),
             live: true,
         };
-        let view = view(&transcription, options(true, false));
+        let view = view(&transcription, options(true, false), &environment(None));
         assert_eq!(view.spoken_language, "auto");
         assert_eq!(view.spoken_languages.len(), 101);
         assert_eq!(view.spoken_languages[0].code, "hinglish");
@@ -429,6 +467,73 @@ mod tests {
     }
 
     #[test]
+    fn the_view_says_whether_the_saved_engine_uses_the_spoken_language() {
+        let saved = |engine, model: &str| Transcription {
+            engine,
+            model: model.into(),
+            language: "mr".into(),
+            live: true,
+        };
+        let mut multilingual = environment(Some("/tmp/ggml-large-v3-turbo-q5_0.bin"));
+        multilingual.whisper_model_id = "large-v3-turbo-q5_0".into();
+
+        let turbo = view(
+            &saved(Preference::Whisper, "large-v3-turbo-q5_0"),
+            options(true, true),
+            &multilingual,
+        );
+        assert!(turbo.honours_language);
+        assert_eq!(turbo.language_ignored_reason, None);
+
+        let english = view(
+            &saved(Preference::Whisper, "small.en-q5_1"),
+            options(true, true),
+            &environment(Some("/tmp/ggml-small.en-q5_1.bin")),
+        );
+        assert!(!english.honours_language);
+        assert_eq!(
+            english.language_ignored_reason.as_deref(),
+            Some(registry::ENGLISH_ONLY_MODEL)
+        );
+        // The saved language is kept, not overwritten.
+        assert_eq!(english.spoken_language, "mr");
+
+        // Automatic is read as what it lands on: Apple's engine here.
+        let auto = view(
+            &saved(Preference::Auto, "large-v3-turbo-q5_0"),
+            options(true, true),
+            &multilingual,
+        );
+        assert!(!auto.honours_language);
+        assert!(
+            auto.language_ignored_reason
+                .as_deref()
+                .is_some_and(|why| why.contains("en-US")),
+            "{:?}",
+            auto.language_ignored_reason
+        );
+
+        let parakeet = view(
+            &saved(Preference::Parakeet, "large-v3-turbo-q5_0"),
+            options(true, true),
+            &multilingual,
+        );
+        assert_eq!(
+            parakeet.language_ignored_reason.as_deref(),
+            Some(registry::PARAKEET_PICKS_ITS_OWN)
+        );
+
+        let mut nothing_ready = options(false, false);
+        nothing_ready.auto = None;
+        let none = view(
+            &saved(Preference::Auto, "large-v3-turbo-q5_0"),
+            nothing_ready,
+            &environment(None),
+        );
+        assert!(none.honours_language);
+    }
+
+    #[test]
     fn a_language_whisper_does_not_know_is_refused_not_written() {
         for bad in ["marathi", "xx", "en-US"] {
             assert!(save_language(bad).is_err(), "{bad}");
@@ -443,7 +548,7 @@ mod tests {
             language: "auto".into(),
             live: true,
         };
-        let view = view(&transcription, options(true, true));
+        let view = view(&transcription, options(true, true), &environment(None));
         assert_eq!(view.engine, EngineChoice::Parakeet);
         assert_eq!(
             view.parakeet.reason.as_deref(),
