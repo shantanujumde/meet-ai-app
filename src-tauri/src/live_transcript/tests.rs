@@ -78,6 +78,8 @@ fn the_status_payload_has_the_agreed_shape() {
         state: State::Failed,
         engine: Some("whisper".into()),
         detail: Some("It stopped.".into()),
+        // Rust-side only (TUR-148): the window's payload is unchanged.
+        dropped_frames: 7,
     })
     .unwrap();
     assert_eq!(
@@ -1011,4 +1013,108 @@ fn an_engine_that_never_finishes_never_makes_transcript_md_final() {
     // Let the engine go, so its thread does not outlive the test.
     gate.open();
     assert!(transcript_final.wait(Duration::from_secs(5)));
+}
+
+// --- TUR-148: an engine that fell behind leaves a partial transcript ------
+
+/// Record a microphone-only meeting into a folder marked `audio/.incomplete`
+/// the way `create_meeting_folder` leaves it, with `offered` chunks already
+/// waiting in a tee that holds `capacity`: what is past the capacity is
+/// dropped, as when the engine falls behind. Stop it, and hand the status to
+/// retention the way `agent_run::finish_then_run` does.
+fn stop_with_a_queue_of(name: &str, capacity: usize, offered: usize) -> (TempTranscript, Status) {
+    let path_dir = temp_transcript(name);
+    let path = path_dir.path.clone();
+    let meeting_dir = path.parent().unwrap().to_path_buf();
+    store::retention::mark_incomplete(&meeting_dir).unwrap();
+    let live = LiveTranscript::default();
+    let notify = Arc::new(CollectingNotify::default());
+    let (mic_tee, mic_feed) = audio::tee::tee_with_capacity(capacity);
+    // Before the engine opens, so nothing reads the queue yet.
+    for _ in 0..offered {
+        mic_tee.offer(&chunk());
+    }
+
+    let transcription = live.start(
+        notify.clone(),
+        path,
+        vec![(Speaker::You, mic_feed)],
+        fake(Mode::Echo),
+    );
+    drop(mic_tee);
+    let (status, mut transcript_final) = transcription.finish_final(STOP_TIMEOUT);
+    assert!(transcript_final.wait(Duration::ZERO));
+    // The window sees the same ending either way: nothing new is shown.
+    assert_eq!(notify.last_status().state, State::Stopped);
+    crate::retention::transcript_finished(&meeting_dir, &status);
+    (path_dir, status)
+}
+
+fn marked_incomplete(transcript: &Path) -> bool {
+    store::retention::incomplete_marker(transcript.parent().unwrap()).exists()
+}
+
+#[test]
+fn a_full_queue_leaves_the_meeting_not_complete_for_retention() {
+    let (path, status) = stop_with_a_queue_of("dropped-frames", 2, 5);
+
+    assert_eq!(
+        status.state,
+        State::Stopped,
+        "the lines that settled are in"
+    );
+    assert_eq!(status.dropped_frames, 3 * chunk().len() as u64);
+    assert!(
+        read(&path).contains("You: You line 2."),
+        "{:?}",
+        read(&path)
+    );
+    assert!(
+        marked_incomplete(&path),
+        "a transcript with gaps keeps its audio"
+    );
+}
+
+#[test]
+fn a_queue_that_never_filled_lets_the_meeting_complete() {
+    let (path, status) = stop_with_a_queue_of("no-dropped-frames", 8, 5);
+
+    assert_eq!(status.state, State::Stopped);
+    assert_eq!(status.dropped_frames, 0);
+    assert!(!marked_incomplete(&path));
+}
+
+#[test]
+fn a_new_meeting_starts_with_no_dropped_frames() {
+    let live = LiveTranscript::default();
+    let first = temp_transcript("dropped-then-clean-1");
+    let (mic_tee, mic_feed) = audio::tee::tee_with_capacity(1);
+    for _ in 0..3 {
+        mic_tee.offer(&chunk());
+    }
+    let transcription = live.start(
+        Arc::new(CollectingNotify::default()),
+        first.path.clone(),
+        vec![(Speaker::You, mic_feed)],
+        fake(Mode::Echo),
+    );
+    drop(mic_tee);
+    assert!(transcription.finish(STOP_TIMEOUT).dropped_frames > 0);
+
+    let second = temp_transcript("dropped-then-clean-2");
+    let (mic_tee, mic_feed) = audio::tee::tee();
+    let transcription = live.start(
+        Arc::new(CollectingNotify::default()),
+        second.path.clone(),
+        vec![(Speaker::You, mic_feed)],
+        fake(Mode::Echo),
+    );
+    mic_tee.offer(&chunk());
+    drop(mic_tee);
+    let status = transcription.finish(STOP_TIMEOUT);
+    assert_eq!(status.state, State::Stopped);
+    assert_eq!(
+        status.dropped_frames, 0,
+        "the last meeting's gaps are its own"
+    );
 }
