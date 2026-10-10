@@ -46,8 +46,13 @@ pub trait TranscriptSink {
 /// Appends `[HH:MM:SS] Speaker: text` lines to a `transcript.md`.
 ///
 /// Append-only, per SPEC §3.4: a line, once written, is never rewritten or
-/// reordered by this sink. The file is opened in append mode so a crash
-/// mid-meeting leaves a valid prefix rather than a truncated file. Live, the
+/// reordered by this sink, and the file is opened in append mode, so what
+/// reached the file is never truncated. It is not crash-safe on its own:
+/// lines wait in an 8 KB buffer until [`TranscriptSink::flush`], so a crash
+/// loses everything since the last flush. Live recording wraps it in
+/// `src-tauri`'s `live_transcript::sink::Durable`, which flushes each line to
+/// the OS as it is written; only that wrapper makes "a crash mid-meeting
+/// leaves a valid prefix" true (TUR-175). Live, the
 /// two tracks share one sink and lines land in the order they settle, not the
 /// order they were said; the app sorts the file by time once the recording
 /// stops (SPEC A19, `store::transcript_order`).
