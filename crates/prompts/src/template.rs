@@ -64,8 +64,10 @@ pub(crate) fn render(
         .map_err(error)
 }
 
-/// Turns `</tag` into `<\/tag` for each of `tags`, ignoring case and any
-/// spaces after the `/`. Other text is left exactly as it was.
+/// Turns `</tag` into `<\/tag` for each of `tags`, ignoring case. Whitespace
+/// or zero-width characters between the `<`, the `/` and the name do not
+/// hide it (TUR-158): `< /tag` becomes `< \/tag` and `<\u{200b}/tag` becomes
+/// `<\u{200b}\/tag`. Other text is left exactly as it was.
 ///
 /// The prompt modules run the meeting's own text through this before
 /// rendering, so someone on the call cannot end a data block early and have
@@ -73,17 +75,92 @@ pub(crate) fn render(
 pub(crate) fn neutralize(text: &str, tags: &[&str]) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
-    while let Some(at) = rest.find("</") {
-        out.push_str(&rest[..at]);
-        let after = &rest[at + 2..];
-        let name = after.trim_start();
-        let closes_a_block = tags.iter().any(|tag| {
-            name.get(..tag.len())
-                .is_some_and(|head| head.eq_ignore_ascii_case(tag))
-        });
-        out.push_str(if closes_a_block { "<\\/" } else { "</" });
-        rest = after;
+    while let Some(at) = rest.find('<') {
+        // Everything up to and including the `<` is kept as it is.
+        let after_lt = &rest[at + 1..];
+        out.push_str(&rest[..=at]);
+        let gap = after_lt.len() - after_lt.trim_start_matches(is_gap).len();
+        if let Some(after_slash) = after_lt[gap..].strip_prefix('/')
+            && names_a_tag(after_slash.trim_start_matches(is_gap), tags)
+        {
+            out.push_str(&after_lt[..gap]);
+            out.push_str("\\/");
+            rest = after_slash;
+        } else {
+            rest = after_lt;
+        }
     }
     out.push_str(rest);
     out
+}
+
+/// Space a reader (or a model) skips over inside a tag: any Unicode
+/// whitespace, and the zero-width characters that render as nothing.
+fn is_gap(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}')
+}
+
+/// Does `name` start with one of `tags`, ignoring ASCII case?
+fn names_a_tag(name: &str, tags: &[&str]) -> bool {
+    tags.iter().any(|tag| {
+        name.get(..tag.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(tag))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::neutralize;
+
+    const TAGS: [&str; 2] = ["transcript", "notes"];
+
+    fn guard(text: &str) -> String {
+        neutralize(text, &TAGS)
+    }
+
+    #[test]
+    fn the_plain_closing_tag_is_neutralized_as_before() {
+        assert_eq!(guard("a </transcript> b"), "a <\\/transcript> b");
+        assert_eq!(guard("</ NOTES>"), "<\\/ NOTES>");
+    }
+
+    #[test]
+    fn whitespace_between_the_angle_and_the_slash_does_not_hide_it() {
+        assert_eq!(guard("< /transcript>"), "< \\/transcript>");
+        assert_eq!(guard("<\t\n /Transcript>"), "<\t\n \\/Transcript>");
+        assert_eq!(guard("< / notes>"), "< \\/ notes>");
+    }
+
+    #[test]
+    fn zero_width_characters_do_not_hide_it() {
+        for zero_width in ['\u{200B}', '\u{200C}', '\u{200D}', '\u{2060}', '\u{FEFF}'] {
+            let before = format!("<{zero_width}/transcript>");
+            let after = format!("<{zero_width}\\/transcript>");
+            assert_eq!(guard(&before), after, "{zero_width:?} before the slash");
+            let before = format!("</{zero_width}transcript>");
+            assert_eq!(guard(&before), format!("<\\/{zero_width}transcript>"));
+        }
+    }
+
+    #[test]
+    fn other_text_with_angles_is_left_alone() {
+        for text in [
+            "1 < 2 and 3 > 2",
+            "a < /b> < /tr>",
+            "<<",
+            "ends with <",
+            "ends with < /",
+            "< \u{200B}",
+            "é< /é",
+            "<transcript>",
+        ] {
+            assert_eq!(guard(text), text, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_run_of_angles_still_finds_the_closing_tag() {
+        assert_eq!(guard("<< /notes>"), "<< \\/notes>");
+        assert_eq!(guard("<</notes>"), "<<\\/notes>");
+    }
 }
