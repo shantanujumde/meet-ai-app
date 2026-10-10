@@ -5,17 +5,20 @@
 
 import { ArrowRight, FolderOpen } from "lucide-react";
 import { revealMeeting } from "@/ipc/client";
-import { osText, shortcutLabel } from "@/lib/osText";
+import { osText } from "@/lib/osText";
 import { useAppStore } from "@/state/app";
 import { FolderRow } from "@/ui/FolderRow";
 import { IconSquare } from "@/ui/icons";
 import { Button, ButtonRow, Card, Pill, Prose } from "@/ui/primitives";
+import { useRecordShortcut } from "@/ui/useRecordShortcut";
 
 export function FolderStep({ onNext }: { onNext: () => void }) {
   const rootExists = useAppStore((state) => state.meetings?.rootExists ?? false);
   // TUR-165: the button opens the newest meeting's folder, so with no meeting
   // yet it would do nothing. The path is printed in the row either way.
   const hasMeeting = useAppStore((state) => (state.meetings?.meetings.length ?? 0) > 0);
+  // TUR-169, TUR-170: a shortcut another app owns is not advertised.
+  const shortcut = useRecordShortcut();
 
   return (
     <>
@@ -45,9 +48,18 @@ export function FolderStep({ onNext }: { onNext: () => void }) {
         />
       </Card>
       <Prose>
-        Audio is deleted after 7 days unless you change it. The text is kept forever. Press{" "}
-        <strong>{shortcutLabel()}</strong> from anywhere to start and stop. This window does not
-        need to be open, or even visible.
+        Audio is deleted after 7 days unless you change it. The text is kept forever.{" "}
+        {shortcut.available ? (
+          <>
+            Press <strong>{shortcut.label}</strong> from anywhere to start and stop. This window
+            does not need to be open, or even visible.
+          </>
+        ) : (
+          <>
+            Use the Record button to start and stop. <strong>{shortcut.label}</strong> is
+            unavailable because another app is using it.
+          </>
+        )}
       </Prose>
       <ButtonRow>
         <Button tone="primary" icon={ArrowRight} onClick={onNext}>

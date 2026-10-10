@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import { useAppStore } from "@/state/app";
 import { meetingSummary } from "@/test/fixtures";
@@ -9,6 +9,11 @@ vi.mock("@tauri-apps/plugin-os", () => ({ platform: vi.fn(() => "macos") }));
 vi.mock("@/ipc/client", async (importOriginal) =>
   (await import("@/test/ipcMock")).mockClient(await importOriginal()),
 );
+
+const shortcut = vi.hoisted(() => ({ available: true }));
+vi.mock("@/ipc/shortcut", () => ({
+  recordShortcutAvailable: () => Promise.resolve(shortcut.available),
+}));
 
 const ROOT = "/Users/test/Meetings";
 
@@ -34,4 +39,23 @@ test("a folder that does not exist yet says when it will be made", () => {
   render(<FolderStep onNext={() => {}} />);
   expect(screen.getByText("Created on first recording")).toBeTruthy();
   expect(screen.queryByRole("button", { name: /Show in/ })).toBeNull();
+});
+
+// TUR-170 (from TUR-169): the step names the shortcut only while it is meet-ai's.
+test("names the shortcut while meet-ai owns it", async () => {
+  shortcut.available = true;
+  useAppStore.setState({ meetings: { root: ROOT, rootExists: true, meetings: [] } });
+  render(<FolderStep onNext={() => {}} />);
+  expect(await screen.findByText(/from anywhere to start and stop/)).toBeTruthy();
+});
+
+test("a shortcut another app owns is not advertised", async () => {
+  shortcut.available = false;
+  useAppStore.setState({ meetings: { root: ROOT, rootExists: true, meetings: [] } });
+  render(<FolderStep onNext={() => {}} />);
+  await waitFor(() =>
+    expect(screen.getByText(/is\s+unavailable because another app/)).toBeTruthy(),
+  );
+  expect(screen.queryByText(/from anywhere to start and stop/)).toBeNull();
+  shortcut.available = true;
 });
