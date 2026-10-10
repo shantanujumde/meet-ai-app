@@ -293,6 +293,46 @@ fn commits_are_capped() {
     assert_eq!(subjects, ["Load test login", "Side fix"]);
 }
 
+/// TUR-168: a git that hangs (a repo on a stalled network share) is stopped
+/// at the time limit, and the brief leaves the commits out.
+#[test]
+fn a_git_that_hangs_is_stopped_and_the_commits_left_out() {
+    let bin = tempfile::tempdir().expect("temp dir");
+    let slow_git = test_support::FakeCli::install(bin.path(), "git");
+    slow_git
+        .set("sleep", "30")
+        .set("stdout", "abc1234 Never seen\n");
+    let repo = tempfile::tempdir().expect("temp dir");
+
+    let started = std::time::Instant::now();
+    let commits = git::recent_commits_with(
+        slow_git.path().as_os_str(),
+        repo.path(),
+        "2026-09-08T14:30:00+05:30",
+        5,
+        std::time::Duration::from_millis(300),
+    );
+    assert!(commits.is_none());
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "git was not stopped: {:?}",
+        started.elapsed()
+    );
+
+    // The same fake, quick, is read as git's output.
+    slow_git.set("sleep", "0");
+    let quick = git::recent_commits_with(
+        slow_git.path().as_os_str(),
+        repo.path(),
+        "2026-09-08T14:30:00+05:30",
+        5,
+        std::time::Duration::from_secs(10),
+    )
+    .expect("a quick git");
+    assert_eq!(quick.len(), 1);
+    assert_eq!(quick[0].subject, "Never seen");
+}
+
 #[test]
 fn the_day_falls_back_to_the_folder_name() {
     let undated = IndexedMeeting {
