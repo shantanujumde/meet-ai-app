@@ -13,7 +13,8 @@
 //! Follows the recorder's own state event, like `hooks::app`, so the
 //! recorder needs no change. The reading never blocks or delays recording,
 //! and an output that cannot be told apart (`OutputKind::Unknown`) never
-//! warns. `audio.warn_no_headphones` off: no reads at all.
+//! warns. `audio.warn_no_headphones` off: no output reads, and the setting is
+//! re-read every poll, so switching it mid-recording takes effect (TUR-170).
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -160,31 +161,54 @@ fn start_watch(app: &AppHandle, meeting_id: String) {
 
 /// Read the output until `meeting_id`'s recording ends.
 fn watch(app: &AppHandle, meeting_id: &str) {
-    let enabled = crate::config::warn_no_headphones();
-    if !enabled {
-        tracing::info!("audio.warn_no_headphones is off: not checking the output");
-    }
+    watch_with(
+        &TRACKER,
+        meeting_id,
+        crate::config::warn_no_headphones,
+        default_output_kind,
+        |warning| send(app, warning),
+        || std::thread::sleep(POLL_INTERVAL),
+    );
+}
+
+/// [`watch`] with its reads, its event and its wait passed in, so it is
+/// testable without a device or the app.
+///
+/// `audio.warn_no_headphones` is re-read before every reading (TUR-170),
+/// like `detection::live`: switched off mid-recording, the banner goes at
+/// the next poll and the output is no longer read; switched back on, both
+/// come back. Off, the only read is the setting.
+fn watch_with(
+    tracker: &Mutex<Tracker>,
+    meeting_id: &str,
+    mut enabled: impl FnMut() -> bool,
+    mut read_output: impl FnMut() -> OutputKind,
+    mut send: impl FnMut(&HeadphoneWarning),
+    mut wait: impl FnMut(),
+) {
+    let mut was_enabled = None;
     loop {
-        // Off: no read at all, and one "no banner" answer.
-        let kind = if enabled {
-            default_output_kind()
+        let on = enabled();
+        if !on && was_enabled != Some(false) {
+            tracing::info!("audio.warn_no_headphones is off: not checking the output");
+        }
+        was_enabled = Some(on);
+        let kind = if on {
+            read_output()
         } else {
             OutputKind::Unknown
         };
-        let show = should_warn(kind, enabled);
-        let step = lock_or_recover(&TRACKER).reading(meeting_id, show);
+        let show = should_warn(kind, on);
+        let step = lock_or_recover(tracker).reading(meeting_id, show);
         match step {
             Step::Stop => return,
             Step::Send(warning) => {
                 tracing::info!(output = ?kind, show, "headphone warning");
-                send(app, &warning);
+                send(&warning);
             }
             Step::Quiet => {}
         }
-        if !enabled {
-            return;
-        }
-        std::thread::sleep(POLL_INTERVAL);
+        wait();
     }
 }
 
