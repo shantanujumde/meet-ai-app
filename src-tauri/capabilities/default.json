@@ -104,6 +104,7 @@
     "allow-set-never-detect-apps",
     "allow-join-reminded-meeting",
     "allow-record-reminded-meeting",
+    "allow-record-shortcut-available",
     "allow-start-at-login",
     "allow-set-start-at-login",
     "allow-appearance-settings",

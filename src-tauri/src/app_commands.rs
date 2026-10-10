@@ -99,6 +99,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "record_reminded_meeting",
     "prompt_popup_current",
     "answer_prompt_popup",
+    "record_shortcut_available",
     "start_at_login",
     "set_start_at_login",
     "appearance_settings",
@@ -232,6 +233,67 @@ mod tests {
             .filter(|command| !NOT_FOR_MAIN.contains(&command.as_str()))
             .collect();
         assert_eq!(granted_commands("default.json"), expected);
+    }
+
+    /// The main window's opener scope (`opener:allow-open-url` in
+    /// `default.json`), as its `url` patterns.
+    fn opener_scope() -> Vec<String> {
+        let path = manifest_dir().join("capabilities").join("default.json");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        json["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["identifier"] == "opener:allow-open-url")
+            .flat_map(|entry| entry["allow"].as_array().unwrap().iter())
+            .map(|allow| allow["url"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// `*` stands for any run of characters, the rest must match exactly.
+    fn glob_matches(pattern: &str, text: &str) -> bool {
+        let mut parts = pattern.split('*');
+        let first = parts.next().unwrap_or_default();
+        let Some(mut rest) = text.strip_prefix(first) else {
+            return false;
+        };
+        let parts: Vec<&str> = parts.collect();
+        let Some((last, middle)) = parts.split_last() else {
+            return rest.is_empty();
+        };
+        for part in middle {
+            match rest.find(part) {
+                Some(at) => rest = &rest[at + part.len()..],
+                None => return false,
+            }
+        }
+        rest.ends_with(last)
+    }
+
+    #[test]
+    fn the_glob_check_matches_like_the_scope() {
+        assert!(glob_matches("https://a.co/x/*", "https://a.co/x/y"));
+        assert!(!glob_matches("https://a.co/x/*", "https://a.co/z/y"));
+        assert!(glob_matches("https://a.co/x", "https://a.co/x"));
+        assert!(!glob_matches("https://a.co/x", "https://a.co/xy"));
+    }
+
+    /// Settings, About opens every model credit through the opener, so a
+    /// credit outside the main window's scope would be refused without a word.
+    #[test]
+    fn every_model_credit_link_is_in_the_opener_scope() {
+        let scope = opener_scope();
+        assert!(!scope.is_empty(), "default.json has no opener scope");
+        for credit in crate::engine::credits() {
+            assert!(
+                scope
+                    .iter()
+                    .any(|pattern| glob_matches(pattern, credit.url)),
+                "{} is outside the opener scope {scope:?} in capabilities/default.json",
+                credit.url
+            );
+        }
     }
 
     #[test]
