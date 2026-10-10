@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "agent"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "agent",
  "dirs 6.0.0",
@@ -381,7 +381,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "audio"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "block2",
  "cpal",
@@ -707,7 +707,7 @@ dependencies = [
 
 [[package]]
 name = "calendar"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
  "block2",
@@ -1539,7 +1539,7 @@ dependencies = [
 
 [[package]]
 name = "detect"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3654,7 +3654,7 @@ dependencies = [
 
 [[package]]
 name = "meet-ai"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "agent",
  "anyhow",
@@ -3709,7 +3709,7 @@ dependencies = [
 
 [[package]]
 name = "meeting-format"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3806,7 +3806,7 @@ dependencies = [
 
 [[package]]
 name = "modelfetch"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "futures-util",
  "reqwest 0.12.28",
@@ -5031,7 +5031,7 @@ dependencies = [
 
 [[package]]
 name = "prompts"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "insta",
  "jsonschema",
@@ -6302,7 +6302,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "store"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
@@ -6383,7 +6383,7 @@ dependencies = [
 
 [[package]]
 name = "stt"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "dirs 6.0.0",
  "earshot",
@@ -7129,7 +7129,7 @@ dependencies = [
 
 [[package]]
 name = "test-support"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "sysinfo",
 ]

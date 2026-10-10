@@ -22,7 +22,7 @@ It is built with Tauri 2: a Rust core with a React window. On macOS 26 and later
 it uses Apple's built-in speech engine, so there is no model to download.
 Whisper is there as a fallback.
 
-**Status:** v0.4.0, early. Apple silicon, macOS 26 or later. See <!-- x-release-please-version -->
+**Status:** v0.5.0, early. Apple silicon, macOS 26 or later. See <!-- x-release-please-version -->
 [`CHANGELOG.md`](./CHANGELOG.md) for what has shipped.
 
 ## Install

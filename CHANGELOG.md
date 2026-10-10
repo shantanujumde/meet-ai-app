@@ -9,6 +9,85 @@ Distribution is **personal only** at this stage — SPEC.md §8.1 puts public
 release in v2. Builds are signed with a self-signed local identity, not a
 Developer ID, and are not notarized.
 
+## [0.5.0](https://github.com/shantanujumde/meet-ai-app/compare/v0.4.0...v0.5.0) (2026-10-10)
+
+
+### Features
+
+* **agent:** Codex default model, notes and model on Default runs (TUR-131) ([#160](https://github.com/shantanujumde/meet-ai-app/issues/160)) ([115f4c3](https://github.com/shantanujumde/meet-ai-app/commit/115f4c3f683262d5a9d61dd7e2f0d1184aace9c1))
+* **agent:** turn off Codex built-in tools and skills in sync (TUR-120) ([#146](https://github.com/shantanujumde/meet-ai-app/issues/146)) ([5cc7921](https://github.com/shantanujumde/meet-ai-app/commit/5cc7921c4bca878128f3fe6701f5f11a31186c62))
+* **audio:** list the apps using the mic on every OS (TUR-142) ([#167](https://github.com/shantanujumde/meet-ai-app/issues/167)) ([197a7c6](https://github.com/shantanujumde/meet-ai-app/commit/197a7c6e65d60e82e6f90253995318dd6ff92987))
+* **detection:** call-started prompt naming the app, Never detect list (TUR-143) ([#171](https://github.com/shantanujumde/meet-ai-app/issues/171)) ([7ca39e9](https://github.com/shantanujumde/meet-ai-app/commit/7ca39e9f4dccde5098416604664d3ace2b797dd4))
+* **detection:** prompt card on every OS, panel on macOS (TUR-147) ([#168](https://github.com/shantanujumde/meet-ai-app/issues/168)) ([c8ca61f](https://github.com/shantanujumde/meet-ai-app/commit/c8ca61f10983332c4c21ca4acc682a806f2a6cd6))
+* **detection:** stop with a countdown when the call ends (TUR-144) ([#172](https://github.com/shantanujumde/meet-ai-app/issues/172)) ([f33e63e](https://github.com/shantanujumde/meet-ai-app/commit/f33e63eb5c03d44db132ae8590933d5123fdf0ff))
+* **engine:** delete a downloaded whisper model from Settings (TUR-132) ([#162](https://github.com/shantanujumde/meet-ai-app/issues/162)) ([0c1ed5d](https://github.com/shantanujumde/meet-ai-app/commit/0c1ed5d8bcb1e89ae2908f28fec4848db0c853ac))
+* **recording:** pause/resume and always-on-top recording overlay (TUR-146) ([#174](https://github.com/shantanujumde/meet-ai-app/issues/174)) ([7df3d71](https://github.com/shantanujumde/meet-ai-app/commit/7df3d710d9f862c782865ab44d308485db43cd3a))
+* **recording:** stop after 10 min of silence, and on sleep (TUR-145) ([#173](https://github.com/shantanujumde/meet-ai-app/issues/173)) ([23443e6](https://github.com/shantanujumde/meet-ai-app/commit/23443e6078a9a8344516492f0baf37866fb11f56))
+* **recording:** transcribe after Stop when transcription.live is false (TUR-137) ([#166](https://github.com/shantanujumde/meet-ai-app/issues/166)) ([3ee763e](https://github.com/shantanujumde/meet-ai-app/commit/3ee763e80c412b21cbd8f3a54ad1c16c4cab5a2d))
+* **stt:** spoken-language picker and Hinglish for whisper ([#143](https://github.com/shantanujumde/meet-ai-app/issues/143)) ([1fc33fa](https://github.com/shantanujumde/meet-ai-app/commit/1fc33faf03760757201a3ea30e76ba8f9a096f04))
+* **sync:** Tickets go to the tracker on their own; test ticket check (TUR-113) ([#169](https://github.com/shantanujumde/meet-ai-app/issues/169)) ([6f19950](https://github.com/shantanujumde/meet-ai-app/commit/6f19950db36f52c0533e777ae11597cfd5fbbd12))
+* **tickets:** approve suggested tasks into Tickets, sync errors by cause (TUR-113) ([#164](https://github.com/shantanujumde/meet-ai-app/issues/164)) ([4c55337](https://github.com/shantanujumde/meet-ai-app/commit/4c55337443fbd94060a5990ec936293116b2cf47))
+* **ui:** approve suggested tasks into Tickets, sending status (TUR-113) ([#170](https://github.com/shantanujumde/meet-ai-app/issues/170)) ([fa4d02e](https://github.com/shantanujumde/meet-ai-app/commit/fa4d02e5d4d96231353bc9971d97549d9a170fdf))
+* **ui:** compact Granola-style meeting reminder card (TUR-108) ([#148](https://github.com/shantanujumde/meet-ai-app/issues/148)) ([4be7a9e](https://github.com/shantanujumde/meet-ai-app/commit/4be7a9ea54d83b77434aba4c006e103a69145c5c))
+* **ui:** Copy prompt when the agent CLI is missing (TUR-128) ([#157](https://github.com/shantanujumde/meet-ai-app/issues/157)) ([23089d1](https://github.com/shantanujumde/meet-ai-app/commit/23089d11358b444a47fe3b9615906d3dbc983616))
+* **ui:** Finishing the transcript state after Stop (TUR-133) ([#155](https://github.com/shantanujumde/meet-ai-app/issues/155)) ([9ebeea2](https://github.com/shantanujumde/meet-ai-app/commit/9ebeea2d325f8c1229234a4cdac813165820ff95))
+* **ui:** meeting row ⋯ menu, right-click menu and Delete (TUR-116) ([#163](https://github.com/shantanujumde/meet-ai-app/issues/163)) ([acc0be9](https://github.com/shantanujumde/meet-ai-app/commit/acc0be9fad6fded761a173e5e29f94dd98623b34))
+* **ui:** show can't watch the meetings folder on Meetings (TUR-134) ([#165](https://github.com/shantanujumde/meet-ai-app/issues/165)) ([ba3c772](https://github.com/shantanujumde/meet-ai-app/commit/ba3c772654ed927eb114ef57c81a3897e2b9f90f))
+* **ui:** transcript in a scrolling box on Review (TUR-111) ([#154](https://github.com/shantanujumde/meet-ai-app/issues/154)) ([577f088](https://github.com/shantanujumde/meet-ai-app/commit/577f08807256f6f7b819fe4d6a6ba14bc64d42b3))
+
+
+### Bug Fixes
+
+* **agent:** one harness for agent runs, brief git timeout, Test cancel (TUR-168) ([#197](https://github.com/shantanujumde/meet-ai-app/issues/197)) ([ed01bd0](https://github.com/shantanujumde/meet-ai-app/commit/ed01bd0cc252cf4617cb880996e6ed538a2500e3))
+* **app:** quit waits for a start or stop and stops agent CLIs (TUR-160) ([#192](https://github.com/shantanujumde/meet-ai-app/issues/192)) ([9543607](https://github.com/shantanujumde/meet-ai-app/commit/9543607c69ea3ca95f4d67d2c7e56de551d44ab5))
+* **audio:** align mic and system at start and on reopen (TUR-151) ([#180](https://github.com/shantanujumde/meet-ai-app/issues/180)) ([a580829](https://github.com/shantanujumde/meet-ai-app/commit/a580829f56731f11d81f9abf734142a1d57a6921))
+* **audio:** no silent audio loss: full rings, stalls, crashes (TUR-163) ([#193](https://github.com/shantanujumde/meet-ai-app/issues/193)) ([37b8981](https://github.com/shantanujumde/meet-ai-app/commit/37b8981a7f97feaf476315c832a451bd21d3daef))
+* **audio:** recording crash safety: header order, late builds, retries (TUR-162) ([#185](https://github.com/shantanujumde/meet-ai-app/issues/185)) ([8c3634f](https://github.com/shantanujumde/meet-ai-app/commit/8c3634f572ae808e5b387650f207174e318c6311))
+* **audio:** retry system audio at the next device change (TUR-121) ([#142](https://github.com/shantanujumde/meet-ai-app/issues/142)) ([05e43a5](https://github.com/shantanujumde/meet-ai-app/commit/05e43a520fd8843163004aa56d6a4e1b9445403d))
+* **calendar:** flag unreadable calendars, stricter merge, cancellable sign-in (TUR-174) ([#198](https://github.com/shantanujumde/meet-ai-app/issues/198)) ([5aa28fa](https://github.com/shantanujumde/meet-ai-app/commit/5aa28fa8464c05b164a4ac61e8af250ce11dc737))
+* **config:** one bad config.jsonc value costs only its own key (TUR-155) ([#189](https://github.com/shantanujumde/meet-ai-app/issues/189)) ([23495a6](https://github.com/shantanujumde/meet-ai-app/commit/23495a6b1f2f8157a3ddf765008aeb3f9288855b))
+* **config:** schema says transcription.language is read (TUR-126) ([#149](https://github.com/shantanujumde/meet-ai-app/issues/149)) ([9cb91ee](https://github.com/shantanujumde/meet-ai-app/commit/9cb91eec666cba8219fe4bed58815d9bd6248b7a))
+* **detection:** prompts, reminders and Record say when they fail (TUR-169) ([#191](https://github.com/shantanujumde/meet-ai-app/issues/191)) ([0a66df9](https://github.com/shantanujumde/meet-ai-app/commit/0a66df9e0450cf543b2bc156c716a17263d27908))
+* **hooks:** $HOME, timeout panic, folder gate, own runner (TUR-167) ([#188](https://github.com/shantanujumde/meet-ai-app/issues/188)) ([82b247b](https://github.com/shantanujumde/meet-ai-app/commit/82b247bdb2b9a7c36991e6d669cbddde206bb8fd))
+* **ipc:** generated types for every command, event and default (TUR-173) ([#203](https://github.com/shantanujumde/meet-ai-app/issues/203)) ([acf0801](https://github.com/shantanujumde/meet-ai-app/commit/acf08017baecf6a7b5a3381246cca91666833d18))
+* **logs:** install crash handlers at the top of run() (TUR-125) ([#153](https://github.com/shantanujumde/meet-ai-app/issues/153)) ([15d561d](https://github.com/shantanujumde/meet-ai-app/commit/15d561d7111fc730602ceeb9958bbb545966b35b))
+* meeting-name follow-ups from the TUR-103 review (TUR-107) ([#132](https://github.com/shantanujumde/meet-ai-app/issues/132)) ([5b1fb1c](https://github.com/shantanujumde/meet-ai-app/commit/5b1fb1c5f4a2758b764dc0b11be782ee06dadeda))
+* **meetings:** safe meetings-folder move, atomic pointer (TUR-149) ([#184](https://github.com/shantanujumde/meet-ai-app/issues/184)) ([b037a9f](https://github.com/shantanujumde/meet-ai-app/commit/b037a9f1dec2dcccf3cf7e5c0e56356dea1a2e66))
+* **modelfetch:** pinned, cancellable, checked model downloads (TUR-159) ([#207](https://github.com/shantanujumde/meet-ai-app/issues/207)) ([a673607](https://github.com/shantanujumde/meet-ai-app/commit/a673607f6397c5633317cef5ebf56671290121c2))
+* **onboarding:** Continue, Back and Show in Finder fixes (TUR-165) ([#178](https://github.com/shantanujumde/meet-ai-app/issues/178)) ([e423734](https://github.com/shantanujumde/meet-ai-app/commit/e423734863de72182839bd56247cdb800fb4ff65))
+* **overlay:** hide the recording overlay on macOS instead of closing it (TUR-180) ([#177](https://github.com/shantanujumde/meet-ai-app/issues/177)) ([320bd3e](https://github.com/shantanujumde/meet-ai-app/commit/320bd3e313db627a764b4f3b096df308d36ace04))
+* **recording:** one stop path, notes after an interrupted recording (TUR-161) ([#183](https://github.com/shantanujumde/meet-ai-app/issues/183)) ([9c15d15](https://github.com/shantanujumde/meet-ai-app/commit/9c15d1525523f46de75bc037d125e66bdb629b7f))
+* **recording:** Record starts at once; system-audio check runs during it (TUR-136) ([#161](https://github.com/shantanujumde/meet-ai-app/issues/161)) ([8c34687](https://github.com/shantanujumde/meet-ai-app/commit/8c34687d516b490ec1a51d75825e3e58fce39241))
+* **release:** install PipeWire, PulseAudio and ALSA headers for the Linux builds (TUR-39) ([#133](https://github.com/shantanujumde/meet-ai-app/issues/133)) ([f2d67b4](https://github.com/shantanujumde/meet-ai-app/commit/f2d67b45c601c1539b778a42dcdc2cb298d10971))
+* **retention:** keep the audio of a live transcript that dropped frames (TUR-148) ([#179](https://github.com/shantanujumde/meet-ai-app/issues/179)) ([7d347e9](https://github.com/shantanujumde/meet-ai-app/commit/7d347e92ff400af73e2fca72419bebbc0be87dc5))
+* **search:** find own writes and offline edits, symlinked root (TUR-152) ([#182](https://github.com/shantanujumde/meet-ai-app/issues/182)) ([0e2181b](https://github.com/shantanujumde/meet-ai-app/commit/0e2181ba4776b30e18bf6793194a9f18992460c9))
+* **security:** lock down window capabilities, harden ids (TUR-158) ([#190](https://github.com/shantanujumde/meet-ai-app/issues/190)) ([7882b8b](https://github.com/shantanujumde/meet-ai-app/commit/7882b8b5f6281ca9590bf972a9a77924f151b81c))
+* **store:** global ticket numbers, per-meeting index and sync keys (TUR-154) ([#186](https://github.com/shantanujumde/meet-ai-app/issues/186)) ([2214273](https://github.com/shantanujumde/meet-ai-app/commit/2214273ceeadee2917513a3b623e18196927699d))
+* **stt:** offline_meeting example reads a real meeting folder (TUR-123) ([#151](https://github.com/shantanujumde/meet-ai-app/issues/151)) ([3e20be4](https://github.com/shantanujumde/meet-ai-app/commit/3e20be4333134b4f552353c0f067a07cd2fa105e))
+* **stt:** timestamps through segments.json anchors, batch and live (TUR-164) ([#196](https://github.com/shantanujumde/meet-ai-app/issues/196)) ([caba288](https://github.com/shantanujumde/meet-ai-app/commit/caba288df06207ce260fdb1100cd88e7875dc7af))
+* **stt:** transcript storage edge cases (TUR-175) ([#200](https://github.com/shantanujumde/meet-ai-app/issues/200)) ([5b55596](https://github.com/shantanujumde/meet-ai-app/commit/5b5559662c0e5dde8014a42f49b546286d003936))
+* **stt:** whisper filter keeps real speech, drops repeats (TUR-156) ([#187](https://github.com/shantanujumde/meet-ai-app/issues/187)) ([788b09c](https://github.com/shantanujumde/meet-ai-app/commit/788b09ce59542fb3fd4e9f8e51d41dea4330c41f))
+* **tickets:** tracker settings stay saved after picking a server ([#175](https://github.com/shantanujumde/meet-ai-app/issues/175)) ([6c43f96](https://github.com/shantanujumde/meet-ai-app/commit/6c43f96831c43b4eb3dc9c9fa284f564af513b0f))
+* **tray:** grey out Record while recording (TUR-117) ([#145](https://github.com/shantanujumde/meet-ai-app/issues/145)) ([3936016](https://github.com/shantanujumde/meet-ai-app/commit/3936016f8d8887ff606bca929678900fd0583ff1))
+* **tray:** Today times follow the system's 12/24-hour clock (TUR-129) ([#159](https://github.com/shantanujumde/meet-ai-app/issues/159)) ([a5440c1](https://github.com/shantanujumde/meet-ai-app/commit/a5440c1937d5358a9bfa1a8de3663ae3aab35f8f))
+* **ui:** keep live transcript sr-only labels inside the scroller (TUR-110) ([#138](https://github.com/shantanujumde/meet-ai-app/issues/138)) ([c2d5673](https://github.com/shantanujumde/meet-ai-app/commit/c2d5673ebb192cc508cb313dc669713f82af9dc0))
+* **ui:** meeting list rows left-aligned (TUR-114) ([#139](https://github.com/shantanujumde/meet-ai-app/issues/139)) ([de0187e](https://github.com/shantanujumde/meet-ai-app/commit/de0187e3b68c7d29ac1f6ddca807b2af789eeb85))
+* **ui:** meeting screen never scrolls sideways (TUR-115) ([#137](https://github.com/shantanujumde/meet-ai-app/issues/137)) ([1deddb3](https://github.com/shantanujumde/meet-ai-app/commit/1deddb3efe3df2a80b0c082061cc852237699704))
+* **ui:** notes keep keystrokes, and fast meeting switching shows the right meeting (TUR-150) ([#176](https://github.com/shantanujumde/meet-ai-app/issues/176)) ([e70c2ba](https://github.com/shantanujumde/meet-ai-app/commit/e70c2ba4e2d14c2adc601d1ed19523fd2e656b5b))
+* **ui:** plain wording for agent errors (TUR-118) ([#136](https://github.com/shantanujumde/meet-ai-app/issues/136)) ([b02838b](https://github.com/shantanujumde/meet-ai-app/commit/b02838b9fea03f17328d552c85b50da11065759c))
+* **ui:** spoken-language picker says when the engine ignores it (TUR-157) ([#194](https://github.com/shantanujumde/meet-ai-app/issues/194)) ([3d26e33](https://github.com/shantanujumde/meet-ai-app/commit/3d26e336f61d9339c69e1a93b0b767f16d847b6d))
+* **ui:** stale and racing state in Settings and meeting view (TUR-170) ([#199](https://github.com/shantanujumde/meet-ai-app/issues/199)) ([c1d4647](https://github.com/shantanujumde/meet-ai-app/commit/c1d46470e6fa941ea79c942abb04358ec447ddbd))
+* **ui:** sync errors render under the task row (TUR-112) ([#140](https://github.com/shantanujumde/meet-ai-app/issues/140)) ([6da33cb](https://github.com/shantanujumde/meet-ai-app/commit/6da33cbffd5a0c985857225a64b0f49f81c038ab))
+* **ui:** Tickets refresh keeps only the newest read (TUR-153) ([#181](https://github.com/shantanujumde/meet-ai-app/issues/181)) ([fa2908f](https://github.com/shantanujumde/meet-ai-app/commit/fa2908f19ca31fda0f8e5a2d4e9d4d1467d84c58))
+* **watch:** start watching the meetings folder once it appears (TUR-122) ([#150](https://github.com/shantanujumde/meet-ai-app/issues/150)) ([ba6fee7](https://github.com/shantanujumde/meet-ai-app/commit/ba6fee70602a7058a6edcf07fb1cfb8c5d7491c4))
+
+
+### Performance Improvements
+
+* cheaper meeting list, search index and ticket numbering (TUR-166) ([#195](https://github.com/shantanujumde/meet-ai-app/issues/195)) ([be0e029](https://github.com/shantanujumde/meet-ai-app/commit/be0e029f99aa0670ca01fbaefeeaa23f067c3490))
+* fewer and cheaper backend calls from the window (TUR-171) ([#201](https://github.com/shantanujumde/meet-ai-app/issues/201)) ([8939665](https://github.com/shantanujumde/meet-ai-app/commit/89396658ff8f4e6c27f129a5a524d7f8737cfb11))
+* less work on backend hot paths (TUR-172) ([#202](https://github.com/shantanujumde/meet-ai-app/issues/202)) ([a667b07](https://github.com/shantanujumde/meet-ai-app/commit/a667b07055127280be8891fb36f9311eeb8c3d5d))
+
 ## [0.4.0](https://github.com/shantanujumde/meet-ai-app/compare/v0.3.0...v0.4.0) (2026-10-04)
 
 
