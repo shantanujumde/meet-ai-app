@@ -10,12 +10,12 @@
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::{make_panel, show};
+pub use macos::{hide, make_panel, show};
 
 #[cfg(not(target_os = "macos"))]
 mod other;
 #[cfg(not(target_os = "macos"))]
-pub use other::{make_panel, show};
+pub use other::{hide, make_panel, show};
 
 /// Does the card window keep the OS window shadow? macOS draws it around the
 /// card's rounded shape. On Windows an undecorated window with a shadow gets

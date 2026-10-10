@@ -1,26 +1,38 @@
-//! The overlay's Tauri window (TUR-146): made when a recording starts and
-//! closed when it ends, never hidden and kept. Placed where the user last
-//! dragged it, or top-right ([`super::placement`]).
+//! The overlay's Tauri window (TUR-146). On macOS it is made for the first
+//! recording, then hidden when a recording ends and shown again for the
+//! next, never closed (TUR-180, [`platform::KEEP_WINDOW`]); elsewhere it is
+//! made when a recording starts and closed when it ends. Placed where the
+//! user last dragged it, or top-right ([`super::placement`]), every time it
+//! shows.
 
 use tauri::{AppHandle, Manager as _, PhysicalPosition, WebviewUrl, WebviewWindow};
 
 use super::placement::{self, Area, HEIGHT, Point, WIDTH};
-use super::{platform, position};
+use super::{Presence, platform, position};
 
 /// The overlay window's label; `capabilities/overlay.json` names it, and
 /// `src/main.tsx` renders the overlay for it.
 pub const LABEL: &str = "overlay";
 
-/// Whether the overlay is up.
-pub fn is_open(app: &AppHandle) -> bool {
-    app.get_webview_window(LABEL).is_some()
+/// Whether the overlay window exists, and whether it is on screen. A window
+/// whose visibility cannot be read counts as shown, so taking it down is
+/// still tried.
+pub fn presence(app: &AppHandle) -> Presence {
+    let Some(window) = app.get_webview_window(LABEL) else {
+        return Presence::Missing;
+    };
+    match window.is_visible() {
+        Ok(true) => Presence::Shown,
+        Ok(false) => Presence::Hidden,
+        Err(error) => {
+            tracing::debug!(%error, "could not read whether the overlay is shown");
+            Presence::Shown
+        }
+    }
 }
 
 /// Make the overlay and show it, without taking focus from the call.
 pub fn open(app: &AppHandle) -> tauri::Result<()> {
-    if is_open(app) {
-        return Ok(());
-    }
     let window = build(app)?;
     platform::after_build(&window);
     place(app, &window);
@@ -28,8 +40,34 @@ pub fn open(app: &AppHandle) -> tauri::Result<()> {
     crate::detection::popup::show_floating(&window)
 }
 
-/// Remember where the overlay is, then close it. Nothing when it is not up.
-pub fn close(app: &AppHandle) {
+/// Show the kept overlay again, at the saved spot. Nothing when it is gone.
+pub fn show(app: &AppHandle) -> tauri::Result<()> {
+    let Some(window) = app.get_webview_window(LABEL) else {
+        return Ok(());
+    };
+    place(app, &window);
+    crate::detection::popup::show_floating(&window)
+}
+
+/// Take the overlay off screen and keep it for the next recording.
+pub fn hide(app: &AppHandle) -> tauri::Result<()> {
+    match app.get_webview_window(LABEL) {
+        Some(window) => platform::hide(&window),
+        None => Ok(()),
+    }
+}
+
+/// Close the overlay. Not on macOS ([`platform::KEEP_WINDOW`]).
+pub fn close(app: &AppHandle) -> tauri::Result<()> {
+    match app.get_webview_window(LABEL) {
+        Some(window) => window.close(),
+        None => Ok(()),
+    }
+}
+
+/// Remember where the overlay is, for the next time it shows. Nothing when
+/// it is not up.
+pub fn save_position(app: &AppHandle) {
     let Some(window) = app.get_webview_window(LABEL) else {
         return;
     };
@@ -43,9 +81,6 @@ pub fn close(app: &AppHandle) {
             }
         }
         Err(error) => tracing::debug!(%error, "could not read where the overlay was"),
-    }
-    if let Err(error) = window.close() {
-        tracing::warn!(%error, "could not close the recording overlay");
     }
 }
 

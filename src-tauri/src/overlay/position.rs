@@ -1,8 +1,10 @@
 //! Where the user last dragged the overlay (TUR-146), kept in
 //! `~/Meetings/.app/state.json` beside the still-running flag
-//! (`lifecycle::notice`), never in the webview's storage: the window is made
-//! afresh for every recording, and the app writes nothing outside the
-//! meetings root (L10). Every other key in the file is kept on a write.
+//! (`lifecycle::notice`), never in the webview's storage: off macOS the
+//! window is made afresh for every recording, and the app writes nothing
+//! outside the meetings root (L10). Saved whenever the window is taken down,
+//! hidden or closed (TUR-180). Every other key in the file is kept on a
+//! write.
 
 use std::path::Path;
 
@@ -45,6 +47,7 @@ pub fn save(root: &Path, point: Point) -> Result<(), UiError> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::placement::{self, Area};
     use super::*;
 
     #[test]
@@ -68,6 +71,22 @@ mod tests {
         );
         save(root, Point { x: 5, y: 6 }).unwrap();
         assert_eq!(load(root), Some(Point { x: 5, y: 6 }));
+    }
+
+    #[test]
+    fn the_spot_saved_when_it_is_hidden_is_where_it_shows_next() {
+        let temp = tempfile::tempdir().unwrap();
+        let screen = Area {
+            x: 0,
+            y: 0,
+            width: 3440,
+            height: 1440,
+        };
+        save(temp.path(), Point { x: 2900, y: 400 }).unwrap();
+        assert_eq!(
+            placement::restore(load(temp.path()), &[screen]),
+            Some(Point { x: 2900, y: 400 })
+        );
     }
 
     #[test]

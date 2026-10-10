@@ -19,7 +19,14 @@
 //! The panel can become key (so VoiceOver and, after a click, the keyboard
 //! reach its buttons) but only does when a control needs it
 //! (`becomesKeyOnlyIfNeeded`): a click on a button does not take the
-//! keyboard.
+//! keyboard. A window built with `focusable(false)` (the recording overlay)
+//! never becomes key: the panel answers from tao's `focusable` ivar, as
+//! tao's own class does (TUR-180).
+//!
+//! Every AppKit call made here runs inside [`catching`]: an Objective-C
+//! exception from it is logged with its name and reason instead of
+//! unwinding into tao's event loop, where it aborts the app and says
+//! nothing about what threw (TUR-180).
 
 // Adapted from github.com/ahkohd/tauri-nspanel/src/panel.rs @ ef6e3090a6083c653955ca0b6e7f6c6ae1453d40 (MIT OR Apache-2.0)
 // The idea and the private `_setPreventsActivation:` call, rewritten for one
@@ -27,6 +34,7 @@
 // non-activating style, and sync the window server's activation tag.
 
 use std::ffi::CStr;
+use std::panic::AssertUnwindSafe;
 use std::sync::OnceLock;
 
 use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, NSObjectProtocol as _, Sel};
@@ -55,10 +63,13 @@ pub fn make_panel(window: &WebviewWindow) {
     let queued = window.run_on_main_thread(move || match target.ns_window() {
         // SAFETY: `run_on_main_thread` runs this on the main thread, and the
         // pointer is this live window's `NSWindow`; `target` keeps it alive.
-        Ok(ns_window) => match unsafe { become_panel(ns_window.cast()) } {
-            Ok(()) => tracing::debug!("the prompt card is a non-activating panel"),
-            Err(why) => tracing::warn!(why, "the prompt card stays a plain window"),
-        },
+        Ok(ns_window) => {
+            match catching("make a panel", || unsafe { become_panel(ns_window.cast()) }) {
+                Some(Ok(())) => tracing::debug!("the prompt card is a non-activating panel"),
+                Some(Err(why)) => tracing::warn!(why, "the prompt card stays a plain window"),
+                None => {}
+            }
+        }
         Err(error) => tracing::warn!(%error, "no NSWindow for the prompt card"),
     });
     if let Err(error) = queued {
@@ -77,11 +88,43 @@ pub fn show(window: &WebviewWindow) -> tauri::Result<()> {
             // window's `NSWindow` (or the panel it became), kept alive by
             // `target`.
             if let Some(ns_window) = unsafe { ns_window.cast::<NSWindow>().as_ref() } {
-                ns_window.orderFrontRegardless();
+                catching("show a panel", || ns_window.orderFrontRegardless());
             }
         }
         Err(error) => tracing::warn!(%error, "no NSWindow to show the prompt card"),
     })
+}
+
+/// Take the window off screen (`orderOut:`), keeping it and its webview for
+/// the next show. Never closes it: closing a window whose class was swapped
+/// is the path that crashed the app on every recording stop (TUR-180).
+pub fn hide(window: &WebviewWindow) -> tauri::Result<()> {
+    let target = window.clone();
+    window.run_on_main_thread(move || match target.ns_window() {
+        Ok(ns_window) => {
+            // SAFETY: on the main thread, and the pointer is this live
+            // window's `NSWindow` (or the panel it became), kept alive by
+            // `target`.
+            if let Some(ns_window) = unsafe { ns_window.cast::<NSWindow>().as_ref() } {
+                catching("hide a panel", || ns_window.orderOut(None));
+            }
+        }
+        Err(error) => tracing::warn!(%error, "no NSWindow to hide"),
+    })
+}
+
+/// Run `work`, AppKit calls of ours, catching an Objective-C exception it
+/// throws: logged at error level with the exception's name and reason (its
+/// `Debug` text), and `None` back. Uncaught, the exception would unwind into
+/// tao's event loop, which aborts the app without a word of what threw.
+fn catching<R>(what: &'static str, work: impl FnOnce() -> R) -> Option<R> {
+    match objc2::exception::catch(AssertUnwindSafe(work)) {
+        Ok(value) => Some(value),
+        Err(exception) => {
+            tracing::error!(what, ?exception, "AppKit threw an Objective-C exception");
+            None
+        }
+    }
 }
 
 /// Swap `ns_window`'s class for the panel class and set it up as a
@@ -161,9 +204,20 @@ pub fn panel_class() -> Option<&'static AnyClass> {
 }
 
 /// A borderless window cannot become key by default; the panel can, so
-/// VoiceOver and the keyboard can reach its buttons.
-extern "C-unwind" fn can_become_key(_this: &NSPanel, _cmd: Sel) -> Bool {
-    Bool::YES
+/// VoiceOver and the keyboard can reach its buttons, unless the window was
+/// built with `focusable(false)`, as tao's own class answers.
+extern "C-unwind" fn can_become_key(this: &NSPanel, _cmd: Sel) -> Bool {
+    focusable(this.as_ref())
+}
+
+/// tao's `focusable` ivar on `object`; yes when it has none.
+fn focusable(object: &AnyObject) -> Bool {
+    match object.class().instance_variable(TAO_FOCUSABLE_IVAR) {
+        // SAFETY: the ivar is a BOOL, in tao's class and in the panel class
+        // alike, and `object` is a live instance that has it.
+        Some(ivar) => unsafe { *ivar.load::<Bool>(object) },
+        None => Bool::YES,
+    }
 }
 
 /// The card is never the main window: the main window stays meet-ai's own.
@@ -201,6 +255,70 @@ mod tests {
         );
         assert!(panel.superclass() == Some(NSPanel::class()));
         assert!(panel.instance_variable(c"focusable").is_some());
+    }
+
+    #[test]
+    fn the_focusable_ivar_sits_where_taos_does() {
+        let tao = tao_like_window()
+            .instance_variable(c"focusable")
+            .expect("tao's ivar");
+        let panel = panel_class()
+            .expect("the class registers")
+            .instance_variable(c"focusable")
+            .expect("the panel's ivar");
+        assert_eq!(tao.offset(), panel.offset());
+    }
+
+    /// An object with tao's `focusable` ivar, set to `value`.
+    fn with_focusable(value: Bool) -> objc2::rc::Retained<AnyObject> {
+        let name = c"MeetAiTestFocusable";
+        let class = AnyClass::get(name).unwrap_or_else(|| {
+            let mut builder =
+                ClassBuilder::new(name, objc2::runtime::NSObject::class()).expect("free");
+            builder.add_ivar::<Bool>(c"focusable");
+            builder.register()
+        });
+        // SAFETY: `+new` on an `NSObject` subclass returns a retained
+        // instance; the ivar is a BOOL on it.
+        unsafe {
+            let object: objc2::rc::Retained<AnyObject> = objc2::msg_send![class, new];
+            let ivar = class.instance_variable(c"focusable").expect("the ivar");
+            *ivar.load_ptr::<Bool>(&object) = value;
+            object
+        }
+    }
+
+    #[test]
+    fn a_window_built_unfocusable_never_becomes_key() {
+        assert_eq!(
+            focusable(&with_focusable(Bool::NO)),
+            Bool::NO,
+            "the overlay"
+        );
+        assert_eq!(
+            focusable(&with_focusable(Bool::YES)),
+            Bool::YES,
+            "the prompt card"
+        );
+        let plain = objc2::runtime::NSObject::new();
+        assert_eq!(
+            focusable(plain.as_ref()),
+            Bool::YES,
+            "no ivar: today's answer"
+        );
+    }
+
+    #[test]
+    fn an_exception_is_caught_not_thrown_on() {
+        let empty = objc2_foundation::NSArray::<objc2::runtime::NSObject>::new();
+        let thrown = catching("a test", || {
+            // SAFETY: `-[NSArray objectAtIndex:]` takes an NSUInteger and
+            // returns an object; past the end it throws NSRangeException,
+            // which is the point.
+            let _: *mut AnyObject = unsafe { objc2::msg_send![&*empty, objectAtIndex: 3usize] };
+        });
+        assert_eq!(thrown, None);
+        assert_eq!(catching("a test", || 7), Some(7));
     }
 
     #[test]

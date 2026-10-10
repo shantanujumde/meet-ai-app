@@ -12,10 +12,12 @@
 //! It follows the recorder rather than being driven by it: every
 //! [`RECORDING_STATE_EVENT`] (and a change of the setting) wakes one worker
 //! thread, which reads the recorder's phase and `audio.show_recording_overlay`
-//! and opens or closes the window to match ([`wanted`]). So every way a
-//! recording starts or ends (the button, ⌘⇧R, the menu bar, a reminder, a
-//! tick that failed) opens or closes it the same way, and nothing in the
-//! recorder waits on a window. The worker, not the listener, does the window
+//! and shows or takes down the window to match ([`wanted`], [`step`]). So
+//! every way a recording starts or ends (the button, ⌘⇧R, the menu bar, a
+//! reminder, a tick that failed) does it the same way, and nothing in the
+//! recorder waits on a window. On macOS the window is made once and hidden
+//! between recordings, never closed (TUR-180, [`platform::KEEP_WINDOW`]);
+//! elsewhere it is closed and made afresh. The worker, not the listener, does the window
 //! work because the state event can be sent from the main thread (the quit
 //! path), where building a window would deadlock.
 
@@ -68,6 +70,51 @@ pub fn wanted(phase: Phase, enabled: impl FnOnce() -> bool) -> bool {
     phase == Phase::Recording && enabled()
 }
 
+/// Where the overlay window is now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence {
+    /// Not made, or closed.
+    Missing,
+    /// Made and kept, off screen.
+    Hidden,
+    /// On screen.
+    Shown,
+}
+
+/// What brings the window in line with what is [`wanted`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Nothing,
+    /// Make the window, place it and show it.
+    Open,
+    /// Place the kept window again and show it.
+    Show,
+    /// Save where it is, then take it off screen and keep it.
+    Hide,
+    /// Save where it is, then close it.
+    Close,
+}
+
+impl Step {
+    /// Does the step save where the window is first? Both ways of taking it
+    /// down do, so the next recording puts it back where it was left.
+    pub fn saves_position(self) -> bool {
+        matches!(self, Self::Hide | Self::Close)
+    }
+}
+
+/// The step from `presence` to `want`. `keep_window` ([`platform::KEEP_WINDOW`])
+/// hides a window no longer wanted instead of closing it.
+pub fn step(want: bool, presence: Presence, keep_window: bool) -> Step {
+    match (want, presence) {
+        (true, Presence::Missing) => Step::Open,
+        (true, Presence::Hidden) => Step::Show,
+        (false, Presence::Shown) if keep_window => Step::Hide,
+        (false, Presence::Shown) => Step::Close,
+        (true, Presence::Shown) | (false, Presence::Hidden | Presence::Missing) => Step::Nothing,
+    }
+}
+
 /// Start following the recorder. Called once from `setup`.
 pub fn init(app: &AppHandle) {
     let (tx, rx) = mpsc::channel::<()>();
@@ -92,17 +139,23 @@ pub fn init(app: &AppHandle) {
     });
 }
 
-/// Open or close the window so it matches the recorder and the setting.
+/// Show or take down the window so it matches the recorder and the setting.
 fn reconcile(app: &AppHandle) {
     let phase = app.state::<Recorder>().status().phase;
-    let open = window::is_open(app);
     let want = wanted(phase, config::show_recording_overlay);
-    if want && !open {
-        if let Err(error) = window::open(app) {
-            tracing::warn!(%error, "could not show the recording overlay");
-        }
-    } else if !want && open {
-        window::close(app);
+    let step = step(want, window::presence(app), platform::KEEP_WINDOW);
+    if step.saves_position() {
+        window::save_position(app);
+    }
+    let done = match step {
+        Step::Nothing => Ok(()),
+        Step::Open => window::open(app),
+        Step::Show => window::show(app),
+        Step::Hide => window::hide(app),
+        Step::Close => window::close(app),
+    };
+    if let Err(error) = done {
+        tracing::warn!(%error, ?step, "could not bring the recording overlay in line");
     }
 }
 
@@ -150,6 +203,40 @@ mod tests {
                 !wanted(phase, || panic!("the setting is only read while recording")),
                 "{phase:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_recording_opens_the_window_once_then_shows_the_kept_one() {
+        for keep in [true, false] {
+            assert_eq!(step(true, Presence::Missing, keep), Step::Open, "{keep}");
+            assert_eq!(step(true, Presence::Hidden, keep), Step::Show, "{keep}");
+            assert_eq!(step(true, Presence::Shown, keep), Step::Nothing, "{keep}");
+        }
+    }
+
+    #[test]
+    fn a_kept_window_is_hidden_never_closed_when_the_recording_ends() {
+        assert_eq!(step(false, Presence::Shown, true), Step::Hide);
+        for presence in [Presence::Shown, Presence::Hidden, Presence::Missing] {
+            assert_ne!(step(false, presence, true), Step::Close, "{presence:?}");
+        }
+        assert_eq!(step(false, Presence::Hidden, true), Step::Nothing);
+        assert_eq!(step(false, Presence::Missing, true), Step::Nothing);
+    }
+
+    #[test]
+    fn elsewhere_the_window_is_closed_when_the_recording_ends() {
+        assert_eq!(step(false, Presence::Shown, false), Step::Close);
+        assert_eq!(step(false, Presence::Missing, false), Step::Nothing);
+    }
+
+    #[test]
+    fn taking_the_window_down_saves_where_it_was_first() {
+        assert!(Step::Hide.saves_position());
+        assert!(Step::Close.saves_position());
+        for other in [Step::Nothing, Step::Open, Step::Show] {
+            assert!(!other.saves_position(), "{other:?}");
         }
     }
 
