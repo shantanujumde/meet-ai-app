@@ -41,6 +41,10 @@ pub mod clock;
 /// The `cpal` streams of a loopback backend (TUR-38).
 pub mod cpal_stream;
 
+/// Both halves of a capture ring, for the loopback, the microphone and the
+/// macOS tap alike (TUR-163).
+pub(crate) mod drain;
+
 /// When a default-device change is real: the switch policy.
 pub mod follower;
 

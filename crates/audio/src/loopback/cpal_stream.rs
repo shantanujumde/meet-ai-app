@@ -17,9 +17,16 @@ use super::capture::Capture;
 use super::source::LiveStream;
 use crate::Error;
 
-/// The sample formats the capture callback converts.
-pub const CAPTURE_FORMATS: [SampleFormat; 3] =
-    [SampleFormat::F32, SampleFormat::I16, SampleFormat::I32];
+/// The sample formats the capture callback converts: the loopback's and,
+/// since TUR-163, the microphone's (U16 and F64 then too, which some Linux
+/// USB and pro interfaces report as their default).
+pub const CAPTURE_FORMATS: [SampleFormat; 5] = [
+    SampleFormat::F32,
+    SampleFormat::I16,
+    SampleFormat::I32,
+    SampleFormat::U16,
+    SampleFormat::F64,
+];
 
 /// Samples the callback's conversion buffer starts with; grown (once) if a
 /// packet is ever larger.
@@ -50,13 +57,33 @@ pub fn to_f32<'a>(data: &Data, scratch: &'a mut Vec<f32>) -> Option<&'a mut [f32
         for (dst, src) in out.iter_mut().zip(samples) {
             *dst = f32::from(*src) / 32_768.0;
         }
-    } else {
-        let samples = data.as_slice::<i32>()?;
+    } else if let Some(samples) = data.as_slice::<i32>() {
         for (dst, src) in out.iter_mut().zip(samples) {
             *dst = (f64::from(*src) / 2_147_483_648.0) as f32;
         }
+    } else if let Some(samples) = data.as_slice::<u16>() {
+        // Unsigned PCM's zero is the middle of its range.
+        for (dst, src) in out.iter_mut().zip(samples) {
+            *dst = (f32::from(*src) - 32_768.0) / 32_768.0;
+        }
+    } else {
+        let samples = data.as_slice::<f64>()?;
+        for (dst, src) in out.iter_mut().zip(samples) {
+            *dst = *src as f32;
+        }
     }
     Some(out)
+}
+
+/// Whether a stream error means the stream is gone: its device went away,
+/// or `cpal` invalidated it (on macOS, also when the device's sample rate
+/// changed). The session then opens a new segment (TUR-38 for the Linux
+/// loopback, TUR-163 for the microphone).
+pub fn stream_is_lost(kind: cpal::ErrorKind) -> bool {
+    matches!(
+        kind,
+        cpal::ErrorKind::DeviceNotAvailable | cpal::ErrorKind::StreamInvalidated
+    )
 }
 
 // Adapted from github.com/CapSoftware/Cap/crates/scap-cpal/src/lib.rs @ a2a6bd8b1948c48fe92936c265c8402d7fa8ddb3 (MIT)
@@ -172,6 +199,40 @@ mod tests {
         let mut i32s = [i32::MIN, 1 << 30];
         let out = to_f32(&data_of(&mut i32s), &mut scratch).expect("i32");
         assert_eq!(out, &[-1.0, 0.5]);
+    }
+
+    #[test]
+    fn unsigned_and_double_samples_are_scaled_to_one() {
+        let mut scratch = Vec::new();
+        let mut u16s = [0u16, 32_768, 49_152];
+        let out = to_f32(&data_of(&mut u16s), &mut scratch).expect("u16");
+        assert_eq!(out, &[-1.0, 0.0, 0.5]);
+        let mut f64s = [0.25f64, -1.0];
+        let out = to_f32(&data_of(&mut f64s), &mut scratch).expect("f64");
+        assert_eq!(out, &[0.25, -1.0]);
+    }
+
+    #[test]
+    fn every_capture_format_converts() {
+        let mut scratch = Vec::new();
+        for format in CAPTURE_FORMATS {
+            // 32 zero bytes, aligned for every format here.
+            let mut bytes = [0u64; 4];
+            // SAFETY: 32 zero bytes are 4 to 16 valid samples of every format
+            // here, aligned for each, and `bytes` outlives the `Data`.
+            let data = unsafe {
+                Data::from_parts(bytes.as_mut_ptr().cast(), 32 / format.sample_size(), format)
+            };
+            assert!(to_f32(&data, &mut scratch).is_some(), "{format:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_dead_stream_is_lost() {
+        assert!(stream_is_lost(cpal::ErrorKind::DeviceNotAvailable));
+        assert!(stream_is_lost(cpal::ErrorKind::StreamInvalidated));
+        assert!(!stream_is_lost(cpal::ErrorKind::Xrun));
+        assert!(!stream_is_lost(cpal::ErrorKind::DeviceChanged));
     }
 
     #[test]

@@ -110,6 +110,15 @@ impl GapRule {
         packet_percent: 100,
     };
 
+    /// No timestamp is ever a gap: only frames the ring had no room for
+    /// become silence. The microphone and the macOS tap (TUR-163), whose
+    /// devices deliver without pause, so a late callback is jitter, and
+    /// filling it would make the track longer than the time it covers.
+    pub const NEVER: Self = Self {
+        floor_ns: u64::MAX,
+        packet_percent: 100,
+    };
+
     /// The threshold after a packet `last_len_ns` long.
     fn threshold(self, last_len_ns: u64) -> u64 {
         let share = u128::from(last_len_ns) * u128::from(self.packet_percent) / 100;
@@ -401,5 +410,14 @@ mod tests {
             ns += 10 * MS;
         }
         assert_eq!(frames, 5 * u64::from(RATE));
+    }
+
+    #[test]
+    fn the_never_rule_fills_no_gap_but_keeps_the_time() {
+        let mut t = Timeline::with_rule(GapRule::NEVER);
+        stamp(&mut t, 1_000 * MS);
+        let s = stamp(&mut t, 4_000 * MS);
+        assert_eq!(s.gap_frames, 0);
+        assert_eq!(s.host_ns, 4_000 * MS);
     }
 }
