@@ -3665,6 +3665,7 @@ dependencies = [
  "crash-handler",
  "detect",
  "dirs 6.0.0",
+ "dunce",
  "jsonc-parser",
  "meeting-format",
  "modelfetch",

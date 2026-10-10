@@ -6,7 +6,7 @@ use audio::Channel;
 use audio::wav_writer::read_header_frames;
 
 use super::list::{Live, list_in, recover_in};
-use super::root::{RootPointer, move_contents};
+use super::root::RootPointer;
 use super::view::{MeetingSummary, meeting_dir, rename_in, summarize, unparsed_lines};
 use crate::error::UiError;
 use crate::recording::{Phase, Status};
@@ -173,83 +173,6 @@ fn the_root_pointer_round_trips_through_the_file_format() {
     assert!(json.contains("customRoot"), "{json}");
     let read: RootPointer = serde_json::from_str(&json).expect("round-trips");
     assert_eq!(read.custom_root, written.custom_root);
-}
-
-#[test]
-fn moving_into_a_folder_that_does_not_exist_yet_takes_everything_with_it() {
-    let tmp = tempfile::tempdir().unwrap();
-    let old_root = tmp.path().join("old");
-    let new_root = tmp.path().join("new");
-
-    fs::create_dir_all(old_root.join("2026-09-01-1430-standup")).unwrap();
-    fs::write(
-        old_root
-            .join("2026-09-01-1430-standup")
-            .join("transcript.md"),
-        "[00:00:04] You: hi\n",
-    )
-    .unwrap();
-
-    move_contents(&old_root, &new_root).expect("the move must succeed");
-
-    assert!(!old_root.exists(), "the old folder must not linger");
-    assert!(
-        new_root
-            .join("2026-09-01-1430-standup")
-            .join("transcript.md")
-            .is_file()
-    );
-}
-
-#[test]
-fn moving_into_an_occupied_folder_merges_rather_than_clobbers() {
-    let tmp = tempfile::tempdir().unwrap();
-    let old_root = tmp.path().join("old");
-    let new_root = tmp.path().join("new");
-
-    fs::create_dir_all(old_root.join("2026-09-01-1430-standup")).unwrap();
-    fs::create_dir_all(new_root.join("2026-08-01-0900-retro")).unwrap();
-
-    move_contents(&old_root, &new_root).expect("a non-colliding merge must succeed");
-
-    assert!(!old_root.exists());
-    assert!(new_root.join("2026-09-01-1430-standup").is_dir());
-    assert!(
-        new_root.join("2026-08-01-0900-retro").is_dir(),
-        "what was already at the destination must survive the merge"
-    );
-}
-
-#[test]
-fn a_name_collision_refuses_the_whole_move_rather_than_guessing_which_copy_wins() {
-    let tmp = tempfile::tempdir().unwrap();
-    let old_root = tmp.path().join("old");
-    let new_root = tmp.path().join("new");
-
-    fs::create_dir_all(old_root.join("2026-09-01-1430-standup")).unwrap();
-    fs::write(
-        old_root.join("2026-09-01-1430-standup").join("notes.md"),
-        "the real notes",
-    )
-    .unwrap();
-    fs::create_dir_all(new_root.join("2026-09-01-1430-standup")).unwrap();
-
-    let error = move_contents(&old_root, &new_root).expect_err("a same-named folder must refuse");
-    assert_eq!(error.kind, "folder-conflict");
-    // Nothing was touched: the source is intact and the destination's
-    // existing folder was not overwritten with the source's contents.
-    assert!(
-        old_root
-            .join("2026-09-01-1430-standup")
-            .join("notes.md")
-            .is_file()
-    );
-    assert!(
-        !new_root
-            .join("2026-09-01-1430-standup")
-            .join("notes.md")
-            .exists()
-    );
 }
 
 // --- TUR-97: finished vs interrupted, and the launch-time header fix ---

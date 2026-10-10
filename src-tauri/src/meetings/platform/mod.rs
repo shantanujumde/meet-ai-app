@@ -2,9 +2,22 @@
 //! is handed to the system Trash (macOS), Recycle Bin (Windows) or the
 //! freedesktop Trash (Linux). Everything that decides whether a meeting may
 //! be deleted is in `super::delete`, and runs on every OS.
+//!
+//! Also the OS steps of moving the meetings folder (TUR-149): making and
+//! removing a symlink, and flushing a copied file. The move itself is in
+//! `super::root`.
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(unix)]
+mod unix;
+#[cfg(windows)]
+mod windows;
+
+#[cfg(unix)]
+pub use self::unix::{remove_symlink, symlink, sync_file};
+#[cfg(windows)]
+pub use self::windows::{remove_symlink, symlink, sync_file};
 
 use std::path::Path;
 
