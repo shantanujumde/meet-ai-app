@@ -6,8 +6,10 @@
 //! headset plugged in. The sound server's own idea of the default sink and
 //! source is read here instead, over the PulseAudio protocol (PipeWire
 //! answers it through pipewire-pulse, `linux/activity.rs` reads the same
-//! way), and run through [`DeviceWatch`] as on Windows: a read every
-//! `DEVICE_CHECK_INTERVAL`, a switch once two reads agree.
+//! way), and run through [`DeviceWatch`] as on Windows: a look every
+//! `DEVICE_CHECK_INTERVAL`, a switch once two looks agree. The looks cost
+//! nothing: one connection, subscribed to the server's change events, keeps
+//! the answer current (`linux/server_watch.rs`, TUR-172).
 //!
 //! A sink removed under a running stream (`cpal`'s `DeviceNotAvailable`)
 //! also counts: the loopback's error callback calls [`note_stream_lost`],
@@ -20,11 +22,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use libpulse_binding::context::{Context, FlagSet as ContextFlagSet};
+use libpulse_binding::context::Context;
 use libpulse_binding::mainloop::standard::Mainloop;
 
 use super::activity::{iterate, read_error, wait_for_ready};
 use super::clock::host_now_ns;
+use super::server_watch;
 use crate::Error;
 use crate::loopback::follower::{DeviceWatch, LossWatch, endpoint_key};
 
@@ -37,19 +40,12 @@ static INPUT_WATCH: Mutex<DeviceWatch> = Mutex::new(DeviceWatch::new());
 static LOSS_WATCH: Mutex<LossWatch> = Mutex::new(LossWatch::new());
 static STREAM_LOSSES: AtomicU64 = AtomicU64::new(0);
 
-/// The last server read, shared by the two watches so one tick costs one
-/// connection: when it was taken (host clock) and what it said.
-static LAST_READ: Mutex<Option<(u64, Defaults)>> = Mutex::new(None);
-
-/// A read this recent answers both watches.
-const READ_REUSE: Duration = Duration::from_secs(1);
-
 /// The longest the server-info read may take.
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The sound server's default sink and source names.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct Defaults {
+pub(super) struct Defaults {
     sink: Option<String>,
     source: Option<String>,
 }
@@ -78,49 +74,17 @@ pub(crate) fn default_input_device() -> Result<DeviceId, Error> {
 fn watch(cell: &Mutex<DeviceWatch>, pick: fn(Defaults) -> Option<String>) -> Result<u64, Error> {
     let mut watch = cell.lock().unwrap_or_else(PoisonError::into_inner);
     watch
-        .poll(host_now_ns(), || defaults().and_then(pick))
+        .poll(host_now_ns(), || server_watch::current().and_then(pick))
         .map(|name| endpoint_key(&name))
         .ok_or_else(|| Error::NoDevice("no default sound-server device".into()))
 }
 
-/// The server's defaults, read at most once per [`READ_REUSE`]. `None` when
-/// the server cannot be reached.
-fn defaults() -> Option<Defaults> {
-    let now = host_now_ns();
-    let mut last = LAST_READ.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some((at, read)) = last.as_ref()
-        && now.saturating_sub(*at) < READ_REUSE.as_nanos() as u64
-    {
-        return Some(read.clone());
-    }
-    match read_defaults() {
-        Ok(read) => {
-            *last = Some((now, read.clone()));
-            Some(read)
-        }
-        Err(error) => {
-            tracing::debug!("default-device read: {error}");
-            *last = None;
-            None
-        }
-    }
-}
-
-fn read_defaults() -> Result<Defaults, Error> {
-    let mut mainloop =
-        Mainloop::new().ok_or_else(|| read_error("could not create a PulseAudio main loop"))?;
-    let mut context = Context::new(&mainloop, "meet-ai")
-        .ok_or_else(|| read_error("could not create a PulseAudio context"))?;
-    context
-        .connect(None, ContextFlagSet::NOAUTOSPAWN, None)
-        .map_err(|error| read_error(format!("could not reach the sound server: {error}")))?;
-    let result = server_defaults(&mut mainloop, &context);
-    context.disconnect();
-    result
-}
-
+/// One read of the server's defaults over `context`'s connection.
 // Adapted from github.com/fastrepl/anarlog/crates/audio-actual/src/speaker/linux.rs @ 93deb8642e75a0a2f8ece1bed186da4362213edd (MIT)
-fn server_defaults(mainloop: &mut Mainloop, context: &Context) -> Result<Defaults, Error> {
+pub(super) fn server_defaults(
+    mainloop: &mut Mainloop,
+    context: &Context,
+) -> Result<Defaults, Error> {
     wait_for_ready(mainloop, context)?;
     let answer: Rc<RefCell<Option<Defaults>>> = Rc::new(RefCell::new(None));
     let into = Rc::clone(&answer);

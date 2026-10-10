@@ -147,9 +147,11 @@ impl SegmentsWriter {
         }
     }
 
-    /// Render the current state as `segments.json`.
+    /// Render the current state as `segments.json`. Compact, not pretty:
+    /// the whole file is rewritten every checkpoint, and a long meeting has
+    /// thousands of anchors (TUR-172).
     pub fn to_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string_pretty(&self.as_segments())
+        serde_json::to_string(&self.as_segments())
     }
 
     /// §7/§11's checkpoint write, through [`meeting_format::write_atomic`]: a
@@ -239,6 +241,32 @@ mod tests {
     }
 
     #[test]
+    fn segments_json_is_compact_and_reads_back() {
+        // TUR-172: a 4-hour meeting's ~2,900 anchors, rewritten every 5 s.
+        let mut writer = SegmentsWriter::new(open(reason::START, 0));
+        for i in 1..=2_900u64 {
+            writer.checkpoint_anchor(Anchor {
+                mic_host_ns: i * 5_000_000_000,
+                mic_frames: i * 80_000,
+                sys_host_ns: i * 5_000_000_000,
+                sys_frames: i * 80_000,
+            });
+        }
+        let compact = writer.to_json().unwrap();
+        let pretty = serde_json::to_string_pretty(&writer.as_segments()).unwrap();
+        eprintln!(
+            "segments.json for 2,900 anchors: {} bytes compact, {} bytes pretty",
+            compact.len(),
+            pretty.len()
+        );
+        assert!(!compact.contains('\n'));
+        // About 300 KB instead of about 490 KB, every checkpoint.
+        assert!(compact.len() * 3 < pretty.len() * 2);
+        let back: Segments = serde_json::from_str(&compact).unwrap();
+        assert_eq!(back, writer.as_segments());
+    }
+
+    #[test]
     fn write_atomic_overwrites_the_previous_checkpoint_and_leaves_no_temp_file() {
         let mut writer = SegmentsWriter::new(open(reason::START, 0));
         writer.update_frames(10, 10);
@@ -251,7 +279,7 @@ mod tests {
         let second = std::fs::read_to_string(&path).unwrap();
 
         assert_ne!(first, second, "the checkpoint on disk did not advance");
-        assert!(second.contains("\"mic_frames\": 20"));
+        assert!(second.contains("\"mic_frames\":20"));
 
         let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
             .unwrap()

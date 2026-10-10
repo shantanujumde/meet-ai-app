@@ -178,7 +178,8 @@ fn a_torn_header_patch_leaves_the_data_length_at_its_old_smaller_value() {
     w.file.seek(SeekFrom::Start(RIFF_SIZE_OFFSET)).unwrap();
     let new_total = 36 + 2 * (1600 + 1600) as u32;
     w.file.write_all(&new_total.to_le_bytes()).unwrap();
-    w.file.sync_all().unwrap();
+    w.file.flush().unwrap();
+    w.file.get_ref().sync_all().unwrap();
     drop(w);
 
     let (frames, samples) = read_declared(&path).unwrap();
@@ -385,4 +386,45 @@ fn on_a_created_file_the_segment_head_is_the_file_head() {
     assert_eq!(frames, 240);
     assert!(samples[..80].iter().all(|&s| s == 0));
     assert_eq!(samples[80..], real);
+}
+
+#[test]
+fn appends_are_buffered_until_the_buffer_fills_or_a_checkpoint_flushes() {
+    // TUR-172: a ~21 ms chunk (341 frames) is a copy into the buffer, not a
+    // seek and a write; the file grows a buffer at a time, and fully at the
+    // checkpoint.
+    let (_dir, path) = temp_path("buffered.wav");
+    let mut w = WavWriter::create(&path).unwrap();
+    let on_disk = || std::fs::metadata(&path).unwrap().len() - HEADER_LEN;
+
+    let chunk = tone(341, 440.0);
+    w.append(&chunk).unwrap();
+    assert_eq!(on_disk(), 0, "one chunk stays in the buffer");
+
+    let mut appended = chunk.clone();
+    while (appended.len() as u64 * BYTES_PER_FRAME) <= WRITE_BUFFER as u64 {
+        w.append(&chunk).unwrap();
+        appended.extend_from_slice(&chunk);
+    }
+    let written = on_disk();
+    assert!(written > 0, "a full buffer reaches the file");
+    assert!(
+        appended.len() as u64 * BYTES_PER_FRAME - written <= WRITE_BUFFER as u64,
+        "at most one buffer is held back"
+    );
+
+    w.fsync_data().unwrap();
+    assert_eq!(on_disk(), appended.len() as u64 * BYTES_PER_FRAME);
+    w.patch_header().unwrap();
+
+    // An append after the header patch goes at the end, not over the
+    // samples after the header.
+    let more = tone(500, 880.0);
+    w.append(&more).unwrap();
+    w.fsync_data().unwrap();
+    w.patch_header().unwrap();
+    appended.extend_from_slice(&more);
+    let (frames, samples) = read_declared(&path).unwrap();
+    assert_eq!(frames, appended.len() as u64);
+    assert_eq!(samples, appended);
 }

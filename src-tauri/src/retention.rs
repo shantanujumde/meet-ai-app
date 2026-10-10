@@ -358,11 +358,13 @@ impl From<RetentionPolicy> for AudioRetentionSetting {
     }
 }
 
-/// `audio.retention_days` as the retention job reads it, for Settings.
+/// `audio.retention_days` as the retention job reads it, for Settings. On
+/// the blocking pool: the root pointer and `config.jsonc` are disk reads
+/// (TUR-172).
 #[tauri::command]
 #[specta::specta]
-pub async fn audio_retention_days() -> AudioRetentionSetting {
-    crate::config::audio().into()
+pub async fn audio_retention_days() -> Result<AudioRetentionSetting, UiError> {
+    crate::error::on_blocking_pool(|| crate::config::audio().into()).await
 }
 
 #[cfg(test)]

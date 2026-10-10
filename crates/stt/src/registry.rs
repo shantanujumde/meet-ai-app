@@ -30,6 +30,9 @@ pub use language::{ENGLISH_ONLY_MODEL, LanguageSupport, PARAKEET_PICKS_ITS_OWN, 
 mod parakeet;
 pub use parakeet::{PARAKEET_NOT_IN_THIS_BUILD, parakeet_runtime_missing};
 
+// A usable probe kept between recordings (TUR-172).
+mod probe_cache;
+
 // Selection *logic* is not platform-specific and compiles everywhere. What
 // differs per OS (whether Apple's engine can exist at all, and how whisper is
 // built) lives in `crate::platform`, the only module that names an OS.
@@ -249,6 +252,15 @@ pub fn resolve(preference: Preference, environment: &Environment) -> Result<Sele
 
 /// Run `meet-stt --probe` once, if there is a sidecar to run.
 fn probe_apple(environment: &Environment) -> Option<Result<Probe, Error>> {
+    probe_apple_with(environment, AppleEngine::probe)
+}
+
+/// [`probe_apple`] through `probe`: the sidecar itself, or the recording
+/// path's [`probe_cache`].
+fn probe_apple_with(
+    environment: &Environment,
+    probe: impl FnOnce(&Path, &str) -> Result<Probe, Error>,
+) -> Option<Result<Probe, Error>> {
     // Off macOS there is nothing to probe, even if a `meet-stt` path exists
     // (TUR-52); the "no sidecar" wording then names the OS instead.
     if crate::platform::APPLE_SPEECH_UNSUPPORTED.is_some() {
@@ -256,7 +268,7 @@ fn probe_apple(environment: &Environment) -> Option<Result<Probe, Error>> {
     }
     // Probing runs the sidecar, so do it once and reuse the answer.
     environment.sidecar.as_ref().map(|binary| {
-        let probe = AppleEngine::probe(binary, &environment.locale);
+        let probe = probe(binary, &environment.locale);
         if let Err(error) = &probe {
             tracing::warn!(%error, "meet-stt --probe failed; treating Apple's engine as unavailable");
         }
@@ -353,7 +365,10 @@ pub fn select(
     preference: Preference,
     environment: &Environment,
 ) -> Result<(Selection, Box<dyn SttEngine>), Error> {
-    let selection = resolve(preference, environment)?;
+    // Not [`resolve`]: a usable probe is kept between recordings, so a start
+    // does not spawn the sidecar again (TUR-172).
+    let apple = probe_apple_with(environment, probe_cache::probe);
+    let selection = decide(preference, environment, &apple)?;
 
     let engine: Box<dyn SttEngine> = match selection.engine {
         Kind::AppleSpeech => {

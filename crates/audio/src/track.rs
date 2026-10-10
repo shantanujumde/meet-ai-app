@@ -114,17 +114,20 @@ impl TrackWriter {
     /// appended before it started is durable once it returns, and appends
     /// go on meanwhile (TUR-163).
     pub(crate) fn fsync_data(&self) -> io::Result<()> {
-        let frames = self.lock().writer.appended_frames();
+        // The buffered samples go to the file under the lock (a write, no
+        // sync), so the sync below covers them (TUR-172).
+        let frames = self.lock().writer.flush()?;
         self.sync.sync_data()?;
         self.lock().writer.mark_synced(frames);
         Ok(())
     }
 
     /// §7's step 3, the same way: the size fields are written under the
-    /// lock, and synced outside it.
+    /// lock, and synced outside it: `sync_data`, as the header is data
+    /// (TUR-172).
     pub(crate) fn patch_header(&self) -> io::Result<()> {
         let frames = self.lock().writer.write_header_sizes()?;
-        self.sync.sync_all()?;
+        self.sync.sync_data()?;
         self.lock().writer.mark_header(frames);
         Ok(())
     }

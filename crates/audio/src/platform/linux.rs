@@ -16,6 +16,7 @@
 mod activity;
 mod clock;
 mod devices;
+mod server_watch;
 // TUR-65: the default sink's active port, for the headphone warning.
 mod headphones;
 mod loopback;

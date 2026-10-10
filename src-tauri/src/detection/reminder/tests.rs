@@ -341,6 +341,46 @@ fn the_loop_fires_each_reminder_once() {
     assert_eq!(calendar.reads(), 1);
 }
 
+/// A calendar whose every read takes `took` on `clock`, like a slow Google
+/// or Microsoft sign-in.
+struct SlowCalendar {
+    calendar: Calendar,
+    clock: FakeClock,
+    took: Duration,
+}
+
+impl Upcoming for SlowCalendar {
+    fn events_between(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<Event>, Error> {
+        *self.clock.0.lock().unwrap() += self.took;
+        self.calendar.events_between(from, to)
+    }
+}
+
+#[test]
+fn a_slow_calendar_read_is_not_a_sleep() {
+    // TUR-172: a 25 s read plus the 10 s tick is a 35 s gap between tick
+    // starts, past the 30 s wake gap. Measured from the end of each tick it
+    // is 10 s, so the calendar is read once, not on every tick.
+    let calendar = Calendar::with(vec![invite("later", at(11, 0, 0), 3)]);
+    let clock = FakeClock(Arc::new(Mutex::new(at(9, 0, 0))));
+    let slow = SlowCalendar {
+        calendar: calendar.clone(),
+        clock: clock.clone(),
+        took: Duration::seconds(25),
+    };
+    let mut reminders = reminders();
+    for _ in 0..6 {
+        assert!(reminders.tick_on(&clock, &slow).is_empty());
+        *clock.0.lock().unwrap() += Duration::from_std(TICK).unwrap();
+    }
+    assert_eq!(calendar.reads(), 1);
+
+    // A real sleep is still one: a long gap after the tick finished.
+    *clock.0.lock().unwrap() += Duration::minutes(5);
+    reminders.tick_on(&clock, &slow);
+    assert_eq!(calendar.reads(), 2);
+}
+
 // --- TUR-78: the lead time from Settings → Notifications --------------------
 
 #[test]

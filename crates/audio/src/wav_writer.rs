@@ -22,9 +22,15 @@
 //! down: the two header length fields are written RIFF-size first, then
 //! data-size — so a torn patch leaves `data`'s declared length at its old,
 //! smaller, fully-durable value rather than a larger one nothing backs.
+//!
+//! Samples go through a [`WRITE_BUFFER`]-byte buffer (TUR-172): a ~21 ms chunk
+//! is a copy, not a seek and a ~700-byte write, and the bytes reach the file
+//! when the buffer fills or at the next checkpoint's
+//! [`WavWriter::fsync_data`], whichever comes first. A reader tailing the
+//! file sees each sample at most [`WRITE_BUFFER`] bytes late.
 
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::segments::SAMPLE_RATE_HZ;
@@ -51,16 +57,25 @@ pub const RIFF_SIZE_OFFSET: u64 = 4;
 /// Offset of the `data` chunk's size field (bytes 40..44): `frames * 2`.
 pub const DATA_SIZE_OFFSET: u64 = 40;
 
+/// How many sample bytes are held before they are written to the file: 2 s
+/// of 16 kHz mono 16-bit audio, under the 5 s checkpoint, so a checkpoint
+/// still finds at most one buffer's worth to write.
+pub const WRITE_BUFFER: usize = 64 * 1024;
+
 /// An incrementally-written, crash-safe mono 16-bit PCM WAV file.
 ///
 /// The header is written once at [`WavWriter::create`], declaring zero
 /// frames, and re-patched in place at every [`WavWriter::patch_header`] call.
 /// Samples are appended between patches; nothing is ever inserted or moved.
 pub struct WavWriter {
-    file: File,
-    /// Frames whose sample bytes have been `write_all`'d to the file. May be
+    /// The file, behind the sample buffer. Its cursor is always at the end
+    /// of the samples: whatever seeks elsewhere ([`WavWriter::write_header_sizes`],
+    /// the head-pad) flushes the buffer first and seeks back to the end after.
+    file: BufWriter<File>,
+    /// Frames whose sample bytes have been `write_all`'d, to the file or to
+    /// its buffer ([`WavWriter::flush`] puts them all in the file). May be
     /// ahead of `header_frames` by up to one checkpoint's worth — those bytes
-    /// exist on disk but the header does not admit to them yet.
+    /// exist but the header does not admit to them yet.
     appended_frames: u64,
     /// `appended_frames` as of the most recent [`WavWriter::fsync_data`] call —
     /// the count [`WavWriter::patch_header`] is allowed to declare. A worker
@@ -100,7 +115,7 @@ impl WavWriter {
         file.write_all(&header_bytes(0))?;
         file.sync_all()?;
         Ok(Self {
-            file,
+            file: BufWriter::with_capacity(WRITE_BUFFER, file),
             appended_frames: 0,
             synced_frames: 0,
             header_frames: 0,
@@ -112,9 +127,9 @@ impl WavWriter {
 
     /// Append PCM samples to the data chunk. Does not fsync and does not
     /// touch the header — call [`WavWriter::fsync_data`] and
-    /// [`WavWriter::patch_header`] at the next checkpoint.
+    /// [`WavWriter::patch_header`] at the next checkpoint. Goes into the
+    /// buffer; no seek, and a write only when the buffer is full.
     pub fn append(&mut self, samples: &[i16]) -> io::Result<()> {
-        self.file.seek(SeekFrom::End(0))?;
         // WAV is little-endian regardless of host order (SPEC §3.2: s16le).
         self.byte_scratch.clear();
         for sample in samples {
@@ -132,18 +147,27 @@ impl WavWriter {
     /// concurrent worker thread) after this sync, but before the header is
     /// actually patched.
     pub fn fsync_data(&mut self) -> io::Result<()> {
-        let frames = self.appended_frames;
-        self.file.sync_data()?;
+        let frames = self.flush()?;
+        self.file.get_ref().sync_data()?;
         self.mark_synced(frames);
         Ok(())
+    }
+
+    /// Write the buffered samples to the file (no sync), and return
+    /// [`WavWriter::appended_frames`], all of which are now in it. What a
+    /// caller syncing through [`WavWriter::sync_handle`] calls first.
+    pub fn flush(&mut self) -> io::Result<u64> {
+        self.file.flush()?;
+        Ok(self.appended_frames)
     }
 
     /// A second handle on the same file, for a caller that syncs without
     /// holding the lock its appends go through (TUR-163: a slow disk then
     /// stalls the checkpoint, never the capture worker). A sync on it covers
-    /// every byte written through this writer before the sync began.
+    /// every byte written to the file before the sync began, so
+    /// [`WavWriter::flush`] the buffer first.
     pub fn sync_handle(&self) -> io::Result<File> {
-        self.file.try_clone()
+        self.file.get_ref().try_clone()
     }
 
     /// [`WavWriter::fsync_data`]'s second half, for a caller that synced
@@ -160,9 +184,12 @@ impl WavWriter {
     /// written before `data` size, so a crash mid-patch leaves `data`'s
     /// declared length at its previous, smaller, already-fsynced value rather
     /// than a new one the bytes don't fully back yet.
+    ///
+    /// `sync_data`, not `sync_all`: the header is data, and the patch changes
+    /// no metadata a reader needs (TUR-172).
     pub fn patch_header(&mut self) -> io::Result<()> {
         let frames = self.write_header_sizes()?;
-        self.file.sync_all()?;
+        self.file.get_ref().sync_data()?;
         self.mark_header(frames);
         Ok(())
     }
@@ -175,11 +202,15 @@ impl WavWriter {
         let frames = self.synced_frames;
         let data_len = frames * BYTES_PER_SAMPLE as u64;
 
-        self.file.seek(SeekFrom::Start(RIFF_SIZE_OFFSET))?;
-        self.file.write_all(&(36 + data_len as u32).to_le_bytes())?;
+        self.file.flush()?;
+        let file = self.file.get_mut();
+        file.seek(SeekFrom::Start(RIFF_SIZE_OFFSET))?;
+        file.write_all(&(36 + data_len as u32).to_le_bytes())?;
 
-        self.file.seek(SeekFrom::Start(DATA_SIZE_OFFSET))?;
-        self.file.write_all(&(data_len as u32).to_le_bytes())?;
+        file.seek(SeekFrom::Start(DATA_SIZE_OFFSET))?;
+        file.write_all(&(data_len as u32).to_le_bytes())?;
+        // Back to the end, where the next append goes.
+        file.seek(SeekFrom::End(0))?;
         Ok(frames)
     }
 
@@ -233,14 +264,17 @@ impl WavWriter {
             return Ok(());
         }
         let offset = HEADER_LEN + at * BYTES_PER_FRAME;
-        self.file.seek(SeekFrom::Start(offset))?;
+        self.file.flush()?;
+        let file = self.file.get_mut();
+        file.seek(SeekFrom::Start(offset))?;
         let mut existing = Vec::new();
-        self.file.read_to_end(&mut existing)?;
+        file.read_to_end(&mut existing)?;
 
-        self.file.seek(SeekFrom::Start(offset))?;
+        file.seek(SeekFrom::Start(offset))?;
         let silence = vec![0u8; (frames * BYTES_PER_FRAME) as usize];
-        self.file.write_all(&silence)?;
-        self.file.write_all(&existing)?;
+        file.write_all(&silence)?;
+        // Ends at the end of the file, where the next append goes.
+        file.write_all(&existing)?;
 
         self.appended_frames += frames;
         Ok(())
@@ -289,7 +323,7 @@ impl WavWriter {
         file.set_len(data_end)?;
         file.seek(SeekFrom::Start(data_end))?;
         Ok(Self {
-            file,
+            file: BufWriter::with_capacity(WRITE_BUFFER, file),
             appended_frames: existing_frames,
             synced_frames: existing_frames,
             header_frames: existing_frames,

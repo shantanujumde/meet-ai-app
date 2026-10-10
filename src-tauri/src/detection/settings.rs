@@ -186,16 +186,22 @@ pub async fn open_notification_settings(app: AppHandle) -> Result<(), UiError> {
 
 /// "Send a test reminder": a reminder for a fake "Test meeting" starting in
 /// the configured lead time, through the real prompt path. `false` when
-/// nothing was shown because a recording is running. Never records.
+/// nothing was shown because a recording is running. Never records. The
+/// lead time is read on the blocking pool: it may read `config.jsonc`
+/// (TUR-172).
 #[tauri::command]
 #[specta::specta]
-pub async fn send_test_reminder(app: AppHandle) -> bool {
-    let minutes = app
-        .try_state::<Detection>()
-        .map_or(config::DEFAULT_REMIND_BEFORE_MINUTES, |detection| {
-            detection.config().remind_before_minutes
-        });
-    super::notify::test_reminder(&app, minutes)
+pub async fn send_test_reminder(app: AppHandle) -> Result<bool, UiError> {
+    let reader = app.clone();
+    let minutes = on_blocking_pool(move || {
+        reader
+            .try_state::<Detection>()
+            .map_or(config::DEFAULT_REMIND_BEFORE_MINUTES, |detection| {
+                detection.config().remind_before_minutes
+            })
+    })
+    .await?;
+    Ok(super::notify::test_reminder(&app, minutes))
 }
 
 #[cfg(test)]
