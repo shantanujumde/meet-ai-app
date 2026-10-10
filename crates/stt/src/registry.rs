@@ -21,6 +21,10 @@ pub use options::{
     Availability, EngineOptions, PARAKEET_NEEDS_A_MODEL, WHISPER_NEEDS_A_MODEL, options,
 };
 
+// Whether the chosen engine and model honour the spoken language (TUR-157).
+mod language;
+pub use language::{ENGLISH_ONLY_MODEL, LanguageSupport, PARAKEET_PICKS_ITS_OWN, language_support};
+
 // The Parakeet choice (TUR-62): its model and, on Windows, ONNX Runtime.
 mod parakeet;
 pub use parakeet::{PARAKEET_NOT_IN_THIS_BUILD, parakeet_runtime_missing};
