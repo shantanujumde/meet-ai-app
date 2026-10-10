@@ -47,12 +47,11 @@ pub(crate) fn install_logging_hooks() {
 }
 
 use crate::gpu_guard::{self, GpuGuard};
-use crate::session::{
-    LiveEmitter, LiveListener, SessionOptions, SessionOutcome, SpanAssembler, SttSession,
-};
+use crate::session::{LiveListener, SessionOptions, SessionOutcome, SttSession};
 use crate::sink::TranscriptSink;
+use crate::span_driver::{Lines, LiveSpans, ModelSpan, speech_spans, to_model_audio, write_spans};
 use crate::spoken_language::SpokenLanguage;
-use crate::vad::{EarshotVad, SAMPLE_RATE, SegmentConfig, Vad, detect_speech};
+use crate::vad::{EarshotVad, SAMPLE_RATE, SegmentConfig, Vad};
 use crate::whisper_text::{prompt_tokens, whisper_line};
 use crate::{Error, Speaker};
 
@@ -196,10 +195,72 @@ impl WhisperEngine {
         &self.model_path
     }
 
-    fn new_state(&self) -> Result<WhisperState, Error> {
-        self.context
+    /// A fresh decoder for one track: its own state, and its own language
+    /// to learn, since one track is one speaker.
+    fn decoder(&self) -> Result<Decoder, Error> {
+        let state = self
+            .context
             .create_state()
-            .map_err(|e| Error::Engine(format!("could not create whisper state: {e}")))
+            .map_err(|e| Error::Engine(format!("could not create whisper state: {e}")))?;
+        Ok(Decoder {
+            state,
+            config: self.config.clone(),
+            heard: SpokenLanguage::new(),
+            prompt: self.prompt.clone(),
+            gpu: self.gpu.clone(),
+        })
+    }
+}
+
+/// What one track's decodes share, batch or live: whisper's state, the
+/// speaker's languages so far, and the engine's settings.
+struct Decoder {
+    state: WhisperState,
+    config: WhisperConfig,
+    /// This track's speaker's languages, when the config names none.
+    heard: SpokenLanguage,
+    /// [`WhisperConfig::prompt`] as tokens, from the engine.
+    prompt: Vec<WhisperTokenId>,
+    /// The engine's GPU crash marker, cleared by the first decode that works.
+    gpu: Option<Arc<GpuGuard>>,
+}
+
+impl Decoder {
+    /// Settle a span into transcript lines, learning its language first
+    /// when the config names none.
+    fn settle(&mut self, span: ModelSpan<'_>) -> Result<Lines, Error> {
+        let language = self.config.language.as_deref().or_else(|| {
+            self.heard
+                .learn(&mut self.state, self.config.threads, span.audio, span.sec)
+        });
+        decode(
+            &mut self.state,
+            &self.config,
+            span.audio,
+            language,
+            &self.prompt,
+            span.start_sec,
+            self.gpu.as_deref(),
+        )
+    }
+
+    /// Guess at an open span. A guess is thrown away, so it does not teach
+    /// the language anything.
+    fn guess(&mut self, audio: &[f32]) -> Result<Lines, Error> {
+        let language = self
+            .config
+            .language
+            .as_deref()
+            .or_else(|| self.heard.usual_code());
+        decode(
+            &mut self.state,
+            &self.config,
+            audio,
+            language,
+            &self.prompt,
+            0.0,
+            self.gpu.as_deref(),
+        )
     }
 }
 
@@ -236,23 +297,6 @@ fn params<'a>(
     params
 }
 
-/// Fill `audio` with `samples` as `f32` in `[-1, 1]`, replacing what was there.
-///
-/// whisper.cpp refuses anything under ~1 s of audio, so shorter input is padded
-/// with silence rather than skipped, or short real words get dropped. `audio`
-/// is the caller's scratch, so repeated calls reuse its capacity.
-fn to_whisper_audio(samples: &[i16], audio: &mut Vec<f32>) {
-    audio.clear();
-    audio.extend(
-        samples
-            .iter()
-            .map(|sample| *sample as f32 / i16::MAX as f32),
-    );
-    if audio.len() < SAMPLE_RATE as usize {
-        audio.resize(SAMPLE_RATE as usize, 0.0);
-    }
-}
-
 /// Run one VAD-approved span through whisper and return what survives layers
 /// 2 and 3 of the hallucination guard.
 ///
@@ -260,7 +304,7 @@ fn to_whisper_audio(samples: &[i16], audio: &mut Vec<f32>) {
 /// one. If the two filtered differently, a meeting would read one way on
 /// screen and another way in `transcript.md`.
 ///
-/// `audio` comes from [`to_whisper_audio`]; `language` is what to tell
+/// `audio` comes from [`crate::span_driver::to_model_audio`]; `language` is what to tell
 /// whisper, `None` to let it guess, and `prompt` is [`WhisperConfig::prompt`]
 /// as tokens. `span_start_sec` positions the result on
 /// the recording's timeline: whisper reports centiseconds relative to the clip
@@ -273,7 +317,7 @@ fn decode(
     prompt: &[WhisperTokenId],
     span_start_sec: f64,
     gpu: Option<&GpuGuard>,
-) -> Result<Vec<(f64, String)>, Error> {
+) -> Result<Lines, Error> {
     state
         .full(params(config, language, prompt), audio)
         .map_err(|e| Error::Engine(format!("whisper inference failed: {e}")))?;
@@ -321,15 +365,7 @@ impl crate::SttEngine for WhisperEngine {
         speaker: Speaker,
         sink: &mut dyn TranscriptSink,
     ) -> Result<(), Error> {
-        let pcm = crate::read_wav_16k_mono(wav)?;
-        let spans = detect_speech(&pcm, self.vad.as_mut(), &self.config.segmentation);
-
-        tracing::debug!(
-            wav = %wav.display(),
-            samples = pcm.len(),
-            spans = spans.len(),
-            "vad segmentation complete"
-        );
+        let (pcm, spans) = speech_spans(wav, self.vad.as_mut(), &self.config.segmentation)?;
 
         // Hallucination guard, layer 1: no spans means the loop body never
         // runs, so whisper is never called and nothing can be invented.
@@ -337,34 +373,8 @@ impl crate::SttEngine for WhisperEngine {
             return sink.flush();
         }
 
-        let mut state = self.new_state()?;
-        let mut audio = Vec::new();
-        // One file is one speaker, so it learns its own language.
-        let mut heard = SpokenLanguage::new();
-
-        for span in spans {
-            let samples = span.samples(&pcm);
-            to_whisper_audio(samples, &mut audio);
-            let span_sec = samples.len() as f64 / SAMPLE_RATE as f64;
-            let language = self
-                .config
-                .language
-                .as_deref()
-                .or_else(|| heard.learn(&mut state, self.config.threads, &audio, span_sec));
-            for (start_sec, text) in decode(
-                &mut state,
-                &self.config,
-                &audio,
-                language,
-                &self.prompt,
-                span.start_sec(),
-                self.gpu.as_deref(),
-            )? {
-                sink.write_at(start_sec, speaker, text)?;
-            }
-        }
-
-        sink.flush()
+        let mut decoder = self.decoder()?;
+        write_spans(&pcm, &spans, speaker, sink, |span| decoder.settle(span))
     }
 
     fn supports_streaming(&self) -> bool {
@@ -378,15 +388,8 @@ impl crate::SttEngine for WhisperEngine {
         listener: Box<dyn LiveListener>,
     ) -> Result<Box<dyn SttSession>, Error> {
         Ok(Box::new(WhisperSession {
-            state: self.new_state()?,
-            config: self.config.clone(),
-            assembler: SpanAssembler::with_default_vad(self.config.segmentation),
-            emitter: LiveEmitter::new(&options, listener),
-            sink,
-            audio: Vec::new(),
-            heard: SpokenLanguage::new(),
-            prompt: self.prompt.clone(),
-            gpu: self.gpu.clone(),
+            decoder: self.decoder()?,
+            live: LiveSpans::new(&options, self.config.segmentation, sink, listener),
         }))
     }
 }
@@ -398,78 +401,31 @@ impl crate::SttEngine for WhisperEngine {
 /// token by token. [`WhisperConfig::live_partials`] buys a hypothesis in
 /// between at the price of a second inference pass.
 ///
-/// The silence gate is not re-implemented here. It is [`SpanAssembler`], which
-/// is [`crate::vad::detect_speech`] with the audio arriving late: no spans over
-/// quiet audio means [`decode`] is never called, which means there is nothing
-/// for whisper to invent a line out of.
+/// The silence gate is not re-implemented here. It is
+/// [`crate::SpanAssembler`], which is [`crate::vad::detect_speech`] with the
+/// audio arriving late: no spans over quiet audio means [`decode`] is never
+/// called, which means there is nothing for whisper to invent a line out of.
 pub struct WhisperSession {
-    state: WhisperState,
-    config: WhisperConfig,
-    assembler: SpanAssembler,
-    emitter: LiveEmitter,
-    sink: Box<dyn TranscriptSink + Send>,
-    /// Scratch for the `f32` copy whisper takes, reused by every decode.
-    audio: Vec<f32>,
-    /// This session's speaker's languages, when the config names none.
-    heard: SpokenLanguage,
-    /// [`WhisperConfig::prompt`] as tokens, from the engine.
-    prompt: Vec<WhisperTokenId>,
-    /// The engine's GPU crash marker, cleared by the first decode that works.
-    gpu: Option<Arc<GpuGuard>>,
+    decoder: Decoder,
+    live: LiveSpans,
 }
 
 impl WhisperSession {
-    /// Settle a span into transcript lines.
-    fn settle(&mut self, span: &crate::session::ReadySpan) -> Result<(), Error> {
-        to_whisper_audio(&span.samples, &mut self.audio);
-        let span_sec = span.samples.len() as f64 / SAMPLE_RATE as f64;
-        let language = self.config.language.as_deref().or_else(|| {
-            self.heard
-                .learn(&mut self.state, self.config.threads, &self.audio, span_sec)
-        });
-        for (start_sec, text) in decode(
-            &mut self.state,
-            &self.config,
-            &self.audio,
-            language,
-            &self.prompt,
-            span.start_sec,
-            self.gpu.as_deref(),
-        )? {
-            self.emitter
-                .finalize(start_sec, &text, self.sink.as_mut())?;
-        }
-        Ok(())
-    }
-
     /// Guess at the utterance in progress, if the caller is paying for that.
     fn guess(&mut self) -> Result<(), Error> {
-        if !self.config.live_partials || !self.emitter.wants_volatile() {
+        let config = &self.decoder.config;
+        if !config.live_partials || !self.live.emitter.wants_volatile() {
             return Ok(());
         }
-        let Some((start_sec, samples)) = self.assembler.open_view() else {
+        let Some((start_sec, samples)) = self.live.assembler.open_view() else {
             return Ok(());
         };
-        if (samples.len() as f64 / SAMPLE_RATE as f64) < self.config.partial_min_sec {
+        if (samples.len() as f64 / SAMPLE_RATE as f64) < config.partial_min_sec {
             return Ok(());
         }
 
-        // A guess is thrown away, so it does not teach the language anything.
-        to_whisper_audio(samples, &mut self.audio);
-        let language = self
-            .config
-            .language
-            .as_deref()
-            .or_else(|| self.heard.usual_code());
-        let guessed = decode(
-            &mut self.state,
-            &self.config,
-            &self.audio,
-            language,
-            &self.prompt,
-            0.0,
-            self.gpu.as_deref(),
-        )?;
+        to_model_audio(samples, &mut self.live.audio);
+        let guessed = self.decoder.guess(&self.live.audio)?;
         // One tail per speaker, so several segments over one open span are one
         // hypothesis. An empty result withdraws the tail rather than freezing
         // the last guess on screen — whisper deciding the span is not speech
@@ -479,7 +435,7 @@ impl WhisperSession {
             .map(|(_, line)| line.as_str())
             .collect::<Vec<_>>()
             .join(" ");
-        self.emitter.volatile(start_sec, &text);
+        self.live.emitter.volatile(start_sec, &text);
         Ok(())
     }
 }
@@ -490,63 +446,22 @@ impl SttSession for WhisperSession {
     }
 
     fn feed(&mut self, samples: &[i16]) -> Result<(), Error> {
-        for span in self.assembler.push(samples) {
-            self.settle(&span)?;
-        }
+        let decoder = &mut self.decoder;
+        self.live.feed(samples, &mut |span| decoder.settle(span))?;
         self.guess()?;
-        self.emitter.poll();
+        self.live.emitter.poll();
         Ok(())
     }
 
-    fn finish(mut self: Box<Self>) -> Result<SessionOutcome, Error> {
-        if let Some(span) = self.assembler.finish() {
-            self.settle(&span)?;
-        }
-
-        // Whatever was still a guess stays a guess. `transcript.md` is
-        // append-only, so there is no version of promoting it that is not a
-        // line the user cannot get rid of.
-        let discarded_volatile = self.emitter.withdraw();
-        self.sink.flush()?;
-
-        Ok(SessionOutcome {
-            speaker: self.emitter.speaker(),
-            finalized: self.emitter.finalized(),
-            discarded_volatile,
-            audio_sec: self.assembler.fed_sec(),
-            engine: WhisperEngine::NAME,
-        })
+    fn finish(self: Box<Self>) -> Result<SessionOutcome, Error> {
+        let Self { mut decoder, live } = *self;
+        live.finish(WhisperEngine::NAME, |span| decoder.settle(span))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn audio_conversion_is_pinned_and_padded_to_one_second() {
-        let mut audio = Vec::new();
-        to_whisper_audio(&[0, i16::MAX, i16::MIN, 16_384], &mut audio);
-        assert_eq!(audio.len(), SAMPLE_RATE as usize);
-        assert_eq!(audio[0], 0.0);
-        assert_eq!(audio[1], 1.0);
-        assert_eq!(audio[2], i16::MIN as f32 / i16::MAX as f32);
-        assert_eq!(audio[3], 16_384.0 / i16::MAX as f32);
-        assert!(audio[4..].iter().all(|s| *s == 0.0));
-    }
-
-    #[test]
-    fn the_audio_scratch_is_reused_and_never_leaks_old_samples() {
-        let mut audio = Vec::new();
-        let long = vec![1_000i16; 5 * SAMPLE_RATE as usize];
-        to_whisper_audio(&long, &mut audio);
-        let capacity = audio.capacity();
-        to_whisper_audio(&long, &mut audio);
-        to_whisper_audio(&[7; 10], &mut audio);
-        assert_eq!(audio.len(), SAMPLE_RATE as usize);
-        assert!(audio[10..].iter().all(|s| *s == 0.0), "stale audio leaked");
-        assert_eq!(audio.capacity(), capacity);
-    }
 
     #[test]
     fn the_canonical_hallucinations_are_caught() {

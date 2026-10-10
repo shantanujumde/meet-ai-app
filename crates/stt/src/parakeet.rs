@@ -41,11 +41,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use parakeet_rs::{ExecutionConfig, ExecutionProvider, ParakeetTDT, TimestampMode, Transcriber};
 
-use crate::session::{
-    LiveEmitter, LiveListener, ReadySpan, SessionOptions, SessionOutcome, SpanAssembler, SttSession,
-};
+use crate::session::{LiveListener, SessionOptions, SessionOutcome, SttSession};
 use crate::sink::TranscriptSink;
-use crate::vad::{EarshotVad, SAMPLE_RATE, SegmentConfig, Vad, detect_speech};
+use crate::span_driver::{Lines, LiveSpans, ModelSpan, speech_spans, write_spans};
+use crate::vad::{EarshotVad, SAMPLE_RATE, SegmentConfig, Vad};
 use crate::whisper::is_hallucination;
 use crate::{Error, Speaker, collapse_whitespace};
 
@@ -135,28 +134,13 @@ fn lock(model: &Mutex<ParakeetTDT>) -> MutexGuard<'_, ParakeetTDT> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// `samples` as `f32` in `[-1, 1]`, padded with silence to at least one second.
-///
-/// The padding matches whisper's: the encoder subsamples 8 times, and a span a
-/// fraction of a second long would otherwise reach it as a handful of frames.
-fn to_parakeet_audio(samples: &[i16]) -> Vec<f32> {
-    let mut audio: Vec<f32> = samples
-        .iter()
-        .map(|sample| *sample as f32 / i16::MAX as f32)
-        .collect();
-    if audio.len() < SAMPLE_RATE as usize {
-        audio.resize(SAMPLE_RATE as usize, 0.0);
-    }
-    audio
-}
-
 /// Turn the sentences Parakeet heard in one span into transcript lines.
 ///
 /// `sentences` are `(seconds into the span, text)`. Each one that survives the
 /// phrase rule and is not blank becomes a line at `span_start_sec` plus its
 /// offset. When the model gave text but no sentences, the whole text is one
 /// line at the span's start.
-fn lines(span_start_sec: f64, text: &str, sentences: &[(f32, String)]) -> Vec<(f64, String)> {
+fn lines(span_start_sec: f64, text: &str, sentences: &[(f32, String)]) -> Lines {
     let at = |offset: f64| (span_start_sec + offset).max(0.0);
     let candidates: Vec<(f64, &str)> = if sentences.is_empty() {
         vec![(at(0.0), text)]
@@ -182,25 +166,20 @@ fn lines(span_start_sec: f64, text: &str, sentences: &[(f32, String)]) -> Vec<(f
 /// Run one VAD-approved span through Parakeet. The one place inference
 /// happens, shared by the batch path and the live one, so both write the same
 /// lines.
-fn decode(
-    model: &Mutex<ParakeetTDT>,
-    samples: &[i16],
-    span_start_sec: f64,
-) -> Result<Vec<(f64, String)>, Error> {
+fn decode(model: &Mutex<ParakeetTDT>, span: ModelSpan<'_>) -> Result<Lines, Error> {
+    // parakeet-rs 0.3.8 takes the samples by value (`transcribe_samples`'s
+    // `Vec<f32>`), so the scratch itself is handed over; the next span
+    // fills it again.
+    let audio = std::mem::take(span.audio);
     let result = lock(model)
-        .transcribe_samples(
-            to_parakeet_audio(samples),
-            SAMPLE_RATE,
-            1,
-            Some(TimestampMode::Sentences),
-        )
+        .transcribe_samples(audio, SAMPLE_RATE, 1, Some(TimestampMode::Sentences))
         .map_err(|e| Error::Engine(format!("Parakeet inference failed: {e}")))?;
     let sentences: Vec<(f32, String)> = result
         .tokens
         .into_iter()
         .map(|sentence| (sentence.start, sentence.text))
         .collect();
-    Ok(lines(span_start_sec, &result.text, &sentences))
+    Ok(lines(span.start_sec, &result.text, &sentences))
 }
 
 impl crate::SttEngine for ParakeetEngine {
@@ -214,22 +193,11 @@ impl crate::SttEngine for ParakeetEngine {
         speaker: Speaker,
         sink: &mut dyn TranscriptSink,
     ) -> Result<(), Error> {
-        let pcm = crate::read_wav_16k_mono(wav)?;
-        let spans = detect_speech(&pcm, self.vad.as_mut(), &self.config.segmentation);
-        tracing::debug!(
-            wav = %wav.display(),
-            samples = pcm.len(),
-            spans = spans.len(),
-            "vad segmentation complete"
-        );
-
+        let (pcm, spans) = speech_spans(wav, self.vad.as_mut(), &self.config.segmentation)?;
         // Layer 1: no spans, no inference, nothing to write.
-        for span in spans {
-            for (start_sec, text) in decode(&self.model, span.samples(&pcm), span.start_sec())? {
-                sink.write_at(start_sec, speaker, text)?;
-            }
-        }
-        sink.flush()
+        write_spans(&pcm, &spans, speaker, sink, |span| {
+            decode(&self.model, span)
+        })
     }
 
     fn supports_streaming(&self) -> bool {
@@ -244,9 +212,7 @@ impl crate::SttEngine for ParakeetEngine {
     ) -> Result<Box<dyn SttSession>, Error> {
         Ok(Box::new(ParakeetSession {
             model: Arc::clone(&self.model),
-            assembler: SpanAssembler::with_default_vad(self.config.segmentation),
-            emitter: LiveEmitter::new(&options, listener),
-            sink,
+            live: LiveSpans::new(&options, self.config.segmentation, sink, listener),
         }))
     }
 }
@@ -256,19 +222,7 @@ impl crate::SttEngine for ParakeetEngine {
 /// line appears when the speaker stops, never as a guess first.
 pub struct ParakeetSession {
     model: SharedModel,
-    assembler: SpanAssembler,
-    emitter: LiveEmitter,
-    sink: Box<dyn TranscriptSink + Send>,
-}
-
-impl ParakeetSession {
-    fn settle(&mut self, span: &ReadySpan) -> Result<(), Error> {
-        for (start_sec, text) in decode(&self.model, &span.samples, span.start_sec)? {
-            self.emitter
-                .finalize(start_sec, &text, self.sink.as_mut())?;
-        }
-        Ok(())
-    }
+    live: LiveSpans,
 }
 
 impl SttSession for ParakeetSession {
@@ -277,26 +231,15 @@ impl SttSession for ParakeetSession {
     }
 
     fn feed(&mut self, samples: &[i16]) -> Result<(), Error> {
-        for span in self.assembler.push(samples) {
-            self.settle(&span)?;
-        }
-        self.emitter.poll();
+        let model = &self.model;
+        self.live.feed(samples, &mut |span| decode(model, span))?;
+        self.live.emitter.poll();
         Ok(())
     }
 
-    fn finish(mut self: Box<Self>) -> Result<SessionOutcome, Error> {
-        if let Some(span) = self.assembler.finish() {
-            self.settle(&span)?;
-        }
-        let discarded_volatile = self.emitter.withdraw();
-        self.sink.flush()?;
-        Ok(SessionOutcome {
-            speaker: self.emitter.speaker(),
-            finalized: self.emitter.finalized(),
-            discarded_volatile,
-            audio_sec: self.assembler.fed_sec(),
-            engine: ParakeetEngine::NAME,
-        })
+    fn finish(self: Box<Self>) -> Result<SessionOutcome, Error> {
+        let Self { model, live } = *self;
+        live.finish(ParakeetEngine::NAME, |span| decode(&model, span))
     }
 }
 
@@ -348,19 +291,6 @@ pub(crate) fn onnx_runtime_problem(path: Option<&Path>, file_name: &str) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn audio_is_scaled_like_whisper_and_padded_to_one_second() {
-        let audio = to_parakeet_audio(&[0, i16::MAX, i16::MIN]);
-        assert_eq!(audio.len(), SAMPLE_RATE as usize);
-        assert_eq!(audio[0], 0.0);
-        assert_eq!(audio[1], 1.0);
-        assert_eq!(audio[2], i16::MIN as f32 / i16::MAX as f32);
-        assert!(audio[3..].iter().all(|s| *s == 0.0));
-
-        let long = vec![100i16; 3 * SAMPLE_RATE as usize];
-        assert_eq!(to_parakeet_audio(&long).len(), long.len());
-    }
 
     #[test]
     fn each_sentence_becomes_a_line_on_the_recording_timeline() {
